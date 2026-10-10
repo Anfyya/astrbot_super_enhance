@@ -1,0 +1,6 @@
+name: astrbot_plugin_super_enhance
+display_name: 超级增强
+desc: 一站式增强包：NapCat 输入状态 / AI 消息时间戳 / 静默工具 / 上下文工具（/usage、/compact）/ 跨会话上下文修复 / 动态生活状态与主动对话 / 新消息优先
+version: 1.0.0
+author: yjln
+repo: ""

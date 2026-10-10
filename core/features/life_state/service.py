@@ -1,0 +1,1346 @@
+"""动态生活状态的服务层：开关、注入、命令、查询、每日生成。"""
+
+import asyncio
+import datetime
+import re
+import time
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+from astrbot.api import logger
+from astrbot.core.message.components import Node, Plain
+from astrbot.core.platform.message_session import MessageSession
+from astrbot.core.platform.message_type import MessageType
+
+from .generator import LifeStateGenerator
+from .injector import (
+    as_context_part,
+    build_fake_messages,
+    build_text,
+    strip_fake_messages,
+)
+from .models import (
+    NATURAL_SLOTS,
+    OPTIONAL_FIELDS,
+    LifeState,
+    TimelineEntry,
+    bot_of_umo,
+    clock_to_minute,
+    format_datetime,
+    minute_to_clock,
+    profile_umo_for_bot,
+    weekday_cn,
+)
+from .ledger import AbilityBook, EventBook, PromiseBook, promise_with_for
+from .proactive import ProactivePlanner, is_proactive_event
+from .prompts import place_description
+from .raw_log import RawMessageLog
+from .reviewer import DailyReviewer
+from .scene import SharedScene, build_injection
+from .store import StateStore
+
+DEFAULT_TZ = "Asia/Shanghai"
+STATE_FILE_NAME = "life_states.json"
+ABILITY_FILE_NAME = "abilities.json"
+PROMISE_FILE_NAME = "promises.json"
+EVENT_FILE_NAME = "events.json"
+# 约定注入时往后看几天
+PROMISE_LOOKAHEAD_DAYS = 7
+# 当天约定过了这么多分钟还没关，就在注入里标「时间已过」
+PROMISE_OVERDUE_MINUTES = 120
+
+def parse_promise_date(text: str) -> datetime.date:
+    """约定日期只收绝对日期 YYYY-MM-DD；今天/明天/周五这类相对说法一律拒收。"""
+    raw = re.sub(r"\s+", "", str(text or ""))
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
+        raise ValueError(
+            "日期要写成 2026-10-05 这样的绝对日期（年-月-日），按对话里的当前日期自己算好再填，"
+            "不要写今天、明天、周五这类说法：%s" % (text or "（空）")
+        )
+    try:
+        return datetime.date.fromisoformat(raw)
+    except ValueError:
+        raise ValueError("没有这一天：%s" % text) from None
+
+
+def parse_promise_time(text: str) -> str:
+    """约定时间只收 24 小时制 HH:MM；没定具体时间传空串。"""
+    raw = re.sub(r"\s+", "", str(text or "")).replace("：", ":")
+    if not raw:
+        return ""
+    m = re.fullmatch(r"(\d{1,2}):(\d{2})", raw)
+    if not m or not (0 <= int(m.group(1)) <= 23 and 0 <= int(m.group(2)) <= 59):
+        raise ValueError(
+            "时间要写成 24 小时制的 14:00、20:30 这样，不要写下午、傍晚这类说法；"
+            "没定具体时间就留空：%s" % text
+        )
+    return "%02d:%02d" % (int(m.group(1)), int(m.group(2)))
+DAILY_HOUR = 0
+DAILY_MINUTE = 0
+
+
+def _command_tail(message: str, command: str) -> str | None:
+    """取命令后面的完整尾随文本（用于 /dls regen 的附加要求）。"""
+    text = re.sub(r"\s+", " ", str(message or "").lstrip("/").strip())
+    for prefix in (command + " ", command):
+        idx = text.find(prefix)
+        if idx == -1:
+            continue
+        tail = text[idx + len(prefix) :].strip()
+        if tail:
+            return tail
+    return None
+
+
+class LifeStateService:
+    """把生成、注入、主动对话、命令、工具都收在这里，main.py 只做转发。"""
+
+    def __init__(self, context, cfg, data_dir: Path) -> None:
+        self.context = context
+        self.cfg = cfg
+        self.data_dir = Path(data_dir)
+        try:
+            retain = int(cfg.get("retain_days", 14) or 14)
+        except Exception:
+            retain = 14
+        legacy_bot = ""
+        try:
+            items = [bot_of_umo(x) for x in (cfg.get("session_list") or [])]
+            legacy_bot = next((x for x in items if x), "")
+        except Exception:
+            legacy_bot = ""
+        self.store = StateStore(
+            self.data_dir / STATE_FILE_NAME,
+            retain_days=retain,
+            legacy_bot=legacy_bot,
+        )
+        self.planner = ProactivePlanner(context, cfg)
+        self.raw_log = RawMessageLog(context, cfg, self.data_dir)
+        # 共享场景：交叉注入对方此刻 + 主人行踪（见 scene.py）
+        self.scene = SharedScene(
+            cfg, self.data_dir, now_fn=self._now, seg_fn=self._seg_key_now
+        )
+        # 三本小账（见 ledger.py）
+        self.abilities = AbilityBook(self.data_dir / ABILITY_FILE_NAME)
+        self.promises = PromiseBook(self.data_dir / PROMISE_FILE_NAME)
+        self.events = EventBook(self.data_dir / EVENT_FILE_NAME)
+        if self.promise_enabled:
+            self.planner.promises = self.promises
+        self.planner.label_fn = self.scene.label_for
+        # 主动对话到点判断要用：日程、这个会话最近的往来、最近一次有人说话 / 主动消息发出的时刻
+        self.planner.store = self.store
+        self.planner.recent_fn = self.recent_messages
+        self.planner.activity_fn = self.last_activity
+        self.planner.sent_fn = lambda umo: self._proactive_sent.get(str(umo), 0.0)
+        # 会话 → 最近一次有人说话（主人发来或 Bot 发出）的时刻；主动消息真正发出的时刻
+        self._activity: dict[str, float] = {}
+        self._proactive_sent: dict[str, float] = {}
+        self.generator: LifeStateGenerator | None = None
+        self.reviewer: DailyReviewer | None = None
+        self._task: asyncio.Task | None = None
+        # 聊天时发现缺日程：后台补生成，不让聊天等（见 _kick_background）
+        self._bg_task: asyncio.Task | None = None
+        self._bg_failed_at = 0.0
+        # 0 点任务正在跑（回查 + 生成），这期间聊天不另起生成
+        self._daily_running = False
+
+    # ---------- 基础 ----------
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.cfg.get("enabled", False))
+
+    @property
+    def abilities_enabled(self) -> bool:
+        return self.enabled and bool(self.cfg.get("abilities_enabled", True))
+
+    @property
+    def promise_enabled(self) -> bool:
+        return self.enabled and bool(self.cfg.get("promise_enabled", True))
+
+    @staticmethod
+    def _forward_result(event, text: str):
+        """把状态文本包成一个合并转发节点（永远走卡片样式，不直接发长消息）。"""
+        node = Node(uin=event.get_self_id(), name="AstrBot", content=[Plain(text)])
+        return event.chain_result([node])
+
+    @property
+    def timezone(self) -> ZoneInfo:
+        global_tz = ""
+        try:
+            global_tz = str((self.context.get_config() or {}).get("timezone") or "")
+        except Exception:
+            global_tz = ""
+        for name in (str(self.cfg.get("timezone") or ""), global_tz, DEFAULT_TZ):
+            if not name:
+                continue
+            try:
+                return ZoneInfo(name)
+            except Exception:
+                continue
+        return ZoneInfo(DEFAULT_TZ)
+
+    def _now(self) -> datetime.datetime:
+        return datetime.datetime.now(self.timezone)
+
+    def _today(self) -> str:
+        return self._now().date().isoformat()
+
+    def _debug(self, message: str, *args) -> None:
+        if self.cfg.get("debug", False):
+            logger.info("[super_enhance/life] " + message, *args)
+
+    # ---------- 生命周期 ----------
+
+    async def initialize(self) -> None:
+        if not self.enabled:
+            logger.info("[super_enhance/life] 未启用（life_state.enabled=false）")
+            return
+        self.generator = LifeStateGenerator(
+            self.context, self.cfg, self.store, on_ready=self._on_state_ready
+        )
+        self.generator.label_fn = self.scene.label_for
+        self.generator.events = self.events
+        if self.abilities_enabled:
+            self.generator.abilities = self.abilities
+        if self.promise_enabled:
+            self.generator.promises = self.promises
+        self.reviewer = DailyReviewer(
+            self.context,
+            self.cfg,
+            self.store,
+            self.generator,
+            self.data_dir,
+            raw_log=self.raw_log,
+        )
+        self.reviewer.label_fn = self.scene.label_for
+        try:
+            await self.raw_log.backfill()
+        except Exception as e:
+            logger.warning("[super_enhance/life] 原始消息回补失败：%s", e)
+        try:
+            await self.planner.cleanup_stale(self._today())
+        except Exception as e:
+            logger.warning("[super_enhance/life] 清理过期主动任务失败：%s", e)
+        if self.planner.enabled and not self.planner.install_gate():
+            logger.warning("[super_enhance/life] cron_manager 还不可用，主动对话到点判断等排期时再接管")
+        self._task = asyncio.create_task(self._daily_loop())
+        logger.info("[super_enhance/life] 已启用（时区 %s）", self.timezone)
+
+    async def terminate(self) -> None:
+        self.planner.uninstall_gate()
+        if self._task is not None:
+            self._task.cancel()
+            try:
+                await self._task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._task = None
+        self.generator = None
+
+    async def _daily_loop(self) -> None:
+        """每天 00:00（本地时区）：先回查修正昨天，再生成新一天的状态。"""
+        while True:
+            now = self._now()
+            next_run = (now + datetime.timedelta(days=1)).replace(
+                hour=DAILY_HOUR, minute=DAILY_MINUTE, second=0, microsecond=0
+            )
+            await asyncio.sleep(max(30.0, (next_run - now).total_seconds()))
+            self._daily_running = True
+            try:
+                if self.generator is not None:
+                    # 每个启用的机器人各有一份日程：先各自回查修正昨天，再一起生成新的一天。
+                    # 新的一天只用一次调用、几份日程在同一个思考链里排出来，
+                    # 这样主人不会被同时安排在两个地方。
+                    bots = self.enabled_bots()
+                    if not bots:
+                        logger.warning("[super_enhance/life] 没有启用的机器人，跳过每日生成")
+                    yesterday = (
+                        self._now() - datetime.timedelta(days=1)
+                    ).date().isoformat()
+                    today = self._today()
+                    for bot in bots:
+                        if self.reviewer is None:
+                            continue
+                        try:
+                            await self.reviewer.revise(
+                                bot, yesterday, self._profile_umo(bot)
+                            )
+                        except Exception as e:
+                            logger.error(
+                                "[super_enhance/life] [%s] 昨日日程回查失败：%s",
+                                bot,
+                                e,
+                            )
+                    try:
+                        self.promises.prune(today)
+                    except Exception:
+                        logger.warning("[super_enhance/life] 清理过期约定失败", exc_info=True)
+                    profiles = {bot: self._profile_umo(bot) for bot in bots}
+                    try:
+                        await self.generator.generate_many(
+                            bots, today, profiles=profiles
+                        )
+                    except Exception as e:
+                        logger.error("[super_enhance/life] 每日生成失败：%s", e)
+            except Exception as e:
+                logger.error("[super_enhance/life] 每日生成失败：%s", e)
+            finally:
+                self._daily_running = False
+
+    async def _on_state_ready(self, bot: str, state: LifeState) -> None:
+        try:
+            await self.planner.sync(bot, state, self._now())
+        except Exception as e:
+            logger.error("[super_enhance/life] 主动对话排期失败：%s", e)
+
+    # ---------- 原始消息副本（日程回查、主动对话到点判断用） ----------
+
+    def _touch(self, umo: str) -> None:
+        if umo:
+            self._activity[str(umo)] = time.time()
+
+    def last_activity(self, umo: str) -> float:
+        """这个会话最近一次有人说话（主人发来或 Bot 发出）的时刻；重启后从原始消息副本里补。"""
+        best = self._activity.get(str(umo), 0.0)
+        now = time.time()
+        for item in self.recent_messages(umo):
+            try:
+                ts = float(item.get("ts") or 0.0)
+            except Exception:
+                continue
+            if ts > now + 120:
+                # 时间在未来的记录（时区没对上）不算「刚聊过」
+                continue
+            best = max(best, ts)
+        return best
+
+    def recent_messages(self, umo: str) -> list[dict]:
+        """原始消息副本里这个会话今天 + 昨天的消息，按时间排好。"""
+        today = self._now().date()
+        items: list[dict] = []
+        for day in (today - datetime.timedelta(days=1), today):
+            for item in self.raw_log.read_day(day.isoformat()):
+                if str(item.get("umo") or "") == str(umo):
+                    items.append(item)
+        items.sort(key=lambda item: item.get("ts") or 0)
+        return items
+
+    def record_incoming(self, event) -> None:
+        """记录用户发来的原始消息。"""
+        self._touch(getattr(event, "unified_msg_origin", ""))
+        try:
+            self.raw_log.record(
+                event.unified_msg_origin, "user", event.get_message_str() or ""
+            )
+        except Exception:
+            logger.debug("[super_enhance/life] 记录用户消息失败", exc_info=True)
+
+    def record_reply(self, event) -> None:
+        """记录 Bot 实际发出去的回复文本。"""
+        try:
+            result = event.get_result()
+        except Exception:
+            result = None
+        if result is None:
+            return
+        texts = []
+        for comp in getattr(result, "chain", []) or []:
+            text = getattr(comp, "text", None)
+            if isinstance(text, str) and text.strip():
+                texts.append(text.strip())
+        if not texts:
+            return
+        self._touch(getattr(event, "unified_msg_origin", ""))
+        try:
+            self.raw_log.record(
+                event.unified_msg_origin, "assistant", "\n".join(texts)
+            )
+        except Exception:
+            logger.debug("[super_enhance/life] 记录回复失败", exc_info=True)
+
+    def record_tool_message(self, event, tool, tool_args) -> None:
+        """记录经 send_message_to_user 主动发出的消息（含定时主动对话）。"""
+        if getattr(tool, "name", "") != "send_message_to_user":
+            return
+        args = tool_args or {}
+        messages = args.get("messages")
+        if not isinstance(messages, list) or not messages:
+            return
+        texts = []
+        for item in messages:
+            if isinstance(item, dict):
+                text = str(item.get("text") or "").strip()
+                if text:
+                    texts.append(text)
+        if not texts:
+            return
+        umo = str(getattr(event, "unified_msg_origin", "") or "")
+        session = args.get("session")
+        if isinstance(session, str) and session.strip():
+            value = session.strip()
+            if ":" in value:
+                umo = value
+            else:
+                try:
+                    cur = MessageSession.from_str(umo)
+                    umo = str(
+                        MessageSession(
+                            platform_name=cur.platform_name,
+                            message_type=MessageType.FRIEND_MESSAGE,
+                            session_id=value,
+                        )
+                    )
+                except Exception:
+                    pass
+        self._touch(umo)
+        # 本插件排的主动对话发给主人的消息：打上标记，下次到点好判断「上一条主人回没回」
+        src = ""
+        if is_proactive_event(event) and umo == str(getattr(event, "unified_msg_origin", "") or ""):
+            src = "proactive"
+            self._proactive_sent[umo] = time.time()
+        try:
+            self.raw_log.record(umo, "assistant", "\n".join(texts), src=src)
+        except Exception:
+            logger.debug("[super_enhance/life] 记录主动消息失败", exc_info=True)
+
+    # ---------- 会话过滤 ----------
+
+    def _bot_enabled(self, bot: str) -> bool:
+        """该机器人（平台实例）是否启用动态生活状态。"""
+        mode = str(self.cfg.get("session_list_mode") or "whitelist").strip()
+        items = [bot_of_umo(x) for x in (self.cfg.get("session_list") or [])]
+        if mode == "none":
+            return True
+        if mode == "blacklist":
+            return bot not in items
+        return bot in items
+
+    def enabled_bots(self) -> list[str]:
+        """当前启用生活状态的机器人列表（每个机器人各自一份日程）。
+
+        - whitelist：名单本身；
+        - blacklist：已存过状态的机器人里排除名单；
+        - none：所有已存过状态的机器人。
+        """
+        mode = str(self.cfg.get("session_list_mode") or "whitelist").strip()
+        items = [bot_of_umo(x) for x in (self.cfg.get("session_list") or [])]
+        items = [x for x in items if x]
+        if mode == "blacklist":
+            return [b for b in self.store.bots() if b not in items]
+        if mode == "none":
+            return self.store.bots()
+        return items
+
+    def _profile_umo(self, bot: str) -> str:
+        """解析该机器人的配置档（人格 / 模型）用的代表 UMO。"""
+        for key in ("proactive_targets", "session_list"):
+            for item in self.cfg.get(key) or []:
+                text = str(item or "").strip()
+                if text and ":" in text and bot_of_umo(text) == bot:
+                    return text
+        return profile_umo_for_bot(bot)
+
+    # ---------- 多机器人同批生成 ----------
+
+    def _reference_text(self, date_text: str, exclude: str = "") -> str:
+        """把另一位机器人当天的日程整理成参考文本（单份重生时用）。"""
+        lines: list[str] = []
+        for bot in self.enabled_bots():
+            if bot == exclude:
+                continue
+            state = self.store.get(bot, date_text)
+            if state is None or state.status != "ok":
+                continue
+            lines.append("【%s】%s" % (self.scene.label_for(bot), state.schedule_summary or ""))
+            lines.append(
+                "  作息：%s 起 / %s 睡" % (state.wake_time, state.sleep_time)
+            )
+            for entry in state.timeline:
+                lines.append("  %s｜%s" % (entry.time, entry.schedule))
+        if not lines:
+            return ""
+        _place, place_desc = place_description(self.cfg.get("together_place"))
+        header = (
+            "下面是另一位角色当天已经排好的日程，你这边要跟它对上：\n"
+            "- 她那边写了和你在一起（或你们和主人三个人在一起）的时段，你这边必须在一字不差的起止时间"
+            "写上同一件事、地点一致，按你自己的视角写，不要写成自己一个人；\n"
+            "- 她那边没写和你在一起的时段，你这边也不要写和她在一起；\n"
+            "- 主人只有一位：她那边写了主人只陪着她的时段，你这边那一段就不能有主人；\n"
+            "- 其余时段你自己安排，起床、入睡和分段边界不要跟她一模一样。\n"
+            "（平时待的大地点：%s）" % place_desc
+        )
+        return header + "\n" + "\n".join(lines)
+
+    async def _ensure_states(self, date_text: str, want: str):
+        """某个机器人缺当天状态时补齐。
+
+        多人一起缺就一次生成几份（同一思考链，主人不会被分身）；
+        只有这一个缺就把另一位当天的日程当参考塞进提示词。
+        """
+        bots = self.enabled_bots() or [want]
+        missing: list[str] = []
+        for bot in bots:
+            cached = self.store.get(bot, date_text)
+            if cached is None or cached.status not in ("ok", "deleted"):
+                missing.append(bot)
+        if not missing:
+            return self.store.get(want, date_text)
+        if len(missing) == 1:
+            only = missing[0]
+            return await self.generator.generate(
+                only,
+                date_text,
+                profile_umo=self._profile_umo(only),
+                reference=self._reference_text(date_text, exclude=only),
+            )
+        profiles = {bot: self._profile_umo(bot) for bot in missing}
+        states = await self.generator.generate_many(
+            missing, date_text, profiles=profiles
+        )
+        return states.get(want) or self.store.get(want, date_text)
+
+    # ---------- 后台补生成 ----------
+
+    # 后台补生成失败后，这么久之内聊天不再触发重试（免得每条消息都去重试一遍）
+    BG_RETRY_COOLDOWN = 600
+
+    def _kick_background(self, date_text: str, bot: str) -> bool:
+        """缺当天日程时在后台补生成；返回这次有没有真的启动。"""
+        if self.generator is None:
+            return False
+        if self._daily_running or self.generator.is_generating:
+            return False
+        if self._bg_task is not None and not self._bg_task.done():
+            return False
+        if time.time() - self._bg_failed_at < self.BG_RETRY_COOLDOWN:
+            return False
+
+        async def runner() -> None:
+            try:
+                state = await self._ensure_states(date_text, bot)
+            except Exception:
+                logger.error("[super_enhance/life] 后台补生成 %s 失败", date_text, exc_info=True)
+                state = None
+            if state is None or state.status != "ok":
+                self._bg_failed_at = time.time()
+                logger.warning(
+                    "[super_enhance/life] 后台补生成 %s 没成功，%d 秒内聊天不再触发重试",
+                    date_text, self.BG_RETRY_COOLDOWN,
+                )
+            else:
+                self._bg_failed_at = 0.0
+
+        self._bg_task = asyncio.create_task(runner())
+        logger.info("[super_enhance/life] [%s] %s 还没有日程，已在后台补生成（这一轮先不带日程）", bot, date_text)
+        return True
+
+    # ---------- 请求注入 ----------
+
+    async def on_llm_request(self, event, req) -> None:
+        if not self.enabled or self.generator is None:
+            return
+        bot = bot_of_umo(getattr(event, "unified_msg_origin", ""))
+        if not self._bot_enabled(bot):
+            return
+        now = self._now()
+        date_text = now.date().isoformat()
+        state = self.store.get(bot, date_text)
+        if state is None or state.status not in ("ok", "deleted"):
+            # 缺日程（0 点刚过 / 生成失败）：放到后台去补，这一轮先不带日程，绝不让聊天等生成
+            self._kick_background(date_text, bot)
+        entry = None
+        if state is not None and state.status == "ok":
+            entry = state.find_entry_strict(now.hour * 60 + now.minute)
+        scene_text = self._scene_block(bot, date_text, now)
+        promise_text = self._promise_text(bot, now)
+        ability_text = self._ability_text(bot)
+        if entry is None:
+            # 没有可用的日程时段（睡眠空档 / 日程尚未就绪 / 生成失败）：
+            # 不注入日程文本，也不回退到当天第一段（免得她半夜以为自己在起床），
+            # 但能力清单、共享场景、约定独立于日程，仍要照常注入。
+            extra = "\n".join(x for x in (ability_text, promise_text, scene_text) if x)
+            if not extra:
+                strip_fake_messages(getattr(req, "contexts", None) or [])
+                self._debug("当前无日程时段，且能力清单、共享场景、约定都为空，跳过注入")
+                return
+            text = extra
+            self._debug("当前无日程时段，仅注入能力清单 / 共享场景 / 约定")
+        else:
+            text = build_text(state, entry, now)
+            for block in (ability_text, promise_text, scene_text):
+                if block:
+                    text = text + "\n" + block
+        strip_fake_messages(getattr(req, "contexts", None) or [])
+        mode = str(self.cfg.get("injection_mode") or "extra_user_content_parts")
+        if mode == "fake_tool_call":
+            req.contexts.extend(build_fake_messages(text))
+        else:
+            req.extra_user_content_parts.append(as_context_part(text))
+        self._debug("注入方式=%s，时段=%s", mode, entry.time if entry else "N/A")
+
+    # ---------- 约定 / 能力：注入文本 ----------
+
+    def _day_word(self, date_text: str, today: datetime.date) -> str:
+        try:
+            day = datetime.date.fromisoformat(date_text)
+        except Exception:
+            return date_text
+        # 只给绝对日期，不说明天/后天：模型照着这个格式填 make_promise 的 date
+        return "%s（%s%s）" % (
+            date_text, weekday_cn(date_text), "，今天" if day == today else ""
+        )
+
+    def _promise_text(self, bot: str, now: datetime.datetime) -> str:
+        """「【约定】」块：这个角色接下来几天答应过、还没做完的事。"""
+        if not self.promise_enabled:
+            return ""
+        today = now.date()
+        try:
+            items = self.promises.open_for(bot, today.isoformat(), PROMISE_LOOKAHEAD_DAYS)
+        except Exception:
+            logger.warning("[super_enhance/life] 读取约定失败", exc_info=True)
+            return ""
+        if not items:
+            return ""
+        now_minute = now.hour * 60 + now.minute
+        lines = [
+            "【约定】你答应过、还没做完的事（到时候要做到；做完用 close_promise 标完成，"
+            "真做不了要先跟对方说清楚再用 close_promise 取消）："
+        ]
+        for item in items:
+            others = [
+                self.scene.label_for(b) for b in item.get("bots") or [] if b != bot
+            ]
+            with_text = promise_with_for(item, bot, self.scene.label_for)
+            flags = []
+            minute = clock_to_minute(item.get("time"))
+            if (
+                item.get("date") == today.isoformat()
+                and minute is not None
+                and now_minute - minute > PROMISE_OVERDUE_MINUTES
+            ):
+                flags.append("时间已过，做了没做要有个交代")
+            if others:
+                flags.append("%s也记着这件事" % "、".join(others))
+            lines.append(
+                "- #%s %s %s %s%s%s"
+                % (
+                    item.get("id"),
+                    self._day_word(str(item.get("date")), today),
+                    item.get("time") or "（没定具体时间）",
+                    item.get("what"),
+                    "（和%s）" % with_text if with_text else "",
+                    "［%s］" % "；".join(flags) if flags else "",
+                )
+            )
+        return "\n".join(lines)
+
+    def _ability_text(self, bot: str) -> str:
+        if not self.abilities_enabled:
+            return ""
+        try:
+            text = self.abilities.render(bot)
+        except Exception:
+            logger.warning("[super_enhance/life] 读取能力清单失败", exc_info=True)
+            return ""
+        if not text:
+            return ""
+        return (
+            "【后来学会的】人设是你最初的样子；下面是你在主人的训练下后来学会、"
+            "或长期改变的事，和人设冲突时以这里为准：\n" + text
+        )
+
+    async def on_cron_request(self, event, req) -> None:
+        """主动对话（cron）专用注入：能力清单 + 约定 + 共享场景。
+
+        AstrBot 的 cron 路径不触发 on_llm_request 钩子，平时那份注入一样都到不了，
+        所以由 cron_context 的 build_main_agent 钩子转调这里补上。
+        只用 extra_user_content_parts：cron 的 contexts 随后会被裁成纯对话，
+        伪造的工具调用会被一起裁掉。
+        """
+        if not self.enabled or req is None:
+            return
+        bot = bot_of_umo(getattr(event, "unified_msg_origin", ""))
+        if not self._bot_enabled(bot):
+            return
+        try:
+            self.planner.prepare_request(event, req)
+        except Exception:
+            logger.error("[super_enhance/life] 主动对话换提示词失败", exc_info=True)
+        now = self._now()
+        blocks = [
+            self._ability_text(bot),
+            self._promise_text(bot, now),
+            self._scene_block(bot, now.date().isoformat(), now),
+        ]
+        text = "\n\n".join(b for b in blocks if b)
+        if not text:
+            return
+        parts = getattr(req, "extra_user_content_parts", None)
+        if not isinstance(parts, list):
+            parts = []
+            req.extra_user_content_parts = parts
+        parts.append(as_context_part(text))
+        logger.info(
+            "[super_enhance/life] [%s] 主动对话已补注入：%s",
+            bot,
+            "、".join(
+                name
+                for name, block in zip(("能力清单", "约定", "共享场景"), blocks)
+                if block
+            ),
+        )
+
+    # ---------- 能力 / 约定：工具 ----------
+
+    def tool_record_ability(self, event, content: str) -> str:
+        if not self.abilities_enabled:
+            return "能力清单没有开启，这次没有记录。"
+        bot = bot_of_umo(getattr(event, "unified_msg_origin", ""))
+        if not self._bot_enabled(bot):
+            return "本机器人没有启用动态生活状态，这次没有记录。"
+        if self.scene.sender_is_bot(event):
+            return "这是和另一个角色的对话，能力只在主人面前学会时才记，这次没有记录。"
+        try:
+            item, created = self.abilities.add(bot, content, "tool", self._today())
+        except ValueError as e:
+            return "没有记录：%s" % e
+        if not created:
+            return "这一条早就记着了（%s 起），不用再记。" % item.get("since")
+        logger.info("[super_enhance/life] [%s] 记下能力：%s", bot, item.get("text"))
+        return "已记下：%s。现在能力清单里一共 %d 条。" % (
+            item.get("text"),
+            len(self.abilities.entries(bot)),
+        )
+
+    def _bots_mentioned(self, bot: str, *texts: str) -> list[str]:
+        """约定涉及哪些角色：自己 + 文本里点了名的其他角色。"""
+        out = [bot]
+        joined = " ".join(str(t or "") for t in texts)
+        for other in self.enabled_bots():
+            if other == bot or other in out:
+                continue
+            label = self.scene.label_for(other)
+            names = {label, label.replace("莉", "利"), label.replace("丛", "从")}
+            if any(name and name in joined for name in names):
+                out.append(other)
+        return out
+
+    async def tool_make_promise(
+        self, event, content: str, date: str = "", time: str = "", with_whom: str = ""
+    ) -> str:
+        if not self.promise_enabled:
+            return "约定功能没有开启，这次没有记录。"
+        bot = bot_of_umo(getattr(event, "unified_msg_origin", ""))
+        if not self._bot_enabled(bot):
+            return "本机器人没有启用动态生活状态，这次没有记录。"
+        today = self._now().date()
+        try:
+            day = parse_promise_date(date)
+            clock = parse_promise_time(time)
+        except ValueError as e:
+            return "没有记录：%s" % e
+        if day < today:
+            return "没有记录：%s 已经过去了。" % day.isoformat()
+        bots = self._bots_mentioned(bot, with_whom, content)
+        try:
+            item = self.promises.add(
+                bots, day.isoformat(), clock, content, with_whom, bot, "tool"
+            )
+        except ValueError as e:
+            return "没有记录：%s" % e
+        logger.info(
+            "[super_enhance/life] [%s] 记下约定 #%s：%s %s %s（涉及 %s）",
+            bot, item["id"], item["date"], item["time"] or "-", item["what"], "、".join(bots),
+        )
+        notes = []
+        if day == today:
+            notes.extend(await self._apply_promise_today(item))
+        lines = [
+            "已记下约定 #%s：%s %s %s%s"
+            % (
+                item["id"],
+                self._day_word(item["date"], today),
+                item["time"] or "（没定具体时间）",
+                item["what"],
+                "（和%s）" % item["with"] if item.get("with") else "",
+            )
+        ]
+        others = [self.scene.label_for(b) for b in item["bots"] if b != bot]
+        if others:
+            lines.append("%s那边也记上了。" % "、".join(others))
+        if day > today:
+            lines.append("到那天生成日程时会把它排进去。")
+        lines.extend(notes)
+        return "\n".join(lines)
+
+    # 当天约定切进日程时，约定那一段默认占多久（分钟）；所在时段剩下的不够就到时段结束为止
+    PROMISE_SLOT_MINUTES = 60
+
+    async def _apply_promise_today(self, item: dict) -> list[str]:
+        """当天、有具体时间的约定：在约定时刻切出一小段写成这件事，并重排主动对话。
+
+        只切约定那一小段（默认 1 小时，不超出原来那个时段），原时段前后两截保持原样；
+        「和谁」按每个角色自己的视角写。
+        """
+        minute = clock_to_minute(item.get("time"))
+        date_text = str(item.get("date"))
+        notes: list[str] = []
+        for bot in item.get("bots") or []:
+            state = self.store.get(bot, date_text)
+            if state is None or state.status != "ok":
+                continue
+            if minute is not None:
+                with_text = promise_with_for(item, bot, self.scene.label_for)
+                text = "按约定：%s%s" % (
+                    item.get("what"),
+                    "（和%s）" % with_text if with_text else "",
+                )
+                piece = self._split_for_promise(state, minute, text)
+                if piece:
+                    if self.reviewer is not None:
+                        try:
+                            self.reviewer._backup(bot, piece[1], date_text)
+                        except Exception:
+                            logger.warning("[super_enhance/life] 约定改日程前备份失败", exc_info=True)
+                    self.store.save(bot, piece[2])
+                    state = piece[2]
+                    notes.append(
+                        "%s今天 %s 这一段排成了这件事。" % (self.scene.label_for(bot), piece[0])
+                    )
+            try:
+                await self._on_state_ready(bot, state)
+            except Exception:
+                logger.error("[super_enhance/life] 约定后重排主动对话失败", exc_info=True)
+        return notes
+
+    def _split_for_promise(self, state: LifeState, minute: int, text: str):
+        """把覆盖 minute 的时段切成「前一截 / 约定 / 后一截」。
+
+        返回 (约定那段的时间, 改动前的副本, 改动后的状态)；不在任何时段里、或已经排过就返回 None。
+        """
+        entry = state.find_entry_strict(minute)
+        if entry is None or str(entry.schedule).startswith(text):
+            return None
+        ranges = entry.ranges()
+        if not ranges:
+            return None
+        seg_start, seg_end = ranges[0]
+        end = min(seg_end, minute + self.PROMISE_SLOT_MINUTES)
+
+        def clock(value: int) -> str:
+            return "24:00" if value >= 1440 else minute_to_clock(value)
+
+        def part(a: int, b: int, schedule: str) -> TimelineEntry:
+            return TimelineEntry(
+                time="%s-%s" % (clock(a), clock(b)),
+                schedule=schedule,
+                outfit=entry.outfit,
+                extras=dict(entry.extras or {}),
+            )
+
+        pieces = []
+        if minute > seg_start:
+            pieces.append(part(seg_start, minute, entry.schedule))
+        pieces.append(part(minute, end, text))
+        if end < seg_end:
+            pieces.append(part(end, seg_end, entry.schedule))
+        before = LifeState.from_dict(state.to_dict())
+        after = LifeState.from_dict(state.to_dict())
+        index = state.timeline.index(entry)
+        after.timeline[index : index + 1] = pieces
+        return pieces[1 if minute > seg_start else 0].time, before, after
+
+    async def tool_close_promise(
+        self, event, promise_id: str, status: str = "done", note: str = ""
+    ) -> str:
+        if not self.promise_enabled:
+            return "约定功能没有开启。"
+        bot = bot_of_umo(getattr(event, "unified_msg_origin", ""))
+        item = self.promises.get(promise_id)
+        if item is None:
+            return "找不到约定 #%s。" % str(promise_id).lstrip("#＃")
+        if bot not in (item.get("bots") or []):
+            return "约定 #%s 不是你的约定，改不了。" % item.get("id")
+        value = str(status or "").strip().lower()
+        if value in ("cancel", "cancelled", "canceled", "取消", "作废"):
+            value = "cancelled"
+        else:
+            value = "done"
+        self.promises.set_status(item["id"], value, note)
+        logger.info(
+            "[super_enhance/life] [%s] 约定 #%s → %s：%s", bot, item["id"], value, item.get("what")
+        )
+        # 取消了当天的约定：重排主动对话，免得到点还去提一件不做了的事
+        if value == "cancelled" and item.get("date") == self._today():
+            for one in item.get("bots") or []:
+                state = self.store.get(one, item["date"])
+                if state is not None and state.status == "ok":
+                    try:
+                        await self._on_state_ready(one, state)
+                    except Exception:
+                        logger.error("[super_enhance/life] 取消约定后重排失败", exc_info=True)
+        return "约定 #%s 已标为%s。" % (item["id"], "取消" if value == "cancelled" else "完成")
+
+    # ---------- 共享场景注入 ----------
+
+    def _seg_key(self, bot: str, date_text: str, minute: int) -> str:
+        """该机器人当前日程时段的 key（空串 = 没有日程或不在任何时段）。"""
+        try:
+            state = self.store.get(bot, date_text)
+            if state is None or state.status != "ok":
+                return ""
+            entry = state.find_entry_strict(minute)
+            return entry.time if entry is not None else ""
+        except Exception:
+            return ""
+
+    def _seg_key_now(self, bot: str) -> str:
+        """给 scene.py 回调用：某机器人此刻所在的时段 key。"""
+        now = self._now()
+        return self._seg_key(bot, now.date().isoformat(), now.hour * 60 + now.minute)
+
+    def _scene_lines(self, bot: str) -> list[str]:
+        """自己 / 对方各自的「此刻」与「之前」，按这个顺序排。
+
+        另一位只用**她自己写下过的那份**（更新式，一直有效到她改），她没写过就不给这行；
+        刻意不拿日程兜底：两份日程本来就不一样，兜底只会让两边又对不上。
+        """
+        lines: list[str] = []
+        cur = self.scene.entry_for(bot)
+        if cur:
+            lines.append("你：%s" % self.scene.describe(cur, self_view=True))
+        prev = self.scene.prev_entry_for(bot)
+        if prev:
+            lines.append("你：%s" % self.scene.describe(prev, self_view=True))
+        for other in self.enabled_bots():
+            if other == bot:
+                continue
+            label = self.scene.label_for(other)
+            other_cur = self.scene.entry_for(other)
+            if other_cur:
+                lines.append(
+                    "%s：%s"
+                    % (label, self.scene.describe(other_cur, own_label=label))
+                )
+            other_prev = self.scene.prev_entry_for(other)
+            if other_prev:
+                lines.append(
+                    "%s：%s"
+                    % (label, self.scene.describe(other_prev, own_label=label))
+                )
+        return lines
+
+    def _scene_block(self, bot: str, date_text: str, now: datetime.datetime) -> str:
+        """拼出追加在注入文本末尾的「共享场景」块；没开就返回空串。"""
+        if not self.scene.enabled:
+            return ""
+        try:
+            return build_injection(
+                now=now,
+                scene_lines=self._scene_lines(bot),
+                master_line=self.scene.master_line(now, self.scene.label_for(bot)),
+                reminder=self.scene.tag_reminder(),
+            )
+        except Exception:
+            logger.error("[super_enhance/life] 组装共享场景失败", exc_info=True)
+            return ""
+
+    # ---------- 查询（LLM 工具） ----------
+
+    async def query(self, event, date: str = "") -> str:
+        if not self.enabled or self.generator is None:
+            return "当前未启用动态生活状态功能。"
+        bot = bot_of_umo(getattr(event, "unified_msg_origin", ""))
+        if not self._bot_enabled(bot):
+            return "本机器人未启用动态生活状态功能。"
+        if self.generator.is_generating:
+            return "生活状态正在生成中，请稍后再试。"
+        now = self._now()
+        target = str(date or "").strip()
+        if target:
+            try:
+                datetime.date.fromisoformat(target)
+            except ValueError:
+                return "日期格式错误，请使用 YYYY-MM-DD，例如 2026-09-21。"
+            state = self.store.get(bot, target)
+        else:
+            target = now.date().isoformat()
+            state = self.store.get(bot, target)
+            if state is None or state.status not in ("ok", "deleted"):
+                # 工具调用有超时，不在这里等生成：后台去补，先如实告诉她
+                self._kick_background(target, bot)
+                return "今天的日程还没排好（正在后台生成），先按聊天里的实际情况来。"
+        if state is None:
+            return "%s 的生活状态尚未生成。" % target
+        if state.status == "failed":
+            return "%s 的生活状态生成失败：%s" % (target, state.error or "未知原因")
+        if state.status == "deleted":
+            return "%s 的生活状态已被删除（当天不会自动生成，可用 /dls regen 重新生成）。" % target
+        return self._format_full(state)
+
+    async def query_state(self, event, date: str = "") -> str:
+        """LLM 工具入口（main.py 的 get_full_dynamic_life_state 调用这里）。"""
+        return await self.query(event, date)
+
+    # ---------- /dls 命令 ----------
+
+    async def cmd_show(self, event, time_query: str = ""):
+        if not self.enabled or self.generator is None:
+            yield event.plain_result("动态生活状态未启用（life_state.enabled=false）。")
+            return
+        bot = bot_of_umo(getattr(event, "unified_msg_origin", ""))
+        if not self._bot_enabled(bot):
+            yield event.plain_result("本机器人未启用动态生活状态功能。")
+            return
+        query = str(time_query or "").strip()
+        if query and query not in NATURAL_SLOTS and clock_to_minute(query) is None:
+            yield event.plain_result(
+                "不支持的时段「%s」：请用 HH:MM（如 08:30），或者 %s。"
+                % (query, "、".join(NATURAL_SLOTS))
+            )
+            return
+        now = self._now()
+        date_text = now.date().isoformat()
+        state = self.store.get(bot, date_text)
+        if state is not None and state.status == "deleted":
+            yield event.plain_result(
+                "今天的日程已被删除（不会自动生成，用 /dls regen 可重新生成）。"
+            )
+            return
+        if state is None or state.status != "ok":
+            if self.generator.is_generating:
+                yield event.plain_result("状态正在生成中，请稍后再试。")
+                return
+            yield event.plain_result("今天的状态还没生成，正在生成…")
+            state = await self._ensure_states(date_text, bot)
+            if state is None or state.status != "ok":
+                yield event.plain_result(
+                    "生成失败：%s" % (getattr(state, "error", "") or "请稍后重试")
+                )
+                return
+        if not query:
+            minute = now.hour * 60 + now.minute
+            yield self._forward_result(
+                event,
+                self._format_current(state, state.find_entry(minute), now=now)
+            )
+            return
+        entry = state.find_entry_by_time_text(query)
+        if entry is None:
+            yield event.plain_result("没有匹配的时段。")
+            return
+        minute = clock_to_minute(query)
+        shown_at = None
+        if minute is not None:
+            shown_at = now.replace(hour=minute // 60, minute=minute % 60, second=0, microsecond=0)
+        yield self._forward_result(
+            event,
+            self._format_current(state, entry, now=shown_at, show_current=False)
+        )
+
+    async def cmd_full(self, event, date: str = ""):
+        if not self.enabled or self.generator is None:
+            yield event.plain_result("动态生活状态未启用（life_state.enabled=false）。")
+            return
+        bot = bot_of_umo(getattr(event, "unified_msg_origin", ""))
+        if not self._bot_enabled(bot):
+            yield event.plain_result("本机器人未启用动态生活状态功能。")
+            return
+        target = str(date or "").strip()
+        if target:
+            try:
+                datetime.date.fromisoformat(target)
+            except ValueError:
+                yield event.plain_result("日期格式错误，请使用 YYYY-MM-DD。")
+                return
+            state = self.store.get(bot, target)
+            if state is None:
+                yield event.plain_result("%s 的状态不存在。" % target)
+                return
+            if state.status == "failed":
+                yield event.plain_result("%s 的状态生成失败：%s" % (target, state.error))
+                return
+            if state.status == "deleted":
+                yield event.plain_result("%s 的状态已被删除。" % target)
+                return
+            yield self._forward_result(event, self._format_full(state))
+            return
+        date_text = self._today()
+        state = self.store.get(bot, date_text)
+        if state is not None and state.status == "deleted":
+            yield event.plain_result(
+                "今天的日程已被删除（不会自动生成，用 /dls regen 可重新生成）。"
+            )
+            return
+        if state is None or state.status != "ok":
+            if self.generator.is_generating:
+                yield event.plain_result("状态正在生成中，请稍后再试。")
+                return
+            state = await self._ensure_states(date_text, bot)
+            if state is None or state.status != "ok":
+                yield event.plain_result("当前没有可用的状态。")
+                return
+        yield self._forward_result(event, self._format_full(state))
+
+    async def cmd_delete(self, event):
+        """删除当天的日程，并取消当天已排的主动对话（不会自动重新生成）。"""
+        if not self.enabled or self.generator is None:
+            yield event.plain_result("动态生活状态未启用（life_state.enabled=false）。")
+            return
+        bot = bot_of_umo(getattr(event, "unified_msg_origin", ""))
+        if not self._bot_enabled(bot):
+            yield event.plain_result("本机器人未启用动态生活状态功能。")
+            return
+        if self.generator.is_generating:
+            yield event.plain_result("状态正在生成中，请稍后再试。")
+            return
+
+        date_text = self._today()
+        existing = self.store.get(bot, date_text)
+        if existing is None or existing.status == "deleted":
+            yield event.plain_result("%s 本来就没有可删除的日程。" % date_text)
+        else:
+            # 删除前留一份原版到 life_state_revisions/，万一后悔还能找回
+            if self.reviewer is not None:
+                try:
+                    self.reviewer._backup(bot, existing, date_text)
+                except Exception as e:
+                    logger.warning("[super_enhance/life] 删除前备份失败：%s", e)
+            marker = LifeState(
+                date=date_text,
+                status="deleted",
+                generated_at=format_datetime(self._now()),
+            )
+            self.store.save(bot, marker)
+
+        removed = 0
+        try:
+            removed = await self.planner.clear_date(bot, date_text)
+        except Exception as e:
+            logger.error("[super_enhance/life] 取消主动对话失败：%s", e)
+
+        yield self._forward_result(
+            event,
+            "已删除 %s 的日程（机器人：%s）\n"
+            "已取消 %d 条当天还没发的主动对话\n"
+            "今天不会再自动生成；想恢复请用 /dls regen" % (date_text, bot, removed),
+        )
+
+    async def cmd_regen(self, event):
+        if not self.enabled or self.generator is None:
+            yield event.plain_result("动态生活状态未启用（life_state.enabled=false）。")
+            return
+        bot = bot_of_umo(getattr(event, "unified_msg_origin", ""))
+        if not self._bot_enabled(bot):
+            yield event.plain_result("本机器人未启用动态生活状态功能。")
+            return
+        if self.generator.is_generating:
+            yield event.plain_result("已有生成任务在进行中，请稍后再试。")
+            return
+        extra = _command_tail(getattr(event, "message_str", ""), "dls regen") or ""
+        date_text = self._today()
+        # 两人（或三人）在一起的时段必须两边同时出现、且起止时间一致，
+        # 所以 regen 默认把当天所有启用的机器人一起重排（同一条思考链）。
+        # 当天被你用 /dls delete 删掉的那位不动。
+        targets = [bot]
+        skipped: list[str] = []
+        for other in self.enabled_bots():
+            if other == bot:
+                continue
+            cached = self.store.get(other, date_text)
+            if cached is not None and cached.status == "deleted":
+                skipped.append(other)
+                continue
+            targets.append(other)
+        note = ""
+        if len(targets) > 1:
+            note += "（%s 一起重排，在一起的时段才能对齐）" % "、".join(targets)
+        if skipped:
+            note += "（%s 今日已被 /dls delete 删掉，未一起重排）" % "、".join(skipped)
+        yield event.plain_result(
+            "正在重新生成今日状态…%s%s"
+            % ("（附加要求：%s）" % extra if extra else "", note)
+        )
+        if len(targets) > 1:
+            states = await self.generator.generate_many(
+                targets,
+                date_text,
+                extra=extra,
+                profiles={b: self._profile_umo(b) for b in targets},
+                force=True,
+            )
+            state = states.get(bot) or self.store.get(bot, date_text)
+        else:
+            state = await self.generator.generate(
+                bot,
+                date_text,
+                profile_umo=self._profile_umo(bot),
+                force=True,
+                extra=extra,
+                reference=self._reference_text(date_text, exclude=bot),
+            )
+        if state is None or state.status != "ok":
+            error = getattr(state, "error", "") or self.generator.last_error or "未知原因"
+            current = self.store.get(bot, date_text)
+            if current is not None and current.status == "ok":
+                yield self._forward_result(
+                    event,
+                    "重新生成失败（%s），今天原来的日程没动：\n\n%s"
+                    % (error, self._format_full(current))
+                )
+            else:
+                yield event.plain_result("重新生成失败（%s），今天还没有可用的日程，请稍后再试。" % error)
+            return
+        yield self._forward_result(
+            event, "重新生成完成。\n\n%s" % self._format_full(state)
+        )
+
+    # ---------- 展示 ----------
+    # ---------- 日程修改（LLM 工具） ----------
+
+    @property
+    def edit_tool_enabled(self) -> bool:
+        return bool(self.cfg.get("edit_tool_enabled", True))
+
+    _CURRENT_SLOT_WORDS = ("", "当前", "现在", "此刻", "current", "now", "this")
+
+    async def revise_my_state(
+        self,
+        event,
+        time_slot: str = "",
+        schedule: str = "",
+        outfit: str = "",
+    ) -> str:
+        """只改发起本次对话的机器人自己、当天日程里的某一个固定时段。"""
+        if not self.enabled or self.generator is None:
+            return "动态生活状态未启用，无法修改日程。"
+        bot = bot_of_umo(getattr(event, "unified_msg_origin", ""))
+        if not self._bot_enabled(bot):
+            return "本机器人未启用动态生活状态，无法修改日程。"
+        date_text = self._today()
+        state = self.store.get(bot, date_text)
+        if state is None or state.status != "ok":
+            return "今天还没有可以修改的日程（尚未生成，或已被 /dls delete 删掉）。"
+
+        new_schedule = str(schedule or "").strip()
+        if not new_schedule:
+            return "缺少要改成的安排内容。"
+        slots = [str(e.time).strip() for e in state.timeline]
+
+        raw = str(time_slot or "").strip()
+        entry = None
+        if raw.lower() in self._CURRENT_SLOT_WORDS:
+            now = self._now()
+            entry = state.find_entry_strict(now.hour * 60 + now.minute)
+            if entry is None:
+                return (
+                    "现在不在任何时段内（多半是睡眠时段），"
+                    "只能从今天已有的这些时段里选一个：" + "、".join(slots)
+                )
+        else:
+            for item in state.timeline:
+                text = str(item.time).strip()
+                if text == raw or text.split("-")[0].strip() == raw:
+                    entry = item
+                    break
+            if entry is None:
+                return "没有「%s」这个时段。只能从今天已有的这些时段里选：" % raw + "、".join(slots)
+
+        # 改动前留一份原版到 life_state_revisions/，后悔还能找回
+        if self.reviewer is not None:
+            try:
+                self.reviewer._backup(bot, state, date_text)
+            except Exception as e:
+                logger.warning("[super_enhance/life] 修改日程前备份失败：%s", e)
+
+        old_schedule = entry.schedule
+        old_outfit = entry.outfit
+        entry.schedule = new_schedule
+        new_outfit = str(outfit or "").strip()
+        if new_outfit:
+            entry.outfit = new_outfit
+
+        self.store.save(bot, state)
+        try:
+            await self._on_state_ready(bot, state)
+        except Exception as e:
+            logger.error("[super_enhance/life] 修改日程后重排主动对话失败：%s", e)
+        logger.info(
+            "[super_enhance/life] %s 修改了 %s 的安排：%s -> %s",
+            bot,
+            entry.time,
+            old_schedule,
+            new_schedule,
+        )
+        lines = [
+            "已更新 %s 这一段的安排。" % entry.time,
+            "原安排：%s" % old_schedule,
+            "新安排：%s" % entry.schedule,
+        ]
+        if new_outfit:
+            lines.append("穿搭改为：%s（原：%s）" % (entry.outfit, old_outfit))
+        return "\n".join(lines)
+
+     # ---------- 展示 ----------
+
+    @staticmethod
+    def _entry_extra_lines(entry: TimelineEntry) -> list[str]:
+        lines = []
+        for key, value in (entry.extras or {}).items():
+            spec = OPTIONAL_FIELDS.get(key)
+            label = spec["label"] if spec else key
+            icon = spec["icon"] if spec else "•"
+            lines.append("%s %s：%s" % (icon, label, value))
+        return lines
+
+    def _format_current(
+        self,
+        state: LifeState,
+        entry: TimelineEntry | None,
+        *,
+        now: datetime.datetime | None = None,
+        show_current: bool = True,
+    ) -> str:
+        lines = [
+            "📅 日期：%s（%s）" % (state.date, weekday_cn(state.date)),
+            "🎉 节日：%s" % (state.holiday or "无"),
+        ]
+        if now is not None:
+            lines.append(
+                "🕓 %s：%s" % ("当前时间" if show_current else "时间", format_datetime(now))
+            )
+        if entry is not None:
+            lines.extend(
+                [
+                    "🕐 时段：%s" % entry.time,
+                    "⌛ 范围：%s" % entry.format_range(),
+                    "📋 %s：%s" % ("当前安排" if show_current else "安排", entry.schedule),
+                    "👗 %s：%s" % ("当前穿搭" if show_current else "穿搭", entry.outfit),
+                ]
+            )
+            lines.extend(self._entry_extra_lines(entry))
+        lines.append("⏰ 生成时间：%s" % (state.generated_at or "未知"))
+        return "\n".join(lines)
+
+    def _format_full(self, state: LifeState) -> str:
+        lines = [
+            "📅 日期：%s（%s）" % (state.date, weekday_cn(state.date)),
+            "🎉 节日：%s" % (state.holiday or "无"),
+            "📝 今日概况：%s" % (state.schedule_summary or "无"),
+            "🎨 今日氛围：%s" % (state.style_summary or "无"),
+            "🛏 作息：%s 起床 / %s 入睡" % (state.wake_time, state.sleep_time),
+            "⏰ 生成时间：%s" % (state.generated_at or "未知"),
+            "",
+            "📋 完整时间线：",
+        ]
+        for entry in state.timeline:
+            lines.append(
+                "  [%s] %s | %s | 👗 %s"
+                % (entry.time, entry.format_range(), entry.schedule, entry.outfit)
+            )
+            details = self._entry_extra_lines(entry)
+            if details:
+                lines.append("    " + " | ".join(details))
+        return "\n".join(lines)
