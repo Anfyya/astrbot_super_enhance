@@ -15,8 +15,9 @@ def build_text(
     state: LifeState,
     entry: TimelineEntry | None,
     now: datetime.datetime,
+    training_line: str = "",
 ) -> str:
-    """拼出注入用的状态文本。"""
+    """拼出注入用的状态文本。training_line：这段标着在练的事时，换成一句人话（不露编号字段）。"""
     lines = [
         INJECT_TAG,
         "当前时间：%s" % format_datetime(now),
@@ -31,9 +32,13 @@ def build_text(
         lines.append("原本打算：%s" % entry.schedule)
         lines.append("穿搭：%s" % entry.outfit)
         for key, value in (entry.extras or {}).items():
+            if key == "training":
+                continue
             spec = OPTIONAL_FIELDS.get(key)
             label = spec["label"] if spec else key
             lines.append("%s：%s" % (label, value))
+        if training_line:
+            lines.append(training_line)
     lines.append(PLAN_NOTE)
     return "\n".join(lines)
 

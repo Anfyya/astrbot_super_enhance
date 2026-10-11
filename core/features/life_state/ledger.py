@@ -7,6 +7,8 @@
   当天的直接改写日程那一段，以后的在那天生成日程时必须排进去。
 - **事件**（events.json）：日程生成时出现的、持续多天的事（祭典、考试周…），
   带起止日期；结束后只能当回忆，免得一件事被抄上好多天。
+- **在练的事**（trainings.json）：主人交代、或她自己要练的本事。要练多久开练时定好，
+  练了多久由程序按日程里练这件事的时段累计，够数就算练成（见 training.py）。
 """
 
 import datetime
@@ -20,6 +22,8 @@ from astrbot.api import logger
 MAX_ABILITIES = 40
 MAX_ABILITY_LEN = 120
 MAX_PROMISE_LEN = 120
+MAX_TRAINING_HOURS = 80.0
+TRAINING_KEEP_DAYS = 30
 PROMISE_KEEP_DAYS = 14
 MAX_EVENT_DAYS = 7
 EVENT_KEEP_DAYS = 30
@@ -129,7 +133,16 @@ class AbilityBook(_JsonBook):
         self._save()
         return item, True
 
-    def update(self, bot: str, item_id: str, text: str, since: str = "") -> dict:
+    def get(self, bot: str, item_id: str) -> dict | None:
+        wanted = str(item_id or "").strip().lstrip("#＃")
+        for item in self.entries(bot):
+            if str(item.get("id")) == wanted:
+                return item
+        return None
+
+    def update(
+        self, bot: str, item_id: str, text: str, since: str = "", source: str = ""
+    ) -> dict:
         text = _clean(text, MAX_ABILITY_LEN)
         if not text:
             raise ValueError("内容是空的")
@@ -138,6 +151,8 @@ class AbilityBook(_JsonBook):
                 item["text"] = text
                 if since:
                     item["since"] = _clean(since, 10)
+                if source:
+                    item["source"] = source
                 item["updated"] = _now_text()
                 self._save()
                 return item
@@ -158,7 +173,8 @@ class AbilityBook(_JsonBook):
         for item in self.entries(bot):
             since = str(item.get("since") or "").strip()
             lines.append(
-                "- %s%s" % (item.get("text"), "（%s 起）" % since if since else "")
+                "- #%s %s%s"
+                % (item.get("id"), item.get("text"), "（%s 起）" % since if since else "")
             )
         return "\n".join(lines)
 
@@ -396,3 +412,190 @@ class EventBook(_JsonBook):
             if end is not None and cutoff <= end < day:
                 out.append(x)
         return out
+
+
+# ---------------------------------------------------------------- 在练的事
+
+
+def parse_hours(value, field: str = "时长") -> float:
+    """「12」「12.5」「12小时」→ 12.5；空串返回 0。"""
+    text = str(value if value is not None else "").strip()
+    if not text:
+        return 0.0
+    match = re.search(r"\d+(?:\.\d+)?", text)
+    if not match:
+        raise ValueError("%s要写成小时数，例如 12：%s" % (field, text))
+    hours = float(match.group(0))
+    if "时辰" in text:
+        hours *= 2
+    elif "天" in text and "小时" not in text:
+        raise ValueError("%s要写成小时数（一天练几小时自己算好），不要写天数：%s" % (field, text))
+    return hours
+
+
+def parse_id_list(value) -> list[str]:
+    """「7, 8」「#7#8」「[7,8]」→ ["7", "8"]。"""
+    if isinstance(value, (list, tuple)):
+        value = ",".join(str(x) for x in value)
+    seen: list[str] = []
+    for one in re.findall(r"\d+", str(value or "")):
+        if one not in seen:
+            seen.append(one)
+    return seen
+
+
+class TrainingBook(_JsonBook):
+    """在练的事。每条属于一个角色；status：open（在练）/ done（练成）/ cancelled。
+
+    字段：what 练什么、standard 练成的标准、arrangement 怎么练（主人的安排）、
+    need_hours 一共要练多少小时、base_hours 开始记之前已经练了的（或手动补的）小时、
+    log 每天在日程里练了多少分钟（今天的不进 log，现算）、
+    ability_after 练成后能力清单写成什么、replaces 练成后替换掉的能力清单旧条目编号。
+    """
+
+    def __init__(self, path: Path) -> None:
+        super().__init__(path, {"version": 1, "next_id": 1, "items": []})
+
+    def items(self) -> list[dict]:
+        raw = self._load().setdefault("items", [])
+        return [x for x in raw if isinstance(x, dict)]
+
+    def get(self, item_id: str) -> dict | None:
+        wanted = str(item_id or "").strip().lstrip("#＃")
+        for item in self.items():
+            if str(item.get("id")) == wanted:
+                return item
+        return None
+
+    def open_for(self, bot: str) -> list[dict]:
+        return [
+            x for x in self.items() if x.get("bot") == bot and x.get("status") == "open"
+        ]
+
+    def for_bot(self, bot: str) -> list[dict]:
+        return [x for x in self.items() if x.get("bot") == bot]
+
+    @staticmethod
+    def _check_hours(value: float, field: str, low: float) -> float:
+        if value < low or value > MAX_TRAINING_HOURS:
+            raise ValueError("%s要在 %g 到 %g 小时之间：%g" % (field, low, MAX_TRAINING_HOURS, value))
+        return round(value, 2)
+
+    def add(
+        self,
+        bot: str,
+        what: str,
+        standard: str,
+        need_hours: float,
+        *,
+        arrangement: str = "",
+        base_hours: float = 0.0,
+        ability_after: str = "",
+        replaces=None,
+        source: str = "tool",
+        created: str = "",
+    ) -> dict:
+        bot = str(bot or "").strip()
+        what = _clean(what, 60)
+        if not bot:
+            raise ValueError("不知道是哪个角色")
+        if not what:
+            raise ValueError("练什么没写")
+        key = _norm(what)
+        for item in self.open_for(bot):
+            if _norm(item.get("what")) == key:
+                raise ValueError("这件事已经在练了（#%s），要改用修改" % item.get("id"))
+        need = self._check_hours(float(need_hours or 0), "要练多久", 0.5)
+        base = self._check_hours(float(base_hours or 0), "已经练了多久", 0.0)
+        item = {
+            "id": str(self._next_id()),
+            "bot": bot,
+            "what": what,
+            "standard": _clean(standard, 120),
+            "arrangement": _clean(arrangement, 120),
+            "need_hours": need,
+            "base_hours": base,
+            "log": {},
+            "ability_after": _clean(ability_after, MAX_ABILITY_LEN),
+            "replaces": parse_id_list(replaces),
+            "status": "open",
+            "source": source,
+            "created": created or _now_text(),
+            "updated": _now_text(),
+        }
+        self._load()["items"].append(item)
+        self._save()
+        return item
+
+    def update(self, item_id: str, **fields) -> dict:
+        item = self.get(item_id)
+        if item is None:
+            raise ValueError("找不到在练的事 #%s" % str(item_id).lstrip("#＃"))
+        for name, limit in (("what", 60), ("standard", 120), ("arrangement", 120),
+                            ("ability_after", MAX_ABILITY_LEN)):
+            if fields.get(name) is not None:
+                value = _clean(fields[name], limit)
+                if name == "what" and not value:
+                    raise ValueError("练什么不能空")
+                item[name] = value
+        if fields.get("need_hours") is not None:
+            item["need_hours"] = self._check_hours(float(fields["need_hours"]), "要练多久", 0.5)
+        if fields.get("base_hours") is not None:
+            item["base_hours"] = self._check_hours(float(fields["base_hours"]), "已经练了多久", 0.0)
+        if fields.get("replaces") is not None:
+            item["replaces"] = parse_id_list(fields["replaces"])
+        item["updated"] = _now_text()
+        self._save()
+        return item
+
+    def set_status(self, item_id: str, status: str, when: str = "", note: str = "") -> dict:
+        item = self.get(item_id)
+        if item is None:
+            raise ValueError("找不到在练的事 #%s" % str(item_id).lstrip("#＃"))
+        item["status"] = status
+        if status == "done":
+            item["completed_at"] = when or _now_text()
+        else:
+            item.pop("completed_at", None)
+            item.pop("ability_id", None)
+        if note:
+            item["note"] = _clean(note, 80)
+        item["updated"] = _now_text()
+        self._save()
+        return item
+
+    def set_log(self, item: dict, log: dict) -> None:
+        if item.get("log") != log:
+            item["log"] = log
+            self._save()
+
+    def mark(self, item: dict, **fields) -> None:
+        item.update(fields)
+        self._save()
+
+    def delete(self, item_id: str) -> bool:
+        items = self.items()
+        kept = [x for x in items if str(x.get("id")) != str(item_id).lstrip("#＃")]
+        if len(kept) == len(items):
+            return False
+        self._load()["items"] = kept
+        self._save()
+        return True
+
+    def prune(self, today: str) -> int:
+        """练成 / 取消超过 30 天的丢掉；在练的一直留着。"""
+        first = _date(today)
+        if first is None:
+            return 0
+        cutoff = first - datetime.timedelta(days=TRAINING_KEEP_DAYS)
+        items = self.items()
+        kept = [
+            x for x in items
+            if x.get("status") == "open"
+            or (_date(str(x.get("completed_at") or x.get("updated") or "")[:10]) or first) >= cutoff
+        ]
+        removed = len(items) - len(kept)
+        if removed:
+            self._load()["items"] = kept
+            self._save()
+        return removed

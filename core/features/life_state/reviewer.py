@@ -382,7 +382,11 @@ class DailyReviewer:
             "time 必须原样照抄，穿搭（outfit）与其它字段（如天气）一律不动。\n"
             "4. 改写沿用原有语气与长度（一到两句），不要编造聊天记录里没有的事。\n"
             "5. 日程里若出现主角的姓名（例如“将臣”），一律改写成“主人”。\n"
-            "6. 只输出 JSON："
+            "6. 带 training 字段的时段是在练某件本事（值是编号，练了多久按这些时段算）："
+            "聊天里明显说明那段其实没去练，就在这条修正里写 \"training\":\"\"；"
+            "聊天里明显说明某段其实是在练日程里出现过的那个编号的事（比如主人让她马上去练），"
+            "就写 \"training\":\"#编号\"；看不出来就别写这个字段。\n"
+            "7. 只输出 JSON："
             '{"edits":[{"time":"原样照抄的时间区间","schedule":"改写后的一句话",'
             '"location":"改写后的地点（没变化就省略）",'
             '"mood":"改写后的心情（没变化就省略）"}],'
@@ -423,7 +427,11 @@ class DailyReviewer:
             new_text = str(edit.get("schedule") or "").strip()
             new_location = str(edit.get("location") or "").strip()
             new_mood = str(edit.get("mood") or "").strip()
-            if not time_key or (not new_text and not new_location and not new_mood):
+            has_training = "training" in edit
+            new_training = str(edit.get("training") or "").strip()
+            if not time_key or (
+                not new_text and not new_location and not new_mood and not has_training
+            ):
                 continue
             start_key = time_key.split("-")[0].strip()
             target = None
@@ -448,6 +456,16 @@ class DailyReviewer:
                 if (target.extras or {}).get(key) != value:
                     target.extras = dict(target.extras or {})
                     target.extras[key] = value
+                    changed = True
+            if has_training:
+                extras = dict(target.extras or {})
+                old = str(extras.get("training") or "")
+                if new_training:
+                    extras["training"] = new_training
+                else:
+                    extras.pop("training", None)
+                if str(extras.get("training") or "") != old:
+                    target.extras = extras
                     changed = True
             if changed:
                 applied += 1

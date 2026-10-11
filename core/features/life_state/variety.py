@@ -156,8 +156,13 @@ def _jaccard(a: set[str], b: set[str]) -> float:
     return len(a & b) / len(a | b)
 
 
+def _counts(entry) -> bool:
+    """练「在练的事」的时段每天都可以有，不算进防重复。"""
+    return not str((getattr(entry, "extras", None) or {}).get("training") or "").strip()
+
+
 def day_text(state) -> str:
-    return " ".join(str(e.schedule or "") for e in (state.timeline or []))
+    return " ".join(str(e.schedule or "") for e in (state.timeline or []) if _counts(e))
 
 
 def day_similarity(a_state, b_state) -> float:
@@ -176,9 +181,11 @@ def too_similar(new_state, recent_states) -> tuple[float, str]:
 
 def overlapping_slots(new_state, old_state, limit: int = 5) -> list[str]:
     """新日程里和旧的那天某段很像的时段原句（重写时告诉模型哪些重复了）。"""
-    old = [_grams(e.schedule) for e in (old_state.timeline or [])[1:-1]]
+    old = [_grams(e.schedule) for e in (old_state.timeline or [])[1:-1] if _counts(e)]
     out = []
     for entry in (new_state.timeline or [])[1:-1]:
+        if not _counts(entry):
+            continue
         grams = _grams(entry.schedule)
         if any(_jaccard(grams, g) >= SLOT_REPEAT for g in old):
             text = str(entry.schedule or "").strip()
@@ -198,7 +205,7 @@ def repeated_slots(states) -> list[str]:
         timeline = list(state.timeline or [])
         for entry in timeline[1:-1]:
             text = str(entry.schedule or "").strip()
-            if text:
+            if text and _counts(entry):
                 slots.append((str(state.date), text, _grams(text)))
     hits = []
     for date_text, text, grams in slots:

@@ -1223,13 +1223,27 @@ class ContextPageApi:
                 life.promises.items(),
                 key=lambda x: (x.get("date") or "", x.get("time") or "99:99"),
             )
+            trainings = []
+            for bot in life.enabled_bots() or []:
+                await life.settle_trainings(bot)
+            for item in life.trainings.items():
+                row = dict(item)
+                row["label"] = life.scene.label_for(item.get("bot"))
+                try:
+                    row["progress"] = life.training_progress(item).to_dict()
+                except Exception:
+                    row["progress"] = {}
+                trainings.append(row)
+            trainings.sort(key=lambda x: (x.get("status") != "open", -int(str(x.get("id") or 0) or 0)))
             return _ok(
                 {
                     "today": today,
                     "abilities_enabled": bool(life.abilities_enabled),
                     "promise_enabled": bool(life.promise_enabled),
+                    "training_enabled": bool(life.training_enabled),
                     "bots": bots,
                     "promises": promises,
+                    "trainings": trainings,
                     "events": life.events.items(),
                 }
             )
@@ -1286,12 +1300,85 @@ class ContextPageApi:
                     await self._resync_promise_day(life, item)
                 else:
                     raise ValueError("不支持的操作：%s" % action)
+            elif kind == "training":
+                item = await self._edit_training(life, action, payload)
             else:
-                raise ValueError("kind 只能是 ability / promise")
+                raise ValueError("kind 只能是 ability / promise / training")
         except Exception as exc:
             return _err(exc)
-        logger.info("[super_enhance/ctx] web 编辑%s：%s", "能力清单" if kind == "ability" else "约定", action)
+        logger.info(
+            "[super_enhance/ctx] web 编辑%s：%s",
+            {"ability": "能力清单", "promise": "约定", "training": "在练的事"}.get(kind, kind),
+            action,
+        )
         return _ok({"item": item})
+
+    @staticmethod
+    async def _edit_training(life, action: str, payload: dict):
+        """在练的事：add / update / done / cancel / reopen / delete。"""
+        from .features.life_state.ledger import parse_hours
+
+        def hours(key: str, label: str):
+            raw = payload.get(key)
+            if raw is None or str(raw).strip() == "":
+                return None
+            return parse_hours(raw, label)
+
+        tid = str(payload.get("id") or "")
+        if action == "add":
+            bot = str(payload.get("bot") or "").strip()
+            if not bot:
+                raise ValueError("缺少 bot")
+            need = hours("need_hours", "要练多久")
+            if not need:
+                raise ValueError("要练多久没填")
+            item = life.trainings.add(
+                bot,
+                payload.get("what"),
+                payload.get("standard") or "",
+                need,
+                arrangement=payload.get("arrangement") or "",
+                base_hours=hours("base_hours", "已经练了多久") or 0.0,
+                ability_after=payload.get("ability_after") or "",
+                replaces=payload.get("replaces") or "",
+                source="web",
+                created=life._now().strftime("%Y-%m-%d %H:%M"),
+            )
+        else:
+            item = life.trainings.get(tid)
+            if item is None:
+                raise ValueError("找不到这一条")
+            if action == "update":
+                item = life.trainings.update(
+                    tid,
+                    what=payload.get("what"),
+                    standard=payload.get("standard"),
+                    arrangement=payload.get("arrangement"),
+                    need_hours=hours("need_hours", "要练多久"),
+                    base_hours=hours("base_hours", "已经练了多久"),
+                    ability_after=payload.get("ability_after"),
+                    replaces=payload.get("replaces"),
+                )
+            elif action == "done":
+                if item.get("status") != "open":
+                    raise ValueError("这件事已经不在练了")
+                life._finish_training(item.get("bot"), item, life._now(), "网页标的练成")
+            elif action == "cancel":
+                life.trainings.set_status(tid, "cancelled", note="网页取消")
+            elif action == "reopen":
+                # 能力清单里已经写上的那条不动，要撤就在能力清单里删
+                life.trainings.set_status(tid, "open")
+            elif action == "delete":
+                if not life.trainings.delete(tid):
+                    raise ValueError("找不到这一条")
+                item = {"bot": item.get("bot")}
+            else:
+                raise ValueError("不支持的操作：%s" % action)
+        bot = str((item or {}).get("bot") or payload.get("bot") or "")
+        if bot:
+            await life.settle_trainings(bot)
+            await life._resync_today(bot)
+        return item
 
     @staticmethod
     async def _resync_promise_day(life, item) -> None:

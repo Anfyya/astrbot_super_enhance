@@ -824,7 +824,7 @@
     insp: null,
     req: { list: [], idx: 0, data: null, err: "", disabled: false, tab: store.get("reqTab", "inject"), all: false, raw: false, loading: false },
     edits: {}, auto: true, drawer: false,
-    ledger: null, ledgerErr: "", ledgerLoading: false, ledEdit: {}, ledShowPast: false,
+    ledger: null, ledgerErr: "", ledgerLoading: false, ledEdit: {}, ledShowPast: false, trEdit: {},
     sch: null, schErr: "", schLoading: false, schBot: store.get("schBot", ""), schDate: ""
   };
 
@@ -896,7 +896,8 @@
       var nAb = 0;
       (S.ledger.bots || []).forEach(function (b) { nAb += (b.abilities || []).length; });
       var nPr = (S.ledger.promises || []).filter(function (x) { return x.status === "open" && x.date >= S.ledger.today; }).length;
-      lsub = nAb + " 项能力 · " + nPr + " 个约定";
+      var nTr = (S.ledger.trainings || []).filter(function (x) { return x.status === "open"; }).length;
+      lsub = nAb + " 项能力 · " + (nTr ? nTr + " 件在练 · " : "") + nPr + " 个约定";
     }
     world.appendChild(h("button", {
       class: "nav-item" + (S.view === "ledger" ? " on" : ""), type: "button",
@@ -2629,6 +2630,7 @@
     if (!(d.bots || []).length) { people.appendChild(h("div", { class: "muted", text: "没有启用动态生活的角色。" })); }
     sec.appendChild(people);
     box.appendChild(sec);
+    box.appendChild(trainingSection(d));
     box.appendChild(promiseSection(d));
     box.appendChild(eventSection(d));
   }
@@ -2691,9 +2693,133 @@
     armed(del, "确认删除", function () { ledgerPost({ kind: "ability", action: "delete", bot: b.id, id: it.id }, "已删除"); });
     row.appendChild(h("div", { class: "lt" }, h("div", { text: it.text }),
       h("div", { class: "lm" }, it.since ? h("span", { text: it.since + " 起" }) : null,
-        h("span", { class: "tag", text: it.source === "tool" ? "她自己记的" : "网页添加" }))));
+        h("span", { text: "#" + it.id }),
+        h("span", { class: "tag", text: it.source === "tool" ? "她自己记的" : it.source === "training" ? "练成自动记的" : "网页添加" }))));
     row.appendChild(h("div", { class: "la" }, edit, del));
     return row;
+  }
+
+  /* ---------- 在练的事 ---------- */
+  var TR_FIELDS = [
+    ["what", "练什么", "例如：收放自如", 60],
+    ["standard", "练成的标准", "例如：收放像吃饭睡觉一样不用想", 120],
+    ["arrangement", "怎么练", "主人的安排，例如：关在藏经阁里练，练成才许出来（可空）", 120],
+    ["need_hours", "一共要练（小时）", "例如：24", 8],
+    ["base_hours", "已经练了（小时）", "开始记之前练的，或手动补的；可空", 8],
+    ["ability_after", "练成后能力清单写成", "一句完整的话；留空就写「已练成 + 练什么」", 120],
+    ["replaces", "练成后替换能力清单", "旧条目编号，例如 7,8；可空", 40]
+  ];
+
+  function trainingSection(d) {
+    var sec = h("div", { class: "lsec" }, lsecHead("在练的事", "要练一阵子的本事：练了多久按日程里练它的时段算，够数就算练成，自动写进能力清单"));
+    if (!d.training_enabled) {
+      sec.appendChild(h("div", { class: "notice" }, h("span", { class: "dot" }), "跟着能力清单走：能力清单关着，这里不会注入，也不会自动练成。"));
+    }
+    var all = d.trainings || [];
+    var card = h("div", { class: "pc" });
+    if (all.length) {
+      var rows = h("div", { class: "lrows" });
+      all.forEach(function (x) { rows.appendChild(S.trEdit[x.id] ? trainingForm(d, x) : trainingRow(x)); });
+      card.appendChild(rows);
+    } else if (!S.trEdit["new"]) {
+      card.appendChild(h("div", { class: "muted", style: "font-size:13px", text: "还没有。主人让她练什么时，她会自己记一条；也可以在这里加。" }));
+    }
+    if (S.trEdit["new"]) {
+      card.appendChild(h("div", { class: "sub-sec" }, trainingForm(d, null)));
+    } else {
+      card.appendChild(h("div", { class: "sub-sec" }, h("button", { class: "addlink", type: "button",
+        onclick: function () { S.trEdit["new"] = { bot: ((d.bots || [])[0] || {}).id || "" }; renderLedger(); } }, "＋ 新加一件")));
+    }
+    sec.appendChild(card);
+    return sec;
+  }
+
+  function trainingRow(x) {
+    var p = x.progress || {};
+    var open = x.status === "open";
+    var st = x.status === "done" ? "已练成" : x.status === "cancelled" ? "不练了" : "在练";
+    var row = h("div", { class: "lrow" + (open ? "" : " off") });
+    var bar = h("span", { style: "display:inline-block;width:120px;height:6px;border-radius:3px;background:var(--sunk);position:relative;vertical-align:middle" },
+      h("span", { style: "position:absolute;left:0;top:0;bottom:0;border-radius:3px;background:var(--accent);width:" + Math.min(100, p.percent || 0) + "%" }));
+    var when = "";
+    if (x.status === "done") { when = "练成于 " + (x.completed_at || "").slice(5); }
+    else if (open && p.eta) { when = "照今天的安排 " + p.eta.slice(11) + " 前后练够"; }
+    else if (open && +p.today_left_hours > 0) { when = "今天还排着 " + p.today_left_hours + " 小时"; }
+    else if (open) { when = "今天日程里没排练这件事"; }
+    row.appendChild(h("div", { class: "lt" },
+      h("div", null, h("span", { class: "what", text: x.what })),
+      x.standard ? h("div", { style: "font-size:13px;color:var(--t2)", text: "标准：" + x.standard }) : null,
+      x.arrangement ? h("div", { style: "font-size:13px;color:var(--t2)", text: "怎么练：" + x.arrangement }) : null,
+      h("div", { class: "lm" },
+        h("span", { text: "#" + x.id }),
+        h("span", { text: x.label || labelOfBot(x.bot) }),
+        open ? bar : null,
+        h("span", { text: "已练 " + (p.done_hours || "0") + " / " + (p.need_hours || x.need_hours) + " 小时" }),
+        when ? h("span", { text: when }) : null,
+        h("span", { class: "tag" + (open ? " acc" : ""), text: st }),
+        h("span", { class: "tag", text: x.source === "tool" ? "她自己记的" : "网页添加" })),
+      (x.ability_after || (x.replaces || []).length) ? h("div", { class: "lm" },
+        x.ability_after ? h("span", { text: "练成后记成：" + x.ability_after }) : null,
+        (x.replaces || []).length ? h("span", { text: "替换能力 #" + x.replaces.join("、#") }) : null,
+        x.ability_id ? h("span", { text: "已写进能力 #" + x.ability_id }) : null) : null));
+    var acts = h("div", { class: "la" });
+    var post = function (action, msg) { return ledgerPost({ kind: "training", action: action, id: x.id }, msg); };
+    if (open) {
+      var edit = h("button", { class: "btn quiet sm", type: "button", title: "编辑" }, icon("edit"));
+      edit.addEventListener("click", function () {
+        var f = {};
+        TR_FIELDS.forEach(function (t) { f[t[0]] = t[0] === "replaces" ? (x.replaces || []).join(",") : (x[t[0]] === undefined ? "" : String(x[t[0]])); });
+        S.trEdit[x.id] = f; renderLedger();
+      });
+      var done = h("button", { class: "btn quiet sm", type: "button", title: "现在就算练成，写进能力清单" }, icon("check"), "练成");
+      armed(done, "确认练成", function () { post("done", "已标为练成"); });
+      var cancel = h("button", { class: "btn quiet sm", type: "button", title: "不练了" }, "取消");
+      armed(cancel, "确认取消", function () { post("cancel", "已取消"); });
+      acts.appendChild(edit); acts.appendChild(done); acts.appendChild(cancel);
+    } else {
+      var re = h("button", { class: "btn quiet sm", type: "button", title: "改回在练（能力清单里已写的那条不会撤）" }, icon("undo"), "恢复");
+      re.addEventListener("click", function () { post("reopen", "已改回在练"); });
+      acts.appendChild(re);
+    }
+    var del = h("button", { class: "btn quiet sm danger", type: "button", title: "删除" }, icon("trash"));
+    armed(del, "确认删除", function () { post("delete", "已删除"); });
+    acts.appendChild(del);
+    row.appendChild(acts);
+    return row;
+  }
+
+  function trainingForm(d, x) {
+    var key = x ? x.id : "new";
+    var f = S.trEdit[key];
+    var box = h("div", { style: "display:flex;flex-direction:column;gap:8px;padding:10px 0;width:100%" });
+    if (!x) {
+      var sel = h("select", { class: "inp" });
+      (d.bots || []).forEach(function (b) { sel.appendChild(h("option", { value: b.id, text: b.label, selected: b.id === f.bot })); });
+      sel.addEventListener("change", function () { f.bot = sel.value; });
+      box.appendChild(h("label", { style: "display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--t3)" }, "谁在练", sel));
+    } else {
+      box.appendChild(h("div", { class: "lm", text: "#" + x.id + " · " + (x.label || labelOfBot(x.bot)) }));
+    }
+    TR_FIELDS.forEach(function (t) {
+      var inp = h("input", { class: "inp", type: "text", maxlength: String(t[3]), placeholder: t[2] });
+      inp.value = f[t[0]] === undefined ? "" : f[t[0]];
+      inp.addEventListener("input", function () { f[t[0]] = inp.value; });
+      box.appendChild(h("label", { style: "display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--t3)" }, t[1], inp));
+    });
+    var stop = function () { delete S.trEdit[key]; };
+    var cancel = h("button", { class: "btn sm", type: "button", text: "取消" });
+    cancel.addEventListener("click", function () { stop(); renderLedger(); });
+    var save = h("button", { class: "btn pri sm", type: "button", text: x ? "保存" : "添加" });
+    save.addEventListener("click", function () {
+      if (!String(f.what || "").trim()) { toast("练什么不能空", { err: true }); return; }
+      if (!String(f.need_hours || "").trim()) { toast("一共要练多少小时没填", { err: true }); return; }
+      var body = { kind: "training", action: x ? "update" : "add", id: x ? x.id : "", bot: f.bot };
+      TR_FIELDS.forEach(function (t) { body[t[0]] = String(f[t[0]] === undefined ? "" : f[t[0]]).trim(); });
+      save.disabled = true;
+      ledgerPost(body, x ? "已保存" : "已添加", stop).then(function () { save.disabled = false; });
+    });
+    box.appendChild(h("div", { style: "display:flex;gap:8px;justify-content:flex-end" }, cancel, save));
+    return box;
   }
 
   function promiseSection(d) {

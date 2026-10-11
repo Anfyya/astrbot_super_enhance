@@ -165,6 +165,7 @@ class SuperEnhance(Star):
                 and not self.life.scene.master_locked,
             ),
             ("record_ability", self.life.abilities_enabled),
+            ("training", self.life.training_enabled),
             ("make_promise", self.life.promise_enabled),
             ("close_promise", self.life.promise_enabled),
             ("sleep_for", self.sleep_tool.enabled),
@@ -440,6 +441,52 @@ class SuperEnhance(Star):
             记录结果。
         """
         return self.life.tool_record_ability(event, content)
+
+    @filter.llm_tool(name="training")
+    async def training(
+        self,
+        event: AstrMessageEvent,
+        action: str,
+        content: str = "",
+        standard: str = "",
+        hours: str = "",
+        training_id: str = "",
+        arrangement: str = "",
+        already_hours: str = "",
+        ability_after: str = "",
+        replaces: str = "",
+    ) -> str:
+        """记下、修改、结束一件「在练的事」：要练一阵子才能学会的本事。
+
+        什么时候用：
+        - start：主人让你去练一样本事、或你答应要去练 / 学一样东西时，马上记一条。
+          要写清练什么、练成的标准、一共大概要练多少小时（按难度估，0.5 到 80）。
+          之后日程会把练的时段排进去，练了多久由系统按这些时段累计，够数那一刻就算练成，
+          练成后自动记进「后来学会的」，不用再调 record_ability。
+        - update：主人改了标准、改了要练多久（比如「给你三天」就按三天能练的小时数改）、改了怎么练。
+        - done：主人说算你练成了，或者主人当面考过、确认你已经练成。
+        - cancel：主人说不用练了。
+        进度、还差多少、几点前后练够，看注入里「【在练的事】」那一段，按那里的数说，不要自己估。
+        记完不要在回复里提到这个工具。
+
+        Args:
+            action (string): start（开始记）/ update（修改）/ done（练成）/ cancel（不练了）。
+            content (string): 练什么，一句话（start 必填）。
+            standard (string): 练成的标准，主人怎么要求就怎么写（例如「收放像吃饭睡觉一样不用想」）。
+            hours (string): 一共要练多少小时，写数字（start 必填；update 时是新的总时数）。
+            training_id (string): 在练的事的编号（update / done / cancel 必填），见「【在练的事】」里的 #数字。
+            arrangement (string): 怎么练：主人的安排（例如「关在藏经阁里练，练成才许出来」「每天上午练两小时」）；没说就留空。
+            already_hours (string): 记之前已经实打实练了多少小时（没有就留空）。
+            ability_after (string): 练成以后「后来学会的」里这件事写成什么，一句完整的话，写练成后的样子。
+            replaces (string): 练成后要被替换掉的「后来学会的」旧条目编号（那里的 #数字，多个用逗号隔开）；没有就留空。
+
+        Returns:
+            记录结果。
+        """
+        return await self.life.tool_training(
+            event, action, content, standard, hours, training_id,
+            arrangement, already_hours, ability_after, replaces,
+        )
 
     @filter.llm_tool(name="make_promise")
     async def make_promise(

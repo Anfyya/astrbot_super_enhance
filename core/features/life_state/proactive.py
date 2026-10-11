@@ -45,9 +45,9 @@ MIN_DELAY_SECONDS = 30
 MAX_POSTPONES = 72
 # 顺延后和同一会话的另一条相差不到这么久，就并成一条（秒）
 MERGE_SECONDS = 120
-# 并成一条时留哪条：约定 > 晚安 > 早安 > 中段
-KIND_RANK = {"promise": 3, "night": 2, "morning": 1, "middle": 0}
-KIND_LABEL = {"promise": "约定", "night": "晚安", "morning": "早安", "middle": "中段"}
+# 并成一条时留哪条：练成 > 约定 > 晚安 > 早安 > 中段
+KIND_RANK = {"training": 4, "promise": 3, "night": 2, "morning": 1, "middle": 0}
+KIND_LABEL = {"training": "练成", "promise": "约定", "night": "晚安", "morning": "早安", "middle": "中段"}
 # 排期时刻的随机偏移（分钟）：起床后、睡前、时段开始后
 MORNING_DELAY = (3, 15)
 NIGHT_LEAD = (5, 20)
@@ -118,6 +118,10 @@ class ProactivePlanner:
         # 由 service 注入：约定账本（到点要专门提一句）、机器人 → 角色名
         self.promises = None
         self.label_fn = None
+        # 由 service 注入：(bot, state, now) → [(分钟, 在练的事)]，照今天的日程会练够的时刻
+        self.trainings_fn = None
+        # 由 service 注入：async (bot, 编号) → 结一遍账后这件事是不是已经练成
+        self.training_done_fn = None
         # 由 service 注入：日程（到点取此刻的打算）、原始消息副本里某会话今天 + 昨天的消息、
         # 某会话最近一次有人说话的时刻、最近一次主动消息真正发出的时刻
         self.store = None
@@ -332,13 +336,25 @@ class ProactivePlanner:
 
         slots: dict[int, dict] = {}
 
-        def add(minute, kind, entry: TimelineEntry | None, promise=None, gap=0) -> bool:
+        def add(minute, kind, entry: TimelineEntry | None, promise=None, gap=0, training=None) -> bool:
             if minute is None or minute <= now_minute or minute in slots:
                 return False
             if gap and any(abs(minute - other) < gap for other in slots):
                 return False
-            slots[minute] = {"minute": minute, "kind": kind, "entry": entry, "promise": promise}
+            slots[minute] = {
+                "minute": minute, "kind": kind, "entry": entry, "promise": promise, "training": training,
+            }
             return True
+
+        # 练够的那一刻（练完过两分钟再说）最先占位
+        if self.trainings_fn is not None:
+            try:
+                due = list(self.trainings_fn(bot, state, now) or [])
+            except Exception:
+                logger.warning("[super_enhance/life] 读取在练的事失败", exc_info=True)
+                due = []
+            for minute, item in due:
+                add(minute + 2, "training", state.find_entry(minute), training=item)
 
         # 约定先占位（准点）：同一分钟撞上早安/晚安时以约定为准
         for minute, item in self._promise_slots(bot, state.date):
@@ -407,6 +423,13 @@ class ProactivePlanner:
                 "what": str(promise.get("what") or ""),
                 "with": promise_with_for(promise, bot, self.label_fn),
             }
+        training = slot.get("training")
+        if training:
+            meta["training"] = {
+                "id": str(training.get("id") or ""),
+                "what": str(training.get("what") or ""),
+                "standard": str(training.get("standard") or ""),
+            }
         return meta
 
     @staticmethod
@@ -421,6 +444,8 @@ class ProactivePlanner:
             out["se_minute"] = meta["minute"]
         if meta.get("promise"):
             out["se_promise"] = meta["promise"]
+        if meta.get("training"):
+            out["se_training"] = meta["training"]
         return out
 
     def _meta_of(self, job, payload: dict) -> dict:
@@ -448,12 +473,14 @@ class ProactivePlanner:
             postponed = int(payload.get("se_postponed") or 0)
         except Exception:
             postponed = 0
+        training = payload.get("se_training")
         return {
             "kind": kind,
             "bot": bot,
             "date": date_text,
             "minute": minute,
             "promise": promise,
+            "training": training if isinstance(training, dict) else None,
             "postponed": postponed,
             "job_id": str(getattr(job, "job_id", "") or ""),
         }
@@ -581,6 +608,19 @@ class ProactivePlanner:
                 at_ts = max(busy_since + QUIET_SECONDS, now_ts + MIN_DELAY_SECONDS)
                 await self._postpone(cron, job, payload, meta, at_ts, busy_since)
                 return None
+            if meta["kind"] == "training" and self.training_done_fn is not None:
+                tid = str((meta.get("training") or {}).get("id") or "")
+                try:
+                    finished = await self.training_done_fn(meta["bot"], tid)
+                except Exception:
+                    logger.warning("[super_enhance/life] 到点核对练成失败，照常发", exc_info=True)
+                    finished = True
+                if not finished:
+                    logger.info(
+                        "[super_enhance/life] [%s] 练成消息（原定 %s）到点时 #%s 还没够数（日程改过），这次不发",
+                        meta["bot"], self._planned_text(meta), tid,
+                    )
+                    return None
             self._inflight[target] = now_ts
 
         now = datetime.datetime.now(self.timezone)
@@ -803,6 +843,12 @@ class ProactivePlanner:
 
     def _kind_line(self, meta: dict, now: datetime.datetime, chat: dict | None) -> str:
         kind = meta.get("kind")
+        if kind == "training":
+            training = meta.get("training") or {}
+            return "你刚把在练的「%s」练够了，算是练成了%s；这是练成后头一回找主人。" % (
+                training.get("what") or "",
+                "（练成的标准：%s）" % training["standard"] if training.get("standard") else "",
+            )
         if kind == "promise":
             promise = meta.get("promise") or {}
             with_text = str(promise.get("with") or "").strip()
@@ -846,7 +892,7 @@ class ProactivePlanner:
                 "- 结合你此刻在做的事和所在的地方来说：可以顺口带一句你在干嘛、碰到了什么，"
                 "但别写成汇报日程，也别一点不提自己在干嘛；",
                 "- 这会儿真不合适说话（比如他刚说要睡了、正忙着），可以不发，直接结束就行，不用解释%s；"
-                % ("（约定到点这种除外）" if kind == "promise" else ""),
+                % ("（约定到点、刚练成这两种除外）" if kind in ("promise", "training") else ""),
                 "- 要发就调用 send_message_to_user 发出去：只有调用了才算真的发出去，光写在回复里他看不到；",
                 "- 你这会儿要是换了地方、或者在做的事变了，先用 update_my_scene 记一下再发；",
                 "- 扮演你的人设，一到两句纯文本，不要 Markdown、不要表情符号、不要罗列清单。",

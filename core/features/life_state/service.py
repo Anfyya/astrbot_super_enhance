@@ -31,7 +31,16 @@ from .models import (
     profile_umo_for_bot,
     weekday_cn,
 )
-from .ledger import AbilityBook, EventBook, PromiseBook, promise_with_for
+from .ledger import (
+    AbilityBook,
+    EventBook,
+    PromiseBook,
+    TrainingBook,
+    parse_hours,
+    parse_id_list,
+    promise_with_for,
+)
+from . import training as training_calc
 from .proactive import ProactivePlanner, is_proactive_event
 from .prompts import place_description
 from .raw_log import RawMessageLog
@@ -44,6 +53,9 @@ STATE_FILE_NAME = "life_states.json"
 ABILITY_FILE_NAME = "abilities.json"
 PROMISE_FILE_NAME = "promises.json"
 EVENT_FILE_NAME = "events.json"
+TRAINING_FILE_NAME = "trainings.json"
+# 练成后「刚练成」提示最多挂这么久（她一直没跟主人说话也不再提）
+TRAINING_NOTICE_HOURS = 48
 # 约定注入时往后看几天
 PROMISE_LOOKAHEAD_DAYS = 7
 # 当天约定过了这么多分钟还没关，就在注入里标「时间已过」
@@ -124,9 +136,12 @@ class LifeStateService:
         self.abilities = AbilityBook(self.data_dir / ABILITY_FILE_NAME)
         self.promises = PromiseBook(self.data_dir / PROMISE_FILE_NAME)
         self.events = EventBook(self.data_dir / EVENT_FILE_NAME)
+        self.trainings = TrainingBook(self.data_dir / TRAINING_FILE_NAME)
         if self.promise_enabled:
             self.planner.promises = self.promises
         self.planner.label_fn = self.scene.label_for
+        self.planner.trainings_fn = self.training_slots
+        self.planner.training_done_fn = self.training_finished
         # 主动对话到点判断要用：日程、这个会话最近的往来、最近一次有人说话 / 主动消息发出的时刻
         self.planner.store = self.store
         self.planner.recent_fn = self.recent_messages
@@ -157,6 +172,11 @@ class LifeStateService:
     @property
     def promise_enabled(self) -> bool:
         return self.enabled and bool(self.cfg.get("promise_enabled", True))
+
+    @property
+    def training_enabled(self) -> bool:
+        """在练的事跟着能力清单走：练成要写进能力清单。"""
+        return self.abilities_enabled
 
     @staticmethod
     def _forward_result(event, text: str):
@@ -205,6 +225,8 @@ class LifeStateService:
             self.generator.abilities = self.abilities
         if self.promise_enabled:
             self.generator.promises = self.promises
+        if self.training_enabled:
+            self.generator.training_fn = self.training_plan_lines
         self.reviewer = DailyReviewer(
             self.context,
             self.cfg,
@@ -276,6 +298,13 @@ class LifeStateService:
                         self.promises.prune(today)
                     except Exception:
                         logger.warning("[super_enhance/life] 清理过期约定失败", exc_info=True)
+                    try:
+                        self.trainings.prune(today)
+                        # 昨天回查改过了：先按改过的日程结一遍账，再生成新的一天
+                        for bot in bots:
+                            await self.settle_trainings(bot)
+                    except Exception:
+                        logger.warning("[super_enhance/life] 结算在练的事失败", exc_info=True)
                     profiles = {bot: self._profile_umo(bot) for bot in bots}
                     try:
                         await self.generator.generate_many(
@@ -554,7 +583,11 @@ class LifeStateService:
             entry = state.find_entry_strict(now.hour * 60 + now.minute)
         scene_text = self._scene_block(bot, date_text, now)
         promise_text = self._promise_text(bot, now)
+        await self.settle_trainings(bot)
         ability_text = self._ability_text(bot)
+        training_text = self._training_text(bot, now)
+        if training_text:
+            ability_text = "\n".join(x for x in (ability_text, training_text) if x)
         if entry is None:
             # 没有可用的日程时段（睡眠空档 / 日程尚未就绪 / 生成失败）：
             # 不注入日程文本，也不回退到当天第一段（免得她半夜以为自己在起床），
@@ -567,7 +600,7 @@ class LifeStateService:
             text = extra
             self._debug("当前无日程时段，仅注入能力清单 / 共享场景 / 约定")
         else:
-            text = build_text(state, entry, now)
+            text = build_text(state, entry, now, self._training_label(entry))
             for block in (ability_text, promise_text, scene_text):
                 if block:
                     text = text + "\n" + block
@@ -669,8 +702,9 @@ class LifeStateService:
         except Exception:
             logger.error("[super_enhance/life] 主动对话换提示词失败", exc_info=True)
         now = self._now()
+        await self.settle_trainings(bot)
         blocks = [
-            self._ability_text(bot),
+            "\n".join(x for x in (self._ability_text(bot), self._training_text(bot, now)) if x),
             self._promise_text(bot, now),
             self._scene_block(bot, now.date().isoformat(), now),
         ]
@@ -690,6 +724,290 @@ class LifeStateService:
                 for name, block in zip(("能力清单", "约定", "共享场景"), blocks)
                 if block
             ),
+        )
+
+    # ---------- 在练的事 ----------
+
+    def training_progress(self, item: dict, now: datetime.datetime | None = None):
+        return training_calc.compute(item, self.store.get, str(item.get("bot")), now or self._now())
+
+    async def settle_trainings(self, bot: str) -> list[dict]:
+        """结一遍账：把以前每天练的分钟数记进 log；够数的标成练成并写进能力清单。返回这次练成的。"""
+        if not self.training_enabled:
+            return []
+        now = self._now()
+        done: list[dict] = []
+        for item in list(self.trainings.open_for(bot)):
+            try:
+                prog = self.training_progress(item, now)
+                self.trainings.set_log(item, prog.log)
+                if prog.crossed is not None:
+                    self._finish_training(bot, item, prog.crossed, "练够了时长")
+                    done.append(item)
+            except Exception:
+                logger.warning("[super_enhance/life] 结算在练的事 #%s 失败", item.get("id"), exc_info=True)
+        return done
+
+    def _finish_training(self, bot: str, item: dict, when: datetime.datetime, how: str) -> str:
+        """标成练成，并把练成后的样子写进能力清单（替换掉指定的旧条目）。返回能力清单那条的编号。"""
+        when_text = when.strftime("%Y-%m-%d %H:%M")
+        self.trainings.set_status(item["id"], "done", when_text, how)
+        text = str(item.get("ability_after") or "").strip() or (
+            "已练成%s%s" % (item.get("what"), "：%s" % item["standard"] if item.get("standard") else "")
+        )
+        since = when.date().isoformat()
+        ability_id = ""
+        try:
+            olds = [x for x in parse_id_list(item.get("replaces")) if self.abilities.get(bot, x)]
+            if olds:
+                self.abilities.update(bot, olds[0], text, since, source="training")
+                ability_id = olds[0]
+                for extra in olds[1:]:
+                    self.abilities.delete(bot, extra)
+            else:
+                added, _created = self.abilities.add(bot, text, "training", since)
+                ability_id = str(added.get("id"))
+        except Exception:
+            logger.error("[super_enhance/life] [%s] 练成 #%s 写能力清单失败", bot, item.get("id"), exc_info=True)
+        self.trainings.mark(item, ability_id=ability_id)
+        logger.info(
+            "[super_enhance/life] [%s] 在练的事 #%s 练成（%s，%s）：%s → 能力清单 #%s",
+            bot, item.get("id"), when_text, how, item.get("what"), ability_id or "?",
+        )
+        return ability_id
+
+    def _master_targets(self, bot: str) -> list[str]:
+        try:
+            return self.planner._targets(bot)
+        except Exception:
+            return []
+
+    def _told_master(self, bot: str, since: datetime.datetime) -> bool:
+        """练成以后她有没有在主人的私聊里说过话。"""
+        stamp = since.timestamp()
+        for umo in self._master_targets(bot):
+            for row in self.recent_messages(umo):
+                try:
+                    ts = float(row.get("ts") or 0)
+                except Exception:
+                    continue
+                if row.get("role") == "assistant" and ts >= stamp:
+                    return True
+        return False
+
+    def _training_label(self, entry) -> str:
+        """当前时段标着在练的事：给注入用的一行（已练成的说一声这段不用练了）。"""
+        if entry is None:
+            return ""
+        tid = training_calc.tag_id(entry)
+        if not tid:
+            return ""
+        item = self.trainings.get(tid)
+        if item is None:
+            return ""
+        if item.get("status") == "done":
+            return "这段原本是练「%s」，这件事已经练成了。" % item.get("what")
+        if item.get("status") == "open":
+            return "这段在练：#%s %s" % (tid, item.get("what"))
+        return ""
+
+    def _training_text(self, bot: str, now: datetime.datetime) -> str:
+        """「【在练的事】」+「【刚练成】」两块。"""
+        if not self.training_enabled:
+            return ""
+        blocks: list[str] = []
+        lines = []
+        for item in self.trainings.open_for(bot):
+            prog = self.training_progress(item, now)
+            if prog.eta is not None:
+                when = "照今天的安排 %s 前后练够" % prog.eta.strftime("%H:%M")
+            elif prog.today_planned > 0:
+                when = "今天日程里还排着 %s 小时，练完还差 %s 小时" % (
+                    training_calc.fmt_hours(prog.today_planned),
+                    training_calc.fmt_hours(prog.left_minutes - prog.today_planned),
+                )
+            else:
+                when = "今天日程里没再排练这件事"
+            parts = ["#%s %s" % (item.get("id"), item.get("what"))]
+            if item.get("standard"):
+                parts.append("练成的标准：%s" % item["standard"])
+            if item.get("arrangement"):
+                parts.append("怎么练：%s" % item["arrangement"])
+            parts.append(
+                "一共要练约 %s 小时，已经练了 %s 小时，还差 %s 小时；%s"
+                % (
+                    training_calc.fmt_hours(prog.need_minutes),
+                    training_calc.fmt_hours(prog.done_minutes),
+                    training_calc.fmt_hours(prog.left_minutes),
+                    when,
+                )
+            )
+            lines.append("- " + "｜".join(parts))
+        if lines:
+            blocks.append(
+                "【在练的事】还没练成的本事。练了多久按日程里真去练了的时段算，够数那一刻就算练成，"
+                "练成后自动记进「后来学会的」；主人改了要求或要练多久、或者说算你练成了，用 training 工具改：\n"
+                + "\n".join(lines)
+            )
+        fresh = []
+        for item in self.trainings.for_bot(bot):
+            if item.get("status") != "done" or not item.get("completed_at"):
+                continue
+            try:
+                moment = datetime.datetime.strptime(item["completed_at"][:16], "%Y-%m-%d %H:%M").replace(tzinfo=now.tzinfo)
+            except Exception:
+                continue
+            if moment > now or now - moment > datetime.timedelta(hours=TRAINING_NOTICE_HOURS):
+                continue
+            if self._told_master(bot, moment):
+                continue
+            fresh.append(
+                "- %s：%s 练成了%s（已记进「后来学会的」）；练成以后你还没跟主人说过话。"
+                % (
+                    item.get("what"),
+                    moment.strftime("%m-%d %H:%M"),
+                    "，标准是：%s" % item["standard"] if item.get("standard") else "",
+                )
+            )
+        if fresh:
+            blocks.append("【刚练成】\n" + "\n".join(fresh))
+        return "\n".join(blocks)
+
+    def training_plan_lines(self, bots: list, date_text: str) -> str:
+        """给日程生成用：这几位还在练的事（编号、标准、怎么练、还差多少）。"""
+        if not self.training_enabled:
+            return ""
+        now = self._now()
+        lines = []
+        for bot in bots:
+            for item in self.trainings.open_for(bot):
+                prog = self.training_progress(item, now)
+                lines.append(
+                    "- [%s] #%s %s｜练成的标准：%s｜怎么练：%s｜还差约 %s 小时"
+                    % (
+                        self.scene.label_for(bot),
+                        item.get("id"),
+                        item.get("what"),
+                        item.get("standard") or "（没写）",
+                        item.get("arrangement") or "（没特别安排，按她自己的性子排）",
+                        training_calc.fmt_hours(prog.left_minutes),
+                    )
+                )
+        return "\n".join(lines)
+
+    async def training_finished(self, bot: str, tid: str) -> bool:
+        await self.settle_trainings(bot)
+        item = self.trainings.get(tid)
+        return item is not None and item.get("status") == "done"
+
+    def training_slots(self, bot: str, state: LifeState, now: datetime.datetime) -> list[tuple[int, dict]]:
+        """给主动对话排期：今天照日程会练够的那一刻（分钟, 那件事）。"""
+        if not self.training_enabled or state is None or state.date != now.date().isoformat():
+            return []
+        out = []
+        for item in self.trainings.open_for(bot):
+            try:
+                prog = self.training_progress(item, now)
+            except Exception:
+                continue
+            if prog.eta is not None:
+                out.append((prog.eta.hour * 60 + prog.eta.minute, item))
+        return out
+
+    async def _resync_today(self, bot: str) -> None:
+        state = self.store.get(bot, self._today())
+        if state is None or state.status != "ok":
+            return
+        try:
+            await self._on_state_ready(bot, state)
+        except Exception:
+            logger.error("[super_enhance/life] 在练的事变了，重排主动对话失败", exc_info=True)
+
+    async def tool_training(
+        self,
+        event,
+        action: str,
+        content: str = "",
+        standard: str = "",
+        hours: str = "",
+        training_id: str = "",
+        arrangement: str = "",
+        already_hours: str = "",
+        ability_after: str = "",
+        replaces: str = "",
+    ) -> str:
+        if not self.training_enabled:
+            return "能力清单没有开启，在练的事也记不了。"
+        bot = bot_of_umo(getattr(event, "unified_msg_origin", ""))
+        if not self._bot_enabled(bot):
+            return "本机器人没有启用动态生活状态，这次没有记录。"
+        if self.scene.sender_is_bot(event):
+            return "这是和另一个角色的对话；练什么、练没练成只在和主人的对话里记，这次没有记录。"
+        act = str(action or "").strip().lower()
+        act = {
+            "开始": "start", "新开": "start", "记": "start", "add": "start", "new": "start",
+            "修改": "update", "改": "update", "edit": "update",
+            "练成": "done", "完成": "done", "finish": "done",
+            "取消": "cancel", "放弃": "cancel", "不练了": "cancel", "cancelled": "cancel",
+        }.get(act, act)
+        now = self._now()
+        try:
+            if act == "start":
+                need = parse_hours(hours, "要练多久")
+                if need <= 0:
+                    return "没有记录：要练多久（hours）没填，按难度估一个小时数。"
+                item = self.trainings.add(
+                    bot,
+                    content,
+                    standard,
+                    need,
+                    arrangement=arrangement,
+                    base_hours=parse_hours(already_hours, "已经练了多久"),
+                    ability_after=ability_after,
+                    replaces=replaces,
+                    source="tool",
+                    created=now.strftime("%Y-%m-%d %H:%M"),
+                )
+                head = "已记下在练的事 #%s：%s" % (item["id"], item["what"])
+            else:
+                item = self.trainings.get(training_id)
+                if item is None or item.get("bot") != bot:
+                    return "找不到你在练的 #%s。" % str(training_id or "").lstrip("#＃")
+                if act == "update":
+                    item = self.trainings.update(
+                        item["id"],
+                        what=content or None,
+                        standard=standard or None,
+                        arrangement=arrangement or None,
+                        need_hours=parse_hours(hours, "要练多久") if str(hours or "").strip() else None,
+                        base_hours=parse_hours(already_hours, "已经练了多久") if str(already_hours or "").strip() else None,
+                        ability_after=ability_after or None,
+                        replaces=replaces if str(replaces or "").strip() else None,
+                    )
+                    head = "已改好 #%s：%s" % (item["id"], item["what"])
+                elif act == "done":
+                    if item.get("status") != "open":
+                        return "#%s 已经不在练了。" % item["id"]
+                    ability_id = self._finish_training(bot, item, now, "她自己标的练成")
+                    await self._resync_today(bot)
+                    return "#%s %s 已标为练成，能力清单 #%s 记下了。" % (item["id"], item["what"], ability_id or "?")
+                elif act == "cancel":
+                    self.trainings.set_status(item["id"], "cancelled", note="不练了")
+                    await self._resync_today(bot)
+                    return "#%s %s 不练了，已取消。" % (item["id"], item["what"])
+                else:
+                    return "action 只能是 start（开始）、update（修改）、done（练成）、cancel（取消）。"
+        except ValueError as e:
+            return "没有记录：%s" % e
+        logger.info("[super_enhance/life] [%s] 在练的事 %s #%s：%s", bot, act, item.get("id"), item.get("what"))
+        done = await self.settle_trainings(bot)
+        if item in done:
+            return head + "。算上已经练的，已经够数，算是练成了，能力清单记下了。"
+        prog = self.training_progress(item, now)
+        await self._resync_today(bot)
+        return head + "。一共要练约 %s 小时，已经练了 %s 小时；之后日程会把练的时段排进去，够数就算练成。" % (
+            training_calc.fmt_hours(prog.need_minutes),
+            training_calc.fmt_hours(prog.done_minutes),
         )
 
     # ---------- 能力 / 约定：工具 ----------

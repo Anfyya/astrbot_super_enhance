@@ -131,6 +131,8 @@ class LifeStateGenerator:
         self.promises = None
         self.events = None
         self.label_fn = None
+        # 由 service 注入：(bots, date) → 这几位还在练的事（一行一条）
+        self.training_fn = None
         # 每天抽到的随机起点记一份，之后几天避开（和日程文件放一起）
         path = getattr(store, "path", None)
         self.seeds = SeedLog(Path(path).with_name(SEED_FILE_NAME)) if path else None
@@ -735,6 +737,23 @@ class LifeStateGenerator:
             "必须排进去的约定（角色亲口答应过的事，硬性要求）：\n"
             + ("\n".join(lines) if lines else "（无）")
         )
+        training = ""
+        if self.training_fn is not None:
+            try:
+                training = str(self.training_fn(bots, date_text) or "").strip()
+            except Exception:
+                logger.warning("[super_enhance/life] 读取在练的事失败", exc_info=True)
+        if training:
+            parts.append(
+                "在练的事（主人交代、或她自己要练的本事，还没练成；硬性要求）：\n"
+                + training
+                + "\n排法：按「怎么练」把练的时间排进对应角色的日程（主人要她一直练、练成才出来的，"
+                "清醒的时候基本都在练，只留吃饭洗漱这类必要的空档；没特别安排的，按她的性子每天排一两段、"
+                "合计一到三小时）；一天排的练习不要超过「还差」的时数太多。"
+                "练这件事的那几段加一个字段 \"training\": \"#编号\"（只写一个编号），别的时段不要加这个字段；"
+                "练的那几段只写在哪练、练什么，不要写练的结果、进展和心得（练了多久由系统按时长算）。"
+                "这些练习每天都可以有，不算重复。"
+            )
         return "\n\n".join(parts)
 
     def _variety_feedback(self, bad: dict, recent_of: dict) -> str:
