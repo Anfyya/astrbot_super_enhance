@@ -331,6 +331,42 @@
                 "hint": "每天 0 点生成新日程前，先拿昨天「起床~入睡」之间的聊天记录小幅修正昨天那份日程：只改对不上的时段，不重写整篇；原版会备份到 life_state_revisions/。",
                 "default": true
             },
+            "world_mode": {
+                "description": "世界线（新架构）",
+                "type": "string",
+                "hint": "off=关闭；shadow=只跑记录员和幕间补写、世界线照常记，但聊天仍用旧日程；live=切换：聊天注入和主动消息都按世界线来，每日日程与回查停用。",
+                "options": ["off", "shadow", "live"],
+                "default": "off"
+            },
+            "recorder_quiet_seconds": {
+                "description": "记录员静默阈值（秒）",
+                "type": "int",
+                "hint": "某个会话最后一条消息过了这么久还没新消息，就把这段对话整理进世界线。",
+                "default": 90
+            },
+            "step_minutes_min": {
+                "description": "幕间补写最短间隔（分钟）",
+                "type": "int",
+                "hint": "没人在聊天时，每隔多少分钟把刚过去这段时间补写进世界线；实际间隔在这和最长值之间随机。",
+                "default": 60
+            },
+            "step_minutes_max": {
+                "description": "幕间补写最长间隔（分钟）",
+                "type": "int",
+                "default": 90
+            },
+            "world_keep_days": {
+                "description": "世界线保留天数",
+                "type": "int",
+                "hint": "每天的条目按这个天数保留，更早的日文件自动删。",
+                "default": 30
+            },
+            "world_inject_recent": {
+                "description": "注入最近条数",
+                "type": "int",
+                "hint": "聊天时把今天最近几条世界线条目给模型看。",
+                "default": 12
+            },
             "edit_tool_enabled": {
                 "description": "日程修改工具",
                 "type": "bool",

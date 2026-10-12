@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import json
 import random
 import re
@@ -315,8 +316,181 @@ class ContextPageApi:
     def manager(self):
         return self.context.conversation_manager
 
+    # ---------- 世界线 ----------
+
+    @staticmethod
+    def _world_label(life, who: str) -> str:
+        if str(who) == "master":
+            return "主人"
+        try:
+            return life.scene.label_for(who) or str(who)
+        except Exception:
+            return str(who)
+
+    async def world_view(self):
+        """世界线：某天的条目 + 约束 + 打算 + 骨架 + 运行状态。"""
+        try:
+            date_text = ""
+            if request is not None:
+                date_text = str(request.args.get("date") or "").strip()
+            life = self.plugin.life
+            world = life.world
+            if not date_text:
+                date_text = life._today()
+            base = datetime.date.fromisoformat(date_text)
+            days = []
+            for offset in range(0, 3):
+                day = (base - datetime.timedelta(days=offset)).isoformat()
+                rows = []
+                for item in world.entries(day, ""):
+                    row = dict(item)
+                    row["who_label"] = self._world_label(life, item.get("who"))
+                    rows.append(row)
+                days.append({"date": day, "entries": rows})
+            constraints = []
+            for item in world.constraints(active_only=False):
+                row = dict(item)
+                row["who_label"] = self._world_label(life, item.get("who"))
+                constraints.append(row)
+            bots = life.enabled_bots()
+            return _ok({
+                "date": date_text,
+                "days": days,
+                "constraints": constraints,
+                "intentions": [
+                    {**item, "who_label": self._world_label(life, item.get("who"))}
+                    for item in world.intentions()
+                ],
+                "routine": world.all_routine(),
+                "day_plan": {bot: world.day_plan(bot, date_text) for bot in bots},
+                "bots": [
+                    {"key": bot, "label": self._world_label(life, bot)} for bot in bots
+                ],
+                "status": {
+                    "mode": life.world_mode,
+                    "last_step": world.last_step(),
+                    "errors": world.errors(),
+                },
+            })
+        except Exception as exc:
+            logger.error("[super_enhance/ctx] 读取世界线失败", exc_info=True)
+            return _err(exc)
+
+    async def world_edit(self):
+        """世界线：条目 / 约束 / 打算 / 骨架的增删改。"""
+        try:
+            body = await request.get_json() or {}
+        except Exception:
+            body = {}
+        try:
+            life = self.plugin.life
+            world = life.world
+            kind = str(body.get("kind") or "")
+            action = str(body.get("action") or "add")
+            date_text = str(body.get("date") or life._today())
+            ok = False
+            if kind == "entry":
+                if action == "delete":
+                    ok = world.delete_entry(date_text, str(body.get("id") or ""))
+                elif action == "update":
+                    fields = {}
+                    for key in ("place", "doing", "public", "start", "end", "training"):
+                        if body.get(key) is not None:
+                            fields[key] = body.get(key)
+                    ok = bool(
+                        world.update_entry(date_text, str(body.get("id") or ""), **fields)
+                    )
+                else:
+                    ok = bool(world.add_entry(date_text, {
+                        "who": body.get("who"),
+                        "start": body.get("start"),
+                        "end": body.get("end") or "",
+                        "place": body.get("place"),
+                        "doing": body.get("doing"),
+                        "public": body.get("public"),
+                        "with": body.get("with") or [],
+                        "training": body.get("training"),
+                        "seen_by": body.get("seen_by") or [],
+                        "source": "manual",
+                    }))
+            elif kind == "constraint":
+                cid = str(body.get("id") or "")
+                if action == "delete":
+                    ok = world.lift_constraint(cid, note="面板手动解除")
+                elif action == "update":
+                    fields = {}
+                    for key in ("text", "public", "until", "until_time", "status"):
+                        if body.get(key) is not None:
+                            fields[key] = body.get(key)
+                    ok = bool(world.update_constraint(cid, **fields))
+                else:
+                    ok = bool(world.add_constraint({
+                        "who": body.get("who"),
+                        "text": body.get("text"),
+                        "public": body.get("public"),
+                        "until": body.get("until"),
+                        "source": "manual",
+                    }))
+            elif kind == "intention":
+                who = str(body.get("who") or "")
+                if action == "delete":
+                    world.clear_intention(who)
+                    ok = True
+                else:
+                    ok = bool(
+                        world.set_intention(
+                            who, body.get("text") or "", body.get("window") or "", "manual"
+                        )
+                    )
+            elif kind == "routine":
+                data = body.get("data")
+                if isinstance(data, dict):
+                    world.set_routine(str(body.get("who") or ""), data)
+                    ok = True
+            return _ok({"ok": bool(ok)})
+        except Exception as exc:
+            logger.error("[super_enhance/ctx] 世界线编辑失败", exc_info=True)
+            return _err(exc)
+
+    async def world_run(self):
+        """世界线：手动跑一次记录员 / 幕间补写。"""
+        try:
+            body = await request.get_json() or {}
+        except Exception:
+            body = {}
+        try:
+            life = self.plugin.life
+            what = str(body.get("what") or "recorder")
+            now = life._now()
+            if what == "step":
+                ok = await life.life_step.run(now)
+            else:
+                ok = await life.recorder.run_all(now)
+            return _ok({"ok": bool(ok), "errors": life.world.errors()})
+        except Exception as exc:
+            logger.error("[super_enhance/ctx] 世界线手动运行失败", exc_info=True)
+            return _err(exc)
+
     def register_routes(self) -> None:
         register = self.context.register_web_api
+        register(
+            f"{PAGE_API_PREFIX}/world",
+            self.world_view,
+            ["GET"],
+            "世界线：某天的条目 / 约束 / 打算 / 骨架 / 状态",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/world/edit",
+            self.world_edit,
+            ["POST"],
+            "世界线：条目 / 约束 / 打算 / 骨架的增删改",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/world/run",
+            self.world_run,
+            ["POST"],
+            "世界线：手动跑一次记录员或幕间补写",
+        )
         register(
             f"{PAGE_API_PREFIX}/conversations",
             self.list_conversations,

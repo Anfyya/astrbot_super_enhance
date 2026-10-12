@@ -95,8 +95,13 @@ class Progress:
         }
 
 
-def compute(item: dict, store_get, bot: str, now: datetime.datetime) -> Progress:
-    """store_get(bot, date_text) → LifeState | None。now 带时区。"""
+def compute(item: dict, store_get, bot: str, now: datetime.datetime, spans_fn=None) -> Progress:
+    """算这件事练到哪了。
+
+    - 默认按日程算：store_get(bot, date_text) → LifeState | None；
+    - 世界线模式下由调用方给 spans_fn(date_text) → [(起分钟, 止分钟)]，直接按世界线条目算。
+    now 带时区。
+    """
     prog = Progress()
     tid = str(item.get("id"))
     try:
@@ -109,15 +114,21 @@ def compute(item: dict, store_get, bot: str, now: datetime.datetime) -> Progress
     log = {str(k): int(v) for k, v in (item.get("log") or {}).items() if str(k) < today.isoformat()}
     day = max(start.date(), today - datetime.timedelta(days=LOOKBACK_DAYS))
     while day < today:
-        state = store_get(bot, day.isoformat())
-        if state is not None and state.status == "ok":
-            low = start.hour * 60 + start.minute if day == start.date() else 0
-            log[day.isoformat()] = minutes_between(segments(state, tid), low, 1440)
+        if spans_fn is not None:
+            spans = spans_fn(day.isoformat())
+        else:
+            state = store_get(bot, day.isoformat())
+            spans = segments(state, tid) if (state is not None and state.status == "ok") else []
+        low = start.hour * 60 + start.minute if day == start.date() else 0
+        log[day.isoformat()] = minutes_between(spans, low, 1440)
         day += datetime.timedelta(days=1)
     prog.log = log
     before_today = base + sum(log.values())
 
-    spans = segments(store_get(bot, today.isoformat()), tid)
+    if spans_fn is not None:
+        spans = spans_fn(today.isoformat())
+    else:
+        spans = segments(store_get(bot, today.isoformat()), tid)
     low = start.hour * 60 + start.minute if start.date() == today else 0
     if start.date() > today:
         spans = []

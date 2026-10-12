@@ -153,21 +153,24 @@ class SuperEnhance(Star):
 
     async def sync_tool_visibility(self) -> None:
         """按开关决定 LLM 工具是否暴露给模型：关掉就不暴露，避免 AI 以为能用。"""
+        # 世界线 live 之后，状态由程序维护，下面这些"让模型自己维护状态"的工具全部收起
+        live = getattr(self.life, "world_mode", "off") == "live"
         for name, enabled in (
             ("stay_silent", self.silence.enabled),
-            ("get_full_dynamic_life_state", self.life.enabled),
-            ("revise_life_state", self.life.edit_tool_enabled),
-            ("update_my_scene", self.life.enabled and self.life.scene.enabled),
+            ("get_full_dynamic_life_state", self.life.enabled and not live),
+            ("revise_life_state", self.life.edit_tool_enabled and not live),
+            ("update_my_scene", self.life.enabled and self.life.scene.enabled and not live),
             (
                 "record_master_scene",
                 self.life.enabled
                 and self.life.scene.enabled
-                and not self.life.scene.master_locked,
+                and not self.life.scene.master_locked
+                and not live,
             ),
-            ("record_ability", self.life.abilities_enabled),
-            ("training", self.life.training_enabled),
-            ("make_promise", self.life.promise_enabled),
-            ("close_promise", self.life.promise_enabled),
+            ("record_ability", self.life.abilities_enabled and not live),
+            ("training", self.life.training_enabled and not live),
+            ("make_promise", self.life.promise_enabled and not live),
+            ("close_promise", self.life.promise_enabled and not live),
             ("sleep_for", self.sleep_tool.enabled),
             ("tell", self.life.enabled),
         ):

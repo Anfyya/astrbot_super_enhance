@@ -47,6 +47,11 @@ from .raw_log import RawMessageLog
 from .reviewer import DailyReviewer
 from .scene import SharedScene, build_injection
 from .store import StateStore
+from .variety import SeedLog
+from .world import WorldStore, parse_time
+from .recorder import Recorder
+from .step import LifeStep
+from .view import build_world_text
 
 DEFAULT_TZ = "Asia/Shanghai"
 STATE_FILE_NAME = "life_states.json"
@@ -104,6 +109,19 @@ def _command_tail(message: str, command: str) -> str | None:
     return None
 
 
+class _PlannerStateView:
+    """主动对话读状态用：live 下从世界线合成一份，其余照旧读日程。"""
+
+    def __init__(self, service) -> None:
+        self.service = service
+
+    def get(self, bot: str, date_text: str):
+        return self.service.state_for_planner(bot, date_text)
+
+    def __getattr__(self, name):
+        return getattr(self.service.store, name)
+
+
 class LifeStateService:
     """把生成、注入、主动对话、命令、工具都收在这里，main.py 只做转发。"""
 
@@ -143,7 +161,7 @@ class LifeStateService:
         self.planner.trainings_fn = self.training_slots
         self.planner.training_done_fn = self.training_finished
         # 主动对话到点判断要用：日程、这个会话最近的往来、最近一次有人说话 / 主动消息发出的时刻
-        self.planner.store = self.store
+        self.planner.store = _PlannerStateView(self)
         self.planner.recent_fn = self.recent_messages
         self.planner.activity_fn = self.last_activity
         self.planner.sent_fn = lambda umo: self._proactive_sent.get(str(umo), 0.0)
@@ -158,6 +176,195 @@ class LifeStateService:
         self._bg_failed_at = 0.0
         # 0 点任务正在跑（回查 + 生成），这期间聊天不另起生成
         self._daily_running = False
+        # 世界线（见 world.py / recorder.py / step.py / view.py）
+        self.world = WorldStore(self.data_dir)
+        self.world.tz = self.timezone
+        self.seed_log = SeedLog(self.data_dir / "daily_seeds.json")
+        self.recorder = Recorder(
+            context, cfg, self.world, self.raw_log,
+            label_fn=self.scene.label_for, now_fn=self._now, tz=self.timezone,
+        )
+        self.recorder.promises = self.promises
+        self.recorder.trainings = self.trainings
+        self.recorder.abilities = self.abilities
+        self.life_step = LifeStep(
+            context, cfg, self.world, self.raw_log, None,
+            self.seed_log, self.scene.label_for, self._now,
+        )
+        self.life_step.promises = self.promises
+        self.life_step.trainings = self.trainings
+        self.life_step.abilities = self.abilities
+        self._world_task: asyncio.Task | None = None
+        self._world_day = None
+
+    # ---------- 世界线 ----------
+
+    @property
+    def world_mode(self) -> str:
+        """off / shadow / live。off 时世界线完全不跑。"""
+        value = str(self.cfg.get("world_mode") or "off").strip().lower()
+        return value if value in ("off", "shadow", "live") else "off"
+
+    def world_text(self, bot: str, now: datetime.datetime) -> str:
+        """live 时给模型的【世界线】块：线 + 约定 + 在练的事 + 能力清单。"""
+        if self.world_mode != "live":
+            return ""
+        try:
+            recent = int(self.cfg.get("world_inject_recent", 12) or 12)
+        except Exception:
+            recent = 12
+        try:
+            head = build_world_text(self.world, bot, now, self.scene.label_for, recent=recent)
+        except Exception:
+            logger.warning("[super_enhance/life] 世界线渲染失败", exc_info=True)
+            head = ""
+        blocks = [head]
+        try:
+            blocks.append(self._promise_text(bot, now))
+        except Exception:
+            logger.warning("[super_enhance/life] 约定注入失败", exc_info=True)
+        try:
+            blocks.append(self._ability_text(bot))
+        except Exception:
+            logger.warning("[super_enhance/life] 能力清单注入失败", exc_info=True)
+        try:
+            blocks.append(self._training_text(bot, now))
+        except Exception:
+            logger.warning("[super_enhance/life] 在练的事注入失败", exc_info=True)
+        return "\n".join(x for x in blocks if x)
+
+    def state_for_planner(self, bot: str, date_text: str):
+        """主动对话读状态：live 下由世界线合成，其余读日程。"""
+        if self.world_mode != "live":
+            return self.store.get(bot, date_text)
+        try:
+            return self._world_state(bot, date_text)
+        except Exception:
+            logger.warning("[super_enhance/life] 世界线合成状态失败", exc_info=True)
+            return None
+
+    def _world_state(self, bot: str, date_text: str):
+        """把世界线当天的条目拼成一份 LifeState，供主动对话排期与提示词使用。"""
+        plan = self.world.day_plan(bot, date_text)
+        entries = []
+        for item in self.world.entries(date_text, bot):
+            start = str(item.get("start") or "")
+            if len(start) < 16:
+                continue
+            end = str(item.get("end") or "")
+            time_text = "%s-%s" % (start[11:], end[11:]) if len(end) >= 16 else start[11:]
+            entries.append(
+                TimelineEntry(
+                    time=time_text,
+                    schedule=str(item.get("doing") or item.get("place") or ""),
+                    outfit="",
+                    extras={},
+                )
+            )
+        # 世界线只有「已经发生」的时段，而主动消息的中段要拿未来的时段当锚点：
+        # 按骨架把清醒时段切开，补几个占位段（不含内容，只提供时间边界）
+        wake_min = clock_to_minute(plan.get("wake") or "06:30") or 390
+        sleep_min = clock_to_minute(plan.get("sleep") or "23:00") or 1380
+        if sleep_min <= wake_min:
+            sleep_min = wake_min + 60
+        cursor = wake_min
+        while cursor < sleep_min:
+            edge = min(cursor + 120, sleep_min)
+            entries.append(
+                TimelineEntry(
+                    time="%s-%s" % (minute_to_clock(cursor), minute_to_clock(edge)),
+                    schedule="",
+                    outfit="",
+                    extras={},
+                )
+            )
+            cursor = edge
+        if not entries and not plan:
+            return None
+        return LifeState(
+            date=date_text,
+            schedule_summary="（世界线：以最近条目为准）",
+            style_summary="",
+            timeline=entries,
+            wake_time=plan.get("wake") or "07:00",
+            sleep_time=plan.get("sleep") or "23:00",
+            status="ok",
+            generated_at="",
+            error="",
+        )
+
+    async def _world_loop(self) -> None:
+        """世界线后台循环：记录员（按会话防抖）+ 幕间补写 + 每日维护。"""
+        await asyncio.sleep(20.0)
+        while True:
+            try:
+                if self.world_mode != "off":
+                    now = self._now()
+                    today = now.date()
+                    if self._world_day != today:
+                        await self._world_daily(today)
+                        self._world_day = today
+                    for umo in self.recorder.sessions():
+                        items = self.recorder.pending(umo, now)
+                        if items:
+                            logger.info(
+                                "[super_enhance/life] 世界线：%s 待处理 %d 条，可跑=%s",
+                                umo, len(items), self.recorder.ready(umo, now),
+                            )
+                    done = await self.recorder.run_all(now)
+                    if self.life_step.due(now):
+                        await self.life_step.run(now)
+                    if done:
+                        self._debug("世界线：记录员处理了 %d 个会话", done)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error("[super_enhance/life] 世界线后台循环出错：%s", e)
+                self.world.note_error("loop", "%s: %s" % (type(e).__name__, e))
+            await asyncio.sleep(30.0)
+
+    async def _world_daily(self, today: datetime.date) -> None:
+        """世界线模式的每日维护：清理旧数据、结算在练的事、抽当天的随机起点。"""
+        date_text = today.isoformat()
+        try:
+            self.world.prune(today, int(self.cfg.get("world_keep_days", 30) or 30))
+        except Exception:
+            logger.warning("[super_enhance/life] 清理世界线失败", exc_info=True)
+        try:
+            self.promises.prune(date_text)
+            self.trainings.prune(date_text)
+        except Exception:
+            logger.warning("[super_enhance/life] 清理约定 / 在练的事失败", exc_info=True)
+        for bot in self.enabled_bots():
+            try:
+                plan = self.world.day_plan(bot, date_text)
+                if plan:
+                    self._debug(
+                        "[%s] 今天的作息：%s ~ %s", bot, plan.get("wake"), plan.get("sleep")
+                    )
+            except Exception:
+                pass
+            try:
+                await self.settle_trainings(bot)
+            except Exception:
+                logger.warning("[super_enhance/life] 结算在练的事失败", exc_info=True)
+            # 主动消息排期（原来挂在每日生成日程后面，世界线模式下挪到这里）
+            try:
+                state = self._world_state(bot, date_text)
+                if state is not None and self.planner.enabled:
+                    await self.planner.sync(bot, state, self._now())
+            except Exception:
+                logger.warning("[super_enhance/life] 主动对话排期失败", exc_info=True)
+        try:
+            if date_text not in (self.seed_log.load() or {}):
+                from .variety import draw_seed
+
+                labels = {b: (self.scene.label_for(b) or b) for b in self.enabled_bots()}
+                seed = draw_seed(date_text, labels=labels, history=self.seed_log.load())
+                self.seed_log.save(date_text, seed)
+                self._debug("世界线：已抽今天的随机起点")
+        except Exception:
+            logger.warning("[super_enhance/life] 抽今天的随机起点失败", exc_info=True)
 
     # ---------- 基础 ----------
 
@@ -246,11 +453,25 @@ class LifeStateService:
             logger.warning("[super_enhance/life] 清理过期主动任务失败：%s", e)
         if self.planner.enabled and not self.planner.install_gate():
             logger.warning("[super_enhance/life] cron_manager 还不可用，主动对话到点判断等排期时再接管")
-        self._task = asyncio.create_task(self._daily_loop())
-        logger.info("[super_enhance/life] 已启用（时区 %s）", self.timezone)
+        self.life_step.generator = self.generator
+        self.life_step.abilities_txt = self._ability_text
+        if self.world_mode != "off":
+            self._world_task = asyncio.create_task(self._world_loop())
+        if self.world_mode != "live":
+            self._task = asyncio.create_task(self._daily_loop())
+        logger.info(
+            "[super_enhance/life] 已启用（时区 %s，世界线=%s）", self.timezone, self.world_mode
+        )
 
     async def terminate(self) -> None:
         self.planner.uninstall_gate()
+        if self._world_task is not None:
+            self._world_task.cancel()
+            try:
+                await self._world_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._world_task = None
         if self._task is not None:
             self._task.cancel()
             try:
@@ -573,6 +794,19 @@ class LifeStateService:
         if not self._bot_enabled(bot):
             return
         now = self._now()
+        if self.world_mode == "live":
+            text = self.world_text(bot, now)
+            strip_fake_messages(getattr(req, "contexts", None) or [])
+            if not text:
+                self._debug("世界线为空，跳过注入")
+                return
+            mode = str(self.cfg.get("injection_mode") or "extra_user_content_parts")
+            if mode == "fake_tool_call":
+                req.contexts.extend(build_fake_messages(text))
+            else:
+                req.extra_user_content_parts.append(as_context_part(text))
+            self._debug("世界线注入（live）")
+            return
         date_text = now.date().isoformat()
         state = self.store.get(bot, date_text)
         if state is None or state.status not in ("ok", "deleted"):
@@ -702,6 +936,17 @@ class LifeStateService:
         except Exception:
             logger.error("[super_enhance/life] 主动对话换提示词失败", exc_info=True)
         now = self._now()
+        if self.world_mode == "live":
+            text = self.world_text(bot, now)
+            if not text:
+                return
+            parts = getattr(req, "extra_user_content_parts", None)
+            if not isinstance(parts, list):
+                parts = []
+                req.extra_user_content_parts = parts
+            parts.append(as_context_part(text))
+            logger.info("[super_enhance/life] [%s] 主动对话已注入世界线", bot)
+            return
         await self.settle_trainings(bot)
         blocks = [
             "\n".join(x for x in (self._ability_text(bot), self._training_text(bot, now)) if x),
@@ -729,7 +974,36 @@ class LifeStateService:
     # ---------- 在练的事 ----------
 
     def training_progress(self, item: dict, now: datetime.datetime | None = None):
-        return training_calc.compute(item, self.store.get, str(item.get("bot")), now or self._now())
+        moment = now or self._now()
+        bot = str(item.get("bot"))
+        if self.world_mode == "live":
+            tid = str(item.get("id"))
+            return training_calc.compute(
+                item, self.store.get, bot, moment,
+                spans_fn=lambda date_text: self._training_spans(bot, tid, date_text),
+            )
+        return training_calc.compute(item, self.store.get, bot, moment)
+
+    def _training_spans(self, bot: str, tid: str, date_text: str) -> list:
+        """世界线里标了这件事的时段（分钟区间）。开口的一条算到现在。"""
+        spans = []
+        want = str(tid).lstrip("#＃")
+        now = self._now()
+        for item in self.world.entries(date_text, bot):
+            got = str(item.get("training") or "").strip().lstrip("#＃")
+            if not got or got != want:
+                continue
+            start = parse_time(item.get("start"))
+            if start is None:
+                continue
+            end = parse_time(item.get("end"))
+            if end is None:
+                end = now if start.date() == now.date() else start.replace(hour=23, minute=59)
+            low = start.hour * 60 + start.minute
+            high = (end.hour * 60 + end.minute) if end.date() == start.date() else 1440
+            if high > low:
+                spans.append((low, high))
+        return sorted(spans)
 
     async def settle_trainings(self, bot: str) -> list[dict]:
         """结一遍账：把以前每天练的分钟数记进 log；够数的标成练成并写进能力清单。返回这次练成的。"""

@@ -865,7 +865,11 @@ class ProactivePlanner:
                 "你准备睡了，想跟主人道声晚安，可以顺带说说你今天或睡前在干嘛；"
                 "要是你们刚才正聊着，就顺着话头道晚安。"
             )
-        return "没什么特别的事，就是这会儿想起他了。"
+        return (
+            "这会儿没人在跟你说话。看看上面【世界线】里「你现在」那行——你正在做的事、"
+            "手边刚发生的小事、看到的什么，都可以是开口的由头：就着那个说一句，"
+            "比空说「没什么事，就是想你了」强。真没什么可说的就别发。"
+        )
 
     def build_note(self, meta: dict, now: datetime.datetime, chat: dict | None = None) -> str:
         """主动对话的提示词。到点时现场生成，排期时先存一份兜底。
@@ -876,10 +880,11 @@ class ProactivePlanner:
         kind = meta.get("kind") or "middle"
         lines = [
             "【主动找主人说话】",
-            "现在是 %s。没有人叫你，是你自己想找主人说说话。" % format_datetime(now),
+            "现在是 %s。没人在跟你说话，是你自己这会儿想说点什么。" % format_datetime(now),
         ]
         entry = self._entry_at(meta, now)
-        if entry is not None:
+        # 世界线模式下合成状态里没有「原本打算」，这一行只在老架构下有内容
+        if entry is not None and str(getattr(entry, "schedule", "") or "").strip():
             lines.append("你这会儿原本打算：%s" % entry.schedule)
             lines.append(PLAN_NOTE)
         lines.append(self._kind_line(meta, now, chat))
@@ -887,14 +892,14 @@ class ProactivePlanner:
             [
                 "",
                 "先想一想现在要不要说、说什么：",
+                "- **上面注入的【世界线】里「你现在」那行就是你此刻在做什么**，从那儿起头："
+                "顺口提一句手上的事、刚才碰见什么、看到什么，比空说「没什么事，就是想你了」强得多；",
                 "- 看看最近聊了什么、主人那边是什么情况（他说过在忙、在睡、出门了……），"
                 "能顺着之前的话题接着说最好；",
-                "- 结合你此刻在做的事和所在的地方来说：可以顺口带一句你在干嘛、碰到了什么，"
-                "但别写成汇报日程，也别一点不提自己在干嘛；",
+                "- 别写成汇报日程，也别一点不提自己在干嘛；",
                 "- 这会儿真不合适说话（比如他刚说要睡了、正忙着），可以不发，直接结束就行，不用解释%s；"
                 % ("（约定到点、刚练成这两种除外）" if kind in ("promise", "training") else ""),
                 "- 要发就调用 send_message_to_user 发出去：只有调用了才算真的发出去，光写在回复里他看不到；",
-                "- 你这会儿要是换了地方、或者在做的事变了，先用 update_my_scene 记一下再发；",
                 "- 扮演你的人设，一到两句纯文本，不要 Markdown、不要表情符号、不要罗列清单。",
             ]
         )
