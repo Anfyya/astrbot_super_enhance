@@ -10,15 +10,20 @@ import asyncio
 import datetime
 import hashlib
 import json
+import re
 
 from astrbot.api import logger
 
 from .models import bot_of_umo, extract_json
-from .world import WorldStore, clean_text, fmt_time, parse_time
+from .world import WorldStore, clean_text, fmt_time, is_event, parse_time, progress_of, result_text, steps_text
 
 SYSTEM_PROMPT = (
     "你只输出一个可以被 JSON 解析的对象，不要输出解释、Markdown 代码块或任何多余文本。"
 )
+
+# 给记录员对照的「后面排好的」：往后看几小时、每人最多几段
+PLANNED_HOURS = 6
+PLANNED_MAX = 8
 
 RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，整理成结构化的条目。
 
@@ -33,24 +38,33 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
 
 规则（只按这些做，不要推理没说出口的东西）：
 
-1. 只记原文里明确说了的。时间没说的，用那条消息的时间；说不清就先不记。
+1. 只记原文里明确说了的。时间没说的，用那条消息的时间；说不清就先不记。不许记晚于「现在」的事。
 2. 条目里的 start / end 一律写成完整的 "YYYY-MM-DD HH:MM"，**日期必须照抄对话原文里的日期**，不许只写时分、也不许自己推成别的日子。
-2. 主人说他自己的事（去了哪、在干什么），记成一条 who = "master" 的条目。
-3. 主人命令她做什么，记成 constraints（约束）；她答应并去做了，另记一条她的条目。
-4. 她说自己做了什么、在做什么，就算做了，记成她的条目（哪怕听着像编的）。
-5. 她说打算之后做什么，记成 intentions（打算），不是条目。
-6. 两个角色之间的对话同样处理；另一个角色说的话，不能当成主人说的。
-7. 每条条目写两层：public 是住在一起的人自然会知道的粗粒度信息（人在哪、大概在干哪类事，例如"在藏经阁闭关练功"、"出门吃饭了"），可以为空表示别人完全不知道；doing 是细节，可以写具体在干什么、聊了什么。
-8. seen_by 写"谁能看到细节"：当事人自己不用写；当时在场的人、以及这段话本来是在哪段私聊里说的，写进去。
-9. 这段时间里发生的事都要记下来（她做了什么、去了哪、什么时候、主人交代了什么要紧的话），不要只挑一两件；纯寒暄和问答不用单独记。
-10. 上面「生效中的约束」里，如果有哪条的到期条件（until）已经达成（例如"问完丛雨""菜热好端上桌"），把它的编号填进 lift_constraints。
-11. 藏经阁的门是关着的：里面的人不主动出来，外面的人看不见里面在做什么，不要写谁「打那儿过瞧见」里面。
-
+3. 主人说他自己的事（去了哪、在干什么），记成一条 who = "master" 的条目。
+4. 主人命令她做什么，记成 constraints（约束）；她答应并去做了，另记一条她的条目。约束的 since 填主人说这句话的那条消息的时间；主人说了期限的要换算成 until_time（"这几天"按三天算、"今晚"到当天 23:59、"明天之前"到明天 0:00），只说了条件的写进 until。
+5. 她的条目分两种，写在 kind 里：
+   - "activity"：她开始做另一件事、换了地方、把手上的事放下去干别的（主人叫她过去、叫她去做什么，她答应并去做了也算）。一条只写一件事，她说了接连要做几件的，按先后拆成几条首尾相接。end 写这件事按常理预计做完的时刻（晚于 start）；她说已经做完的，end 写做完的那一刻。
+   - "event"：做手上的事当中顺带发生的一件事（递了个东西、被摸了头、答应了什么），只有一个时刻，不写 end，不打断手上那件。
+   她只是边做事边跟人说话，或者说的就是下面「她们此刻手上的事」里那件，什么都不用记：聊天本身不算一件事。她说自己做了什么、在做什么，就算做了（哪怕听着像编的）。
+   只有和她手上那件真冲突，才记一段新的 activity 把它换掉。真冲突是指：她说人在别的地方；她说那件事停下了、做完了；她说正在做的事和手上那件不可能同时做。只是没提手上那件、只提了其中一部分、或者说了件能同时做的小事，都不算冲突：能记成 event 就记 event，不然什么都不记。没说不等于没做。
+   手上那段标着「闲着」的：她说开始做了一件具体的事（看书、出门、做饭……），就记一段新的 activity。
+6. 她说打算之后做什么，记成 intentions（打算），不是条目。
+7. 两个角色之间的对话同样处理；另一个角色说的话，不能当成主人说的。
+8. 每条条目写两层：public 是住在一起的人自然会知道的粗粒度信息（人在哪、大概在干哪类事，例如"在藏经阁闭关练功"、"出门吃饭了"），可以为空表示别人完全不知道；doing 是细节，可以写具体在干什么、聊了什么。
+9. seen_by 写"谁能看到细节"：当事人自己不用写；当时在场的人、以及这段话本来是在哪段私聊里说的，写进去。
+10. 这段时间里发生的事都要记下来（她开始做什么、去了哪、什么时候、主人交代了什么要紧的话），不要只挑一两件；纯寒暄、一句话的应答、边干活边聊天都不用记，同一件事连着说的几句合成一条。
+11. 上面「生效中的约束」里，已经不该再管着她的，把编号填进 lift_constraints：到期条件已经达成的；主人撤销或放宽了的；后来发生的事已经和它对不上的（例如被赶出去、禁足之后主人又叫她回来、原谅了她；说好"这几天"的那几天已经过了）；因为某件事才定的规矩，那件事结束了也跟着撤（两个人的都算）。拿不准就不动。
+12. 条目里如果是在练「在练的事」里的某件，training 填它的编号，例如 "#2"；不是在练就留空。trainings 里 update / done / drop 的 id 也填这个编号。
+13. 她在回答、解释、回忆以前的事（昨天、早上、刚才已经说过的）时，那件事不是这会儿发生的：不要按这条消息的时间再记一条；下面「今天已经记了的」里有的别重复记。确实没记过、要补的，时间写成那件事实际发生的时候。
+14. 上面列的「打算」里，她之前说过的打算如果已经做完了，或者后来的事已经和它对不上了（例如说好在社务所等，后来人已经回了宿舍），把她的 key 填进 drop_intentions；这次又说了新打算的，照常写进 intentions。
+15. 她把上面「她们后面已经排好、还没做的」里的某件事，说成已经做了、或者正在做：这件事不记成条目，也不要为它改别的条目，写进 early：who、entry（那段的编号）、said（她原话里说的那句）。只算那张单子里有的事；单子里没有的事，照上面的规则记。她说的是「待会儿去」「打算做」，不算，不写 early。
+16. 「她们后面已经排好、还没做的」是按排的那会儿的情况写的。这段对话里说的事让其中某几段对不上了的（例如主人说他回来了、出门了，她答应了这会儿去做别的，人换了地方，那段写的事已经做过了），把对不上的那几段写进 stale：who、entry（编号）、why（一句话说哪里对不上）。只写对不上的；照样做得了、不受影响的不写。写进 stale 的段会撤掉，按现在的情况重排。
+{world_notes}
 输出这个 JSON（没有的字段留空数组）：
 
 {{
   "entries": [
-    {{"who": "napcat", "start": "2026-10-11 09:00", "end": "", "place": "", "doing": "",
+    {{"who": "napcat", "kind": "activity", "start": "2026-10-11 09:00", "end": "2026-10-11 09:40", "place": "", "doing": "",
       "public": "", "with": [], "training": "", "seen_by": [], "quote": "摘一句原文"}}
   ],
   "constraints": [
@@ -59,6 +73,9 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
   ],
   "lift_constraints": ["c3"],
   "intentions": [{{"who": "napcat", "text": "下午想去温泉街挑布", "window": "13:00~16:00"}}],
+  "drop_intentions": ["napcat2"],
+  "early": [{{"who": "napcat2", "entry": "e88", "said": "衣裳收进屋叠好了"}}],
+  "stale": [{{"who": "napcat2", "entry": "e100", "why": "排的是守着水等主人回来，主人已经回来了"}}],
   "promises": [{{"action": "add", "bots": ["napcat"], "date": "2026-10-12", "time": "14:00",
                 "what": "陪主人进山看红叶", "with": "主人"}}],
   "trainings": [{{"action": "start", "bot": "napcat", "what": "收放自如", "standard": "十回连着一收一放不漏不散",
@@ -71,6 +88,26 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
 - trainings：start（开始练）/ update（改时长或标准）/ done（练成了）/ drop（不练了），update/done/drop 要填 id。
 - abilities 只在主人明确确认她学会了一件新本事、而这件事不是在练的事时才写，很少用。
 """
+
+
+REVIEW_TEMPLATE = """现在是 {now}。下面是还在生效的规矩（约束），以及最近两天世界线里记下的事。
+请判断哪些规矩已经不该再管着她们了。
+
+还在生效的规矩：
+{constraints}
+
+最近两天发生的事（按时间先后）：
+{events}
+
+算「不该再管着」的情况：到期条件已经达成；主人撤销或放宽了；后来发生的事已经和它对不上了
+（例如被赶出去、禁足之后主人又叫她回来、原谅了她；说好"这几天"的那几天已经过了）；
+规矩是因为某件事才定的（例如因为丛雨被赶走，才让亚托莉别去找她、这几天只陪主人），那件事结束了，规矩也跟着撤。
+说话方式这类一直有效的规矩（例如回话不许用某个字）不要动。拿不准就不动。
+
+只输出 JSON：{{"lift": [{{"id": "c10", "reason": "一句话说明"}}]}}
+"""
+
+REVIEW_MAX_EVENTS = 160
 
 
 def norm_time(value, date_text: str, fallback: str = "") -> str:
@@ -103,6 +140,10 @@ class Recorder:
         self._now = now_fn
         self.tz = tz
         self._running: set[str] = set()
+        # 她把日程里后面才做的事说早了：async (bot, umo, entry, said, now)，由 service 接上去叫她改口
+        self.on_early = None
+        self._early: list = []
+        self._early_seen: set[str] = set()
 
     # ---------- 配置 ----------
 
@@ -204,6 +245,22 @@ class Recorder:
             )
         return "\n".join(lines)
 
+    def _recorded_today(self, now: datetime.datetime, per_person: int = 8) -> list[str]:
+        """今天每个人已经记了的最近几条（供记录员对照，别把回忆当成新的事再记一遍）。"""
+        flat = now.replace(tzinfo=None)
+        date_text = flat.date().isoformat()
+        rows = []
+        for who in list(self.raw_log.enabled_bots()) + ["master"]:
+            name = "主人" if who == "master" else (self.label(who) or who)
+            items = [x for x in self.world.entries(date_text, who)
+                     if parse_time(x.get("start")) and parse_time(x.get("start")) <= flat]
+            for item in items[-per_person:]:
+                rows.append("  - %s %s %s：%s" % (
+                    str(item.get("start"))[11:16], name, item.get("place") or "",
+                    clean_text(item.get("doing") or item.get("public"), 60) + result_text(item),
+                ))
+        return rows
+
     def _today_block(self, now: datetime.datetime) -> str:
         date_text = now.date().isoformat()
         parts = []
@@ -221,7 +278,16 @@ class Recorder:
         if master:
             parts.append("- 主人最近一条动向：%s %s" % (master.get("start"), master.get("place")))
         for item in self.world.constraints(active_only=True):
-            parts.append("- 生效中的约束 %s（%s）：%s" % (item.get("id"), item.get("who"), item.get("text")))
+            parts.append(
+                "- 生效中的约束 %s（%s，%s 起%s）：%s"
+                % (
+                    item.get("id"),
+                    self.label(str(item.get("who"))) or item.get("who"),
+                    str(item.get("since") or "")[5:16],
+                    "，到期条件：%s" % item["until"] if item.get("until") else "",
+                    item.get("text"),
+                )
+            )
         for item in self.world.intentions():
             parts.append("- 打算（%s）：%s %s" % (item.get("who"), item.get("text"), item.get("window") or ""))
         book = getattr(self, "trainings", None)
@@ -231,8 +297,8 @@ class Recorder:
                     if str(item.get("status")) != "open":
                         continue
                     parts.append(
-                        "- 在练的事 #%s（%s）：%s（练了多久由程序按条目算，你不用管）"
-                        % (item.get("id"), item.get("bot"), item.get("what"))
+                        "- 在练的事 #%s（%s）：%s（条目里在练它就把 training 填成 #%s；练了多久由程序按条目算）"
+                        % (item.get("id"), item.get("bot"), item.get("what"), item.get("id"))
                     )
             except Exception:
                 pass
@@ -248,7 +314,71 @@ class Recorder:
                     )
             except Exception:
                 pass
+        flat = now.replace(tzinfo=None)
+        for bot in self.raw_log.enabled_bots():
+            cur = self.world.current(bot, flat)
+            if cur is None:
+                continue
+            pct = None if cur.get("idle") else progress_of(cur, flat)
+            parts.append("- 她们此刻手上的事：%s（%s）%s %s%s，%s 起%s%s" % (
+                self.label(bot) or bot, bot, cur.get("place") or "", clean_text(cur.get("doing"), 400),
+                "（闲着，没在做具体的事）" if cur.get("idle") else steps_text(cur) + result_text(cur),
+                str(cur.get("start"))[11:16],
+                "，预计 %s 做完" % str(cur.get("end"))[11:16] if cur.get("end") else "",
+                "，做了 %d%%" % pct if pct is not None else "",
+            ))
+        recorded = self._recorded_today(now)
+        if recorded:
+            parts.append("- 今天已经记了的（每人最近几条）：")
+            parts.extend(recorded)
         return "今天到目前为止（供你对照，别重复记）：\n" + ("\n".join(parts) if parts else "（空）")
+
+    def _since(self, items, now: datetime.datetime) -> datetime.datetime:
+        """这批消息里最早那条的时刻（不带时区的本地时间）；拿不到就用现在。"""
+        stamps = []
+        for item in items or []:
+            try:
+                stamps.append(float(item.get("ts")))
+            except Exception:
+                pass
+        if not stamps:
+            return now.replace(tzinfo=None)
+        return datetime.datetime.fromtimestamp(min(stamps), self.tz).replace(tzinfo=None)
+
+    def _planned_block(self, items, now: datetime.datetime) -> str:
+        """这批消息开始之后才排着的段（还没做的），给记录员对照「她是不是说早了」「后面排的还对不对得上」。"""
+        since = self._since(items, now)
+        horizon = now.replace(tzinfo=None) + datetime.timedelta(hours=PLANNED_HOURS)
+        lines = []
+        for bot in self.raw_log.enabled_bots():
+            label = self.label(bot) or bot
+            count = 0
+            for day in (since.date(), since.date() + datetime.timedelta(days=1)):
+                for item in self.world.entries(day.isoformat(), bot):
+                    start = parse_time(item.get("start"))
+                    if start is None or start <= since or start > horizon or is_event(item):
+                        continue
+                    lines.append("- %s %s（%s）%s–%s %s%s" % (
+                        item.get("id"), label, bot, str(item.get("start"))[11:16],
+                        str(item.get("end"))[11:16] or "…", "（闲着）" if item.get("idle") else "",
+                        clean_text(item.get("doing") or item.get("place"), 80) + result_text(item)))
+                    count += 1
+                    if count >= PLANNED_MAX:
+                        break
+                if count >= PLANNED_MAX:
+                    break
+        if not lines:
+            return ""
+        return "\n\n她们后面已经排好、还没做的（按安排之后才做）：\n" + "\n".join(lines)
+
+    @property
+    def world_notes(self) -> str:
+        """配置里写的故事固定事实（藏经阁在哪、门关不关这类），一行一条。"""
+        text = str(self.cfg.get("world_notes") or "").strip()
+        lines = [x.strip().lstrip("-• ").strip() for x in text.splitlines() if x.strip()]
+        if not lines:
+            return ""
+        return "\n故事里的固定事实（照着记，不要写出和它冲突的事）：\n" + "\n".join("- " + x for x in lines)
 
     def build_prompt(self, umo: str, items: list[dict], now: datetime.datetime) -> str:
         labels = "、".join(
@@ -259,7 +389,8 @@ class Recorder:
             where=self._where_text(umo),
             labels=labels or "（未配置）",
             transcript=self._transcript(items, umo),
-            today_block=self._today_block(now),
+            today_block=self._today_block(now) + self._planned_block(items, now),
+            world_notes=self.world_notes,
         )
 
     # ---------- 执行 ----------
@@ -309,7 +440,9 @@ class Recorder:
             last = items[-1]
             last_ts = float(last.get("ts") or moment.timestamp())
             self.world.set_cursor(umo, last_ts, _digest(last.get("text")))
+            self.world.clear_error("recorder")
             logger.info("[super_enhance/world] 记录员处理了 %d 条（%s）", len(items), umo)
+            await self._flush_early(moment)
             return True
         except Exception as e:
             logger.error("[super_enhance/world] 记录员失败：%s", e)
@@ -333,6 +466,72 @@ class Recorder:
                 break
         return count
 
+    # ---------- 约束复核（每天一次） ----------
+
+    def _review_prompt(self, active: list, now: datetime.datetime) -> str:
+        flat = now.replace(tzinfo=None)
+        rows = []
+        for item in active:
+            rows.append(
+                "- %s（%s，%s 起%s%s）：%s"
+                % (
+                    item.get("id"),
+                    self.label(str(item.get("who"))) or item.get("who"),
+                    str(item.get("since") or "")[5:16],
+                    "，到期条件：%s" % item["until"] if item.get("until") else "",
+                    "，到 %s 为止" % item["until_time"] if item.get("until_time") else "",
+                    item.get("text"),
+                )
+            )
+        events = []
+        for back in (1, 0):
+            date_text = (flat.date() - datetime.timedelta(days=back)).isoformat()
+            for item in self.world.entries(date_text, ""):
+                start = parse_time(item.get("start"))
+                if start is None or start > flat:
+                    continue
+                who = str(item.get("who") or "")
+                name = "主人" if who == "master" else (self.label(who) or who)
+                text = clean_text(item.get("doing") or item.get("public") or item.get("place"), 90)
+                events.append("- %s %s %s：%s" % (str(item.get("start"))[5:16], name, item.get("place") or "", text))
+        events = events[-REVIEW_MAX_EVENTS:]
+        return REVIEW_TEMPLATE.format(
+            now=fmt_time(flat),
+            constraints="\n".join(rows),
+            events="\n".join(events) or "（没有记录）",
+        )
+
+    async def review_constraints(self, now: datetime.datetime | None = None) -> list:
+        """对照最近两天的世界线，把已经过时的约束撤掉。返回撤掉的编号。"""
+        moment = now or self._now()
+        active = self.world.constraints(active_only=True)
+        if not active:
+            return []
+        provider = self._resolve_provider()
+        if provider is None:
+            raise RuntimeError("没有可用的模型")
+        response = await asyncio.wait_for(
+            provider.text_chat(
+                prompt=self._review_prompt(active, moment),
+                system_prompt=SYSTEM_PROMPT,
+                session_id="super_enhance_constraint_review",
+            ),
+            timeout=self.timeout,
+        )
+        data = extract_json(getattr(response, "completion_text", "") or "")
+        if not isinstance(data, dict):
+            raise RuntimeError("返回内容不是 JSON")
+        ids = {str(x.get("id")) for x in active}
+        lifted = []
+        for raw in data.get("lift") or []:
+            if not isinstance(raw, dict):
+                continue
+            cid = str(raw.get("id") or "").strip()
+            if cid in ids and cid not in lifted:
+                self.world.lift_constraint(cid, note="复核解除：%s" % clean_text(raw.get("reason"), 60))
+                lifted.append(cid)
+        return lifted
+
     # ---------- 落库 ----------
 
     def _seen_by(self, entry: dict, umo: str) -> list[str]:
@@ -343,8 +542,30 @@ class Recorder:
                 out.append(value)
         return out
 
+    def training_id(self, value, bot: str = "") -> str:
+        """training 字段：「#2」「2」直接认；写成名字的按在练的事对上编号；对不上、或那件事已经不在练就留空。"""
+        text = str(value or "").strip().lstrip("#＃").strip()
+        if not text:
+            return ""
+        book = getattr(self, "trainings", None)
+        if book is None:
+            return ""
+        open_items = [
+            x for x in book.items()
+            if str(x.get("status")) == "open" and (not bot or str(x.get("bot")) == str(bot))
+        ]
+        if text.isdigit():
+            return text if any(str(x.get("id")) == text for x in open_items) else ""
+        key = re.sub(r"[\s，。,.!！?？、：:「」（）()]+", "", text)
+        for item in open_items:
+            what = re.sub(r"[\s，。,.!！?？、：:「」（）()]+", "", str(item.get("what") or ""))
+            if what and (what in key or key in what):
+                return str(item.get("id"))
+        return ""
+
     def apply(self, umo: str, data: dict, now: datetime.datetime, items=None) -> None:
         batch = list(items or [])
+        flat_now = now.replace(tzinfo=None)
         for raw in data.get("entries") or []:
             if not isinstance(raw, dict):
                 continue
@@ -354,16 +575,25 @@ class Recorder:
             start = norm_time(raw.get("start"), now.date().isoformat(), fallback=fmt_time(now))
             if not start:
                 continue
+            if parse_time(start) > flat_now + datetime.timedelta(minutes=5):
+                # 不可能发生在「现在」之后：多半是日期猜错了，宁可不记
+                logger.warning("[super_enhance/world] 记录员给了晚于现在的条目，丢掉：%s %s", start, raw.get("doing"))
+                continue
             date_text = start[:10]
+            kind = "event" if str(raw.get("kind") or "") == "event" and who != "master" else "activity"
+            end = "" if kind == "event" else norm_time(raw.get("end"), date_text)
+            if end and parse_time(end) is not None and parse_time(end) <= parse_time(start):
+                end = ""
             entry = {
                 "who": who,
+                "kind": kind,
                 "start": start,
-                "end": norm_time(raw.get("end"), date_text),
+                "end": end,
                 "place": raw.get("place"),
                 "doing": raw.get("doing"),
                 "public": raw.get("public"),
                 "with": raw.get("with") or [],
-                "training": raw.get("training"),
+                "training": self.training_id(raw.get("training"), who),
                 "seen_by": self._seen_by(raw, umo),
                 "source": "chat",
                 "src_umo": umo,
@@ -392,16 +622,79 @@ class Recorder:
             })
         for cid in data.get("lift_constraints") or []:
             self.world.lift_constraint(str(cid), note="对话里解除")
+        # 先撤掉过时的打算，再记这次新说的
+        for who in data.get("drop_intentions") or []:
+            if str(who or "").strip():
+                self.world.clear_intention(str(who).strip())
         for raw in data.get("intentions") or []:
             if isinstance(raw, dict):
                 self.world.set_intention(
                     str(raw.get("who") or ""), raw.get("text"), raw.get("window") or "", "chat"
                 )
-        self._apply_promises(data.get("promises") or [], now)
+        self._apply_promises(data.get("promises") or [], now, umo)
+        self._collect_early(data.get("early") or [], umo, items, now)
+        self._apply_stale(data.get("stale") or [], data.get("early") or [], now)
         self._apply_trainings(data.get("trainings") or [], now)
         self._apply_abilities(data.get("abilities") or [], now)
 
-    def _apply_promises(self, items, now: datetime.datetime) -> None:
+    def _collect_early(self, raws, umo: str, items, now: datetime.datetime) -> None:
+        """记录员标出的「说早了」：核对那段确实在这批消息之后才排着，攒起来等 run 里叫她改口。"""
+        since = self._since(items, now)
+        bots = set(self.raw_log.enabled_bots())
+        for raw in raws:
+            if not isinstance(raw, dict):
+                continue
+            who = str(raw.get("who") or "").strip()
+            entry_id = str(raw.get("entry") or "").strip()
+            if who not in bots or not entry_id or entry_id in self._early_seen:
+                continue
+            date_text = self.world.date_of(entry_id, who, since)
+            entry = next((x for x in self.world.entries(date_text, who) if str(x.get("id")) == entry_id), None) if date_text else None
+            start = parse_time(entry.get("start")) if entry else None
+            if entry is None or start is None or start <= since:
+                logger.info("[super_enhance/world] 记录员说%s说早了 %s，对不上日程，不管", who, entry_id)
+                continue
+            self._early_seen.add(entry_id)
+            self._early.append((who, umo, dict(entry), clean_text(raw.get("said"), 120)))
+
+    def _apply_stale(self, raws, early, now: datetime.datetime) -> None:
+        """记录员说对不上了的「后面排好的段」：还没开始、是补写排的才撤；撤掉的空档由补写按现在的情况重排。"""
+        flat = now.replace(tzinfo=None)
+        bots = set(self.raw_log.enabled_bots())
+        # 同一段又被说成「说早了」的：要叫她改口，那段得留着
+        keep = {str(x.get("entry") or "").strip() for x in early if isinstance(x, dict)}
+        for raw in raws:
+            if not isinstance(raw, dict):
+                continue
+            who = str(raw.get("who") or "").strip()
+            entry_id = str(raw.get("entry") or "").strip()
+            if who not in bots or not entry_id or entry_id in keep:
+                continue
+            date_text = self.world.date_of(entry_id, who, flat)
+            entry = next((x for x in self.world.entries(date_text, who) if str(x.get("id")) == entry_id), None) if date_text else None
+            start = parse_time(entry.get("start")) if entry else None
+            if entry is None or start is None or start <= flat or str(entry.get("source") or "") != "step":
+                logger.info("[super_enhance/world] 记录员说%s的 %s 对不上了，但它不是还没开始的补写段，不动", who, entry_id)
+                continue
+            self.world.delete_entry(date_text, entry_id)
+            logger.info(
+                "[super_enhance/world] 记录员撤掉%s排好的 %s %s–%s %s（%s）",
+                self.label(who) or who, entry_id, str(entry.get("start"))[11:16], str(entry.get("end"))[11:16],
+                clean_text(entry.get("doing"), 30), clean_text(raw.get("why"), 60),
+            )
+
+    async def _flush_early(self, now: datetime.datetime) -> None:
+        """攒下的「说早了」逐条交出去叫她改口；出错不影响记录员。"""
+        pending, self._early = self._early, []
+        if self.on_early is None:
+            return
+        for who, umo, entry, said in pending:
+            try:
+                await self.on_early(who, umo, entry, said, now)
+            except Exception:
+                logger.warning("[super_enhance/world] 叫她改口没排上", exc_info=True)
+
+    def _apply_promises(self, items, now: datetime.datetime, umo: str = "") -> None:
         book = getattr(self, "promises", None)
         if book is None:
             return
@@ -460,11 +753,19 @@ class Recorder:
                         fields["need_hours"] = raw["need_hours"]
                     if fields:
                         book.update(str(raw.get("id") or ""), **fields)
-                elif action in ("done", "drop"):
+                elif action == "done":
+                    item = book.get(str(raw.get("id") or ""))
+                    if item is None or str(item.get("status")) != "open":
+                        continue
+                    finish = getattr(self, "finish_fn", None)
+                    if finish is not None:
+                        # 和练够时长自动练成走同一条路：标练成、写进能力清单
+                        finish(str(item.get("bot")), item, now, "对话里练成")
+                    else:
+                        book.set_status(item["id"], "done", note=clean_text(raw.get("note"), 80))
+                elif action == "drop":
                     book.set_status(
-                        str(raw.get("id") or ""),
-                        "done" if action == "done" else "dropped",
-                        note=clean_text(raw.get("note"), 80),
+                        str(raw.get("id") or ""), "cancelled", note=clean_text(raw.get("note"), 80)
                     )
             except Exception as e:
                 logger.warning("[super_enhance/world] 记录员写在练的事失败：%s", e)

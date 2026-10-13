@@ -46,8 +46,18 @@ MAX_POSTPONES = 72
 # 顺延后和同一会话的另一条相差不到这么久，就并成一条（秒）
 MERGE_SECONDS = 120
 # 并成一条时留哪条：练成 > 约定 > 晚安 > 早安 > 中段
-KIND_RANK = {"training": 4, "promise": 3, "night": 2, "morning": 1, "middle": 0}
-KIND_LABEL = {"training": "练成", "promise": "约定", "night": "晚安", "morning": "早安", "middle": "中段"}
+KIND_RANK = {"correct": 5, "training": 4, "promise": 3, "night": 2, "morning": 1, "middle": 0, "done": 0,
+             "out": 0, "back": 0, "meal": 0}
+KIND_LABEL = {"correct": "改口", "training": "练成", "promise": "约定", "night": "晚安", "morning": "早安", "middle": "中段",
+              "done": "做完一件事", "out": "出门", "back": "回来", "meal": "开饭"}
+# 随手叫她的几种（做完一件事、出门、回来、开饭）：彼此不挡，只让早安晚安、约定、改口、练成这些挡住
+CASUAL_KINDS = ("done", "out", "back", "meal", "middle")
+# 必须发的几种（主人定的规矩不许开口时除外）
+MUST_SEND = ("correct", "promise", "training")
+# 世界线 live：做完一件事时，前后这么久里已经排着早安 / 晚安 / 约定，就不再另发（分钟）
+DONE_SKIP_MINUTES = 15
+# 做完一件事后过多久发（秒）
+DONE_DELAY_SECONDS = 20
 # 排期时刻的随机偏移（分钟）：起床后、睡前、时段开始后
 MORNING_DELAY = (3, 15)
 NIGHT_LEAD = (5, 20)
@@ -56,6 +66,9 @@ MIDDLE_DELAY = (5, 25)
 MIN_GAP_MINUTES = 30
 # 早于这个钟点的消息算「昨天夜里」，不算今天已经说过话
 DAY_START_HOUR = 4
+# 给她看的「今天主动发过的话」最多列几条、每条截多长
+SENT_TODAY_LIMIT = 20
+SENT_TEXT_LEN = 80
 # AstrBot 给 cron 唤醒加的英文系统提示的开头：本插件的主动对话整段去掉，用自己的提示词
 CRON_SYSTEM_MARK = "You are an autonomous proactive agent."
 
@@ -90,6 +103,16 @@ def is_proactive_event(event) -> bool:
     return isinstance(job, dict) and str(job.get("name") or "").startswith(JOB_PREFIX)
 
 
+def job_kind_casual(kind: str) -> bool:
+    return str(kind) in CASUAL_KINDS
+
+
+def clean_line(text, limit: int) -> str:
+    """压成一行，太长截断加省略号。"""
+    value = " ".join(str(text or "").split())
+    return value if len(value) <= limit else value[:limit] + "…"
+
+
 def _parse_iso(text, tz: ZoneInfo) -> datetime.datetime | None:
     try:
         value = datetime.datetime.fromisoformat(str(text))
@@ -122,6 +145,8 @@ class ProactivePlanner:
         self.trainings_fn = None
         # 由 service 注入：async (bot, 编号) → 结一遍账后这件事是不是已经练成
         self.training_done_fn = None
+        # 由 service 注入：() → 世界线是不是 live（live 时提示词里不写「原本打算」）
+        self.live_fn = None
         # 由 service 注入：日程（到点取此刻的打算）、原始消息副本里某会话今天 + 昨天的消息、
         # 某会话最近一次有人说话的时刻、最近一次主动消息真正发出的时刻
         self.store = None
@@ -232,6 +257,186 @@ class ProactivePlanner:
                 created,
             )
         return created
+
+    async def _jobs_of(self, cron, bot: str, date_text: str = "") -> list:
+        """该机器人（某天）已排的任务。"""
+        try:
+            jobs = await cron.list_jobs("active_agent")
+        except Exception:
+            return []
+        out = []
+        for job in jobs or []:
+            name = str(getattr(job, "name", "") or "")
+            if not name.startswith(JOB_PREFIX):
+                continue
+            if date_text and _job_date(name) != str(date_text):
+                continue
+            payload = getattr(job, "payload", None) or {}
+            if bot_of_umo(str(payload.get("session") or "")) != bot:
+                continue
+            out.append(job)
+        return out
+
+    async def _add_job(self, cron, meta: dict, target: str, at: datetime.datetime) -> bool:
+        name = "%s %s %s %s" % (JOB_PREFIX, meta["date"], at.strftime("%H:%M"), target)
+        payload = {"session": target, "note": self.build_note(meta, at)}
+        payload.update(self._meta_payload(meta))
+        try:
+            await cron.add_active_job(
+                name=name,
+                cron_expression=None,
+                payload=payload,
+                description="%s｜%s" % (meta["kind"], target),
+                timezone=str(self.timezone),
+                run_once=True,
+                run_at=at,
+            )
+            return True
+        except Exception as e:
+            logger.warning("[super_enhance/life] 建立主动对话任务失败：%s", e)
+            return False
+
+    async def sync_live(self, bot: str, date_text: str, wake: str, sleep: str,
+                        now: datetime.datetime | None = None) -> int:
+        """世界线 live：排当天的早安、晚安、约定。只补缺的，已经排了的不动（重启不会改时间）。"""
+        if not self.enabled:
+            return 0
+        targets = self._targets(bot)
+        cron = self._cron()
+        if not targets or cron is None:
+            return 0
+        self.install_gate()
+        local_now = (now or datetime.datetime.now(self.timezone)).astimezone(self.timezone)
+        day = datetime.date.fromisoformat(str(date_text))
+        # 时刻的随机偏移按（角色, 日期）定死：同一天怎么重算都一样
+        rng = random.Random("%s|%s" % (bot, date_text))
+        wake_min = clock_to_minute(wake)
+        sleep_min = clock_to_minute(sleep)
+        wake_min = wake_min if wake_min is not None else 7 * 60
+        sleep_min = sleep_min if sleep_min is not None else 23 * 60
+        if sleep_min <= wake_min:
+            sleep_min += 1440
+        wanted = [
+            ("morning", wake_min + rng.randint(*MORNING_DELAY), None),
+            ("night", sleep_min - rng.randint(*NIGHT_LEAD), None),
+        ]
+        promise_minutes = set()
+        for minute, item in self._promise_slots(bot, date_text):
+            wanted.append(("promise", minute, item))
+            promise_minutes.add(minute)
+        jobs = await self._jobs_of(cron, bot, date_text)
+        have = set()
+        for job in jobs:
+            meta = self._meta_of(job, dict(getattr(job, "payload", None) or {}))
+            if meta["kind"] in ("middle", "training") or (
+                meta["kind"] == "promise" and meta.get("minute") not in promise_minutes
+            ):
+                # 老架构排的中段 / 练成，和已经不在的约定：撤掉
+                try:
+                    await cron.delete_job(job.job_id)
+                except Exception:
+                    pass
+                continue
+            have.add((meta["kind"], meta.get("minute")))
+        created = 0
+        for kind, minute, item in wanted:
+            if (kind, minute) in have:
+                continue
+            at = datetime.datetime.combine(day, datetime.time(0, 0), tzinfo=self.timezone) + datetime.timedelta(minutes=minute)
+            if at <= local_now:
+                continue
+            meta = {"kind": kind, "bot": bot, "date": date_text, "minute": minute, "postponed": 0}
+            if item is not None:
+                meta["promise"] = {
+                    "what": str(item.get("what") or ""),
+                    "with": promise_with_for(item, bot, self.label_fn),
+                }
+            for target in targets:
+                if await self._add_job(cron, meta, target, at):
+                    created += 1
+        if created:
+            logger.info("[super_enhance/life] [%s] 已为 %s 补排 %d 条主动对话（早安 / 晚安 / 约定）", bot, date_text, created)
+        return created
+
+    async def fire_done(self, bot: str, entry: dict, now: datetime.datetime | None = None, kind: str = "done") -> int:
+        """世界线 live：叫她一次（发不发她自己定）。kind：done 做完一件够分的事；out 出门；back 到家；meal 开饭。"""
+        if not self.enabled:
+            return 0
+        targets = self._targets(bot)
+        cron = self._cron()
+        if not targets or cron is None:
+            return 0
+        self.install_gate()
+        # 传进来的时刻可能是补写开始前取的（补写一跑好几分钟）：比现在早就用现在，免得排进过去、永远不发
+        real_now = datetime.datetime.now(self.timezone)
+        local_now = max((now or real_now).astimezone(self.timezone), real_now)
+        at = (local_now + datetime.timedelta(seconds=DONE_DELAY_SECONDS)).replace(microsecond=0)
+        created = 0
+        for target in targets:
+            near = None
+            for job in await self._pending_jobs(cron, target, exclude=""):
+                payload = dict(getattr(job, "payload", None) or {})
+                run_at = _parse_iso(payload.get("run_at"), self.timezone)
+                other = self._meta_of(job, payload)["kind"]
+                if run_at is not None and (real_now - run_at).total_seconds() > 60:
+                    continue  # 早就过了点、一直没发的（停机、排进了过去），不算「前后已经排着」
+                if kind != "done" and job_kind_casual(other):
+                    continue  # 出门、回来、开饭：随手叫她的那几种挡不住，出去三分钟就回来也两条都发
+                if run_at is not None and abs((run_at - at).total_seconds()) <= DONE_SKIP_MINUTES * 60:
+                    near = other
+                    break
+            if near is not None:
+                logger.info(
+                    "[super_enhance/life] [%s] %s「%s」：前后已经排着一条（%s），不另发",
+                    bot, KIND_LABEL.get(kind, kind), str(entry.get("doing") or "")[:20], KIND_LABEL.get(near, near),
+                )
+                continue
+            meta = {
+                "kind": kind, "bot": bot, "date": at.date().isoformat(),
+                "minute": at.hour * 60 + at.minute, "postponed": 0,
+                "done": {
+                    "doing": str(entry.get("doing") or entry.get("place") or ""),
+                    "result": str(entry.get("result") or ""),
+                    "place": str(entry.get("place") or ""),
+                    "start": str(entry.get("start") or ""),
+                    "end": str(entry.get("end") or ""),
+                },
+            }
+            if await self._add_job(cron, meta, target, at):
+                created += 1
+        if created:
+            logger.info("[super_enhance/life] [%s] %s「%s」，%s 叫她一次", bot, KIND_LABEL.get(kind, kind),
+                        str(entry.get("doing") or "")[:20], at.strftime("%H:%M:%S"))
+        return created
+
+    async def fire_correct(self, bot: str, target: str, entry: dict, said: str,
+                           now: datetime.datetime | None = None) -> bool:
+        """世界线 live：她把日程里后面才做的事说成已经做了 / 正在做，叫她一次改口（必须发）。"""
+        if not self.enabled or target not in self._targets(bot):
+            return False
+        cron = self._cron()
+        if cron is None:
+            return False
+        self.install_gate()
+        real_now = datetime.datetime.now(self.timezone)
+        local_now = max((now or real_now).astimezone(self.timezone), real_now)
+        at = (local_now + datetime.timedelta(seconds=DONE_DELAY_SECONDS)).replace(microsecond=0)
+        meta = {
+            "kind": "correct", "bot": bot, "date": at.date().isoformat(),
+            "minute": at.hour * 60 + at.minute, "postponed": 0,
+            "correct": {
+                "said": clean_line(said, 120),
+                "doing": str(entry.get("doing") or entry.get("place") or ""),
+                "start": str(entry.get("start") or ""),
+                "end": str(entry.get("end") or ""),
+            },
+        }
+        ok = await self._add_job(cron, meta, target, at)
+        if ok:
+            logger.info("[super_enhance/life] [%s] 说早了「%s」（日程 %s 才%s），%s 叫她改口",
+                        bot, clean_line(said, 30), str(entry.get("start") or "")[11:16],
+                        clean_line(entry.get("doing"), 20), at.strftime("%H:%M:%S"))
+        return ok
 
     def _targets(self, bot: str) -> list[str]:
         """该机器人的主动对话目标会话（配置里要填完整 UMO）。"""
@@ -446,6 +651,10 @@ class ProactivePlanner:
             out["se_promise"] = meta["promise"]
         if meta.get("training"):
             out["se_training"] = meta["training"]
+        if meta.get("done"):
+            out["se_done"] = meta["done"]
+        if meta.get("correct"):
+            out["se_correct"] = meta["correct"]
         return out
 
     def _meta_of(self, job, payload: dict) -> dict:
@@ -474,7 +683,11 @@ class ProactivePlanner:
         except Exception:
             postponed = 0
         training = payload.get("se_training")
+        done = payload.get("se_done")
+        correct = payload.get("se_correct")
         return {
+            "done": done if isinstance(done, dict) else None,
+            "correct": correct if isinstance(correct, dict) else None,
             "kind": kind,
             "bot": bot,
             "date": date_text,
@@ -785,7 +998,25 @@ class ProactivePlanner:
             "last": items[-1] if items else None,
             "last_user": last_user,
             "unreplied": [m for m in tail if m.get("src") == "proactive"],
+            "items": items,
         }
+
+    def _sent_today(self, chat: dict | None, now: datetime.datetime) -> list:
+        """今天（凌晨 4 点起）她主动发过的话，每条带上主人后来回没回：[(时刻, 文字, 回没回)]。"""
+        items = list((chat or {}).get("items") or [])
+        start = now.replace(hour=DAY_START_HOUR, minute=0, second=0, microsecond=0)
+        if now < start:
+            start -= datetime.timedelta(days=1)
+        out = []
+        for index, item in enumerate(items):
+            if item.get("src") != "proactive":
+                continue
+            moment = self._moment(item)
+            if moment is None or moment < start:
+                continue
+            replied = any(later.get("role") == "user" for later in items[index + 1:])
+            out.append((moment, clean_line(item.get("text"), SENT_TEXT_LEN), replied))
+        return out[-SENT_TODAY_LIMIT:]
 
     def _moment(self, item: dict) -> datetime.datetime | None:
         try:
@@ -841,8 +1072,44 @@ class ProactivePlanner:
             return None
         return state.find_entry_strict(minute)
 
+    def _correct_pending(self, meta: dict, now: datetime.datetime) -> bool:
+        """改口那件事是不是还没到点（到点了就不用专门改口）。"""
+        start = _parse_iso(str((meta.get("correct") or {}).get("start") or "").replace(" ", "T"), self.timezone)
+        return start is None or now.astimezone(self.timezone) < start
+
     def _kind_line(self, meta: dict, now: datetime.datetime, chat: dict | None) -> str:
         kind = meta.get("kind")
+        if kind == "correct":
+            info = meta.get("correct") or {}
+            if not self._correct_pending(meta, now):
+                return (
+                    "你之前跟主人说「%s」的时候，这件事其实还没做（按安排 %s 才开始）；现在已经轮到了，"
+                    "不用专门改口，照常说就行。" % (info.get("said") or "", str(info.get("start") or "")[11:16])
+                )
+            return (
+                "你刚才跟主人说「%s」，可这件事其实还没做：按安排是 %s–%s 才%s，现在还没到。你说早了。"
+                "马上给主人发一句改口：说清楚其实还没做、什么时候去做；不要找理由，也不要装作没说过。"
+                % (info.get("said") or "", str(info.get("start") or "")[11:16], str(info.get("end") or "")[11:16],
+                   info.get("doing") or "")
+            )
+        if kind in ("out", "back", "meal"):
+            done = meta.get("done") or {}
+            head = {"out": "你刚出了宿舍", "back": "你刚回到宿舍", "meal": "开饭了"}[kind]
+            return "%s：%s%s（%s 起）。" % (
+                head,
+                "%s，" % done["place"] if done.get("place") and done["place"] not in str(done.get("doing") or "") else "",
+                done.get("doing") or "",
+                str(done.get("start") or "")[11:16],
+            )
+        if kind == "done":
+            done = meta.get("done") or {}
+            return "你手上那件事刚做完：%s%s%s（%s–%s）。" % (
+                "%s，" % done["place"] if done.get("place") and done["place"] not in str(done.get("doing") or "") else "",
+                done.get("doing") or "",
+                "，结果：%s" % done["result"] if done.get("result") else "",
+                str(done.get("start") or "")[11:16],
+                str(done.get("end") or "")[11:16],
+            )
         if kind == "training":
             training = meta.get("training") or {}
             return "你刚把在练的「%s」练够了，算是练成了%s；这是练成后头一回找主人。" % (
@@ -854,7 +1121,8 @@ class ProactivePlanner:
             with_text = str(promise.get("with") or "").strip()
             return (
                 "这是你答应过的约定到点了：%s%s。主动提起这件事（提醒他、催一催、或者说你已经准备好了），"
-                "不要装作忘了。" % (promise.get("what") or "", "（和%s）" % with_text if with_text else "")
+                "不要装作忘了。主人后来定的规矩要是不许你这会儿找他，以规矩为准，这次不发。"
+                % (promise.get("what") or "", "（和%s）" % with_text if with_text else "")
             )
         if kind == "morning":
             if self._talked_today(chat, now):
@@ -865,11 +1133,7 @@ class ProactivePlanner:
                 "你准备睡了，想跟主人道声晚安，可以顺带说说你今天或睡前在干嘛；"
                 "要是你们刚才正聊着，就顺着话头道晚安。"
             )
-        return (
-            "这会儿没人在跟你说话。看看上面【世界线】里「你现在」那行——你正在做的事、"
-            "手边刚发生的小事、看到的什么，都可以是开口的由头：就着那个说一句，"
-            "比空说「没什么事，就是想你了」强。真没什么可说的就别发。"
-        )
+        return "没什么特别的事，就是这会儿想起他了。"
 
     def build_note(self, meta: dict, now: datetime.datetime, chat: dict | None = None) -> str:
         """主动对话的提示词。到点时现场生成，排期时先存一份兜底。
@@ -880,26 +1144,41 @@ class ProactivePlanner:
         kind = meta.get("kind") or "middle"
         lines = [
             "【主动找主人说话】",
-            "现在是 %s。没人在跟你说话，是你自己这会儿想说点什么。" % format_datetime(now),
+            "现在是 %s。没有人叫你，是你自己想找主人说说话。" % format_datetime(now),
         ]
-        entry = self._entry_at(meta, now)
-        # 世界线模式下合成状态里没有「原本打算」，这一行只在老架构下有内容
+        # 世界线 live 时，她此刻在做什么看注入的【世界线】；合成状态里的时段不是「打算」，不再写这一行
+        live = bool(self.live_fn and self.live_fn())
+        entry = None if live else self._entry_at(meta, now)
         if entry is not None and str(getattr(entry, "schedule", "") or "").strip():
             lines.append("你这会儿原本打算：%s" % entry.schedule)
             lines.append(PLAN_NOTE)
         lines.append(self._kind_line(meta, now, chat))
+        sent = self._sent_today(chat, now)
+        if sent:
+            lines.append("")
+            lines.append("你今天主动发过的话：")
+            for moment, text, replied in sent:
+                lines.append("- %s %s%s" % (moment.strftime("%H:%M"), text, "" if replied else "（主人还没回）"))
         lines.extend(
             [
                 "",
                 "先想一想现在要不要说、说什么：",
-                "- **上面注入的【世界线】里「你现在」那行就是你此刻在做什么**，从那儿起头："
-                "顺口提一句手上的事、刚才碰见什么、看到什么，比空说「没什么事，就是想你了」强得多；",
-                "- 看看最近聊了什么、主人那边是什么情况（他说过在忙、在睡、出门了……），"
-                "能顺着之前的话题接着说最好；",
-                "- 别写成汇报日程，也别一点不提自己在干嘛；",
+                "- 看看最近聊了什么、主人那边是什么情况（他说过在忙、在睡、出门了……）；",
+                "- 同一件事、同一个问题（比如问主人在干什么、去哪了、吃了没）：主人没回之前最多说两次，"
+                "一天里最多说三次。%s到数了就别再提，说别的，或者这次不发；" % ("对照上面你今天主动发过的话，" if sent else ""),
+                "- 结合你此刻在做的事和所在的地方来说：可以顺口带一句你在干嘛、碰到了什么，"
+                "但别写成汇报日程，也别一点不提自己在干嘛；",
                 "- 这会儿真不合适说话（比如他刚说要睡了、正忙着），可以不发，直接结束就行，不用解释%s；"
-                % ("（约定到点、刚练成这两种除外）" if kind in ("promise", "training") else ""),
+                % ("（这次是改口、约定到点或刚练成，必须发，除非主人定的规矩不许）"
+                   if kind in MUST_SEND and (kind != "correct" or self._correct_pending(meta, now)) else ""),
                 "- 要发就调用 send_message_to_user 发出去：只有调用了才算真的发出去，光写在回复里他看不到；",
+            ]
+        )
+        if not live:
+            # 老架构下场景要她自己记；世界线 live 时由记录员记，这个工具也收起来了
+            lines.append("- 你这会儿要是换了地方、或者在做的事变了，先用 update_my_scene 记一下再发；")
+        lines.extend(
+            [
                 "- 扮演你的人设，一到两句纯文本，不要 Markdown、不要表情符号、不要罗列清单。",
             ]
         )

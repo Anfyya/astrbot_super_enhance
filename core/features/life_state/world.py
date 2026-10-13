@@ -12,7 +12,13 @@
 - world_state.json：约束、打算、记录员游标、补写游标、最近错误；
 - routine.json：作息骨架 + 每天抖动后的起床 / 入睡时刻。
 
-只记已经发生的事。未来只有「打算」（intention），一句话、随时会被改写。
+条目分两种（kind）：
+
+- activity：一段在做的事，有开始和（预计）结束。补写写的都是这种，而且会提前写好「接下来那一段」；
+  记录员在她说开始做另一件事时也写这种，结束时间按常理估。同一个人的 activity 不重叠。
+- event：做事当中顺带发生的一件事（递了个东西、说好了什么），只有一个时刻，不打断手上那段。
+
+「她此刻在做什么」= 覆盖此刻的那段 activity；进度按开始到结束的时间算。
 """
 
 import datetime
@@ -22,6 +28,7 @@ import os
 import random
 import re
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from astrbot.api import logger
 
@@ -32,11 +39,16 @@ ROUTINE_NAME = "routine.json"
 SOURCE_RANK = {"step": 1, "chat": 2, "manual": 3}
 DEFAULT_KEEP_DAYS = 30
 INTENTION_TTL_HOURS = 12  # 打算最多活这么久，过期当没有
+HOLE_MINUTES = 2  # 排好的段之间空出超过这么久，算空档（补写要补上）
 
 MAX_PLACE = 60
 MAX_DOING = 240
 MAX_PUBLIC = 90
 MAX_TEXT = 200
+# 一段事最多分几步、每步多长
+MAX_STEPS = 6
+MAX_STEP = 80
+MAX_RESULT = 80
 
 TIME_FMT = "%Y-%m-%d %H:%M"
 
@@ -65,6 +77,22 @@ def clock_text(moment: datetime.datetime) -> str:
     return moment.strftime("%H:%M")
 
 
+def is_event(entry: dict) -> bool:
+    """顺带发生的一件事（不是一段在做的事）。老条目没写 kind 的都当成一段事。"""
+    return str((entry or {}).get("kind") or "") == "event"
+
+
+def progress_of(entry: dict, now: datetime.datetime):
+    """这段事做到百分之几（0–100）；没写结束、或时间不对就返回 None。"""
+    start = parse_time((entry or {}).get("start"))
+    end = parse_time((entry or {}).get("end")) if (entry or {}).get("end") else None
+    if start is None or end is None or end <= start:
+        return None
+    moment = now.replace(tzinfo=None)
+    done = (moment - start).total_seconds() / (end - start).total_seconds()
+    return max(0, min(100, int(round(done * 100))))
+
+
 class WorldStore:
     """世界线的全部读写。文件不存在就当作空的。"""
 
@@ -85,7 +113,8 @@ class WorldStore:
                 return datetime.datetime.now(self.tz).replace(tzinfo=None)
             except Exception:
                 pass
-        return datetime.datetime.now()
+        # 没注入时区时按东八区算（容器系统时区是 UTC，直接 now() 会慢 8 小时）
+        return datetime.datetime.now(ZoneInfo("Asia/Shanghai")).replace(tzinfo=None)
 
     @staticmethod
     def _write_json(path: Path, data: dict) -> None:
@@ -111,7 +140,7 @@ class WorldStore:
             self._state = self._read_json(
                 self.root / STATE_NAME,
                 {"version": 1, "constraints": [], "intentions": [],
-                 "cursors": {}, "last_step": "", "errors": {}},
+                 "cursors": {}, "last_step": "", "last_step_attempt": "", "errors": {}},
             )
         return self._state
 
@@ -165,17 +194,27 @@ class WorldStore:
             end = None
         source = str(entry.get("source") or "step")
         rank = SOURCE_RANK.get(source, 0)
+        kind = "event" if str(entry.get("kind") or "") == "event" else "activity"
+        if kind == "event":
+            end = None
         day = self._load_day(date_text)
         items = day.get("entries") or []
 
         kept = []
         for old in items:
-            if str(old.get("who")) != who:
+            if str(old.get("who")) != who or kind == "event" or is_event(old):
+                # 别人的、顺带的一件事：不和这一段抢时间
                 kept.append(old)
                 continue
             old_start = parse_time(old.get("start"))
             old_end = parse_time(old.get("end")) if old.get("end") else None
             if old_start is None or not self._overlaps(old_start, old_end, start, end):
+                kept.append(old)
+                continue
+            if old_end is None and old_start <= start:
+                # 旧的还没写结束时间（开口），新段从它之后开始：说明旧的到新段开始处就该结束。
+                # 直接闭合旧条目，不再走优先级拦截——否则补写永远接不上被记录员写了开口的时段。
+                old["end"] = fmt_time(start)
                 kept.append(old)
                 continue
             old_rank = SOURCE_RANK.get(str(old.get("source") or ""), 0)
@@ -194,6 +233,7 @@ class WorldStore:
         record = {
             "id": str(entry.get("id") or ("e%d" % int(day.get("next_id") or 1))),
             "who": who,
+            "kind": kind,
             "start": fmt_time(start),
             "end": fmt_time(end) if end else "",
             "place": clean_text(entry.get("place"), MAX_PLACE),
@@ -205,7 +245,21 @@ class WorldStore:
             "source": source,
             "src_umo": str(entry.get("src_umo") or ""),
             "src_quote": clean_text(entry.get("src_quote"), MAX_TEXT),
-            "created": str(entry.get("created") or fmt_time(datetime.datetime.now())),
+            "steps": parse_steps(entry.get("steps"))[0],
+            "step_minutes": (
+                parse_steps(entry.get("steps"))[1]
+                or (list(entry.get("step_minutes") or []) if not isinstance(entry.get("steps"), str) else [])
+            ),
+            # 闲着：没在做具体的事（不算进度、做完不叫她）
+            "idle": bool(entry.get("idle")) and kind != "event",
+            # 重要程度 1–5（补写打的分；0 = 没打分），够设置里的阈值，做完才叫她
+            "importance": clean_importance(entry.get("importance")),
+            # 人在不在宿舍（True / False；没标是 None）、是不是在吃饭：出门、到家、开饭时叫她
+            "at_home": clean_flag(entry.get("at_home")),
+            "meal": bool(clean_flag(entry.get("meal"))),
+            # 这件事最后的结果（修好了、没找着……）：不算一步，她做完才看得到
+            "result": clean_text(entry.get("result"), MAX_RESULT),
+            "created": str(entry.get("created") or fmt_time(self.now_local())),
         }
         if not entry.get("id"):
             day["next_id"] = int(day.get("next_id") or 1) + 1
@@ -225,16 +279,60 @@ class WorldStore:
             for key, limit in limits.items():
                 if fields.get(key) is not None:
                     item[key] = clean_text(fields[key], limit)
-            for key in ("start", "end", "training", "source"):
+            for key in ("start", "end", "training", "source", "kind"):
                 if fields.get(key) is not None:
                     item[key] = str(fields[key]).strip()
             if fields.get("with") is not None:
                 item["with"] = [str(x) for x in fields["with"] if str(x).strip()]
             if fields.get("seen_by") is not None:
                 item["seen_by"] = [str(x) for x in fields["seen_by"] if str(x).strip()]
+            if fields.get("steps") is not None:
+                item["steps"], item["step_minutes"] = parse_steps(fields["steps"])
+            if fields.get("idle") is not None:
+                item["idle"] = bool(fields["idle"])
+            if fields.get("importance") is not None:
+                item["importance"] = clean_importance(fields["importance"])
+            if fields.get("at_home") is not None:
+                item["at_home"] = clean_flag(fields["at_home"])
+            if fields.get("meal") is not None:
+                item["meal"] = bool(clean_flag(fields["meal"]))
+            if fields.get("result") is not None:
+                item["result"] = clean_text(fields["result"], MAX_RESULT)
             self._save_day(date_text)
             return item
         return None
+
+    def manual_update(self, date_text: str, entry_id: str, **fields):
+        """网页上改一条：改完算手动（补写、记录员都改不动），和它撞上的前后条目让开。"""
+        old = None
+        for item in self._load_day(date_text).get("entries") or []:
+            if str(item.get("id")) == str(entry_id):
+                old = dict(item)
+                break
+        if old is None:
+            return None
+        merged = dict(old)
+        for key, value in fields.items():
+            if value is not None:
+                merged[key] = value
+        if parse_time(merged.get("start")) is None:
+            return None
+        self.delete_entry(date_text, entry_id)
+        merged["source"] = "manual"
+        record = self.add_entry(str(merged.get("start"))[:10], merged)
+        if record is None:
+            # 不该发生（手动最高）：放回原样
+            self.add_entry(date_text, old)
+        self.note_manual()
+        return record
+
+    def note_manual(self) -> None:
+        """网页上刚动过世界线：补写等一会儿再看，免得改到一半它先插进来。"""
+        self._load_state()["manual_at"] = fmt_time(self.now_local())
+        self._save_state()
+
+    def manual_at(self):
+        return parse_time(self._load_state().get("manual_at"))
 
     def delete_entry(self, date_text: str, entry_id: str) -> bool:
         day = self._load_day(date_text)
@@ -249,7 +347,7 @@ class WorldStore:
     def latest_for(self, who: str, before: str = ""):
         """某人最近的一条（可限定在某时刻之前），往前找三天。"""
         limit = parse_time(before) if before else None
-        today = (limit or datetime.datetime.now()).date()
+        today = (limit or self.now_local()).date()
         for back in range(0, 3):
             date_text = (today - datetime.timedelta(days=back)).isoformat()
             for item in reversed(self.entries(date_text, who)):
@@ -258,6 +356,97 @@ class WorldStore:
                     continue
                 return item
         return None
+
+    def activities(self, who: str, now: datetime.datetime, back_days: int = 1) -> list:
+        """某人最近几天的 activity，按开始时间排好（跨天的睡觉那段在前一天的文件里）。"""
+        moment = now.replace(tzinfo=None)
+        out = []
+        for back in range(back_days, -1, -1):
+            date_text = (moment.date() - datetime.timedelta(days=back)).isoformat()
+            out.extend(x for x in self.entries(date_text, who) if not is_event(x))
+        out.sort(key=lambda x: str(x.get("start") or ""))
+        return out
+
+    def current(self, who: str, now: datetime.datetime):
+        """此刻在做的那段：已经开始、还没结束（没写结束的也算）。没有返回 None。"""
+        moment = now.replace(tzinfo=None)
+        found = None
+        for item in self.activities(who, moment):
+            start = parse_time(item.get("start"))
+            if start is None or start > moment:
+                continue
+            end = parse_time(item.get("end")) if item.get("end") else None
+            found = item if (end is None or end > moment) else None
+        return found
+
+    def last_activity(self, who: str, now: datetime.datetime):
+        """已经开始了的最近一段（可能已经结束）。"""
+        moment = now.replace(tzinfo=None)
+        found = None
+        for item in self.activities(who, moment):
+            start = parse_time(item.get("start"))
+            if start is not None and start <= moment:
+                found = item
+        return found
+
+    def next_after(self, who: str, moment: datetime.datetime):
+        """从 moment 起（含）开始的下一段，补写提前写好的那段。"""
+        flat = moment.replace(tzinfo=None)
+        for item in self.activities(who, flat, back_days=1) + [
+            x for x in self.entries((flat.date() + datetime.timedelta(days=1)).isoformat(), who)
+            if not is_event(x)
+        ]:
+            start = parse_time(item.get("start"))
+            if start is not None and start >= flat - datetime.timedelta(minutes=1):
+                return item
+        return None
+
+    def first_hole(self, who: str, after: datetime.datetime, until: datetime.datetime):
+        """after 之后、until 之前，同一个人排好的段之间第一个空档（中间撤掉过段才会有）。
+
+        返回 (空档开始的时刻, 空档后面那段)；没有空档、或后面没排东西，返回 None。
+        """
+        flat = after.replace(tzinfo=None)
+        items = self.activities(who, flat, back_days=1) + [
+            x for x in self.entries((flat.date() + datetime.timedelta(days=1)).isoformat(), who)
+            if not is_event(x)
+        ]
+        items.sort(key=lambda x: str(x.get("start") or ""))
+        edge = flat
+        for item in items:
+            start = parse_time(item.get("start"))
+            if start is None:
+                continue
+            end = parse_time(item.get("end")) if item.get("end") else None
+            if end is not None and end <= edge:
+                continue
+            if start > until:
+                break
+            if start > edge + datetime.timedelta(minutes=HOLE_MINUTES):
+                return edge, item
+            if end is None:
+                return None
+            edge = max(edge, end)
+        return None
+
+    def date_of(self, entry_id: str, who: str, now: datetime.datetime) -> str:
+        """条目在哪一天的文件里（今天、昨天、明天里找）。"""
+        flat = now.replace(tzinfo=None)
+        for back in (0, 1, -1):
+            date_text = (flat.date() - datetime.timedelta(days=back)).isoformat()
+            for item in self.entries(date_text, who):
+                if str(item.get("id")) == str(entry_id):
+                    return date_text
+        return ""
+
+    # ---------- 做完一段事的通知游标 ----------
+
+    def done_mark(self, who: str) -> str:
+        return str((self._load_state().get("done_marks") or {}).get(str(who)) or "")
+
+    def set_done_mark(self, who: str, when: str) -> None:
+        self._load_state().setdefault("done_marks", {})[str(who)] = str(when)
+        self._save_state()
 
     # ---------- 约束 ----------
 
@@ -306,7 +495,7 @@ class WorldStore:
             "who": who,
             "text": text,
             "public": clean_text(item.get("public"), MAX_PUBLIC),
-            "since": str(item.get("since") or fmt_time(datetime.datetime.now())),
+            "since": str(item.get("since") or fmt_time(self.now_local())),
             "until": clean_text(item.get("until"), MAX_TEXT),
             "until_time": str(item.get("until_time") or ""),
             "status": "active",
@@ -341,7 +530,7 @@ class WorldStore:
 
     def expire_constraints(self, now: datetime.datetime | None = None) -> int:
         """到点的约束自动解除（只看 until_time）。返回解除条数。"""
-        moment = (now or datetime.datetime.now()).replace(tzinfo=None)
+        moment = (now or self.now_local()).replace(tzinfo=None)
         count = 0
         for item in self._load_state().get("constraints") or []:
             if str(item.get("status")) != "active":
@@ -378,7 +567,7 @@ class WorldStore:
         state = self._load_state()
         items = [x for x in (state.get("intentions") or []) if str(x.get("who")) != str(who)]
         record = {"who": who, "text": body, "window": clean_text(window, 60),
-                  "source": source, "created": fmt_time(datetime.datetime.now())}
+                  "source": source, "created": fmt_time(self.now_local())}
         items.append(record)
         state["intentions"] = items[-12:]
         self._save_state()
@@ -407,13 +596,34 @@ class WorldStore:
         self._load_state()["last_step"] = str(when)
         self._save_state()
 
+    def last_review(self) -> str:
+        return str(self._load_state().get("last_review") or "")
+
+    def set_last_review(self, date_text: str) -> None:
+        self._load_state()["last_review"] = str(date_text)
+        self._save_state()
+
+    def last_step_attempt(self) -> str:
+        return str(self._load_state().get("last_step_attempt") or "")
+
+    def set_last_step_attempt(self, when: str) -> None:
+        self._load_state()["last_step_attempt"] = str(when)
+        self._save_state()
+
     def note_error(self, where: str, text: str) -> None:
         state = self._load_state()
         state.setdefault("errors", {})[str(where)] = {
-            "at": fmt_time(datetime.datetime.now()),
+            "at": fmt_time(self.now_local()),
             "text": clean_text(text, 300),
         }
         self._save_state()
+
+    def clear_error(self, where: str) -> None:
+        """这一块后来成功了，旧报错清掉。"""
+        state = self._load_state()
+        if str(where) in (state.get("errors") or {}):
+            state["errors"].pop(str(where), None)
+            self._save_state()
 
     def errors(self) -> dict:
         return dict(self._load_state().get("errors") or {})
@@ -443,7 +653,7 @@ class WorldStore:
         for bot in (self.all_routine() or {}).keys():
             if bot and str(bot) != str(exclude) and str(bot) not in out:
                 out.append(str(bot))
-        date_text = datetime.datetime.now().date().isoformat()
+        date_text = self.now_local().date().isoformat()
         for path in sorted(self.dir.glob("*.json")):
             if path.stem != date_text:
                 continue
@@ -518,6 +728,130 @@ def detail_of(entry: dict) -> str:
     """给当事人看的细节。"""
     parts = [str(entry.get("place") or "").strip(), str(entry.get("doing") or "").strip()]
     return "，".join(x for x in parts if x)
+
+
+# 网页上一行一步，行尾可写分钟：「添水烧开 10」「添水烧开（10分钟）」
+_STEP_MIN_TAIL = (
+    re.compile(r"^(.*\S)\s*[（(]\s*(\d{1,3})\s*(?:分钟|分|min)?\s*[)）]$"),
+    re.compile(r"^(.*\S)\s+(\d{1,3})\s*(?:分钟|分|min)?$"),
+)
+
+
+def parse_steps(value) -> tuple:
+    """分步拆成（文字列表, 分钟列表）。
+
+    接受补写给的 [{"text", "minutes"}]、文字列表、或网页上按行写的文字。
+    分钟只有每一步都写了（>0）才留，不然给空列表（进度按步数平均分）。
+    """
+    if isinstance(value, str):
+        value = value.splitlines()
+    if not isinstance(value, (list, tuple)):
+        return [], []
+    texts, minutes = [], []
+    for raw in value:
+        text, mins = raw, 0
+        if isinstance(raw, dict):
+            text = raw.get("text") or raw.get("what") or raw.get("step") or ""
+            try:
+                mins = int(float(raw.get("minutes") or 0))
+            except Exception:
+                mins = 0
+        else:
+            text = str(raw or "").strip()
+            for pattern in _STEP_MIN_TAIL:
+                hit = pattern.match(text)
+                if hit:
+                    text, mins = hit.group(1), int(hit.group(2))
+                    break
+        text = clean_text(text, MAX_STEP)
+        if not text:
+            continue
+        texts.append(text)
+        minutes.append(max(0, min(mins, 600)))
+        if len(texts) >= MAX_STEPS:
+            break
+    if not texts or any(x <= 0 for x in minutes):
+        minutes = []
+    return texts, minutes
+
+
+def clean_flag(value):
+    """true / false（含字符串写法）规整成布尔；看不出来是 None。"""
+    if isinstance(value, bool):
+        return value
+    text = str(value if value is not None else "").strip().lower()
+    if text in ("true", "1", "yes", "是"):
+        return True
+    if text in ("false", "0", "no", "否"):
+        return False
+    return None
+
+
+def clean_importance(value) -> int:
+    """重要程度规整成 0–5 的整数；写不出数就是 0（没打分）。"""
+    try:
+        return max(0, min(5, int(round(float(value)))))
+    except Exception:
+        return 0
+
+
+def clean_steps(value) -> list:
+    """分步的文字：去空、截长、最多 MAX_STEPS 步。"""
+    return parse_steps(value)[0]
+
+
+def step_minutes(entry: dict) -> list:
+    """存着的各步分钟；对不上步数就当没有。"""
+    steps = clean_steps((entry or {}).get("steps"))
+    mins = (entry or {}).get("step_minutes") or []
+    try:
+        mins = [int(x) for x in mins]
+    except Exception:
+        return []
+    return mins if len(mins) == len(steps) and mins and all(x > 0 for x in mins) else []
+
+
+def step_index(entry: dict, pct) -> int:
+    """进度落在第几步：有分钟按分钟比例，没有就按步数平均分。"""
+    steps = clean_steps((entry or {}).get("steps"))
+    if not steps or pct is None:
+        return -1
+    mins = step_minutes(entry)
+    if not mins:
+        return min(len(steps) - 1, int(pct * len(steps) / 100))
+    passed = pct / 100.0 * sum(mins)
+    for index, value in enumerate(mins):
+        passed -= value
+        if passed < 0:
+            return index
+    return len(steps) - 1
+
+
+def result_text(entry: dict) -> str:
+    """「（结果：……）」；没写结果返回空。"""
+    value = str((entry or {}).get("result") or "").strip()
+    return "（结果：%s）" % value if value else ""
+
+
+def steps_text(entry: dict) -> str:
+    """全部分步连成一句（给记录员、补写看全貌）；没分步返回空。"""
+    steps = clean_steps((entry or {}).get("steps"))
+    return "（分几步：%s）" % "；".join(steps) if steps else ""
+
+
+def staged_of(entry: dict, now: datetime.datetime) -> str:
+    """给当事人看手上这段：分了步的按进度只给做过的几步和正在做的那步，后面的不给。
+
+    没分步（比如她自己在聊天里说的）或没写结束，就照原样给。
+    """
+    steps = clean_steps((entry or {}).get("steps"))
+    pct = progress_of(entry, now)
+    if not steps or pct is None:
+        return detail_of(entry)
+    index = step_index(entry, pct)
+    text = detail_of(entry)
+    inner = ("做过了：%s；" % "；".join(steps[:index]) if index else "") + "正在：" + steps[index]
+    return "%s（%s）" % (text, inner) if text else inner
 
 
 def visible_to(entry: dict, viewer: str) -> str:

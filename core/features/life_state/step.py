@@ -1,27 +1,53 @@
-"""幕间补写：没人在聊天的时候，把刚过去这段时间两人实际做了什么补进世界线。
+"""补写：安排两人接下来做什么，一段一段往前接。
 
-- 节奏：清醒时段里没人在聊天时每 step_minutes_min~max 分钟跑一次；主动消息到点前若距上次
-  补写超过 20 分钟先补到此刻；睡着不跑，起床补一次；约束或能力清单里写了不睡的以那边为准。
-- 两人永远在同一次调用里一起写，保证在一起的时段对得上。
-- 只写过去。程序校验：都在窗口里、不重叠、不许出现主人、with 双向一致；不合格整次丢掉，下次重跑。
+- 每段事都有开始和（预计）结束。手上那段快做完时（提前 step_lead_minutes 分钟）补写下一段；
+  记录员记了一段没定结束的（她在聊天里说开始做什么），也马上补写给它定个做完的时刻；
+  中间断了（重启、出错）就从断的地方补到此刻之后。
+- 一起要写的几位在同一次调用里写，在一起的时段对得上；快到点的人顺带一起写，省调用。
+- 睡觉也是一段（从入睡写到第二天起床）；有钟点的约定要提前留出路上的时间。
+- 程序校验：首尾相接、第一段从给定时刻开始、最后一段的结束晚于此刻；不许出现主人。
+- 补写不撤规矩，规矩只由记录员撤。
 """
 
 import asyncio
 import datetime
 import json
-import random
 
 from astrbot.api import logger
 
 from .models import extract_json
 from .recorder import norm_time
-from .world import WorldStore, clean_text, fmt_time, parse_time
+from .world import WorldStore, clean_text, fmt_time, is_event, parse_steps, parse_time, progress_of, result_text, steps_text
 
 SYSTEM_PROMPT = (
     "你只输出一个可以被 JSON 解析的对象，不要输出解释、Markdown 代码块或任何多余文本。"
 )
 
-STEP_TEMPLATE = """现在是 {now}。请把 {start} 到 {now} 这段时间里，下面这几位角色各自做了什么补出来。
+# 几点到几点算晚上（补写只给晚上的随机小事、不给意外）
+NIGHT_FROM = 18
+NIGHT_UNTIL = 6
+# 一段最长多久（睡觉除外）
+MAX_SEGMENT_HOURS = 4
+# 闲着一段最长多久（分钟）：歇够了补写接着想下一件事
+MAX_IDLE_MINUTES = 60
+# 睡觉那段最长多久
+MAX_SLEEP_HOURS = 14
+# 快到点的几位在多少分钟内要接着写的，顺带一起写
+BATCH_MINUTES = 15
+# 补写失败后隔多久再试（秒）
+RETRY_SECONDS = 180
+# 一次最多往后写这么多小时（从给定时刻和现在里晚的那个算起；睡觉那段不受限）
+HORIZON_HOURS = 2
+# 一次最多写几段
+MAX_SEGMENTS = 6
+# 往后多远之内的空档要补（撤掉的段留下的）
+FILL_LOOK_HOURS = 24
+# 补空档时最后剩下不到这么多分钟，就把最后一段拉长接上，不再为它调一次模型
+FILL_STRETCH_MINUTES = 30
+# 网页上刚改过世界线，补写等这么久再看（秒）
+MANUAL_HOLD_SECONDS = 180
+
+STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，由你来安排。
 
 角色（key = 平台 id）：
 {roster}
@@ -38,26 +64,33 @@ STEP_TEMPLATE = """现在是 {now}。请把 {start} 到 {now} 这段时间里，
 
 {context_block}
 
+这次要你写的：
+{task_block}
+
 规则：
 
-1. 补 已经过去 的这段时间，从 {start} 开始、到 {now} 结束；不写还没发生的事。
-2. 每人给一到几段，按时间顺序、首尾相接、不重叠；每段写 start、end、place、doing、public。
-3. **不许生成主人的条目，也不许写主人在场**——除非下面「主人最近的动向」里明确说他在那个地方。
-4. 已经写过的事不要重复；接着刚才的状态往下写。
-5. 约束优先级最高：写着不许出门的，这段时间就得在屋里。
-6. public 是住在一起的人自然会知道的粗粒度信息（人在哪、大概在干哪类事），可以为空。doing 是细节。
-7. 如果两人有在一起的时间，两边的 start/end 和共同事件要一致，with 互相写上对方的 key。
-9. 如果上面「生效中的约束」里有哪条的到期条件已经达成（例如"问完丛雨""菜热好端上桌"），在 JSON 顶层加一个 "lift_constraints": ["c4"] 把它们列出来。
-10. 藏经阁的门是关着的：里面的人不主动出来，外面的人看不见里面在做什么。
-11. 藏经阁不在神社里，是两处地方。
+1. 只写「这次要你写的」里列出的人。每人从上面给的时刻开始，按时间顺序写几段，首尾相接、不重叠；最后一段的结束时间必须晚于现在（{now}）。一次最多写到 {horizon} 左右，不要把后面一整天都写完（睡觉那段除外，可以一直写到第二天起床）。
+2. **一段只写一件事**：吃饭就是吃饭，洗碗另起一段，看书再另起一段。doing 只写这件事是什么（一句话），result 写这件事最后的结果（修好了没、找着没、谁赢了这类，一句；不算一步、没有分钟；闲着和睡觉不写），不要把几件事用「然后」「又」「再」串在同一段里。steps 把这件事按先后分成 1–5 步，每步写 text（一句，到那一步时她手上在干什么，最后一步是收尾）和 minutes（这一步按常理要几分钟）。**这段做多久就是各步 minutes 加起来**，程序按它算结束时间，end 照着算好写上就行（洗碗十来分钟、吃饭二三十分钟、看书一两个小时……）；闲着和睡觉不写 steps，end 照常写。添炭、倒水这种几分钟的小动作不用写。上面今天已经做过的事，别再原样做一遍。
+3. **没事就写闲着**：她手上没有打算、约定、规矩要做的事，也没什么想做的，就写一段闲着，idle 填 true：doing 只写在哪、怎么待着（例如「在堂屋火盆边歇着」），steps 留空，不编添炭、擦桌子、翻日志这类小动作凑数。闲着一段最长一小时，歇够了就接着写下一件事（也可以再歇一段）。不是闲着的段 idle 填 false。
+4. 每段写 importance（1–5）：这件事做完值不值得跟主人说一声。1 是天天都做的小事（洗碗、走路、收拾东西、把东西搁好）；2 是平常的事（吃饭、洗衣裳、看书）；3 是有点意思的事（出门逛街、去泡足汤、买点心）；4 是做成了一件像样的事、或碰上了新鲜事（修好了东西、捡到稀奇的东西、有人上门托事）；5 是难得的大事（练成一招、碰上意外）。闲着和睡觉写 1。
+   每段还要写 at_home 和 meal：at_home 是这段她人在不在宿舍（屋里、院子、廊下、门口、后头小屋都算 true；出了宿舍去别处、走在路上都算 false）；meal 是这段是不是正在吃饭（吃早饭午饭晚饭、夜宵算 true；做饭、摆碗筷、洗碗都不算）。
+5. 睡觉也是一段：到了她今天定的入睡时刻，就写一段睡觉，从入睡时刻一直写到第二天定的起床时刻；睡前那段要在入睡时刻结束。
+6. 下面「还没做的约定」里有钟点的：到那个钟点她要已经在约定的地方、和约定的人在一起。要换地方的，在那之前写一段赶过去，留足路上的工夫；约定那件事从约定的钟点开始写。
+7. **不许生成主人的条目，也不许替主人编他做了什么、说了什么。** 主人在哪只看「主人最近的动向」：他最后说在哪、之后没说离开，就当他还在那儿，她们可以待在他身边、在他旁边做自己的事；他说了出门、去上课、睡了这类，就照那个写，别写他在场。
+8. 约束优先级最高：写着不许出门的，这段时间就得在屋里。
+9. public 是住在一起的人自然会知道的粗粒度信息（人在哪、大概在干哪类事），可以为空。doing 是细节。
+10. 两人在一起的时段，两边的 start/end 和共同的事要一致，with 互相写上对方的 key；对方手上的事还没做完的，别写成和她在一起。对方不在「这次要你写的」里时，她那段时间做什么以「她们此刻手上的事」和「已经排好、这次不改的」为准，你改不了：只有她那边写的也是这件事、也在这个地方，才能写成和她一起；不然就别把她写进来。
+11. 段里是在练「在练的事」里的某件，training 填它的编号（例如 "#2"）；不是在练就留空，不要往里写别的。
+{world_notes}
+注意：**不要输出 intentions，也不要写任何「接下来打算」**。上面「各自的打算」里如果有，是她们自己之前说过的，照着走就行。
 
-注意：**不要输出 intentions，也不要写任何「接下来打算」**。上面「各自的打算」里如果有，是她们自己之前说过的，照着走就行；没有就不用管。
-
-输出 JSON：
+输出 JSON（end_current 只给上面说了「先定做完时刻」的人写）：
 
 {{
+  "end_current": {{"napcat": "{example_end}"}},
   "segments": {{
-    "napcat": [{{"start": "{example_start}", "end": "", "place": "", "doing": "", "public": "", "with": [], "training": ""}}],
+    "napcat": [{{"start": "{example_start}", "end": "{example_end}", "place": "", "doing": "吃饭", "steps": [{{"text": "盛饭端上桌", "minutes": 5}}, {{"text": "边吃边说话", "minutes": 18}}, {{"text": "吃完放下碗筷", "minutes": 2}}], "result": "吃饱了，菜一点没剩", "idle": false, "importance": 2, "at_home": true, "meal": true, "public": "", "with": [], "training": ""}},
+               {{"start": "{example_end}", "end": "{example_end2}", "place": "", "doing": "洗碗", "steps": [{{"text": "碗筷泡进水盆", "minutes": 3}}, {{"text": "一只只洗净", "minutes": 9}}, {{"text": "擦干摆回架上", "minutes": 3}}], "result": "碗都洗净摆回架上了", "idle": false, "importance": 1, "at_home": true, "meal": false, "public": "", "with": [], "training": ""}}],
     "napcat2": []
   }}
 }}
@@ -65,7 +98,7 @@ STEP_TEMPLATE = """现在是 {now}。请把 {start} 到 {now} 这段时间里，
 
 
 class LifeStep:
-    """幕间补写。"""
+    """补写。"""
 
     def __init__(self, context, cfg, world: WorldStore, raw_log, generator,
                  seed_log, label_fn, now_fn, abilities_txt=None) -> None:
@@ -86,15 +119,23 @@ class LifeStep:
     def enabled(self) -> bool:
         return bool(self.cfg.get("world_enabled", True))
 
-    def minutes_range(self) -> tuple[float, float]:
+    @property
+    def lead_minutes(self) -> float:
+        """手上那段做完前多少分钟补写下一段。"""
         try:
-            low = float(self.cfg.get("step_minutes_min", 60) or 60)
-            high = float(self.cfg.get("step_minutes_max", 90) or 90)
+            value = float(self.cfg.get("step_lead_minutes", 5) or 5)
         except Exception:
-            low, high = 60.0, 90.0
-        if high < low:
-            low, high = high, low
-        return max(5.0, low), max(5.0, high)
+            value = 5.0
+        return max(1.0, min(value, 30.0))
+
+    @property
+    def window_hours(self) -> float:
+        """断了很久时最多往回补多少小时。"""
+        try:
+            value = float(self.cfg.get("step_window_hours", 3) or 3)
+        except Exception:
+            value = 3.0
+        return max(0.5, min(value, 12.0))
 
     @property
     def timeout(self) -> float:
@@ -108,6 +149,55 @@ class LifeStep:
         except Exception:
             value = ""
         return value or "穗织"
+
+    @property
+    def world_notes(self) -> str:
+        """配置里写的故事固定事实，一行一条。"""
+        text = str(self.cfg.get("world_notes") or "").strip()
+        lines = [x.strip().lstrip("-• ").strip() for x in text.splitlines() if x.strip()]
+        if not lines:
+            return ""
+        return "12. 故事里的固定事实（照着写，不要写出和它冲突的事）：\n" + "\n".join("   - " + x for x in lines)
+
+    @staticmethod
+    def _seed_text(seed: dict, labels: dict, night: bool = False) -> str:
+        """当天的随机起点，按补写的口径写：一天要补十几回，小事和意外都只用一次。"""
+        lines = ["今天的情况（系统随机给的，用来让每天不一样）："]
+        if seed.get("weather"):
+            lines.append("- 天气：%s" % seed["weather"])
+        if seed.get("tone"):
+            lines.append("- 今天的基调：%s" % seed["tone"])
+        moods = seed.get("moods") or {}
+        if moods:
+            lines.append(
+                "- 各人今天的心情（自然地透在做的事里，不用每段都点明）：%s"
+                % "；".join("%s：%s" % (labels.get(bot) or bot, mood) for bot, mood in moods.items())
+            )
+        names = [name for name in labels.values() if name]
+        if len(names) >= 2:
+            lines.append(
+                "- %s感情很好：不写她们之间吵架、闹别扭、冷战或互相误会。" % "和".join(names)
+            )
+        twists = seed.get("night_twists") if night else seed.get("twists")
+        if twists:
+            lines.append(
+                "- %s可能碰上的小事：%s。她们自己说过的打算优先；打算之外的空档里才用，"
+                "这次补写最多用一件，上面今天的条目里写过的别再写。" % ("今晚" if night else "今天", "；".join(twists))
+            )
+        if seed.get("accident") and not night:
+            lines.append(
+                "- 今天会碰上一件意外：%s。上面今天的条目里还没有的话，挑个合适的时段写进去，当天能收场；"
+                "已经写过就别再写。" % seed["accident"]
+            )
+        return "\n".join(lines)
+
+    def training_id(self, value, bot: str) -> str:
+        """只认在练的事的编号（或能对上的名字）；对不上就空，免得往里塞一句描述。"""
+        recorder = getattr(self, "recorder", None)
+        if recorder is not None:
+            return recorder.training_id(value, bot)
+        text = str(value or "").strip().lstrip("#＃").strip()
+        return text if text.isdigit() else ""
 
     @property
     def _timeout(self) -> float:
@@ -132,50 +222,92 @@ class LifeStep:
 
     # ---------- 什么时候跑 ----------
 
-    def window_start(self, bot: str, now: datetime.datetime) -> datetime.datetime:
-        """上次补写到哪了；窗口最多往回 step_window_hours 小时（免得一次补一整天）。"""
-        flat = now.replace(tzinfo=None)
-        try:
-            hours = float(self.cfg.get("step_window_hours", 3) or 3)
-        except Exception:
-            hours = 3.0
-        floor = flat - datetime.timedelta(hours=max(0.5, min(hours, 12)))
-        last = parse_time(self.world.last_step())
-        if last is not None and floor < last < flat:
-            return last
-        latest = self.world.latest_for(bot, before=fmt_time(now))
-        if latest:
-            moment = parse_time(latest.get("end") or latest.get("start"))
-            if moment is not None and floor < moment < flat:
-                return moment
-        return floor
 
-    def interval(self, now: datetime.datetime) -> float:
-        low, high = self.minutes_range()
-        rng = random.Random(int(now.timestamp()) // 600)
-        return rng.uniform(low, high) * 60.0
+    # ---------- 什么时候补写 ----------
+
+    def need(self, bot: str, now: datetime.datetime, ahead_minutes: float = 0.0):
+        """这个人现在要不要补写；要的话返回 {mode, start, cur}，不要返回 None。
+
+        - open：手上那段（多半是记录员记的）没定结束，要先给它定个做完的时刻；
+        - next：手上那段快做完了（提前 lead 分钟，ahead_minutes 用来把快到点的人顺带进来）；
+        - gap：此刻什么都没在做（断了），从断的地方补起；
+        - fill：后面排好的段中间空了一截（记录员或手动撤掉了几段），把这截补上，正好接上后面那段。
+        """
+        flat = now.replace(tzinfo=None)
+        cur = self.world.current(bot, flat)
+        if cur is not None:
+            end = parse_time(cur.get("end")) if cur.get("end") else None
+            if end is None:
+                return {"mode": "open", "start": None, "cur": cur}
+            if self.world.next_after(bot, end) is not None:
+                return self._hole(bot, end, flat, ahead_minutes)
+            lead = datetime.timedelta(minutes=self.lead_minutes + ahead_minutes)
+            if flat >= end - lead:
+                return {"mode": "next", "start": end, "cur": cur}
+            return None
+        floor = flat - datetime.timedelta(hours=self.window_hours)
+        last = self.world.last_activity(bot, flat)
+        start = floor
+        if last is not None:
+            moment = parse_time(last.get("end")) or parse_time(last.get("start"))
+            if moment is not None and floor < moment <= flat:
+                start = moment
+        later = self.world.next_after(bot, flat)
+        later_start = parse_time(later.get("start")) if later is not None else None
+        if later_start is not None and later_start > flat:
+            # 此刻断着、后面还排着：补到后面那段开始为止
+            return {"mode": "fill", "start": start, "until": later_start, "cur": None, "next": later}
+        return {"mode": "gap", "start": start, "cur": None}
+
+    def hole_at(self, bot: str, after: datetime.datetime, flat: datetime.datetime):
+        """after 之后排好的段中间第一个空档：(空档开始, 空档后面那段)；没有返回 None。"""
+        return self.world.first_hole(bot, after, flat + datetime.timedelta(hours=FILL_LOOK_HOURS))
+
+    def _hole(self, bot: str, after: datetime.datetime, flat: datetime.datetime, ahead_minutes: float = 0.0):
+        # 空档和平常接着往下写一样：快到它开始的时候才补，不提前几个小时写
+        hole = self.hole_at(bot, after, flat)
+        if hole is None:
+            return None
+        start, later = hole
+        if flat < start - datetime.timedelta(minutes=self.lead_minutes + ahead_minutes):
+            return None
+        return {"mode": "fill", "start": start, "until": parse_time(later.get("start")), "cur": None, "next": later}
+
+    def next_due(self, now: datetime.datetime):
+        """下一次补写大概什么时候（给网页看）；已经该补了就返回此刻。"""
+        flat = now.replace(tzinfo=None)
+        best = None
+        for bot in self.raw_log.enabled_bots():
+            if self.need(bot, flat) is not None:
+                return flat
+            cur = self.world.current(bot, flat)
+            end = parse_time(cur.get("end")) if cur is not None and cur.get("end") else None
+            if end is None:
+                continue
+            if self.world.next_after(bot, end) is not None:
+                hole = self.hole_at(bot, end, flat)
+                if hole is None:
+                    continue
+                end = hole[0]
+            moment = end - datetime.timedelta(minutes=self.lead_minutes)
+            if best is None or moment < best:
+                best = moment
+        return best
 
     def due(self, now: datetime.datetime) -> bool:
         if self.running:
             return False
-        last = parse_time(self.world.last_step())
-        if last is None:
-            return True
-        return (now.replace(tzinfo=None) - last).total_seconds() >= self.interval(now)
-
-    def asleep(self, bot: str, now: datetime.datetime) -> bool:
-        """按骨架判断这会儿是不是睡着（跨午夜也算）。"""
-        plan = self.world.day_plan(bot, now.date().isoformat())
-        wake = parse_time("%s %s" % (now.date().isoformat(), plan.get("wake") or ""))
-        sleep = parse_time("%s %s" % (now.date().isoformat(), plan.get("sleep") or ""))
-        if wake is None or sleep is None:
+        flat = now.replace(tzinfo=None)
+        touched = self.world.manual_at()
+        if touched is not None and 0 <= (flat - touched).total_seconds() < MANUAL_HOLD_SECONDS:
             return False
-        minute = now.hour * 60 + now.minute
-        w = wake.hour * 60 + wake.minute
-        s = sleep.hour * 60 + sleep.minute
-        if s > w:
-            return minute < w or minute >= s
-        return s <= minute < w
+        failed = parse_time(self.world.last_step_attempt())
+        done = parse_time(self.world.last_step())
+        if failed is not None and (done is None or failed > done):
+            if (flat - failed).total_seconds() < RETRY_SECONDS:
+                return False
+        return any(self.need(bot, flat) is not None for bot in self.raw_log.enabled_bots())
+
 
     # ---------- 提示词 ----------
 
@@ -192,11 +324,13 @@ class LifeStep:
             blocks.append("### key = %s\n%s" % (bot, text or "（未配置人格）"))
         return "\n\n".join(blocks)
 
+
     def _routine_block(self, bots: list, now: datetime.datetime) -> str:
         lines = []
         for bot in bots:
             base = self.world.routine(bot)
             plan = self.world.day_plan(bot, now.date().isoformat())
+            tomorrow = self.world.day_plan(bot, (now.date() + datetime.timedelta(days=1)).isoformat())
             if not base:
                 lines.append("- %s：还没有作息骨架" % (self.label(bot) or bot))
                 continue
@@ -206,11 +340,12 @@ class LifeStep:
                 for h in (base.get("habits") or [])
             )
             lines.append(
-                "- %s：起床 %s（今天定的 %s）、入睡 %s（今天定的 %s）、三餐 %s、习惯 %s%s"
+                "- %s：起床 %s（今天定的 %s，明天定的 %s）、入睡 %s（今天定的 %s）、三餐 %s、习惯 %s%s"
                 % (
                     self.label(bot) or bot,
                     base.get("wake") or "?",
                     plan.get("wake") or "?",
+                    tomorrow.get("wake") or "?",
                     base.get("sleep") or "?",
                     plan.get("sleep") or "?",
                     meals,
@@ -220,26 +355,53 @@ class LifeStep:
             )
         return "\n".join(lines) if lines else "（没有骨架）"
 
-    def _context_block(self, bots: list, start: datetime.datetime, now: datetime.datetime) -> str:
+
+    def _promise_lines(self, now: datetime.datetime) -> list:
+        book = getattr(self, "promises", None)
+        if book is None:
+            return []
+        today = now.date().isoformat()
+        tomorrow = (now.date() + datetime.timedelta(days=1)).isoformat()
+        out = []
+        try:
+            for item in book.items():
+                if str(item.get("status")) != "open" or str(item.get("date") or "") not in (today, tomorrow):
+                    continue
+                names = "、".join(self.label(b) or b for b in (item.get("bots") or []))
+                out.append("- %s %s %s：%s%s" % (
+                    item.get("date"), item.get("time") or "（没定钟点）", names, item.get("what"),
+                    "（和%s）" % item["with"] if item.get("with") else "",
+                ))
+        except Exception:
+            pass
+        return out
+
+    def _context_block(self, bots: list, now: datetime.datetime, tasks: dict | None = None) -> str:
         parts = []
-        for date_offset in (0, 1):
-            date_text = (now.date() - datetime.timedelta(days=date_offset)).isoformat()
+        flat = now.replace(tzinfo=None)
+        for date_offset in (1, 0):
+            date_text = (flat.date() - datetime.timedelta(days=date_offset)).isoformat()
             lines = []
             for bot in bots:
                 for item in self.world.entries(date_text, bot):
-                    lines.append(
-                        "- %s %s~%s %s（%s）"
-                        % (
-                            self.label(bot) or bot,
-                            str(item.get("start"))[11:],
-                            str(item.get("end"))[11:] or "…",
-                            item.get("doing") or item.get("place"),
-                            item.get("source"),
-                        )
-                    )
+                    start = parse_time(item.get("start"))
+                    if start is None or start > flat:
+                        continue
+                    if is_event(item):
+                        lines.append("- %s %s（顺带的事）%s" % (
+                            self.label(bot) or bot, str(item.get("start"))[11:], item.get("doing") or item.get("place")))
+                        continue
+                    lines.append("- %s %s~%s %s %s%s" % (
+                        self.label(bot) or bot,
+                        str(item.get("start"))[11:],
+                        str(item.get("end"))[11:] or "…",
+                        item.get("place") or "",
+                        item.get("doing") or "",
+                        result_text(item),
+                    ))
             master = [
                 x for x in self.world.entries(date_text, "master")
-                if parse_time(x.get("start")) and parse_time(x.get("start")) <= now
+                if parse_time(x.get("start")) and parse_time(x.get("start")) <= flat
             ]
             for item in master:
                 lines.append(
@@ -247,7 +409,43 @@ class LifeStep:
                     % (str(item.get("start"))[11:], item.get("place"), item.get("doing") or "")
                 )
             if lines:
-                parts.append("【%s】\n%s" % (date_text, "\n".join(lines)))
+                parts.append("【%s 已经发生的】\n%s" % (date_text, "\n".join(lines)))
+        now_lines = []
+        for bot in bots:
+            cur = self.world.current(bot, flat)
+            if cur is None:
+                now_lines.append("- %s：这会儿没有记录" % (self.label(bot) or bot))
+                continue
+            pct = None if cur.get("idle") else progress_of(cur, flat)
+            now_lines.append("- %s：%s %s%s（%s 起%s%s）" % (
+                self.label(bot) or bot, cur.get("place") or "", cur.get("doing") or "",
+                "（闲着）" if cur.get("idle") else steps_text(cur) + result_text(cur),
+                str(cur.get("start"))[11:16],
+                "，预计 %s 做完" % str(cur.get("end"))[11:16] if cur.get("end") else "，还没定什么时候做完",
+                "，做了 %d%%" % pct if pct is not None else "",
+            ))
+        parts.append("她们此刻手上的事：\n" + "\n".join(now_lines))
+        # 这次不写的人，她后面已经排好的段也给出来，免得把她拉进她那边没有的事里
+        planned = []
+        for bot in bots:
+            if tasks is not None and bot in tasks:
+                continue
+            for date_offset in (0, 1):
+                date_text = (flat.date() + datetime.timedelta(days=date_offset)).isoformat()
+                for item in self.world.entries(date_text, bot):
+                    start = parse_time(item.get("start"))
+                    if start is None or start <= flat or is_event(item):
+                        continue
+                    planned.append("- %s %s~%s %s %s%s" % (
+                        self.label(bot) or bot,
+                        str(item.get("start"))[5:16],
+                        str(item.get("end"))[11:16] or "…",
+                        item.get("place") or "",
+                        (item.get("doing") or "") + result_text(item),
+                        "（和%s）" % "、".join(self.label(x) or x for x in item["with"]) if item.get("with") else "",
+                    ))
+        if planned:
+            parts.append("已经排好、这次不改的（不在「这次要你写的」里的人）：\n" + "\n".join(planned))
         constraints = self.world.constraints(active_only=True)
         if constraints:
             parts.append(
@@ -263,11 +461,34 @@ class LifeStep:
                 "各自的打算：\n"
                 + "\n".join("- %s：%s" % (x.get("who"), x.get("text")) for x in intentions)
             )
-        master_latest = self.world.latest_for("master", before=fmt_time(now))
+        promises = self._promise_lines(flat)
+        if promises:
+            parts.append("还没做的约定：\n" + "\n".join(promises))
+        master_latest = self.world.latest_for("master", before=fmt_time(flat))
         if master_latest:
+            # 最近一条常常没写地点（比如只记了他说的话），地点另取最近一条写了的
+            where = None
+            for back in (0, 1):
+                day = (flat.date() - datetime.timedelta(days=back)).isoformat()
+                for item in reversed(self.world.entries(day, "master")):
+                    moment = parse_time(item.get("start"))
+                    if moment is not None and moment <= flat and str(item.get("place") or "").strip():
+                        where = item
+                        break
+                if where is not None:
+                    break
             parts.append(
-                "主人最近的动向（只作参考，不许改写、不许替他编）：%s %s"
-                % (master_latest.get("start"), master_latest.get("place"))
+                "主人最近的动向（只作参考，不许改写、不许替他编）：%s %s%s"
+                % (
+                    str(master_latest.get("start"))[5:16],
+                    master_latest.get("place") or "",
+                    "，" + clean_text(master_latest.get("doing"), 80) if master_latest.get("doing") else "",
+                )
+                + (
+                    "；最后一次说到他在哪：%s %s（之后没说过离开）"
+                    % (str(where.get("start"))[5:16], where.get("place"))
+                    if where is not None else "；今天还没说过他在哪"
+                )
             )
         book = getattr(self, "trainings", None)
         if book is not None:
@@ -276,14 +497,48 @@ class LifeStep:
                     if str(item.get("status")) != "open":
                         continue
                     parts.append(
-                        "在练的事 #%s（%s）：%s；这段时间里如果在练它，把 training 填成 #%s"
+                        "在练的事 #%s（%s）：%s；段里在练它就把 training 填成 #%s"
                         % (item.get("id"), item.get("bot"), item.get("what"), item.get("id"))
                     )
             except Exception:
                 pass
-        return "\n\n".join(parts) if parts else "（今天还没有条目）"
+        return "\n\n".join(parts)
 
-    async def build_prompt(self, bots: list, start: datetime.datetime, now: datetime.datetime) -> str:
+    def _task_block(self, tasks: dict) -> str:
+        lines = []
+        for bot, info in tasks.items():
+            name = "%s（%s）" % (self.label(bot) or bot, bot)
+            cur = info.get("cur") or {}
+            if info["mode"] == "open":
+                lines.append(
+                    "- %s：手上「%s」（%s 起）还没定什么时候做完。先在 end_current 里给它定一个做完的时刻"
+                    "（不早于此刻之后五分钟），再从那个时刻往下写。"
+                    % (name, clean_text(cur.get("doing") or cur.get("place"), 60), str(cur.get("start"))[11:16])
+                )
+            elif info["mode"] == "fill":
+                later = info.get("next") or {}
+                lines.append(
+                    "- %s：%s 到 %s 这一截空着（原来排的撤掉了），把它补上：从 %s 开始写，最后一段在 %s 结束，"
+                    "接上后面已经排好的「%s」（%s 起，这段不改）。"
+                    % (name, fmt_time(info["start"])[11:], fmt_time(info["until"])[11:], fmt_time(info["start"]),
+                       fmt_time(info["until"]), clean_text(later.get("doing") or later.get("place"), 60),
+                       fmt_time(info["until"])[11:])
+                )
+            elif info["mode"] == "next":
+                lines.append(
+                    "- %s：手上「%s」%s 做完，从 %s 开始往下写。"
+                    % (name, clean_text(cur.get("doing") or cur.get("place"), 60),
+                       fmt_time(info["start"])[11:], fmt_time(info["start"]))
+                )
+            else:
+                lines.append(
+                    "- %s：%s 之后没有记录。从 %s 开始写（已经过去的那部分照常补上），一直写到此刻之后。"
+                    % (name, fmt_time(info["start"]), fmt_time(info["start"]))
+                )
+        return "\n".join(lines)
+
+    async def build_prompt(self, tasks: dict, now: datetime.datetime) -> str:
+        bots = list(self.raw_log.enabled_bots())
         roster = "\n".join(
             "- key = %s（%s）" % (bot, self.label(bot) or bot) for bot in bots
         )
@@ -295,61 +550,68 @@ class LifeStep:
                 seed = (self.seed_log.load() or {}).get(date_text)
             except Exception:
                 seed = None
-        seed_text = ""
-        if seed:
-            from .variety import seed_text as render_seed
-
-            seed_text = render_seed(seed, labels)
-        # 有打算的时候就不塞随机事件了：两样同时给，模型会不知道该听哪个
-        try:
-            if self.world.intentions():
-                seed_text = ""
-        except Exception:
-            pass
+        # 这次从晚上开始写：随机的小事只给晚上那份，也不给意外
+        first = min((x["start"] for x in tasks.values() if x.get("start")), default=None) or now
+        night = first.hour >= NIGHT_FROM or first.hour < NIGHT_UNTIL
+        seed_text = self._seed_text(seed, labels, night) if seed else ""
+        first = next(iter(tasks.values()))
+        example_start = first["start"] or (now + datetime.timedelta(minutes=10))
         return STEP_TEMPLATE.format(
             now=fmt_time(now),
-            start=fmt_time(start),
             roster=roster,
             personas=await self._personas(bots),
             home_block=(
                 "她们现在住的地方：\n"
-                "- 她们住在【%s】。补写出来的地点和活动都在%s这一带（家里、街上、后山、河边这类地方都行）。\n"
+                "- 她们住在【%s】。写出来的地点和活动都在%s这一带（家里、街上、后山、河边这类地方都行）。\n"
                 "- 人设里写的其它地方（比如从前待过的镇子）只是背景，人现在不在那儿，不要写成此刻发生的事。"
                 % (self.home, self.home)
             ),
             seed_text=seed_text,
+            world_notes=self.world_notes,
             routine_block=self._routine_block(bots, now),
-            context_block=self._context_block(bots, start, now),
-            example_start=fmt_time(start),
+            context_block=self._context_block(bots, now, tasks),
+            task_block=self._task_block(tasks),
+            example_start=fmt_time(example_start),
+            example_end=fmt_time(example_start + datetime.timedelta(minutes=25)),
+            example_end2=fmt_time(example_start + datetime.timedelta(minutes=40)),
+            horizon=fmt_time(max(min(x["start"] or now for x in tasks.values()), now) + datetime.timedelta(hours=HORIZON_HOURS)),
         )
+
 
     # ---------- 执行 ----------
 
-    async def run(self, now: datetime.datetime | None = None) -> bool:
+    def tasks_for(self, now: datetime.datetime, force: bool = False) -> dict:
+        """这次要写的人：该补的，加上 BATCH_MINUTES 分钟内也要补的（一起写省一次调用）。"""
+        bots = list(self.raw_log.enabled_bots())
+        tasks = {}
+        for bot in bots:
+            info = self.need(bot, now)
+            if info is not None:
+                tasks[bot] = info
+        if not tasks and not force:
+            return {}
+        for bot in bots:
+            if bot in tasks:
+                continue
+            info = self.need(bot, now, ahead_minutes=10**6 if force else BATCH_MINUTES)
+            if info is not None:
+                tasks[bot] = info
+        return tasks
+
+    async def run(self, now: datetime.datetime | None = None, force: bool = False) -> bool:
         # 世界线里的时间都是不带时区的本地时间，这里统一成一样的口径
         moment = (now or self._now()).replace(tzinfo=None)
-        bots = self.raw_log.enabled_bots()
-        if not bots:
-            return False
-        providers = []
-        for bot in bots:
-            if self.asleep(bot, moment):
-                continue
-            providers.append(bot)
-        if not providers:
-            self.world.set_last_step(fmt_time(moment))
-            return False
-        # 睡着的不写：只给醒着的这几位补
-        start = self.window_start(providers[0], moment)
-        if (moment - start).total_seconds() < 300:
+        tasks = self.tasks_for(moment, force=force)
+        if not tasks:
             return False
         provider = self._resolve_provider()
         if provider is None:
             self.world.note_error("step", "没有可用的模型")
+            self.world.set_last_step_attempt(fmt_time(moment))
             return False
         self.running = True
         try:
-            prompt = await self.build_prompt(providers, start, moment)
+            prompt = await self.build_prompt(tasks, moment)
             text = ""
             for attempt in (1, 2):
                 try:
@@ -368,74 +630,134 @@ class LifeStep:
                         raise
                     logger.warning("[super_enhance/world] 补写第 %d 次失败：%s", attempt, e)
             data = extract_json(text)
-            if data is None:
+            if not isinstance(data, dict):
                 self.world.note_error("step", "返回内容不是 JSON")
+                self.world.set_last_step_attempt(fmt_time(moment))
                 return False
-            count = self.apply(data, providers, start, moment)
-            if count <= 0:
-                self.world.note_error("step", "没有一条能通过校验")
+            written, missed = self.apply(data, tasks, moment)
+            if missed:
+                self.world.note_error("step", "%s 没写到此刻之后" % "、".join(missed))
+                self.world.set_last_step_attempt(fmt_time(moment))
+                logger.warning(
+                    "[super_enhance/world] 补写没写全（%s），过 %d 秒再补", "、".join(missed), RETRY_SECONDS,
+                )
                 return False
             self.world.set_last_step(fmt_time(moment))
-            logger.info("[super_enhance/world] 补写写了 %d 段（%s ~ %s）", count, fmt_time(start), fmt_time(moment))
+            self.world.clear_error("step")
+            logger.info("[super_enhance/world] 补写写了 %d 段：%s", sum(len(x) for x in written.values()), "；".join(
+                "%s %s" % (self.label(bot) or bot, "、".join(
+                    "%s–%s %s" % (str(x.get("start"))[11:16], str(x.get("end"))[11:16], clean_text(x.get("doing"), 16))
+                    for x in rows))
+                for bot, rows in written.items()))
             return True
         except Exception as e:
             logger.error("[super_enhance/world] 补写失败：%s", e)
             self.world.note_error("step", "%s: %s" % (type(e).__name__, e))
+            self.world.set_last_step_attempt(fmt_time(moment))
             return False
         finally:
             self.running = False
 
-    def apply(self, data: dict, bots: list, start: datetime.datetime, now: datetime.datetime) -> int:
-        """校验并落库，返回写入的段数。"""
-        segments = data.get("segments")
-        if not isinstance(segments, dict):
-            return 0
-        date_text = now.date().isoformat()
-        count = 0
-        for bot in bots:
-            items = segments.get(bot)
-            if not isinstance(items, list):
-                continue
-            for raw in items:
-                if not isinstance(raw, dict):
-                    continue
-                seg_start = parse_time(
-                    norm_time(raw.get("start"), date_text, fallback=fmt_time(start))
+    @staticmethod
+    def _sleepy(doing) -> bool:
+        return any(word in str(doing or "") for word in ("睡", "就寝", "歇下"))
+
+    def _limit(self, start: datetime.datetime, end, doing: str) -> datetime.datetime:
+        """结束时间缺了、早于开始、或长得离谱时规整一下。"""
+        sleepy = self._sleepy(doing)
+        cap = datetime.timedelta(hours=MAX_SLEEP_HOURS if sleepy else MAX_SEGMENT_HOURS)
+        if end is None or end <= start:
+            return start + datetime.timedelta(minutes=45)
+        return min(end, start + cap)
+
+    def apply(self, data: dict, tasks: dict, now: datetime.datetime):
+        """校验并落库，返回（每人写进去的段，没写到此刻之后的人）。"""
+        flat = now.replace(tzinfo=None)
+        date_text = flat.date().isoformat()
+        segments = data.get("segments") if isinstance(data.get("segments"), dict) else {}
+        end_current = data.get("end_current") if isinstance(data.get("end_current"), dict) else {}
+        bots = list(self.raw_log.enabled_bots())
+        written, missed = {}, []
+        for bot, info in tasks.items():
+            start = info["start"]
+            if info["mode"] == "open":
+                cur = info["cur"]
+                cur_start = parse_time(cur.get("start")) or flat
+                end = parse_time(norm_time(end_current.get(bot), date_text)) if end_current.get(bot) else None
+                if end is None:
+                    # 没给就拿第一段的开始当它的结束
+                    raw = (segments.get(bot) or [None])[0]
+                    if isinstance(raw, dict):
+                        end = parse_time(norm_time(raw.get("start"), date_text))
+                floor = flat + datetime.timedelta(minutes=5)
+                if end is None or end < floor:
+                    end = floor
+                end = self._limit(cur_start, end, cur.get("doing"))
+                self.world.update_entry(
+                    self.world.date_of(cur.get("id"), bot, flat) or cur_start.date().isoformat(),
+                    cur.get("id"), end=fmt_time(end),
                 )
-                seg_end = (
-                    parse_time(norm_time(raw.get("end"), date_text)) if raw.get("end") else None
-                )
-                if seg_start is None:
-                    continue
-                if seg_start < start - datetime.timedelta(minutes=30) or seg_start > now:
-                    continue
-                if seg_end is not None and (seg_end <= seg_start or seg_end > now + datetime.timedelta(minutes=5)):
-                    seg_end = None
-                with_list = [
-                    str(x) for x in (raw.get("with") or [])
-                    if str(x).strip() and str(x) in bots
-                ]
+                start = end
+            rows = []
+            items = [x for x in (segments.get(bot) or []) if isinstance(x, dict)]
+            items.sort(key=lambda x: str(norm_time(x.get("start"), date_text) or ""))
+            cursor = start
+            horizon = max(start, flat) + datetime.timedelta(hours=HORIZON_HOURS)
+            until = info.get("until") if info["mode"] == "fill" else None
+            for raw in items[:MAX_SEGMENTS]:
+                if cursor >= horizon and cursor > flat:
+                    break  # 写得够远了，后面的下次再写
+                if until is not None and cursor >= until:
+                    break  # 空档补满了
+                seg_end = parse_time(norm_time(raw.get("end"), date_text)) if raw.get("end") else None
+                if seg_end is not None and seg_end <= cursor:
+                    # 模型把日期写成今天、其实是明天早上（睡觉那段）
+                    later = seg_end + datetime.timedelta(days=1)
+                    seg_end = later if later > cursor else None
+                with_list = [str(x) for x in (raw.get("with") or []) if str(x) in bots and str(x) != bot]
+                idle = raw.get("idle") is True or str(raw.get("idle")).strip().lower() == "true"
+                # 分了步、写了各步分钟的：这段做多久就是分钟加起来，模型写的 end 不算（闲着、睡觉除外）
+                _texts, minutes = parse_steps(raw.get("steps"))
+                if minutes and not idle and not self._sleepy(raw.get("doing")):
+                    seg_end = cursor + datetime.timedelta(minutes=sum(minutes))
+                seg_end = self._limit(cursor, seg_end, raw.get("doing"))
+                if idle:
+                    seg_end = min(seg_end, cursor + datetime.timedelta(minutes=MAX_IDLE_MINUTES))
+                if until is not None:
+                    seg_end = min(seg_end, until)
                 entry = {
                     "who": bot,
-                    "start": fmt_time(seg_start),
-                    "end": fmt_time(seg_end) if seg_end else "",
+                    "kind": "activity",
+                    # 首尾相接：开始一律接在上一段（或给定时刻）后面
+                    "start": fmt_time(cursor),
+                    "end": fmt_time(seg_end),
                     "place": raw.get("place"),
                     "doing": raw.get("doing"),
+                    "steps": None if idle else raw.get("steps"),
+                    "result": None if idle else raw.get("result"),
+                    "idle": idle,
+                    "importance": raw.get("importance"),
+                    "at_home": raw.get("at_home"),
+                    "meal": raw.get("meal"),
                     "public": raw.get("public"),
                     "with": with_list,
-                    "training": raw.get("training"),
+                    "training": self.training_id(raw.get("training"), bot),
                     "seen_by": [bot] + with_list,
                     "source": "step",
-                    "created": fmt_time(now),
+                    "created": fmt_time(flat),
                 }
-                if self.world.add_entry(seg_start.date().isoformat(), entry):
-                    count += 1
-        intentions = data.get("intentions")
-        if isinstance(intentions, dict):
-            for bot, text in intentions.items():
-                if str(bot) in bots and str(text or "").strip():
-                    self.world.set_intention(str(bot), text, source="step")
-        for cid in data.get("lift_constraints") or []:
-            self.world.lift_constraint(str(cid), note="条件达成（补写判定）")
-        return count
-
+                record = self.world.add_entry(cursor.date().isoformat(), entry)
+                if record is None:
+                    break
+                rows.append(record)
+                cursor = seg_end
+            if until is not None and rows and cursor < until <= cursor + datetime.timedelta(minutes=FILL_STRETCH_MINUTES):
+                # 离后面那段只差一点：最后一段拉长接上，免得剩个小空档再调一次模型
+                last = rows[-1]
+                self.world.update_entry(str(last.get("start"))[:10], last.get("id"), end=fmt_time(until))
+                last["end"] = fmt_time(until)
+                cursor = until
+            written[bot] = rows
+            if cursor <= flat or (until is not None and not rows):
+                missed.append(self.label(bot) or bot)
+        return written, missed

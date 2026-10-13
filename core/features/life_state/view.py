@@ -5,7 +5,7 @@
 
 import datetime
 
-from .world import WorldStore, detail_of, parse_time, public_of, visible_to
+from .world import WorldStore, detail_of, is_event, parse_time, progress_of, public_of, result_text, staged_of, visible_to
 
 WEEKDAYS_CN = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
 TAG = "【世界线】"
@@ -24,29 +24,71 @@ def _span(item: dict) -> str:
     return "%s 起" % head
 
 
-def merge_close(items: list, gap_minutes: int = 15) -> list:
-    """同一个人、时间挨得很近的碎条目合成一条，免得把注入额度浪费在 1–2 分钟的小事上。"""
+# 碎条目：记录员把一句话记成一条，常常只有一两分钟。只把这种碎条连成一段，
+# 正常的时段（补写写的几十分钟一段）保持原样，免得整天被合成一条。
+FRAGMENT_MINUTES = 10
+LINE_LIMIT = 160
+# 「接下来（还没做）」往后看多少分钟、最多列几件
+NEXT_MINUTES = 90
+NEXT_MAX = 3
+
+
+def _effective_ends(items: list) -> list:
+    """每条的实际结束时刻：写了结束就用它，没写就到下一条开始为止；最后一条没写就是还在进行（None）。"""
+    out = []
+    for index, item in enumerate(items):
+        end = parse_time(item.get("end")) if item.get("end") else None
+        if end is None and index + 1 < len(items):
+            end = parse_time(items[index + 1].get("start"))
+        out.append(end)
+    return out
+
+
+def _clip_tail(text: str, limit: int = LINE_LIMIT) -> str:
+    """太长就留后半截（越靠后的越新）。"""
+    text = str(text or "").strip()
+    return text if len(text) <= limit else "…" + text[-limit:]
+
+
+def merge_close(items: list, gap_minutes: int = FRAGMENT_MINUTES) -> list:
+    """连续的碎条目（每条不超过 FRAGMENT_MINUTES 分钟、彼此相隔不超过 gap_minutes）合成一段。
+
+    合成后：起点取第一条，结束取最后一条（最后一条还在进行就保持开口），
+    地点取最后一条写了的，内容按先后连起来、太长只留后半截。
+    """
+    items = list(items or [])
+    ends = _effective_ends(items)
     out: list = []
-    for item in items:
-        if out:
+    run_open = False  # out[-1] 是不是一串碎条合成的、还能接着并
+    for index, item in enumerate(items):
+        start = parse_time(item.get("start"))
+        end = ends[index]
+        short = start is not None and end is not None and (end - start).total_seconds() <= FRAGMENT_MINUTES * 60
+        if out and run_open and (short or end is None):
             prev = out[-1]
-            prev_end = parse_time(prev.get("end")) or parse_time(prev.get("start"))
-            cur_start = parse_time(item.get("start"))
+            prev_end = parse_time(prev.get("_eff_end"))
             if (
                 str(prev.get("who")) == str(item.get("who"))
                 and prev_end is not None
-                and cur_start is not None
-                and abs((cur_start - prev_end).total_seconds()) <= gap_minutes * 60
+                and start is not None
+                and abs((start - prev_end).total_seconds()) <= gap_minutes * 60
             ):
                 merged = dict(prev)
-                merged["end"] = item.get("end") or item.get("start")
-                merged["doing"] = "；".join(
-                    x for x in (str(prev.get("doing") or "").strip(),
-                                str(item.get("doing") or "").strip()) if x
-                )
+                merged["end"] = item.get("end") or ""
+                merged["_eff_end"] = item.get("end") or (end.strftime("%Y-%m-%d %H:%M") if end else "")
+                if str(item.get("place") or "").strip():
+                    merged["place"] = item.get("place")
+                merged["doing"] = _clip_tail("；".join(
+                    x for x in (str(prev.get("doing") or "").strip(), str(item.get("doing") or "").strip()) if x
+                ), 400)
+                merged["public"] = item.get("public") or prev.get("public")
                 out[-1] = merged
+                run_open = end is not None
                 continue
-        out.append(dict(item))
+        row = dict(item)
+        row["_eff_end"] = end.strftime("%Y-%m-%d %H:%M") if end else ""
+        out.append(row)
+        run_open = bool(short)
     return out
 
 
@@ -63,30 +105,30 @@ def _day_word(date_text: str, today: datetime.date) -> str:
     return "%s " % date_text
 
 
-def _entry_line(item: dict, viewer: str, label, show_name: bool = True) -> str:
-    level = visible_to(item, viewer)
-    if level == "none":
-        return ""
-    text = detail_of(item) if level == "detail" else public_of(item)
-    if not text:
-        return ""
-    who = str(item.get("who") or "")
-    name = "主人" if who == "master" else (label(who) or who)
-    if show_name:
-        return "- %s %s %s" % (_span(item), name, text)
-    return "- %s %s" % (_span(item), text)
+def _when(item: dict) -> str:
+    """「09:00–10:40」或「10:40 起」。"""
+    start = str(item.get("start") or "")
+    end = str(item.get("end") or "")
+    if len(start) < 16:
+        return start
+    if end and len(end) >= 16:
+        return "%s–%s" % (start[11:16], end[11:16] if end[:10] == start[:10] else end[5:16])
+    return "%s 起" % start[11:16]
 
 
-def _current_line(item: dict, viewer: str, label) -> str:
-    level = visible_to(item, viewer)
-    if level == "none":
-        return ""
-    text = detail_of(item) if level == "detail" else public_of(item)
-    if not text:
-        return ""
-    who = str(item.get("who") or "")
-    name = "主人" if who == "master" else (label(who) or who)
-    return "%s：%s（%s 起）" % (name, text, str(item.get("start") or "")[11:])
+def _latest_visible(items: list, viewer: str, now: datetime.datetime):
+    """viewer 能看到的、最近开始的那一条，连同他看到的文字；都看不到返回 (None, "")。"""
+    for item in reversed(items):
+        moment = parse_time(item.get("start"))
+        if moment is None or moment > now:
+            continue
+        level = visible_to(item, viewer)
+        if level == "none":
+            continue
+        text = detail_of(item) if level == "detail" else public_of(item)
+        if text:
+            return item, text
+    return None, ""
 
 
 def build_world_text(
@@ -105,29 +147,50 @@ def build_world_text(
         "%s现在 %s %s（%s）" % (TAG, date_text, now.strftime("%H:%M"), WEEKDAYS_CN[now.weekday()])
     ]
 
-    mine = world.entries(date_text, viewer)
-    mine = merge_close(mine)
-    own_now = None
-    for item in mine:
-        start = parse_time(item.get("start"))
-        end = parse_time(item.get("end")) if item.get("end") else None
-        if start is None or start > now:
-            continue
-        if end is None or end > now:
-            own_now = item
+    raw = [x for x in world.entries(date_text, viewer)
+           if parse_time(x.get("start")) and parse_time(x.get("start")) <= now]
+    # 「你现在」= 覆盖此刻的那段事（顺带的事不算），带上做到百分之几；
+    # 分了步的只给到正在做的那步，后面的和结局不给
+    own_now = world.current(viewer, now)
     if own_now is not None:
-        lines.append(
-            "你现在：%s（%s 起）"
-            % (detail_of(own_now) or "（没写）", str(own_now.get("start"))[5:16])
-        )
+        # 闲着的不算进度
+        pct = None if own_now.get("idle") else progress_of(own_now, now)
+        lines.append("你现在：%s（%s%s）" % (
+            staged_of(own_now, now) or "（没写）", _when(own_now), "，做了 %d%%" % pct if pct is not None else ""))
+    else:
+        last = world.last_activity(viewer, now)
+        if last is not None:
+            lines.append("你最近：%s%s（%s，已经做完）" % (detail_of(last) or "（没写）", result_text(last), _when(last)))
 
-    tail = mine[-max(2, int(recent or 12)):]
+    # 接下来排好的几件（只给时刻和事名，不给步骤和结局），免得她把后面的事说成已经做了
+    upcoming = []
+    for day in (today, today + datetime.timedelta(days=1)):
+        for item in world.entries(day.isoformat(), viewer):
+            start = parse_time(item.get("start"))
+            if start is None or start <= now or start > now + datetime.timedelta(minutes=NEXT_MINUTES):
+                continue
+            if is_event(item) or item.get("idle"):
+                continue
+            upcoming.append("%s %s" % (str(item.get("start"))[11:16], item.get("doing") or item.get("place") or ""))
+    if upcoming:
+        lines.append("接下来（还没做）：" + "；".join(upcoming[:NEXT_MAX]))
+
+    tail = merge_close(raw)[-max(2, int(recent or 12)):]
     if tail:
         lines.append("你今天：")
         for item in tail:
-            row = _entry_line(item, viewer, label, show_name=False)
-            if row:
-                lines.append(row)
+            going = own_now is not None and str(item.get("id")) == str(own_now.get("id"))
+            # 做完了的才带结果；正在做的只给到当前这一步
+            ended = parse_time(item.get("end")) if item.get("end") else None
+            done = not going and ended is not None and ended <= now
+            text = _clip_tail(staged_of(item, now) if going else detail_of(item) + (result_text(item) if done else ""))
+            if text:
+                if is_event(item):
+                    lines.append("- %s（顺带）%s" % (str(item.get("start"))[5:16], text))
+                    continue
+                # 没写结束的那条到下一条开始为止；只有最后一条才算「起」
+                shown = dict(item, end=item.get("end") or item.get("_eff_end") or "")
+                lines.append("- %s %s" % (_span(shown), text))
 
     for item in world.intentions(viewer):
         lines.append("你说过的打算：%s%s" % (item.get("text"), "（%s）" % item.get("window") if item.get("window") else ""))
@@ -140,30 +203,28 @@ def build_world_text(
 
     for bot in world.known_bots(exclude=viewer):
         name = label(bot) or bot
-        items = [x for x in world.entries(date_text, bot) if parse_time(x.get("start")) and parse_time(x.get("start")) <= now]
-        if not items:
-            continue
-        last = items[-1]
-        level = visible_to(last, viewer)
-        if level == "none":
-            continue
-        text = detail_of(last) if level == "detail" else public_of(last)
-        if not text:
-            continue
-        lines.append("%s：%s（%s 起）" % (name, text, str(last.get("start"))[11:]))
-
-    master = [x for x in world.entries(date_text, "master") if parse_time(x.get("start")) and parse_time(x.get("start")) <= now]
-    if master:
-        last = master[-1]
-        level = visible_to(last, viewer)
-        if level == "detail":
-            lines.append("主人：%s（%s 起）" % (detail_of(last), str(last.get("start"))[11:]))
-        elif level == "public":
-            lines.append("主人：%s（%s 起）" % (public_of(last), str(last.get("start"))[11:]))
+        cur = world.current(bot, now)
+        if cur is not None and visible_to(cur, viewer) != "none":
+            item = cur
+            text = staged_of(cur, now) if visible_to(cur, viewer) == "detail" else public_of(cur)
         else:
-            lines.append("主人：未知（主人没说，不要猜）")
+            item, text = _latest_visible(
+                [x for x in world.entries(date_text, bot) if not is_event(x)], viewer, now)
+        if item is not None:
+            lines.append("%s：%s（%s）" % (name, text, _when(item)))
+
+    masters = world.entries(date_text, "master")
+    item, text = _latest_visible(masters, viewer, now)
+    if item is not None:
+        line = "主人：%s（%s）" % (text, _when(item))
+        if not str(item.get("place") or "").strip():
+            # 最近这条没写他在哪：补上他最后一次说到的地方（之后没说离开就还在那儿）
+            placed = [x for x in masters if str(x.get("place") or "").strip()]
+            where, _text = _latest_visible(placed, viewer, now)
+            if where is not None:
+                line += "；最后说在%s（%s）" % (where.get("place"), str(where.get("start"))[11:16])
+        lines.append(line)
     else:
-        lines.append("主人：未知（主人没说，不要猜）")
+        lines.append("主人：今天还没说过他自己在哪、在干什么")
 
     return "\n".join(lines)
-

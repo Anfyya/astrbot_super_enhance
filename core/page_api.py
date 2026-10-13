@@ -353,8 +353,36 @@ class ContextPageApi:
                 row["who_label"] = self._world_label(life, item.get("who"))
                 constraints.append(row)
             bots = life.enabled_bots()
+            # 记录员每个会话处理到哪条消息了（本地时间）
+            cursors = {}
+            for umo, cur in (world._load_state().get("cursors") or {}).items():
+                try:
+                    cursors[umo] = datetime.datetime.fromtimestamp(
+                        float(cur.get("ts") or 0), life.timezone
+                    ).strftime("%Y-%m-%d %H:%M")
+                except Exception:
+                    cursors[umo] = ""
+            dates = sorted(
+                (p.stem for p in world.dir.glob("*.json")), reverse=True
+            ) if world.dir.exists() else []
+            now = life._now().replace(tzinfo=None)
+            try:
+                next_step = life.life_step.next_due(now)
+            except Exception:
+                next_step = None
+            current = {}
+            for bot in bots:
+                cur = world.current(bot, now)
+                if cur is not None:
+                    current[bot] = str(cur.get("id") or "")
             return _ok({
                 "date": date_text,
+                "today": life._today(),
+                "now": now.strftime("%Y-%m-%d %H:%M:%S"),
+                "current": current,
+                # 做完的事够这个重要程度才叫她主动说（网页标颜色用）
+                "done_min": life._done_min_importance(),
+                "dates": dates,
                 "days": days,
                 "constraints": constraints,
                 "intentions": [
@@ -369,6 +397,10 @@ class ContextPageApi:
                 "status": {
                     "mode": life.world_mode,
                     "last_step": world.last_step(),
+                    "next_step": next_step.strftime("%Y-%m-%d %H:%M") if next_step else "",
+                    "last_step_attempt": world.last_step_attempt(),
+                    "last_review": world.last_review(),
+                    "cursors": cursors,
                     "errors": world.errors(),
                 },
             })
@@ -389,16 +421,26 @@ class ContextPageApi:
             action = str(body.get("action") or "add")
             date_text = str(body.get("date") or life._today())
             ok = False
+            from .features.life_state.recorder import norm_time
+
+            for key in ("start", "end"):
+                if body.get(key):
+                    body[key] = norm_time(body.get(key), date_text) or None
+            if kind == "entry" and action != "delete" and body.get("start"):
+                # 条目按开始时间所在的那天存
+                date_text = str(body["start"])[:10] if action == "add" else date_text
             if kind == "entry":
                 if action == "delete":
                     ok = world.delete_entry(date_text, str(body.get("id") or ""))
+                    world.note_manual()
                 elif action == "update":
                     fields = {}
-                    for key in ("place", "doing", "public", "start", "end", "training"):
+                    for key in ("place", "doing", "public", "start", "end", "training", "steps", "importance", "result"):
                         if body.get(key) is not None:
                             fields[key] = body.get(key)
+                    # 改完算手动，撞上的前后条目让开
                     ok = bool(
-                        world.update_entry(date_text, str(body.get("id") or ""), **fields)
+                        world.manual_update(date_text, str(body.get("id") or ""), **fields)
                     )
                 else:
                     ok = bool(world.add_entry(date_text, {
@@ -407,28 +449,39 @@ class ContextPageApi:
                         "end": body.get("end") or "",
                         "place": body.get("place"),
                         "doing": body.get("doing"),
+                        "steps": body.get("steps") or [],
+                        "importance": body.get("importance"),
+                        "result": body.get("result"),
                         "public": body.get("public"),
                         "with": body.get("with") or [],
                         "training": body.get("training"),
                         "seen_by": body.get("seen_by") or [],
                         "source": "manual",
                     }))
+                    world.note_manual()
             elif kind == "constraint":
                 cid = str(body.get("id") or "")
                 if action == "delete":
                     ok = world.lift_constraint(cid, note="面板手动解除")
+                elif action == "reopen":
+                    ok = bool(world.update_constraint(cid, status="active"))
                 elif action == "update":
                     fields = {}
                     for key in ("text", "public", "until", "until_time", "status"):
                         if body.get(key) is not None:
                             fields[key] = body.get(key)
+                    if fields.get("until_time"):
+                        fields["until_time"] = norm_time(fields["until_time"], life._today())
                     ok = bool(world.update_constraint(cid, **fields))
                 else:
+                    until_time = norm_time(body.get("until_time"), life._today()) if body.get("until_time") else ""
                     ok = bool(world.add_constraint({
                         "who": body.get("who"),
                         "text": body.get("text"),
                         "public": body.get("public"),
                         "until": body.get("until"),
+                        "until_time": until_time,
+                        "since": life._now().strftime("%Y-%m-%d %H:%M"),
                         "source": "manual",
                     }))
             elif kind == "intention":
@@ -463,12 +516,40 @@ class ContextPageApi:
             what = str(body.get("what") or "recorder")
             now = life._now()
             if what == "step":
-                ok = await life.life_step.run(now)
+                # 手动：没写到下一段的人都接着往下写
+                ok = await life.life_step.run(now, force=True)
+            elif what == "review":
+                lifted = await life.recorder.review_constraints(now)
+                life.world.set_last_review(now.date().isoformat())
+                life.world.clear_error("review")
+                return _ok({"ok": True, "lifted": lifted, "errors": life.world.errors()})
             else:
                 ok = await life.recorder.run_all(now)
             return _ok({"ok": bool(ok), "errors": life.world.errors()})
         except Exception as exc:
             logger.error("[super_enhance/ctx] 世界线手动运行失败", exc_info=True)
+            return _err(exc)
+
+    async def manual_send(self):
+        """手动以 bot 身份发一条消息到指定会话（运维用）。"""
+        try:
+            body = await request.get_json() or {}
+        except Exception:
+            body = {}
+        umo = str(body.get("umo") or "").strip()
+        text = str(body.get("text") or "").strip()
+        if not umo or not text:
+            return _err(ValueError("umo 和 text 都不能为空"))
+        try:
+            from astrbot.core.message.components import Plain
+            from astrbot.core.message.message_event_result import MessageChain
+
+            chain = MessageChain(chain=[Plain(text)])
+            await self.plugin.context.send_message(umo, chain)
+            logger.info("[super_enhance/ctx] 手动发送到 %s：%s", umo, text[:80])
+            return _ok({"sent": True})
+        except Exception as exc:
+            logger.error("[super_enhance/ctx] 手动发送失败", exc_info=True)
             return _err(exc)
 
     def register_routes(self) -> None:
@@ -490,6 +571,12 @@ class ContextPageApi:
             self.world_run,
             ["POST"],
             "世界线：手动跑一次记录员或幕间补写",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/manual_send",
+            self.manual_send,
+            ["POST"],
+            "手动以 bot 身份发一条消息（运维）",
         )
         register(
             f"{PAGE_API_PREFIX}/conversations",

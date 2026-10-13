@@ -71,7 +71,6 @@ TWISTS = (
     "跟人打了个小赌",
     "缝补一件衣服，或修补一样旧用品",
     "种点花草，或照料别人家的盆栽",
-    "晚上抬头看星星或月亮看了很久",
     "做了个奇怪的梦，一整天都在琢磨",
     "认真练一样拿手或不拿手的本事",
     "被熟人叫去家里坐坐、闲聊家常",
@@ -87,6 +86,23 @@ TWISTS = (
     "跟熟人一起干了半天活",
     "记账、清点东西，算清一笔小账",
     "听唱片或广播听得入了神",
+)
+
+# 晚上（天黑以后）的小事：都是在家里能做的，补写写晚上的段时只拿这些
+NIGHT_TWISTS = (
+    "晚上抬头看星星或月亮看了很久",
+    "翻到旧物，想起以前的事",
+    "听唱片或广播听得入了神",
+    "安安静静看书或发呆",
+    "缝补一件衣服，或修补一样旧用品",
+    "给收藏的小物件重新分类、摆放",
+    "记账、清点东西，算清一笔小账",
+    "两人在家玩个游戏或比一场小比赛",
+    "两人一起动手做一样小东西",
+    "睡前聊起一件藏在心里的事",
+    "跟着唱片学一首新歌",
+    "把自己会的一样本事教给对方",
+    "给主人写一张小纸条或留言",
 )
 
 TONES = (
@@ -126,6 +142,7 @@ ACCIDENTS = (
 
 ACCIDENT_CHANCE = 0.1  # 大约十天碰上一回
 TWIST_PICK = 3
+NIGHT_TWIST_PICK = 2
 TWIST_LOOKBACK = 3  # 最近 3 天抽过的插曲今天不再抽
 ACCIDENT_LOOKBACK = 30  # 30 天内碰过的意外不再碰
 SEED_KEEP_DAYS = 40
@@ -320,6 +337,7 @@ def draw_seed(
         "weather": _weather(date_text, prev_weather, rng),
         "tone": _pick(TONES, used("tone", 1), 1, rng)[0],
         "twists": _pick(TWISTS, used("twists", TWIST_LOOKBACK), TWIST_PICK, rng, TWIST_WEIGHTS),
+        "night_twists": _pick(NIGHT_TWISTS, used("night_twists", TWIST_LOOKBACK), NIGHT_TWIST_PICK, rng, TWIST_WEIGHTS),
         "moods": moods,
         "accident": accident,
     }

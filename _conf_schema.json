@@ -335,7 +335,11 @@
                 "description": "世界线（新架构）",
                 "type": "string",
                 "hint": "off=关闭；shadow=只跑记录员和幕间补写、世界线照常记，但聊天仍用旧日程；live=切换：聊天注入和主动消息都按世界线来，每日日程与回查停用。",
-                "options": ["off", "shadow", "live"],
+                "options": [
+                    "off",
+                    "shadow",
+                    "live"
+                ],
                 "default": "off"
             },
             "recorder_quiet_seconds": {
@@ -344,16 +348,29 @@
                 "hint": "某个会话最后一条消息过了这么久还没新消息，就把这段对话整理进世界线。",
                 "default": 90
             },
-            "step_minutes_min": {
-                "description": "幕间补写最短间隔（分钟）",
+            "step_lead_minutes": {
+                "description": "补写提前量（分钟）",
                 "type": "int",
-                "hint": "没人在聊天时，每隔多少分钟把刚过去这段时间补写进世界线；实际间隔在这和最长值之间随机。",
-                "default": 60
+                "hint": "她手上那件事做完前多少分钟，补写接着写下一段（1-30）。聊天里说开始做一件没说多久的事、或者断了没记录时，会马上补写。",
+                "default": 5
             },
-            "step_minutes_max": {
-                "description": "幕间补写最长间隔（分钟）",
+            "step_window_hours": {
+                "description": "补写断档上限（小时）",
                 "type": "int",
-                "default": 90
+                "hint": "断了很久（停机、出错）时，最多往回补多少小时（1-12）；更早的不补。",
+                "default": 3
+            },
+            "world_home": {
+                "description": "她们现在住的地方",
+                "type": "string",
+                "hint": "幕间补写用的地点锚点：补写出来的地点和活动都在这一带，人设里写的其它地方只当背景。",
+                "default": "穗织"
+            },
+            "world_notes": {
+                "description": "故事里的固定事实",
+                "type": "text",
+                "hint": "一行一条，记录员和幕间补写都会照着写（例如哪里在哪、哪扇门关着）。剧情变了就改这里，不用改代码。",
+                "default": "藏经阁的门是关着的：里面的人不主动出来，外面的人看不见里面在做什么，不要写谁打那儿过瞧见里面。\n藏经阁不在神社里，是两处地方。"
             },
             "world_keep_days": {
                 "description": "世界线保留天数",
@@ -425,13 +442,24 @@
             "proactive_middle_count": {
                 "description": "中间时段主动条数",
                 "type": "int",
-                "hint": "起床与入睡之外，白天随机挑选的主动搭话次数（彼此至少隔 30 分钟，排不下就少几条）。",
+                "hint": "起床与入睡之外，白天随机挑选的主动搭话次数（彼此至少隔 30 分钟，排不下就少几条）。世界线 live 时不用这个：做完够重要的事才叫她（见「做完一件事要多重要才主动说」）。",
                 "slider": {
                     "min": 0,
                     "max": 24,
                     "step": 1
                 },
                 "default": 5
+            },
+            "proactive_done_min_importance": {
+                "description": "做完一件事要多重要才主动说",
+                "type": "int",
+                "hint": "世界线 live：补写给每段事打 1–5 分（1 洗碗走路这类小事，3 逛街泡脚，4 修好东西、碰上新鲜事，5 练成一招、碰上意外）。做完的事够这个分数才叫她发主动消息；闲着、睡觉、没打分的（聊天里记的）都不叫。另外出门、到家、开饭那一刻总会叫她一次；早安、晚安、约定、改口不受影响。",
+                "slider": {
+                    "min": 1,
+                    "max": 5,
+                    "step": 1
+                },
+                "default": 4
             },
             "proactive_extra_requirements": {
                 "description": "主动对话额外要求",

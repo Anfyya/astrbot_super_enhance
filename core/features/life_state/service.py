@@ -2,6 +2,7 @@
 
 import asyncio
 import datetime
+import json
 import re
 import time
 from pathlib import Path
@@ -31,6 +32,7 @@ from .models import (
     profile_umo_for_bot,
     weekday_cn,
 )
+from .ledger import set_timezone as set_ledger_timezone
 from .ledger import (
     AbilityBook,
     EventBook,
@@ -48,12 +50,15 @@ from .reviewer import DailyReviewer
 from .scene import SharedScene, build_injection
 from .store import StateStore
 from .variety import SeedLog
-from .world import WorldStore, parse_time
+from .world import WorldStore, fmt_time, is_event, parse_time
 from .recorder import Recorder
 from .step import LifeStep
 from .view import build_world_text
 
 DEFAULT_TZ = "Asia/Shanghai"
+# 每日约束复核失败后隔多久重试、一天最多试几回
+REVIEW_RETRY_MINUTES = 10
+REVIEW_TRIES = 3
 STATE_FILE_NAME = "life_states.json"
 ABILITY_FILE_NAME = "abilities.json"
 PROMISE_FILE_NAME = "promises.json"
@@ -187,6 +192,12 @@ class LifeStateService:
         self.recorder.promises = self.promises
         self.recorder.trainings = self.trainings
         self.recorder.abilities = self.abilities
+        # 记录员看到对话里「练成了」也走同一条路：标练成、写进能力清单
+        self.recorder.finish_fn = self._finish_training
+        # 她把日程里后面才做的事说早了：叫她给主人改口
+        self.recorder.on_early = self._on_early
+        # 账本里的时间用本地时间（容器系统时区是 UTC）
+        set_ledger_timezone(self.timezone)
         self.life_step = LifeStep(
             context, cfg, self.world, self.raw_log, None,
             self.seed_log, self.scene.label_for, self._now,
@@ -194,6 +205,9 @@ class LifeStateService:
         self.life_step.promises = self.promises
         self.life_step.trainings = self.trainings
         self.life_step.abilities = self.abilities
+        self.life_step.recorder = self.recorder
+        # 世界线 live 时，主动消息提示词里不再出「原本打算」那一行
+        self.planner.live_fn = lambda: self.world_mode == "live"
         self._world_task: asyncio.Task | None = None
         self._world_day = None
 
@@ -293,17 +307,53 @@ class LifeStateService:
             error="",
         )
 
+    async def _flush_outbox(self) -> None:
+        """手动外发队列：data_dir/outbox.jsonl 里的消息逐条发出去（运维用）。"""
+        fp = self.data_dir / "outbox.jsonl"
+        if not fp.exists():
+            return
+        try:
+            lines = fp.read_text(encoding="utf-8-sig").splitlines()
+        except Exception:
+            logger.error("[super_enhance/life] outbox 读取失败", exc_info=True)
+            return
+        try:
+            stamp = self._now().strftime("%Y%m%d-%H%M%S")
+            fp.rename(self.data_dir / ("outbox.sent-%s.jsonl" % stamp))
+        except Exception:
+            pass
+        from astrbot.core.message.components import Plain
+        from astrbot.core.message.message_event_result import MessageChain
+
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                item = json.loads(line)
+                umo = str(item.get("umo") or "").strip()
+                text = str(item.get("text") or "")
+                if not umo or not text:
+                    continue
+                await self.context.send_message(umo, MessageChain(chain=[Plain(text)]))
+                logger.info("[super_enhance/life] outbox 已发送到 %s：%s", umo, text[:60])
+            except Exception:
+                logger.error("[super_enhance/life] outbox 发送失败", exc_info=True)
+
     async def _world_loop(self) -> None:
         """世界线后台循环：记录员（按会话防抖）+ 幕间补写 + 每日维护。"""
         await asyncio.sleep(20.0)
         while True:
             try:
+                await self._flush_outbox()
                 if self.world_mode != "off":
                     now = self._now()
                     today = now.date()
                     if self._world_day != today:
                         await self._world_daily(today)
                         self._world_day = today
+                    else:
+                        await self._review_if_due(now)
                     for umo in self.recorder.sessions():
                         items = self.recorder.pending(umo, now)
                         if items:
@@ -312,16 +362,134 @@ class LifeStateService:
                                 umo, len(items), self.recorder.ready(umo, now),
                             )
                     done = await self.recorder.run_all(now)
+                    if done and self.world_mode == "live":
+                        # 记录员可能记了新约定：补排约定到点的那条
+                        await self._sync_live_jobs(now.date().isoformat())
                     if self.life_step.due(now):
                         await self.life_step.run(now)
+                    if self.world_mode == "live":
+                        await self._settle_live(now)
+                        # 补写可能跑了好几分钟：做完没做完按此刻算
+                        await self._notify_done(self._now())
                     if done:
                         self._debug("世界线：记录员处理了 %d 个会话", done)
+                self.world.clear_error("loop")
             except asyncio.CancelledError:
                 raise
             except Exception as e:
                 logger.error("[super_enhance/life] 世界线后台循环出错：%s", e)
                 self.world.note_error("loop", "%s: %s" % (type(e).__name__, e))
             await asyncio.sleep(30.0)
+
+    async def _sync_live_jobs(self, date_text: str) -> None:
+        """世界线 live：按今天定好的起床 / 入睡和约定补排主动对话（只补缺的）。"""
+        if not self.planner.enabled:
+            return
+        for bot in self.enabled_bots():
+            try:
+                plan = self.world.day_plan(bot, date_text)
+                await self.planner.sync_live(
+                    bot, date_text, plan.get("wake") or "07:00", plan.get("sleep") or "23:00", self._now()
+                )
+            except Exception:
+                logger.warning("[super_enhance/life] 主动对话排期失败", exc_info=True)
+
+    @staticmethod
+    def _moment_kind(items: list, index: int) -> str:
+        """新的一段刚开始时算不算出门 / 到家 / 开饭：出门、到家看前后两段在不在宿舍；同时是开饭，算出门到家。"""
+        item = items[index]
+        prev = items[index - 1] if index > 0 else None
+        here = item.get("at_home")
+        before = prev.get("at_home") if prev is not None else None
+        if before is True and here is False:
+            return "out"
+        if before is False and here is True:
+            return "back"
+        if item.get("meal") and not item.get("idle"):
+            return "meal"
+        return ""
+
+    async def _notify_done(self, now: datetime.datetime) -> None:
+        """世界线 live：到点叫她一次，发不发她自己定。新一段刚开始是出门、到家、开饭时叫；做完一件够分的事时叫。"""
+        if not self.planner.enabled:
+            return
+        flat = now.replace(tzinfo=None)
+        for bot in self.enabled_bots():
+            mark = parse_time(self.world.done_mark(bot))
+            if mark is None:
+                # 头一回：从现在开始算，之前做完的不补发
+                self.world.set_done_mark(bot, fmt_time(flat))
+                continue
+            finished = None
+            started = None
+            items = self.world.activities(bot, flat)
+            for index, item in enumerate(items):
+                start = parse_time(item.get("start"))
+                end = parse_time(item.get("end")) if item.get("end") else None
+                if start is not None and mark < start <= flat and (flat - start).total_seconds() <= 600:
+                    moment = self._moment_kind(items, index)
+                    if moment:
+                        started = (moment, item)
+                if start is None or end is None or not (mark < end <= flat):
+                    continue
+                if (flat - end).total_seconds() > 600:
+                    continue  # 停机期间做完的，过了就过了
+                if (end - start).total_seconds() < 600:
+                    continue  # 几分钟的小事不算「做完一件事」
+                finished = item
+            if parse_time(self.world.done_mark(bot)) != flat:
+                self.world.set_done_mark(bot, fmt_time(flat))
+            if started is not None:
+                # 出门、到家、开饭优先；同一刻做完的那件就不另叫了
+                try:
+                    await self.planner.fire_done(bot, started[1], now, kind=started[0])
+                except Exception:
+                    logger.warning("[super_enhance/life] 出门 / 到家 / 开饭的主动对话没排上", exc_info=True)
+                continue
+            if finished is None:
+                continue
+            if any(word in str(finished.get("doing") or "") for word in ("睡觉", "睡下", "入睡", "睡着")):
+                continue  # 睡醒由早安那条管
+            if finished.get("idle"):
+                continue  # 闲着到头不算做完一件事
+            need = self._done_min_importance()
+            score = int(finished.get("importance") or 0)
+            if score < need:
+                logger.info(
+                    "[super_enhance/life] [%s] 做完「%s」：重要程度 %s，不到 %d，不叫她",
+                    bot, str(finished.get("doing") or "")[:20], score or "没打分", need,
+                )
+                continue
+            try:
+                await self.planner.fire_done(bot, finished, now)
+            except Exception:
+                logger.warning("[super_enhance/life] 做完一件事的主动对话没排上", exc_info=True)
+
+    async def _on_early(self, bot: str, umo: str, entry: dict, said: str, now) -> None:
+        """记录员发现她把日程里后面才做的事说早了：live 下叫她给主人改口。"""
+        if self.world_mode != "live" or not self.planner.enabled:
+            return
+        await self.planner.fire_correct(bot, umo, entry, said, now)
+
+    def _done_min_importance(self) -> int:
+        """做完一件事要多重要（1–5）才叫她发主动消息。"""
+        try:
+            value = int(self.cfg.get("proactive_done_min_importance", 4) or 4)
+        except Exception:
+            value = 4
+        return max(1, min(value, 5))
+
+    async def _settle_live(self, now: datetime.datetime) -> None:
+        """世界线模式：每隔几分钟结一次账，练够时长当场算练成（不用等到 0 点）。"""
+        last = getattr(self, "_settle_at", None)
+        if last is not None and (now - last).total_seconds() < 300:
+            return
+        self._settle_at = now
+        for bot in self.enabled_bots():
+            try:
+                await self.settle_trainings(bot)
+            except Exception:
+                logger.warning("[super_enhance/life] 结算在练的事失败", exc_info=True)
 
     async def _world_daily(self, today: datetime.date) -> None:
         """世界线模式的每日维护：清理旧数据、结算在练的事、抽当天的随机起点。"""
@@ -348,13 +516,14 @@ class LifeStateService:
                 await self.settle_trainings(bot)
             except Exception:
                 logger.warning("[super_enhance/life] 结算在练的事失败", exc_info=True)
-            # 主动消息排期（原来挂在每日生成日程后面，世界线模式下挪到这里）
-            try:
-                state = self._world_state(bot, date_text)
-                if state is not None and self.planner.enabled:
-                    await self.planner.sync(bot, state, self._now())
-            except Exception:
-                logger.warning("[super_enhance/life] 主动对话排期失败", exc_info=True)
+            # 主动消息排期：live 只排早安 / 晚安 / 约定（做完一件事的现排）；shadow 照旧
+            if self.world_mode != "live":
+                try:
+                    state = self._world_state(bot, date_text)
+                    if state is not None and self.planner.enabled:
+                        await self.planner.sync(bot, state, self._now())
+                except Exception:
+                    logger.warning("[super_enhance/life] 主动对话排期失败", exc_info=True)
         try:
             if date_text not in (self.seed_log.load() or {}):
                 from .variety import draw_seed
@@ -365,6 +534,40 @@ class LifeStateService:
                 self._debug("世界线：已抽今天的随机起点")
         except Exception:
             logger.warning("[super_enhance/life] 抽今天的随机起点失败", exc_info=True)
+        if self.world_mode == "live":
+            await self._sync_live_jobs(date_text)
+        await self._review_if_due(self._now())
+
+    async def _review_if_due(self, now: datetime.datetime) -> None:
+        """每日约束复核：今天还没成功就做；失败隔 REVIEW_RETRY_MINUTES 分钟再试，一天最多 REVIEW_TRIES 回。"""
+        date_text = now.date().isoformat()
+        if self.world.last_review() == date_text:
+            return
+        tries = getattr(self, "_review_tries", None)
+        if not tries or tries.get("date") != date_text:
+            tries = self._review_tries = {"date": date_text, "count": 0, "at": None}
+        if tries["count"] >= REVIEW_TRIES:
+            return
+        if tries["at"] is not None and (now - tries["at"]).total_seconds() < REVIEW_RETRY_MINUTES * 60:
+            return
+        tries["count"] += 1
+        tries["at"] = now
+        try:
+            lifted = await self.recorder.review_constraints(now)
+            self.world.set_last_review(date_text)
+            self.world.clear_error("review")
+            logger.info(
+                "[super_enhance/life] 世界线：约束复核完成，撤掉 %d 条%s",
+                len(lifted), "（%s）" % "、".join(lifted) if lifted else "",
+            )
+        except Exception as e:
+            left = REVIEW_TRIES - tries["count"]
+            logger.warning(
+                "[super_enhance/life] 约束复核失败（第 %d 回）：%s%s", tries["count"], e,
+                "，%d 分钟后再试" % REVIEW_RETRY_MINUTES if left > 0 else "，今天不再试",
+            )
+            self.world.note_error("review", "%s: %s" % (type(e).__name__, e))
+
 
     # ---------- 基础 ----------
 
@@ -989,16 +1192,21 @@ class LifeStateService:
         spans = []
         want = str(tid).lstrip("#＃")
         now = self._now()
+        flat_now = now.replace(tzinfo=None)
         for item in self.world.entries(date_text, bot):
+            if is_event(item):
+                continue
             got = str(item.get("training") or "").strip().lstrip("#＃")
             if not got or got != want:
                 continue
             start = parse_time(item.get("start"))
-            if start is None:
+            if start is None or start > flat_now:
                 continue
             end = parse_time(item.get("end"))
             if end is None:
-                end = now if start.date() == now.date() else start.replace(hour=23, minute=59)
+                end = flat_now if start.date() == flat_now.date() else start.replace(hour=23, minute=59)
+            # 补写提前写好了结束时间：没到的那部分还没练
+            end = min(end, flat_now)
             low = start.hour * 60 + start.minute
             high = (end.hour * 60 + end.minute) if end.date() == start.date() else 1440
             if high > low:
@@ -1093,7 +1301,10 @@ class LifeStateService:
         lines = []
         for item in self.trainings.open_for(bot):
             prog = self.training_progress(item, now)
-            if prog.eta is not None:
+            if self.world_mode == "live":
+                # 世界线没有往后的日程，只说练了多少、还差多少
+                when = ""
+            elif prog.eta is not None:
                 when = "照今天的安排 %s 前后练够" % prog.eta.strftime("%H:%M")
             elif prog.today_planned > 0:
                 when = "今天日程里还排着 %s 小时，练完还差 %s 小时" % (
@@ -1108,19 +1319,22 @@ class LifeStateService:
             if item.get("arrangement"):
                 parts.append("怎么练：%s" % item["arrangement"])
             parts.append(
-                "一共要练约 %s 小时，已经练了 %s 小时，还差 %s 小时；%s"
+                "一共要练约 %s 小时，已经练了 %s 小时，还差 %s 小时%s"
                 % (
                     training_calc.fmt_hours(prog.need_minutes),
                     training_calc.fmt_hours(prog.done_minutes),
                     training_calc.fmt_hours(prog.left_minutes),
-                    when,
+                    "；" + when if when else "",
                 )
             )
             lines.append("- " + "｜".join(parts))
         if lines:
             blocks.append(
-                "【在练的事】还没练成的本事。练了多久按日程里真去练了的时段算，够数那一刻就算练成，"
-                "练成后自动记进「后来学会的」；主人改了要求或要练多久、或者说算你练成了，用 training 工具改：\n"
+                (
+                    "【在练的事】还没练成的本事。练了多久按%s里真去练了的时段算，够数那一刻就算练成，"
+                    "练成后自动记进「后来学会的」；主人改了要求或要练多久、或者说算你练成了，用 training 工具改：\n"
+                    % ("世界线" if self.world_mode == "live" else "日程")
+                )
                 + "\n".join(lines)
             )
         fresh = []
