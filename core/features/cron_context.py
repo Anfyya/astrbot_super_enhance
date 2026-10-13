@@ -356,7 +356,9 @@ class CronContextFeature:
         if not umo:
             logger.warning("[super_enhance/cron_ctx] 无通知目标，仅记录日志：%s", text)
             return
-        await self._send(umo, text)
+        # 这次主动消息还在跑：补进历史要并到它登记的会话对象上，收尾时一起写库
+        live_conv = cron_history.get(umo) if self._is_cron_event(event) else None
+        await self._send(umo, text, live_conv)
 
     def _notify_targets_sync(self, text: str) -> None:
         """安装期（无事件）同步通知。"""
@@ -376,7 +378,7 @@ class CronContextFeature:
         except Exception:
             logger.error("[super_enhance/cron_ctx] 通知发送失败", exc_info=True)
 
-    async def _send(self, umo: str, text: str) -> None:
+    async def _send(self, umo: str, text: str, live_conv=None) -> None:
         now = datetime.datetime.now().timestamp()
         key = text[:60]
         if now - self._notify_at.get(key, 0) < NOTIFY_COOLDOWN_SECONDS:
@@ -384,11 +386,13 @@ class CronContextFeature:
         self._notify_at[key] = now
         # 设置里给这个机器人备了句子就用她的口吻说，出了什么错只进日志
         voiced = error_voice.pick_for_umo(self.config, "cron", umo)
+        sent = voiced or "[超级增强] " + text
         try:
-            chain = MessageChain(chain=[Plain(voiced or "[超级增强] " + text)])
-            await self.context.send_message(umo, chain)
+            await self.context.send_message(umo, MessageChain(chain=[Plain(sent)]))
             logger.info("[super_enhance/cron_ctx] 已通知 %s：%s", umo, voiced or text)
             if voiced:
                 logger.info("[super_enhance/cron_ctx] （出错原因：%s）", text)
         except Exception:
             logger.error("[super_enhance/cron_ctx] 通知发送失败", exc_info=True)
+            return
+        await error_voice.note_sent_error(self.context, self.config, umo, sent, text, live_conv)

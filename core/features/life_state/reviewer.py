@@ -500,7 +500,9 @@ class DailyReviewer:
         # 设置里给这个机器人备了句子就用她的口吻说，出了什么错只进日志（调用处已记）
         voiced = error_voice.pick_for_umo(self.cfg, "review", umo)
         try:
-            chain = MessageChain(chain=[Plain(voiced or "[超级增强] " + text)])
-            await self.context.send_message(umo, chain)
+            sent = voiced or "[超级增强] " + text
+            await self.context.send_message(umo, MessageChain(chain=[Plain(sent)]))
         except Exception:
             logger.error("[super_enhance/life] 回查通知发送失败", exc_info=True)
+            return
+        await error_voice.note_sent_error(self.context, self.cfg, umo, sent, text)
