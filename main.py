@@ -651,12 +651,17 @@ class SuperEnhance(Star):
         被「新消息优先」作废的那一轮，只有排第一的钩子能跑到。这里统一做：
         - 标记「这一轮的 agent 已跑完」（新消息优先 / 静默判断上一轮还在不在跑要用）；
         - 被作废的轮次：没发出去的话和中断标记不写进历史；
-        - 静默的轮次：最后那句没发出去的话不写进历史（工具调用照常保留）。
+        - 静默的轮次：最后那句没发出去的话不写进历史（工具调用照常保留）；
+        - 模型失败的轮次：记下原因和主人原话，发完以后补进历史（error_voice）。
         """
         try:
             event.set_extra(AGENT_DONE_FLAG, time.time())
         except Exception:
             pass
+        try:
+            error_voice.remember_model_error(self.config, event, run_context, response)
+        except Exception:
+            logger.error("[super_enhance/error_voice] 记录模型失败出错", exc_info=True)
         try:
             self.reply_guard.on_agent_done(event, run_context)
         except Exception:
@@ -676,6 +681,11 @@ class SuperEnhance(Star):
     @filter.after_message_sent()
     async def after_message_sent_reply_guard(self, event: AstrMessageEvent) -> None:
         await self.reply_guard.after_message_sent(event)
+
+    @filter.after_message_sent()
+    async def after_message_sent_error_note(self, event: AstrMessageEvent) -> None:
+        """模型失败的那一轮：那句代发的话发完以后，把这一轮补进会话历史。"""
+        await error_voice.write_model_error(self.context, event, self.msg_time.marker())
 
     # ------------------------------------------------------------------
     # 8. 原始消息副本（只给日程回查用，保留今天+昨天两个自然日）

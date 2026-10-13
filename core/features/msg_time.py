@@ -107,6 +107,12 @@ class MsgTimeFeature:
             WEEKDAYS[now.weekday()],
         )
 
+    def marker(self) -> str:
+        """自己往历史里写 assistant 消息时用的发送时间戳；没开返回空串。"""
+        if not self.enabled:
+            return ""
+        return "<system_reminder>%s</system_reminder>" % self._now_text()
+
     @staticmethod
     def _has_stamp(message) -> bool:
         content = getattr(message, "content", None)
