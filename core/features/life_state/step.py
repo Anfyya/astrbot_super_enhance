@@ -35,6 +35,8 @@ MAX_IDLE_MINUTES = 60
 MAX_SLEEP_HOURS = 14
 # 快到点的几位在多少分钟内要接着写的，顺带一起写
 BATCH_MINUTES = 15
+# 这次补写顺带上别人：她排好的到这次要写到的时刻之前就排完、至少还空这么多分钟，就从她排完的地方接着一起写
+JOIN_ROOM_MINUTES = 30
 # 补写失败后隔多久再试（秒）
 RETRY_SECONDS = 180
 # 一次最多往后写这么多小时（从给定时刻和现在里晚的那个算起；睡觉那段不受限）
@@ -431,16 +433,19 @@ class LifeStep:
                 "，做了 %d%%" % pct if pct is not None else "",
             ))
         parts.append("她们此刻手上的事：\n" + "\n".join(now_lines))
-        # 这次不写的人，她后面已经排好的段也给出来，免得把她拉进她那边没有的事里
+        # 这次不写的人，她后面已经排好的段也给出来，免得把她拉进她那边没有的事里；
+        # 从后面某个时刻才开始写的人（after），那个时刻之前排好的也给出来
         planned = []
         for bot in bots:
-            if tasks is not None and bot in tasks:
+            info = (tasks or {}).get(bot)
+            if info is not None and info.get("mode") != "after":
                 continue
+            upto = info["start"] if info is not None else None
             for date_offset in (0, 1):
                 date_text = (flat.date() + datetime.timedelta(days=date_offset)).isoformat()
                 for item in self.world.entries(date_text, bot):
                     start = parse_time(item.get("start"))
-                    if start is None or start <= flat or is_event(item):
+                    if start is None or start <= flat or is_event(item) or (upto is not None and start >= upto):
                         continue
                     planned.append("- %s %s~%s %s %s%s" % (
                         self.label(bot) or bot,
@@ -451,7 +456,7 @@ class LifeStep:
                         "（和%s）" % "、".join(self.label(x) or x for x in item["with"]) if item.get("with") else "",
                     ))
         if planned:
-            parts.append("已经排好、这次不改的（不在「这次要你写的」里的人）：\n" + "\n".join(planned))
+            parts.append("已经排好、这次不改的：\n" + "\n".join(planned))
         constraints = self.world.constraints(active_only=True)
         if constraints:
             parts.append(
@@ -530,6 +535,12 @@ class LifeStep:
                        fmt_time(info["until"]), clean_text(later.get("doing") or later.get("place"), 60),
                        fmt_time(info["until"])[11:])
                 )
+            elif info["mode"] == "after":
+                lines.append(
+                    "- %s：已经排到 %s（最后一段「%s」），从 %s 开始往下写；在那之前排好的不改。"
+                    % (name, fmt_time(info["start"])[11:], clean_text(cur.get("doing") or cur.get("place"), 60),
+                       fmt_time(info["start"]))
+                )
             elif info["mode"] == "next":
                 lines.append(
                     "- %s：手上「%s」%s 做完，从 %s 开始往下写。"
@@ -586,8 +597,27 @@ class LifeStep:
 
     # ---------- 执行 ----------
 
+    def _frontier(self, bot: str, flat: datetime.datetime):
+        """她排好的段一直接到哪儿：(排完的时刻, 最后那段)。手上那段没定结束、此刻没在做事、
+        或者后面断了一截又排着的（那是 fill 的事），返回 None。"""
+        cur = self.world.current(bot, flat)
+        if cur is None or not cur.get("end"):
+            return None
+        edge, last = parse_time(cur.get("end")), cur
+        while edge is not None:
+            later = self.world.next_after(bot, edge)
+            if later is None:
+                return edge, last
+            start = parse_time(later.get("start"))
+            if start is None or start > edge + datetime.timedelta(minutes=2) or not later.get("end"):
+                return None
+            edge, last = parse_time(later.get("end")), later
+        return None
+
     def tasks_for(self, now: datetime.datetime, force: bool = False) -> dict:
-        """这次要写的人：该补的，加上 BATCH_MINUTES 分钟内也要补的（一起写省一次调用）。"""
+        """这次要写的人：该补的，加上 BATCH_MINUTES 分钟内也要补的（一起写省一次调用）；
+        再加上排好的段在这次要写到的时刻之前就排完的人，从她排完的地方接着写（mode=after），
+        这样两个人后面的事是一起排出来的，不会一个已经排出去两小时、另一个只能绕着她排。"""
         bots = list(self.raw_log.enabled_bots())
         tasks = {}
         for bot in bots:
@@ -602,6 +632,18 @@ class LifeStep:
             info = self.need(bot, now, ahead_minutes=10**6 if force else BATCH_MINUTES)
             if info is not None:
                 tasks[bot] = info
+        flat = now.replace(tzinfo=None)
+        starts = [x["start"] for x in tasks.values() if x.get("start")]
+        reach = max(min(starts) if starts else flat, flat) + datetime.timedelta(hours=HORIZON_HOURS)
+        for bot in bots:
+            if bot in tasks:
+                continue
+            front = self._frontier(bot, flat)
+            if front is None:
+                continue
+            edge, last = front
+            if flat < edge <= reach - datetime.timedelta(minutes=JOIN_ROOM_MINUTES):
+                tasks[bot] = {"mode": "after", "start": edge, "cur": last}
         return tasks
 
     async def run(self, now: datetime.datetime | None = None, force: bool = False) -> bool:
