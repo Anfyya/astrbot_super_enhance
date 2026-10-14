@@ -162,7 +162,8 @@ def build_world_text(
         if last is not None:
             lines.append("你最近：%s%s（%s，已经做完）" % (detail_of(last) or "（没写）", result_text(last), _when(last)))
 
-    # 接下来排好的几件（只给时刻和事名，不给步骤和结局），免得她把后面的事说成已经做了
+    # 接下来排好的几件（只给先后和事名、不给钟点，也不给步骤和结局）：
+    # 免得她把后面的事说成已经做了，也免得她像报日程表一样按点报时间。
     upcoming = []
     for day in (today, today + datetime.timedelta(days=1)):
         for item in world.entries(day.isoformat(), viewer):
@@ -171,7 +172,7 @@ def build_world_text(
                 continue
             if is_event(item) or item.get("idle"):
                 continue
-            upcoming.append("%s %s" % (str(item.get("start"))[11:16], item.get("doing") or item.get("place") or ""))
+            upcoming.append(item.get("doing") or item.get("place") or "")
     if upcoming:
         lines.append("接下来（还没做）：" + "；".join(upcoming[:NEXT_MAX]))
 
