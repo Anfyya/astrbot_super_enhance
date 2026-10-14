@@ -49,9 +49,7 @@ TWISTS = (
     # （插曲，丛雨，亚托莉）
     ("有熟人来串门，或在路上碰见，站着聊了一会儿", 1.2, 1.5),
     ("被一件小事逗得很开心", 1.5, 1.5),
-    ("安安静静待着：看书、发呆", 1.5, 1.2),
     ("有点犯困、提不起劲，节奏放慢", 0.8, 1.2),
-    ("认真练一样拿手或不拿手的本事", 1.2, 0.8),
     ("学到了一点新知识或新技巧", 1.0, 1.0),
     ("被熟人临时拜托帮一个小忙", 0.6, 1.0),
     ("做饭或做家务时手忙脚乱，出了点小岔子", 0.6, 1.0),
@@ -70,7 +68,6 @@ TWISTS = (
     ("听唱片听得入了神，跟着学唱", 0.2, 0.3),
     ("去比平时远一点的地方走走", 0.6, 0.6),
     ("想学一首新歌，哼了一整天", 0.6, 0.6),
-    ("种点花草，或照料院子里的盆栽", 0.6, 0.6),
     ("第一次用一样以前没碰过的东西", 0.6, 0.6),
     ("学做一道新菜，认真尝了好几遍味道", 0.4, 0.6),
     ("熟人手把手教她一样家务（做菜、缝补之类）", 0.4, 0.6),
@@ -87,6 +84,8 @@ TWISTS = (
     ("去鹈茅学院转了转，看学生上课", 0.4, 0.3),
     ("做了个奇怪的梦，一整天都在琢磨", 0.2, 0.4),
     ("去照相馆看照片，或者拿相机拍了几张", 0.2, 0.4),
+    ("动手做了个小手工（布偶、草编、黏土小摆件、书签之类）", 0.4, 0.6),
+    ("在院子里踢毽子或拍皮球，玩了一阵", 0.4, 0.3),
     # 丛雨这边常有的
     ("在神社里转了一圈，看看手水舍、绘马和御神木", 1.2, 0.3),
     ("跟芳乃或茉子说了一会儿话", 1.2, 0.3),
@@ -138,7 +137,6 @@ TOGETHER_TWISTS = (
 # 晚上（天黑以后）的小事：都是在家里或附近能做的，补写写晚上的段时只拿这些
 NIGHT_TWISTS = (
     # （插曲，丛雨，亚托莉）
-    ("安安静静看书或发呆", 1.2, 1.2),
     ("晚上抬头看星星或月亮看了很久", 0.6, 1.0),
     ("两人在家玩个游戏或比一场小比赛", 0.8, 0.8),
     ("翻到旧物，想起以前的事", 0.6, 0.6),
@@ -156,40 +154,48 @@ NIGHT_TWISTS = (
     ("暗处掉了东西，靠一双夜里也看得清的眼睛找了回来", 0, 0.3),
 )
 
-# 手边的消遣：在家闲着的时候拿起来做的事，做到一半去忙别的、回头还能接着做。（消遣，丛雨，亚托莉）
-# 只写泛泛的事，不写具体哪样东西，免得把某样道具天天带出来
+# 手边的消遣：在家闲下来时拿起来做的习惯，跟插曲（「今天发生了一件事」）不一样：
+# 随时能停、停了能接；能做很久；天天做也不怪；不产出新东西（免得多出一样道具被天天翻出来）。
+# （消遣，丛雨，亚托莉）
 PASTIMES = (
     ("看书，看到哪算哪", 1.0, 1.2),
     ("泡一壶茶，坐着慢慢喝", 1.0, 0.8),
+    ("练一样拿手或不拿手的本事", 1.2, 0.8),
     ("翻一本画册或图鉴，一页页慢慢看", 0.8, 0.6),
     ("练字，一张纸写满了再换一张", 0.8, 0.5),
     ("靠着打个盹", 0.8, 0.4),
+    ("看漫画", 0.7, 0.5),
+    ("剥个橘子或一把瓜子，慢慢吃", 0.7, 0.5),
     ("画画：院子、屋檐、窗外看见的东西", 0.5, 0.7),
     ("拼一副拼图，拼到哪算哪", 0.5, 0.7),
-    ("织点过冬的东西（围巾、手套），一针一针慢慢来", 0.5, 0.6),
+    ("翻食谱，琢磨下回做什么菜", 0.3, 0.7),
+    ("织点东西（围巾、手套、袜子），一针一针慢慢来", 0.5, 0.6),
     ("折纸", 0.6, 0.6),
+    ("照料院子里的盆栽，浇水、掐黄叶", 0.6, 0.6),
+    ("解谜题、填字游戏", 0.4, 0.6),
     ("翻花绳", 0.5, 0.5),
     ("编绳结", 0.6, 0.5),
+    ("剪纸，剪个窗花或小动物", 0.5, 0.5),
+    ("玩九连环或孔明锁", 0.4, 0.5),
     ("写日记", 0.3, 0.5),
+    ("看一份报纸，挑感兴趣的读", 0.3, 0.5),
     ("一个人摆将棋棋谱，琢磨下一步", 0.6, 0.4),
     ("背和歌，对着歌牌念上句猜下句", 0.6, 0.4),
     ("做针线，绣个小花样", 0.5, 0.4),
-    ("照料院子里的盆栽，浇水、掐黄叶", 0.6, 0.6),
-    ("逗院子里来的猫或鸟", 0.6, 0.6),
-    ("梳头、编辫子，换个发型试试", 0.5, 0.4),
+    ("读诗集，挑喜欢的句子抄下来", 0.4, 0.4),
+    ("一个人玩纸牌接龙", 0.4, 0.4),
+    ("把想说的话写成小诗或短句", 0.4, 0.3),
 )
 
-# 说的是同一回事的几条：冷却按组算（抽到其中一条，同组的一起打折）。没列的各算各的
+# 说的是同一回事的几条：冷却按组算（抽到其中一条，同组的一起打折），在一个池子里合起来也只算一条的分量。
+# 这是默认值：网页上改池子时每条自己带组（pools.json 里的 group）。这里另外列着以前池子里的老说法，
+# 只用来认出以前每天抽到的记录
 GROUPS = {
     "旧物": (
         "翻到旧物，想起以前的事",
         "把收藏的小物件擦亮，重新分类摆放",
         "在商店街的旧货铺或钟表铺淘到一样旧时代的小东西（机械表、发条玩具之类）",
         "把白天得来的小东西擦干净收好",
-        # 老池子里的说法，以前的记录里还有
-        "给收藏的小物件重新分类、摆放",
-        "在商店街淘到一样有意思的小玩意儿",
-        "收拾出一堆用不上的东西，打算送人",
     ),
     "修东西": (
         "把一样坏了的旧东西拆开修，修了半天",
@@ -203,48 +209,177 @@ GROUPS = {
         "放张唱片听，或跟着学两句",
     ),
     "看书": (
-        "安安静静待着：看书、发呆",
-        "在书店或图书室翻到一本好书",
-        "安安静静看书或发呆",
         "看书，看到哪算哪",
-        "安安静静宅着：看书、发呆或睡午觉",
+        "读诗集，挑喜欢的句子抄下来",
+        "在书店或图书室翻到一本好书",
     ),
     "花草": (
-        "种点花草，或照料院子里的盆栽",
-        "两人一起照料院子里的花草",
         "照料院子里的盆栽，浇水、掐黄叶",
-    ),
-    "猫鸟": (
-        "一只猫或一只鸟老在身边转，跟着它走了一段",
-        "逗院子里来的猫或鸟",
-    ),
-    "发型": (
-        "心血来潮换个发型或换身打扮",
-        "梳头、编辫子，换个发型试试",
+        "两人一起照料院子里的花草",
     ),
     "游戏": (
         "两人玩一个游戏或比一场小比赛",
         "两人在家玩个游戏或比一场小比赛",
-        "玩一个游戏或比一场小比赛",
     ),
 }
-_GROUP_OF = {text: name for name, items in GROUPS.items() for text in items}
+LEGACY_GROUPS = {
+    "旧物": ("给收藏的小物件重新分类、摆放", "在商店街淘到一样有意思的小玩意儿", "收拾出一堆用不上的东西，打算送人"),
+    "看书": ("安安静静待着：看书、发呆", "安安静静看书或发呆", "安安静静宅着：看书、发呆或睡午觉"),
+    "花草": ("种点花草，或照料院子里的盆栽",),
+    "游戏": ("玩一个游戏或比一场小比赛",),
+    "练本事": ("认真练一样拿手或不拿手的本事", "练一样拿手或不拿手的本事"),
+}
+_DEFAULT_GROUP = {text: name for name, items in GROUPS.items() for text in items}
+_DEFAULT_GROUP["练一样拿手或不拿手的本事"] = "练本事"
+_LEGACY_GROUP = {text: name for name, items in LEGACY_GROUPS.items() for text in items}
 
 
-def cool_key(text: str) -> str:
-    """冷却按什么算：在组里的按组，不在的按它自己。"""
-    return _GROUP_OF.get(str(text), str(text))
+def cool_key(text: str, groups: dict | None = None) -> str:
+    """冷却按什么算：在组里的按组，不在的按它自己。groups 是这次用的池子里每条的组（``group_map``）。"""
+    text = str(text)
+    if groups is not None and text in groups:
+        return groups[text] or text
+    return _DEFAULT_GROUP.get(text) or _LEGACY_GROUP.get(text) or text
 
 
-def cool_factor(days) -> float:
-    """隔了 days 天没抽到时的折扣；None 是很久没抽到。"""
+def cool_factor(days, table: dict | None = None) -> float:
+    """隔了 days 天没抽到时的折扣；None 是很久没抽到。table 不给就按插曲那套；
+    表里没有的天数按 1，过了 7 天每天再加一点，最多 COOL_MAX。"""
     if days is None:
         return COOL_MAX
-    if days <= 1:
-        return COOLDOWN[1]
-    if days in COOLDOWN:
-        return COOLDOWN[days]
-    return min(COOL_MAX, 1.0 + COOL_BONUS_PER_DAY * (days - 7))
+    days = max(1, int(days))
+    table = table or COOLDOWN
+    if days in table:
+        return table[days]
+    return min(COOL_MAX, 1.0 + COOL_BONUS_PER_DAY * max(0, days - 7))
+
+
+# ---------- 池子的数据：代码里这份是默认值，网页改过就存 pools.json ----------
+POOL_KINDS = ("twists", "night_twists", "together", "pastimes")
+POOL_LABELS = {"twists": "白天的插曲", "night_twists": "晚上的插曲", "together": "两人一起", "pastimes": "手边的消遣"}
+POOL_TEXT_MAX = 80
+POOL_GROUP_MAX = 12
+POOL_WEIGHT_MAX = 5.0
+
+
+def default_pools() -> dict:
+    def per(rows):
+        return [{"text": t, "w": dict(zip(TWIST_PEOPLE, ws)), "group": _DEFAULT_GROUP.get(t, "")} for t, *ws in rows]
+
+    return {
+        "twists": per(TWISTS),
+        "night_twists": per(NIGHT_TWISTS),
+        "together": [{"text": t, "w": w, "group": _DEFAULT_GROUP.get(t, "")} for t, w in TOGETHER_TWISTS],
+        "pastimes": per(PASTIMES),
+    }
+
+
+def _weight(value) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise ValueError("权重要填数字")
+    if not 0 <= number <= POOL_WEIGHT_MAX:
+        raise ValueError("权重要在 0 到 %g 之间" % POOL_WEIGHT_MAX)
+    return round(number, 2)
+
+
+def clean_pool_item(kind: str, item: dict) -> dict:
+    """校验网页提交的一条；不对就抛 ValueError（中文原因）。"""
+    if kind not in POOL_KINDS:
+        raise ValueError("没有这个池子：%s" % kind)
+    if not isinstance(item, dict):
+        raise ValueError("格式不对")
+    text = re.sub(r"\s+", " ", str(item.get("text") or "")).strip()
+    if not text:
+        raise ValueError("内容不能空")
+    if len(text) > POOL_TEXT_MAX:
+        raise ValueError("内容太长（最多 %d 字）" % POOL_TEXT_MAX)
+    group = re.sub(r"\s+", "", str(item.get("group") or ""))
+    if len(group) > POOL_GROUP_MAX:
+        raise ValueError("组名太长（最多 %d 字）" % POOL_GROUP_MAX)
+    raw = item.get("w")
+    if kind == "together":
+        weight = _weight(raw.get("") if isinstance(raw, dict) else raw)
+    else:
+        raw = raw if isinstance(raw, dict) else {}
+        weight = {name: _weight(raw.get(name, 0)) for name in TWIST_PEOPLE}
+        if not any(weight.values()):
+            raise ValueError("至少给一个人一个大于 0 的权重")
+    if kind == "together" and weight <= 0:
+        raise ValueError("权重要大于 0")
+    return {"text": text, "w": weight, "group": group}
+
+
+def normalize_pools(data) -> dict:
+    """读进来的池子：哪个池子缺了或坏了就用默认的那份；单条坏了就跳过。"""
+    out = default_pools()
+    if not isinstance(data, dict):
+        return out
+    for kind in POOL_KINDS:
+        rows = data.get(kind)
+        if not isinstance(rows, list):
+            continue
+        clean, seen = [], set()
+        for row in rows:
+            try:
+                item = clean_pool_item(kind, row)
+            except ValueError:
+                continue
+            if item["text"] not in seen:
+                seen.add(item["text"])
+                clean.append(item)
+        out[kind] = clean
+    return out
+
+
+def group_map(pools: dict) -> dict:
+    """池子里每条的组：{原文: 组名（没有就空）}。"""
+    return {item["text"]: item.get("group") or "" for kind in POOL_KINDS for item in pools.get(kind) or []}
+
+
+def rows_for(items: list, name: str) -> list:
+    """池子里这个人的那份 [(原文, 权重)]，权重 0 的不要。两人一起的权重就一个数。
+    没在 TWIST_PEOPLE 里的角色按每条里最大的那个权重算。"""
+    out = []
+    for item in items or []:
+        w = item.get("w")
+        if isinstance(w, dict):
+            weight = w.get(name) if name in TWIST_PEOPLE else max(list(w.values()) or [0])
+        else:
+            weight = w
+        if weight and weight > 0:
+            out.append((item["text"], float(weight)))
+    return out
+
+
+class PoolStore:
+    """插曲 / 消遣池（``pools.json``）。没有这个文件就用代码里的默认值。"""
+
+    def __init__(self, path) -> None:
+        self.path = Path(path)
+
+    def custom(self) -> bool:
+        return self.path.exists()
+
+    def load(self) -> dict:
+        if not self.path.exists():
+            return default_pools()
+        try:
+            return normalize_pools(json.loads(self.path.read_text(encoding="utf-8")))
+        except Exception:
+            return default_pools()
+
+    def save(self, pools: dict) -> None:
+        data = {kind: list(pools.get(kind) or []) for kind in POOL_KINDS}
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temp = self.path.with_name(self.path.name + ".tmp")
+        temp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+        os.replace(temp, self.path)
+
+    def reset(self) -> None:
+        if self.path.exists():
+            self.path.unlink()
 
 
 TONES = (
@@ -293,6 +428,8 @@ PASTIME_PICK = 4
 COOLDOWN = {1: 0.03, 2: 0.1, 3: 0.25, 4: 0.45, 5: 0.65, 6: 0.85, 7: 1.0}
 COOL_BONUS_PER_DAY = 0.03
 COOL_MAX = 1.3
+# 消遣天天做也正常，冷却轻得多：只是别连着几天都是同一样
+PASTIME_COOLDOWN = {1: 0.3, 2: 0.6, 3: 0.85, 4: 1.0}
 COOL_LOOKBACK = 17  # 往前看这么多天；再早没抽过的按最多那档算
 ACCIDENT_LOOKBACK = 30  # 30 天内碰过的意外不再碰
 SEED_KEEP_DAYS = 40
@@ -409,16 +546,18 @@ def _days_back(date_text: str, days: int) -> list[str]:
     return [(day - datetime.timedelta(days=n)).isoformat() for n in range(days + 1)]
 
 
-def _pick_cooled(pool, seen: dict, count: int, rng: random.Random) -> list:
-    """从 (插曲, 权重) 池里按「权重 × 冷却折扣」抽 count 个（不放回）。
+def _pick_cooled(pool, seen: dict, count: int, rng: random.Random, groups: dict | None = None,
+                 table: dict | None = None) -> list:
+    """从 (原文, 权重) 池里按「权重 × 冷却折扣」抽 count 个（不放回）。
 
     seen 是 {cool_key: 隔了几天}，抽到的会记成 0，同组的后面再抽就按刚抽过算。
     同组的几条在这个池子里合起来只算一条的分量（各自权重除以同组条数），不然组越大越常来。"""
     left = list(pool)
     out = []
     for _ in range(min(count, len(left))):
-        size = collections.Counter(cool_key(t) for t, _w in left)
-        weights = [w / size[cool_key(t)] * cool_factor(seen.get(cool_key(t))) for t, w in left]
+        keys = [cool_key(t, groups) for t, _w in left]
+        size = collections.Counter(keys)
+        weights = [w / size[k] * cool_factor(seen.get(k), table) for (_t, w), k in zip(left, keys)]
         point = rng.random() * sum(weights)
         index = len(left) - 1
         for i, weight in enumerate(weights):
@@ -428,19 +567,29 @@ def _pick_cooled(pool, seen: dict, count: int, rng: random.Random) -> list:
                 break
         text = left.pop(index)[0]
         out.append(text)
-        seen[cool_key(text)] = 0
+        seen[cool_key(text, groups)] = 0
     return out
 
 
-def pool_for(pool, name: str) -> list:
-    """（插曲, 丛雨, 亚托莉）池子里这个人的那份 [(插曲, 权重)]，权重 0 的不要。
-    没在 TWIST_PEOPLE 里的角色按每条里最大的那个权重算。"""
-    out = []
-    for text, *weights in pool:
-        weight = weights[TWIST_PEOPLE.index(name)] if name in TWIST_PEOPLE else max(weights)
-        if weight > 0:
-            out.append((text, weight))
+def drawn_days(history: dict, date_text: str, bot: str, groups: dict | None = None) -> dict:
+    """这个人每样东西最近一次是几天前抽到的：{cool_key: 天数}（0 是当天）。插曲、晚上的、两人一起的、
+    消遣都算，老格式那份共用的也算；COOL_LOOKBACK 天里没抽到的不在里面。"""
+    out: dict = {}
+    for back, day in enumerate(_days_back(date_text, COOL_LOOKBACK)):
+        record = (history or {}).get(day)
+        if not isinstance(record, dict):
+            continue
+        for key in ("twists", "night_twists", "together", "pastimes"):
+            value = record.get(key)
+            items = (value.get(bot) or []) if isinstance(value, dict) else (value or [])
+            for text in items if isinstance(items, list) else []:
+                out.setdefault(cool_key(text, groups), back)
     return out
+
+
+def last_drawn(history: dict, date_text: str, bot: str, groups: dict | None = None) -> dict:
+    """抽的时候用：隔了几天没抽到，当天的（重新抽时上一版）按隔 1 天算。"""
+    return {key: max(days, 1) for key, days in drawn_days(history, date_text, bot, groups).items()}
 
 
 def twists_of(seed: dict, night: bool = False) -> tuple[dict, list]:
@@ -494,13 +643,14 @@ def draw_seed(
     history: dict | None = None,
     prev_weather: str = "",
     rng: random.Random | None = None,
+    pools: dict | None = None,
 ) -> dict:
     """抽当天的随机起点：天气（接着昨天变）、基调、小插曲、每人的心情、偶尔一个意外。
 
     labels 是 {机器人: 角色名}，每人各抽一个心情（不防重复）、各抽一份插曲和消遣（按她在池子里的权重）；
     两人一起的插曲当天一份。history 是以前每天抽到的（``SeedLog.load()``），用来防重复：
-    插曲和消遣按这个人隔了几天没抽到打折（``cool_factor``，同组算一条）；
-    昨天的基调今天不再抽，30 天内碰过的意外不再碰。
+    插曲和消遣按这个人隔了几天没抽到打折（``cool_factor``，同组算一条；消遣按 ``PASTIME_COOLDOWN``，轻得多）；
+    昨天的基调今天不再抽，30 天内碰过的意外不再碰。pools 是网页改过的池子（``PoolStore.load()``），不给用默认的。
     """
     rng = rng or random.Random()
     history = history or {}
@@ -518,24 +668,11 @@ def draw_seed(
                 out.add(value)
         return out
 
-    def seen_by(bot: str) -> dict:
-        """这个人每样东西隔了几天没抽到：{cool_key: 天数}。插曲、晚上的、两人一起的、消遣都算，
-        老格式那份共用的也算；当天重新抽时上一版也算（按隔 1 天）。"""
-        out: dict = {}
-        for back, day in enumerate(_days_back(date_text, COOL_LOOKBACK)):
-            record = history.get(day)
-            if not isinstance(record, dict):
-                continue
-            for key in ("twists", "night_twists", "together", "pastimes"):
-                value = record.get(key)
-                items = (value.get(bot) or []) if isinstance(value, dict) else (value or [])
-                for text in items if isinstance(items, list) else []:
-                    out.setdefault(cool_key(text), max(back, 1))
-        return out
-
+    pools = normalize_pools(pools) if pools is not None else default_pools()
+    groups = group_map(pools)
     labels = labels or {}
     moods = {bot: rng.choice(MOODS) for bot in labels}
-    seen = {bot: seen_by(bot) for bot in labels}
+    seen = {bot: last_drawn(history, date_text, bot, groups) for bot in labels}
     together = []
     if len(labels) >= 2:
         # 两人一起的两个人都算：按两人里更近抽过的那个打折
@@ -543,15 +680,16 @@ def draw_seed(
         for bot in labels:
             for key, days in seen[bot].items():
                 both[key] = min(days, both.get(key, days))
-        together = _pick_cooled(TOGETHER_TWISTS, both, TOGETHER_PICK, rng)
+        together = _pick_cooled(rows_for(pools["together"], ""), both, TOGETHER_PICK, rng, groups)
         for bot in labels:
             for text in together:
-                seen[bot][cool_key(text)] = 0
+                seen[bot][cool_key(text, groups)] = 0
     twists, night_twists, pastimes = {}, {}, {}
     for bot, name in labels.items():
-        twists[bot] = _pick_cooled(pool_for(TWISTS, name), seen[bot], DAY_PICK, rng)
-        night_twists[bot] = _pick_cooled(pool_for(NIGHT_TWISTS, name), seen[bot], NIGHT_PICK, rng)
-        pastimes[bot] = _pick_cooled(pool_for(PASTIMES, name), seen[bot], PASTIME_PICK, rng)
+        twists[bot] = _pick_cooled(rows_for(pools["twists"], name), seen[bot], DAY_PICK, rng, groups)
+        night_twists[bot] = _pick_cooled(rows_for(pools["night_twists"], name), seen[bot], NIGHT_PICK, rng, groups)
+        pastimes[bot] = _pick_cooled(rows_for(pools["pastimes"], name), seen[bot], PASTIME_PICK, rng, groups,
+                                     PASTIME_COOLDOWN)
     accident = ""
     if rng.random() < ACCIDENT_CHANCE:
         accident = _pick(ACCIDENTS, used("accident", ACCIDENT_LOOKBACK), 1, rng)[0]

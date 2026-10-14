@@ -552,8 +552,137 @@ class ContextPageApi:
             logger.error("[super_enhance/ctx] 手动发送失败", exc_info=True)
             return _err(exc)
 
+    # ---------- 插曲与消遣池 ----------
+
+    async def pools_view(self):
+        """插曲 / 消遣池：每条的原文、各人权重、组，以及各人最近几天前抽到过它（同组算一条）。"""
+        life = getattr(self.plugin, "life", None)
+        if life is None:
+            return _err("动态生活状态未加载")
+        try:
+            from .features.life_state import variety
+
+            today = life._today()
+            pools = life.pool_store.load()
+            groups = variety.group_map(pools)
+            history = life.seed_log.load() or {}
+            bots = [{"id": bot, "label": life.scene.label_for(bot) or bot} for bot in life.enabled_bots() or []]
+            drawn = {b["id"]: variety.drawn_days(history, today, b["id"], groups) for b in bots}
+            out = {}
+            for kind in variety.POOL_KINDS:
+                rows = []
+                for item in pools.get(kind) or []:
+                    key = variety.cool_key(item["text"], groups)
+                    rows.append(dict(item, last={b["label"]: drawn[b["id"]].get(key) for b in bots}))
+                out[kind] = rows
+            return _ok(
+                {
+                    "today": today,
+                    "custom": life.pool_store.custom(),
+                    "people": list(variety.TWIST_PEOPLE),
+                    "bots": bots,
+                    "kinds": [{"kind": k, "label": variety.POOL_LABELS[k]} for k in variety.POOL_KINDS],
+                    "pools": out,
+                    "groups": sorted({g for g in groups.values() if g}),
+                    "cooldown": {"twist": variety.COOLDOWN, "pastime": variety.PASTIME_COOLDOWN},
+                    "lookback": variety.COOL_LOOKBACK,
+                }
+            )
+        except Exception as exc:
+            logger.error("[super_enhance/ctx] 读取插曲与消遣池失败", exc_info=True)
+            return _err(exc)
+
+    async def pools_edit(self):
+        """action=add / update / delete / move（挪到别的池子）/ reset（恢复默认）。
+        update / delete / move 带 index 和原来的 text，对不上就不改（网页上的是旧的）。"""
+        life = getattr(self.plugin, "life", None)
+        if life is None:
+            return _err("动态生活状态未加载")
+        payload = await request.get_json(silent=True) or {}
+        if not isinstance(payload, dict):
+            return _err("请求体格式错误")
+        try:
+            from .features.life_state import variety
+
+            action = str(payload.get("action") or "").strip()
+            store = life.pool_store
+            if action == "reset":
+                store.reset()
+                logger.info("[super_enhance/ctx] 插曲与消遣池恢复默认")
+                return _ok(None)
+            kind = str(payload.get("kind") or "").strip()
+            if kind not in variety.POOL_KINDS:
+                raise ValueError("没有这个池子：%s" % kind)
+            pools = store.load()
+            rows = pools[kind]
+
+            def exists(where: list, text: str, skip: int = -1) -> bool:
+                return any(i != skip and r["text"] == text for i, r in enumerate(where))
+
+            def located() -> int:
+                index = _as_int(payload.get("index"), -1)
+                if not 0 <= index < len(rows) or rows[index]["text"] != str(payload.get("text") or ""):
+                    raise ValueError("这条已经变了，刷新一下再改")
+                return index
+
+            if action == "add":
+                item = variety.clean_pool_item(kind, payload.get("item"))
+                if exists(rows, item["text"]):
+                    raise ValueError("这个池子里已经有这一条了")
+                rows.append(item)
+                note = "加了"
+            elif action == "update":
+                index = located()
+                item = variety.clean_pool_item(kind, payload.get("item"))
+                if exists(rows, item["text"], index):
+                    raise ValueError("这个池子里已经有这一条了")
+                rows[index] = item
+                note = "改了"
+            elif action == "delete":
+                item = rows.pop(located())
+                note = "删了"
+            elif action == "move":
+                to = str(payload.get("to") or "").strip()
+                if to not in variety.POOL_KINDS or to == kind:
+                    raise ValueError("挪到哪个池子？")
+                index = located()
+                item = dict(rows[index])
+                w = item.get("w")
+                if to == "together":
+                    item["w"] = max(list(w.values()) or [0]) if isinstance(w, dict) else w
+                elif not isinstance(w, dict):
+                    item["w"] = {name: w for name in variety.TWIST_PEOPLE}
+                item = variety.clean_pool_item(to, item)
+                if exists(pools[to], item["text"]):
+                    raise ValueError("「%s」里已经有这一条了" % variety.POOL_LABELS[to])
+                rows.pop(index)
+                pools[to].append(item)
+                note = "挪到%s" % variety.POOL_LABELS[to]
+            else:
+                raise ValueError("不支持的操作：%s" % action)
+            store.save(pools)
+            logger.info("[super_enhance/ctx] 插曲与消遣池（%s）%s：%s", variety.POOL_LABELS[kind], note, item["text"])
+            return _ok(None)
+        except ValueError as exc:
+            return _err(exc)
+        except Exception as exc:
+            logger.error("[super_enhance/ctx] 改插曲与消遣池失败", exc_info=True)
+            return _err(exc)
+
     def register_routes(self) -> None:
         register = self.context.register_web_api
+        register(
+            f"{PAGE_API_PREFIX}/pools",
+            self.pools_view,
+            ["GET"],
+            "插曲与消遣池：每条的权重、组、最近抽到",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/pools/edit",
+            self.pools_edit,
+            ["POST"],
+            "插曲与消遣池：增删改、挪池子、恢复默认",
+        )
         register(
             f"{PAGE_API_PREFIX}/world",
             self.world_view,

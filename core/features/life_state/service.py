@@ -49,7 +49,7 @@ from .raw_log import RawMessageLog
 from .reviewer import DailyReviewer
 from .scene import SharedScene, build_injection
 from .store import StateStore
-from .variety import SeedLog
+from .variety import PoolStore, SeedLog
 from .world import WorldStore, fmt_time, is_event, parse_time
 from .recorder import Recorder
 from .step import LifeStep
@@ -185,6 +185,7 @@ class LifeStateService:
         self.world = WorldStore(self.data_dir)
         self.world.tz = self.timezone
         self.seed_log = SeedLog(self.data_dir / "daily_seeds.json")
+        self.pool_store = PoolStore(self.data_dir / "pools.json")
         self.recorder = Recorder(
             context, cfg, self.world, self.raw_log,
             label_fn=self.scene.label_for, now_fn=self._now, tz=self.timezone,
@@ -611,7 +612,7 @@ class LifeStateService:
                 from .variety import draw_seed
 
                 labels = {b: (self.scene.label_for(b) or b) for b in self.enabled_bots()}
-                seed = draw_seed(date_text, labels=labels, history=self.seed_log.load())
+                seed = draw_seed(date_text, labels=labels, history=self.seed_log.load(), pools=self.pool_store.load())
                 self.seed_log.save(date_text, seed)
                 self._debug("世界线：已抽今天的随机起点")
         except Exception:

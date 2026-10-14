@@ -30,6 +30,7 @@ from .prompts import (
 )
 from .variety import (
     DAY_TOO_SIMILAR,
+    PoolStore,
     SeedLog,
     draw_seed,
     overlapping_slots,
@@ -137,6 +138,7 @@ class LifeStateGenerator:
         # 每天抽到的随机起点记一份，之后几天避开（和日程文件放一起）
         path = getattr(store, "path", None)
         self.seeds = SeedLog(Path(path).with_name(SEED_FILE_NAME)) if path else None
+        self.pools = PoolStore(Path(path).with_name("pools.json")) if path else None
 
     @property
     def is_generating(self) -> bool:
@@ -675,6 +677,7 @@ class LifeStateGenerator:
             labels=labels,
             history=history,
             prev_weather=self._prev_weather(bots, date_text),
+            pools=self.pools.load() if getattr(self, "pools", None) is not None else None,
         )
         if seeds is not None:
             try:

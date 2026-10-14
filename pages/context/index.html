@@ -331,6 +331,11 @@
   .lrow.off .lt .what{text-decoration:line-through;text-decoration-color:var(--line2)}
   .ladd{display:flex;gap:8px;margin-top:4px}
   .ladd .inp{flex:1}
+  .ptop{max-width:720px;margin:0 auto 18px;display:flex;flex-direction:column;gap:10px}
+  .ptop .notice{margin-bottom:0;align-items:flex-start;line-height:1.6}
+  .ptop-r{display:flex;gap:8px;align-items:center}
+  .ptop-r .inp{flex:1}
+  .tag.cold{background:var(--accent-soft);color:var(--accent)}
   .when-b{font-variant-numeric:tabular-nums;font-weight:600;color:var(--t1);margin-right:6px}
   @media (max-width:640px){
     .lrow{flex-wrap:wrap}
@@ -593,6 +598,20 @@
         <button class="btn quiet ibtn" id="ledgerRefresh" data-icon="refresh" title="刷新" type="button"></button>
       </header>
       <div class="scroller scroll"><div class="scene" id="ledgerBody"></div></div>
+    </section>
+
+    <!-- 插曲与消遣 -->
+    <section class="view" id="poolView" hidden>
+      <header class="mhead">
+        <button class="btn quiet ibtn narrow-only" data-icon="menu" data-open-side title="会话列表" type="button"></button>
+        <div class="who">
+          <span class="av hm" data-icon="cal"></span>
+          <div class="who-t"><span class="who-n">插曲与消遣</span><span class="who-s" id="poolSub">每天从这里抽 · 改了从下一次抽起生效</span></div>
+        </div>
+        <div class="grow"></div>
+        <button class="btn quiet ibtn" id="poolRefresh" data-icon="refresh" title="刷新" type="button"></button>
+      </header>
+      <div class="scroller scroll"><div class="scene" id="poolBody"></div></div>
     </section>
 
     <!-- 旧版（世界线 live 之后不用了，先注释掉）「每日日程」页
@@ -908,6 +927,7 @@
     req: { list: [], idx: 0, data: null, err: "", disabled: false, tab: store.get("reqTab", "inject"), all: false, raw: false, loading: false },
     edits: {}, auto: true, drawer: false,
     ledger: null, ledgerErr: "", ledgerLoading: false, ledEdit: {}, ledShowPast: false, trEdit: {},
+    pools: null, poolsErr: "", poolsLoading: false, poolEdit: {}, poolQ: "",
     world: null, worldErr: "", worldLoading: false, worldDate: "", worldWho: "", worldBusy: "", worldShowLifted: false, worldShowStatus: false,
     wEdit: {}, cEdit: {}, iEdit: {}, rEdit: {},
     sch: null, schErr: "", schLoading: false, schBot: store.get("schBot", ""), schDate: ""
@@ -1006,6 +1026,19 @@
       onclick: function () { openLedger(); }
     }, lg, h("span", { class: "nav-t" }, h("span", { class: "nav-n", text: "能力与约定" }), h("span", { class: "nav-s", text: lsub }))));
 
+    var pg = h("span", { class: "av hm" });
+    pg.appendChild(icon("cal"));
+    var psub = "每天抽的插曲 · 消遣";
+    if (S.pools) {
+      var np = S.pools.pools || {};
+      psub = ((np.twists || []).length + (np.night_twists || []).length + (np.together || []).length) + " 件插曲 · " +
+        (np.pastimes || []).length + " 样消遣" + (S.pools.custom ? "" : " · 默认");
+    }
+    world.appendChild(h("button", {
+      class: "nav-item" + (S.view === "pool" ? " on" : ""), type: "button",
+      onclick: function () { openPools(); }
+    }, pg, h("span", { class: "nav-t" }, h("span", { class: "nav-n", text: "插曲与消遣" }), h("span", { class: "nav-s", text: psub }))));
+
     // 旧版（世界线 live 之后不用了，先注释掉）：每日日程入口
     // var cg = h("span", { class: "av hm" });
     // cg.appendChild(icon("cal"));
@@ -1102,6 +1135,18 @@
     });
   }
 
+  function openPools() {
+    guardDirty().then(function (ok) {
+      if (!ok) { return; }
+      setSideOpen(false);
+      closeInsp(true);
+      S.view = "pool";
+      showView();
+      renderPools();
+      loadPools();
+    });
+  }
+
   // 旧版（世界线 live 之后不用了，先注释掉）
   // function openSchedule() {
     // guardDirty().then(function (ok) {
@@ -1132,6 +1177,7 @@
     $("convView").hidden = !isConv;
     // $("sceneView").hidden = S.view !== "scene";
     $("ledgerView").hidden = S.view !== "ledger";
+    $("poolView").hidden = S.view !== "pool";
     // $("schView").hidden = S.view !== "sch";
     $("worldView").hidden = S.view !== "world";
     if (isConv) {
@@ -2673,6 +2719,219 @@
   // setInterval(function () {
     // if (S.view === "scene" && S.auto && !Object.keys(S.edits).length && !S.drawer && !document.hidden) { loadScene(true); }
   // }, 10000);
+
+  /* ================= 插曲与消遣 ================= */
+  var POOL_NOTES = {
+    twists: "今天发生了一件事：有新鲜感、有结果。每人每天抽 4 件，抽到过的几天内很难再抽到",
+    night_twists: "天黑以后在家附近碰上的小事。每人每天抽 2 件，冷却和白天的一起算",
+    together: "两个人一起做的事。每天抽 1 件，两个人谁近来抽过都算",
+    pastimes: "闲下来顺手做的习惯：随时能停、停了能接，能做很久，天天做也不怪，不产出新东西。每人每天抽 4 样，冷却轻得多"
+  };
+
+  function loadPools(silent) {
+    if (S.poolsLoading) { return Promise.resolve(); }
+    S.poolsLoading = true;
+    return api("ctx/pools").then(function (d) {
+      S.poolsLoading = false;
+      S.pools = d;
+      S.poolsErr = "";
+      renderSide();
+      if (S.view === "pool") { renderPools(); }
+    }).catch(function (e) {
+      S.poolsLoading = false;
+      S.poolsErr = errMsg(e);
+      renderSide();
+      if (S.view === "pool") { renderPools(); }
+      if (!silent && S.view === "pool") { toast("读取失败：" + S.poolsErr, { err: true }); }
+    });
+  }
+
+  function poolPost(body, okMsg, done) {
+    return post("ctx/pools/edit", body).then(function () {
+      if (done) { done(); }
+      if (okMsg) { toast(okMsg); }
+      return loadPools(true);
+    }).catch(function (e) {
+      toast("没保存：" + errMsg(e), { err: true });
+    });
+  }
+
+  function poolLabel(kind) {
+    var ks = (S.pools && S.pools.kinds) || [];
+    for (var i = 0; i < ks.length; i++) { if (ks[i].kind === kind) { return ks[i].label; } }
+    return kind;
+  }
+
+  function fmtW(w) { return String(Math.round(Number(w || 0) * 100) / 100); }
+
+  function poolForm(kind, it) {
+    var people = (S.pools && S.pools.people) || [];
+    var w = {};
+    if (kind === "together") { w[""] = it ? fmtW(it.w) : "0.5"; }
+    else { people.forEach(function (n) { w[n] = it ? fmtW((it.w || {})[n]) : "0.5"; }); }
+    return { text: it ? it.text : "", w: w, group: it ? (it.group || "") : "", to: kind };
+  }
+
+  function renderPools() {
+    var box = clear($("poolBody"));
+    var d = S.pools;
+    if (!d) {
+      if (S.poolsErr) {
+        box.appendChild(h("div", { class: "empty-state" }, h("div", { class: "big", text: "读取失败" }), h("div", { text: S.poolsErr }),
+          h("button", { class: "btn sm", type: "button", text: "重试", onclick: function () { loadPools(); } })));
+      } else {
+        box.appendChild(h("div", { class: "people" }, h("div", { class: "sk", style: "height:180px" }), h("div", { class: "sk", style: "height:180px" })));
+      }
+      return;
+    }
+    var top = h("div", { class: "ptop" });
+    top.appendChild(h("div", { class: "notice" }, h("span", { class: "dot" }), h("span", null,
+      "每天 0 点从这里给每人抽一份，补写排日程时拿来用。权重越大越常抽到，0 是不给她。",
+      "抽到过的会冷却几天；「组」相同的几条算同一回事，一起冷却、合起来只算一条的分量。改动从下一次抽起生效，今天已经抽好的不变。")));
+    var q = h("input", { class: "inp", type: "search", placeholder: "搜索一条…" });
+    q.value = S.poolQ;
+    q.addEventListener("input", function () { S.poolQ = q.value; renderPoolSections(); });
+    var reset = null;
+    if (d.custom) {
+      reset = h("button", { class: "btn sm", type: "button", title: "删掉网页上的所有改动，回到代码里的默认池子" }, icon("undo"), "恢复默认");
+      armed(reset, "确认恢复默认", function () { poolPost({ action: "reset" }, "已恢复默认"); });
+    }
+    top.appendChild(h("div", { class: "ptop-r" }, q, reset));
+    box.appendChild(top);
+    box.appendChild(h("div", { id: "poolSecs" }));
+    renderPoolSections();
+  }
+
+  function renderPoolSections() {
+    var wrap = $("poolSecs");
+    if (!wrap || !S.pools) { return; }
+    clear(wrap);
+    var d = S.pools;
+    var kw = String(S.poolQ || "").trim();
+    (d.kinds || []).forEach(function (k) {
+      var items = (d.pools || {})[k.kind] || [];
+      var sec = h("div", { class: "lsec" }, lsecHead(k.label + " · " + items.length, POOL_NOTES[k.kind] || ""));
+      var card = h("div", { class: "pc" });
+      var rows = h("div", { class: "lrows" });
+      var shown = 0;
+      items.forEach(function (it, i) {
+        var key = k.kind + ":" + i;
+        if (kw && it.text.indexOf(kw) < 0 && String(it.group || "").indexOf(kw) < 0 && !S.poolEdit[key]) { return; }
+        shown++;
+        rows.appendChild(S.poolEdit[key] ? poolEditor(k.kind, i, it) : poolRow(k.kind, i, it));
+      });
+      if (shown) { card.appendChild(rows); }
+      else if (kw) { card.appendChild(h("div", { class: "muted", style: "font-size:13px", text: "没有对得上的。" })); }
+      var nk = k.kind + ":new";
+      if (S.poolEdit[nk]) {
+        card.appendChild(h("div", { class: "sub-sec" }, poolEditor(k.kind, -1, null)));
+      } else {
+        card.appendChild(h("div", { class: "sub-sec" }, h("button", { class: "addlink", type: "button",
+          onclick: function () { S.poolEdit[nk] = poolForm(k.kind, null); renderPoolSections(); } }, "＋ 加一条")));
+      }
+      sec.appendChild(card);
+      wrap.appendChild(sec);
+    });
+  }
+
+  function poolRow(kind, i, it) {
+    var row = h("div", { class: "lrow" });
+    var meta = h("div", { class: "lm" });
+    if (kind === "together") {
+      meta.appendChild(h("span", { text: "权重 " + fmtW(it.w) }));
+    } else {
+      meta.appendChild(h("span", { text: ((S.pools && S.pools.people) || []).map(function (n) {
+        var v = Number((it.w || {})[n] || 0);
+        return n + " " + (v > 0 ? fmtW(v) : "—");
+      }).join(" · ") }));
+    }
+    if (it.group) { meta.appendChild(h("span", { class: "tag", title: "同组的算同一回事", text: "组：" + it.group })); }
+    Object.keys(it.last || {}).forEach(function (name) {
+      var n = (it.last || {})[name];
+      if (n === null || n === undefined) { return; }
+      meta.appendChild(h("span", { class: "tag cold", title: it.group ? "同组里有一条被抽到就算" : "",
+        text: name + (n === 0 ? " 今天抽到" : " " + n + " 天前抽到") }));
+    });
+    row.appendChild(h("div", { class: "lt" }, h("div", { text: it.text }), meta));
+    var edit = h("button", { class: "btn quiet sm", type: "button", title: "编辑 / 挪到别的池子" }, icon("edit"));
+    edit.addEventListener("click", function () { S.poolEdit[kind + ":" + i] = poolForm(kind, it); renderPoolSections(); });
+    var del = h("button", { class: "btn quiet sm danger", type: "button", title: "删除" }, icon("trash"));
+    armed(del, "确认删除", function () { poolPost({ action: "delete", kind: kind, index: i, text: it.text }, "已删除"); });
+    row.appendChild(h("div", { class: "la" }, edit, del));
+    return row;
+  }
+
+  function poolEditor(kind, i, it) {
+    var key = kind + ":" + (i < 0 ? "new" : i);
+    var f = S.poolEdit[key];
+    var form = h("div", { class: "wform" });
+    form.appendChild(h("div", { class: "wform-h" }, h("span", { class: "t", text: it ? "改一条" : "加一条" }),
+      h("span", { class: "m", text: poolLabel(kind) })));
+    var text = h("input", { class: "inp", type: "text", maxlength: "80", placeholder: kind === "pastimes" ? "例如：看书，看到哪算哪" : "例如：有熟人来串门，站着聊了一会儿" });
+    text.value = f.text;
+    text.addEventListener("input", function () { f.text = text.value; });
+    form.appendChild(h("div", { class: "wfld" }, h("div", { class: "wfld-l", text: "内容" }), text));
+    var cols = h("div", { class: "wcols" });
+    Object.keys(f.w).forEach(function (name) {
+      var inp = h("input", { class: "inp", type: "number", min: "0", max: "5", step: "0.1" });
+      inp.value = f.w[name];
+      inp.addEventListener("input", function () { f.w[name] = inp.value; });
+      cols.appendChild(h("div", { class: "wfld" }, h("div", { class: "wfld-l" }, name ? name + " 的权重" : "权重", h("span", { class: "n", text: "1 一般 · 0 不给" })), inp));
+    });
+    var gid = "pgl-" + Math.random().toString(36).slice(2);
+    var grp = h("input", { class: "inp", type: "text", maxlength: "12", placeholder: "可空，例如：旧物" });
+    grp.setAttribute("list", gid);
+    grp.value = f.group;
+    grp.addEventListener("input", function () { f.group = grp.value; });
+    var dl = h("datalist", { id: gid });
+    ((S.pools && S.pools.groups) || []).forEach(function (g) { dl.appendChild(h("option", { value: g })); });
+    cols.appendChild(h("div", { class: "wfld" }, h("div", { class: "wfld-l" }, "组", h("span", { class: "n", text: "同一回事的几条填同一个" })), grp, dl));
+    form.appendChild(cols);
+    if (it) {
+      var to = h("select", { class: "inp" });
+      ((S.pools && S.pools.kinds) || []).forEach(function (k) {
+        to.appendChild(h("option", { value: k.kind, text: k.label, selected: k.kind === f.to }));
+      });
+      to.addEventListener("change", function () { f.to = to.value; });
+      form.appendChild(h("div", { class: "wfld" }, h("div", { class: "wfld-l" }, "放在哪个池子", h("span", { class: "n", text: "换了就挪过去，权重按那边的格式换算" })), to));
+    }
+    var stop = function () { delete S.poolEdit[key]; };
+    var cancel = h("button", { class: "btn sm", type: "button", text: "取消" });
+    cancel.addEventListener("click", function () { stop(); renderPoolSections(); });
+    var save = h("button", { class: "btn pri sm", type: "button", text: "保存" });
+    save.addEventListener("click", function () {
+      var t = String(f.text || "").trim();
+      if (!t) { toast("内容不能空；想删掉请点删除", { err: true }); return; }
+      var w = kind === "together" ? f.w[""] : f.w;
+      var item = { text: t, w: w, group: String(f.group || "").trim() };
+      save.disabled = true;
+      var p;
+      if (!it) {
+        p = poolPost({ action: "add", kind: kind, item: item }, "已添加", stop);
+      } else {
+        var orig = poolForm(kind, it);
+        var changed = t !== it.text || item.group !== orig.group ||
+          JSON.stringify(w) !== JSON.stringify(kind === "together" ? orig.w[""] : orig.w);
+        var first = changed ? post("ctx/pools/edit", { action: "update", kind: kind, index: i, text: it.text, item: item }) : Promise.resolve();
+        p = first.then(function () {
+          if (f.to === kind) { return null; }
+          return post("ctx/pools/edit", { action: "move", kind: kind, index: i, text: t, to: f.to });
+        }).then(function () {
+          stop();
+          toast(f.to === kind ? "已保存" : "已挪到「" + poolLabel(f.to) + "」");
+          return loadPools(true);
+        }).catch(function (e) {
+          toast("没保存：" + errMsg(e), { err: true });
+          return loadPools(true);
+        });
+      }
+      p.then(function () { save.disabled = false; });
+    });
+    form.appendChild(h("div", { class: "wform-f" }, h("span", { class: "hint muted", style: "font-size:12px", text: "" }), cancel, save));
+    return form;
+  }
+
+  $("poolRefresh").addEventListener("click", function () { loadPools().then(function () { if (!S.poolsErr) { toast("已刷新"); } }); });
 
   /* ================= 能力与约定 ================= */
   function loadLedger(silent) {
@@ -4649,6 +4908,7 @@
     var b = bridge();
     Promise.resolve(typeof b.ready === "function" ? b.ready() : null).catch(function () {}).then(function () {
       loadLedger(true);
+      loadPools(true);
       // loadSchedule(true);
       // loadWorld(true);
       // return Promise.all([loadScene(true), loadConvs()]);
