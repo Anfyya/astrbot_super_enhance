@@ -225,6 +225,7 @@ class LifeStateService:
 
         补写段：正在做的那段到此刻为止；后面还没开始的全部撤掉——那些是按「她这会儿不做这件事」排的，
         这件事插进来以后可能做重了、对不上了（先做了饭，后面又排着炒菜、等开饭）。做完以后由补写按新情况接着排。
+        另一个人补写排的、写着和她一起的段也跟着处理（见 _release_partners），不等记录员去猜。
         返回给模型看的结果（只写事实）。
         """
         if self.world_mode != "live":
@@ -283,15 +284,41 @@ class LifeStateService:
             for item in removed:
                 self.world.add_entry(str(item.get("start"))[:10], item)
             return "没写进去：这段时间世界线上是主人手动排的事，补写和对话都改不动。"
+        released = self._release_partners(bot, now)
         logger.info(
-            "[super_enhance/world] [%s] 现在去做：%s %s–%s%s",
+            "[super_enhance/world] [%s] 现在去做：%s %s–%s%s%s",
             bot, what[:30], fmt_time(now)[11:], fmt_time(end)[11:],
             "（撤掉补写排的 %d 段）" % len(removed) if removed else "",
+            "（对方和她一起的：%s）" % "、".join(released) if released else "",
         )
         return "已写进世界线：%s–%s %s%s。做完时系统会叫你一次。" % (
             fmt_time(now)[11:], fmt_time(end)[11:], what,
             "（地点：%s）" % record.get("place") if record.get("place") else "",
         )
+
+    def _release_partners(self, bot: str, now: datetime.datetime) -> list:
+        """她被叫去做别的：另一个人补写排的、写着和她一起的段对不上了。
+        正在做的到此刻为止，还没开始的撤掉；空出来的由补写按现在的情况重排。只写自己的段、手动写的不动。"""
+        out = []
+        days = [now.date().isoformat(), (now.date() + datetime.timedelta(days=1)).isoformat()]
+        for other in self.enabled_bots():
+            if other == bot:
+                continue
+            for date_text in days:
+                for item in list(self.world.entries(date_text, other)):
+                    if item.get("source") != "step" or is_event(item) or bot not in (item.get("with") or []):
+                        continue
+                    start = parse_time(item.get("start"))
+                    stop = parse_time(item.get("end")) if item.get("end") else None
+                    if start is None or (stop is not None and stop <= now):
+                        continue
+                    if start < now:
+                        self.world.update_entry(date_text, str(item.get("id")), end=fmt_time(now), intent="", stopped=True)
+                        out.append("%s %s 到此刻为止" % (item.get("id"), str(item.get("doing") or "")[:20]))
+                    else:
+                        self.world.delete_entry(date_text, str(item.get("id")))
+                        out.append("%s %s 撤掉" % (item.get("id"), str(item.get("doing") or "")[:20]))
+        return out
 
     def world_text(self, bot: str, now: datetime.datetime) -> str:
         """live 时给模型的【世界线】块：线 + 约定 + 在练的事 + 能力清单。"""
@@ -509,6 +536,8 @@ class LifeStateService:
                         started = (moment, item)
                 if start is None or end is None or not (mark < end <= flat):
                     continue
+                if item.get("stopped"):
+                    continue  # 做到一半被打断、到此为止的：不算做完
                 if item.get("intent"):
                     if self.world.drop_intention(str(item.get("intent"))):
                         # 打算里的那件事做完了：这条打算撤掉

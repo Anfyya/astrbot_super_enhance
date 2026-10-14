@@ -223,8 +223,9 @@ class WorldStore:
             # 同级或更权威：新的赢，旧的被裁短（开口的那条到此为止）
             if old_start < start:
                 old["end"] = fmt_time(start)
-                if old.get("intent"):
-                    old["intent"] = ""  # 做到一半被打断：那条打算不算做完
+                # 做到一半被打断：不算做完（那条打算不算做完，到点也不叫她说做完了）
+                old["intent"] = ""
+                old["stopped"] = True
                 kept.append(old)
             elif end is not None and (old_end is None or old_end > end):
                 old["start"] = fmt_time(end)
@@ -264,6 +265,8 @@ class WorldStore:
             "asked": bool(entry.get("asked")) and kind != "event",
             # 这段做的是哪条打算（编号，如 i2）：做完叫她跟主人说一声，并撤掉那条打算
             "intent": str(entry.get("intent") or "").strip() if kind != "event" else "",
+            # 做到一半被打断、到此为止的：结束时刻不算做完
+            "stopped": bool(entry.get("stopped")) and kind != "event",
             "created": str(entry.get("created") or fmt_time(self.now_local())),
         }
         if not entry.get("id"):
@@ -295,6 +298,8 @@ class WorldStore:
                 item["steps"], item["step_minutes"] = parse_steps(fields["steps"])
             if fields.get("idle") is not None:
                 item["idle"] = bool(fields["idle"])
+            if fields.get("stopped") is not None:
+                item["stopped"] = bool(fields["stopped"])
             if fields.get("importance") is not None:
                 item["importance"] = clean_importance(fields["importance"])
             if fields.get("at_home") is not None:

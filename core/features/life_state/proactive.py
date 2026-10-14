@@ -55,6 +55,9 @@ KIND_LABEL = {"correct": "改口", "training": "练成", "promise": "约定", "n
               "intent": "打算做完"}
 # 随手叫她的几种（做完一件事、出门、回来、开饭）：彼此不挡，只让早安晚安、约定、改口、练成这些挡住
 CASUAL_KINDS = ("done", "out", "back", "meal", "middle")
+# 出门、回来、开饭、做完一件事：只在那几分钟有意义，原定时刻过了这么久还没发出去（一直在聊、顺延了）就不发了（分钟）
+TIMELY_KINDS = ("done", "out", "back", "meal")
+TIMELY_STALE_MINUTES = 10
 # 必须发的几种（主人定的规矩不许开口时除外）
 MUST_SEND = ("correct", "promise", "training", "intent")
 # 世界线 live：做完一件事时，前后这么久里已经排着早安 / 晚安 / 约定，就不再另发（分钟）
@@ -716,6 +719,18 @@ class ProactivePlanner:
                 }
         return None
 
+    def _stale(self, meta: dict, at_ts: float) -> bool:
+        """出门、回来、开饭、做完一件事：到 at_ts 时离原定时刻是不是已经超过 TIMELY_STALE_MINUTES。"""
+        if meta.get("kind") not in TIMELY_KINDS or not isinstance(meta.get("minute"), int):
+            return False
+        try:
+            day = datetime.date.fromisoformat(str(meta.get("date") or ""))
+        except ValueError:
+            return False
+        planned = datetime.datetime.combine(day, datetime.time(), tzinfo=self.timezone) + datetime.timedelta(
+            minutes=meta["minute"])
+        return at_ts - planned.timestamp() > TIMELY_STALE_MINUTES * 60
+
     @staticmethod
     def _planned_text(meta: dict) -> str:
         minute = meta.get("minute")
@@ -813,16 +828,28 @@ class ProactivePlanner:
                 )
                 return None
             now_ts = time.time()
+            if self._stale(meta, now_ts):
+                logger.info(
+                    "[super_enhance/life] [%s] 主动对话（%s，原定 %s）过了 %d 分钟还没发出去，那会儿已经过去了，不发了",
+                    meta["bot"], label, self._planned_text(meta), TIMELY_STALE_MINUTES,
+                )
+                return None
             quiet = ASKED_QUIET_SECONDS if meta["kind"] in ("asked", "intent") else QUIET_SECONDS
             busy_since = self._busy_since(target, now_ts, quiet)
             if busy_since is not None:
+                at_ts = max(busy_since + quiet, now_ts + MIN_DELAY_SECONDS)
+                if self._stale(meta, at_ts):
+                    logger.info(
+                        "[super_enhance/life] [%s] 主动对话（%s，原定 %s）还在聊，等聊完那会儿已经过去了，不发了",
+                        meta["bot"], label, self._planned_text(meta),
+                    )
+                    return None
                 if meta["postponed"] >= MAX_POSTPONES or cron is None:
                     logger.info(
                         "[super_enhance/life] [%s] 主动对话（%s，原定 %s）顺延了 %d 次还在聊，这条不发了",
                         meta["bot"], label, self._planned_text(meta), meta["postponed"],
                     )
                     return None
-                at_ts = max(busy_since + quiet, now_ts + MIN_DELAY_SECONDS)
                 await self._postpone(cron, job, payload, meta, at_ts, busy_since)
                 return None
             if meta["kind"] == "training" and self.training_done_fn is not None:

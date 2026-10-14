@@ -711,7 +711,8 @@ class Recorder:
             if start < flat - datetime.timedelta(minutes=2):
                 # 正在做、已经做了一会儿的：到此刻为止
                 # 做到一半停下：那条打算不算做完
-                self.world.update_entry(date_text, entry_id, end=fmt_time(flat.replace(second=0, microsecond=0)), intent="")
+                self.world.update_entry(date_text, entry_id, end=fmt_time(flat.replace(second=0, microsecond=0)), intent="",
+                                       stopped=True)
                 logger.info(
                     "[super_enhance/world] 记录员让%s正在做的 %s %s 到此刻为止（%s）",
                     self.label(who) or who, entry_id, clean_text(entry.get("doing"), 30), clean_text(raw.get("why"), 60),
