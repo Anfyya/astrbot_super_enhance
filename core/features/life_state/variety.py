@@ -187,6 +187,19 @@ PASTIMES = (
     ("把想说的话写成小诗或短句", 0.4, 0.3),
 )
 
+# 闲着的样子：没事做、歇着的时候人在哪、怎么待着。补写写「闲着」那段照今天抽到的写。（样子，丛雨，亚托莉）
+# 只写人在哪、怎么待着，不带道具
+IDLES = (
+    ("在廊下坐着，看院子", 1.0, 1.0),
+    ("靠在窗边，看外面", 0.8, 0.8),
+    ("坐在矮桌边，什么也不干", 0.8, 0.8),
+    ("在屋里躺一会儿", 0.6, 0.8),
+    ("在院子里站着吹吹风", 0.7, 0.6),
+    ("坐在门口的台阶上，看路上的人", 0.5, 0.7),
+    ("坐着听外头的动静", 0.5, 0.5),
+    ("趴在桌上歇一会儿", 0.5, 0.6),
+)
+
 # 说的是同一回事的几条：冷却按组算（抽到其中一条，同组的一起打折），在一个池子里合起来也只算一条的分量。
 # 这是默认值：网页上改池子时每条自己带组（pools.json 里的 group）。这里另外列着以前池子里的老说法，
 # 只用来认出以前每天抽到的记录
@@ -255,8 +268,9 @@ def cool_factor(days, table: dict | None = None) -> float:
 
 
 # ---------- 池子的数据：代码里这份是默认值，网页改过就存 pools.json ----------
-POOL_KINDS = ("twists", "night_twists", "together", "pastimes")
-POOL_LABELS = {"twists": "白天的插曲", "night_twists": "晚上的插曲", "together": "两人一起", "pastimes": "手边的消遣"}
+POOL_KINDS = ("twists", "night_twists", "together", "pastimes", "idles")
+POOL_LABELS = {"twists": "白天的插曲", "night_twists": "晚上的插曲", "together": "两人一起", "pastimes": "手边的消遣",
+               "idles": "闲着的样子"}
 POOL_TEXT_MAX = 80
 POOL_GROUP_MAX = 12
 POOL_WEIGHT_MAX = 5.0
@@ -271,6 +285,7 @@ def default_pools() -> dict:
         "night_twists": per(NIGHT_TWISTS),
         "together": [{"text": t, "w": w, "group": _DEFAULT_GROUP.get(t, "")} for t, w in TOGETHER_TWISTS],
         "pastimes": per(PASTIMES),
+        "idles": per(IDLES),
     }
 
 
@@ -374,7 +389,7 @@ def pool_outlook(pools: dict, history: dict, date_text: str, labels: dict, sims:
     for _ in range(max(1, int(sims))):
         seed = draw_seed(nxt, labels=labels, history=history, rng=rng, pools=pools)
         for bot in labels:
-            for kind in ("twists", "night_twists", "pastimes"):
+            for kind in ("twists", "night_twists", "pastimes", "idles"):
                 counts[bot][kind].update(seed[kind].get(bot) or [])
             counts[bot]["together"].update(seed["together"])
     seen = {bot: last_drawn(history, nxt, bot, groups) for bot in labels}
@@ -495,7 +510,9 @@ DAY_PICK = 4
 NIGHT_PICK = 2
 TOGETHER_PICK = 1
 PASTIME_PICK = 4
-POOL_PICKS = {"twists": DAY_PICK, "night_twists": NIGHT_PICK, "together": TOGETHER_PICK, "pastimes": PASTIME_PICK}
+IDLE_PICK = 3
+POOL_PICKS = {"twists": DAY_PICK, "night_twists": NIGHT_PICK, "together": TOGETHER_PICK, "pastimes": PASTIME_PICK,
+              "idles": IDLE_PICK}
 # 冷却：同一个人抽到过的（插曲、消遣都算），按隔了几天打折；7 天回到原样，再往后每天 +0.03，最多 1.3 倍。
 # 同一天里抽到一条，同组的别的也按「隔 1 天」算
 COOLDOWN = {1: 0.03, 2: 0.1, 3: 0.25, 4: 0.45, 5: 0.65, 6: 0.85, 7: 1.0}
@@ -652,7 +669,7 @@ def drawn_days(history: dict, date_text: str, bot: str, groups: dict | None = No
         record = (history or {}).get(day)
         if not isinstance(record, dict):
             continue
-        for key in ("twists", "night_twists", "together", "pastimes"):
+        for key in ("twists", "night_twists", "together", "pastimes", "idles"):
             value = record.get(key)
             items = (value.get(bot) or []) if isinstance(value, dict) else (value or [])
             for text in items if isinstance(items, list) else []:
@@ -757,12 +774,13 @@ def draw_seed(
         for bot in labels:
             for text in together:
                 seen[bot][cool_key(text, groups)] = 0
-    twists, night_twists, pastimes = {}, {}, {}
+    twists, night_twists, pastimes, idles = {}, {}, {}, {}
     for bot, name in labels.items():
         twists[bot] = _pick_cooled(rows_for(pools["twists"], name), seen[bot], DAY_PICK, rng, groups)
         night_twists[bot] = _pick_cooled(rows_for(pools["night_twists"], name), seen[bot], NIGHT_PICK, rng, groups)
         pastimes[bot] = _pick_cooled(rows_for(pools["pastimes"], name), seen[bot], PASTIME_PICK, rng, groups,
                                      PASTIME_COOLDOWN)
+        idles[bot] = _pick_cooled(rows_for(pools["idles"], name), seen[bot], IDLE_PICK, rng, groups, PASTIME_COOLDOWN)
     accident = ""
     if rng.random() < ACCIDENT_CHANCE:
         accident = _pick(ACCIDENTS, used("accident", ACCIDENT_LOOKBACK), 1, rng)[0]
@@ -773,6 +791,7 @@ def draw_seed(
         "night_twists": night_twists,
         "together": together,
         "pastimes": pastimes,
+        "idles": idles,
         "moods": moods,
         "accident": accident,
     }

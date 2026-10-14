@@ -1110,7 +1110,7 @@
     if (S.pools) {
       var np = S.pools.pools || {};
       psub = ((np.twists || []).length + (np.night_twists || []).length + (np.together || []).length) + " 件插曲 · " +
-        (np.pastimes || []).length + " 样消遣" + (S.pools.custom ? "" : " · 默认");
+        (np.pastimes || []).length + " 样消遣 · " + (np.idles || []).length + " 种闲着" + (S.pools.custom ? "" : " · 默认");
     }
     world.appendChild(h("button", {
       class: "nav-item" + (S.view === "pool" ? " on" : ""), type: "button",
@@ -2803,7 +2803,8 @@
     twists: "今天发生了一件事：有新鲜感、有结果，重复了扎眼，所以抽过的几天里很难再抽到。",
     night_twists: "天黑以后在家附近碰上的小事，冷却和白天的插曲一起算。",
     together: "两个人一起做的事，两人共用一份；谁近来抽到过都算。",
-    pastimes: "闲下来顺手做的习惯：随时能停、停了能接，天天做也不怪，所以冷却轻得多。"
+    pastimes: "闲下来顺手做的习惯：随时能停、停了能接，天天做也不怪，所以冷却轻得多。",
+    idles: "什么也不做、歇着的时候人在哪、怎么待着。补写写「闲着」那段就照今天抽到的写，冷却和消遣一样轻。"
   };
   var POOL_SORTS = [["chance", "按明天抽中"], ["base", "按初始权重"], ["order", "原顺序"]];
 
@@ -3095,7 +3096,7 @@
     if (!it) {
       form.appendChild(h("div", { class: "wform-h" }, h("span", { class: "t", text: "加一条" }), h("span", { class: "m", text: "加到「" + poolLabel(kind) + "」" })));
     }
-    var text = h("input", { class: "inp", type: "text", maxlength: "80", placeholder: kind === "pastimes" ? "例如：看书，看到哪算哪" : "例如：有熟人来串门，站着聊了一会儿" });
+    var text = h("input", { class: "inp", type: "text", maxlength: "80", placeholder: kind === "pastimes" ? "例如：看书，看到哪算哪" : kind === "idles" ? "例如：在廊下坐着，看院子" : "例如：有熟人来串门，站着聊了一会儿" });
     text.value = f.text;
     text.addEventListener("input", function () { f.text = text.value; });
     form.appendChild(h("div", { class: "wfld" }, h("div", { class: "wfld-l", text: "内容" }), text));
