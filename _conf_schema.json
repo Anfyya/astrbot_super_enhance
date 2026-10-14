@@ -196,9 +196,9 @@
         }
     },
     "life_state": {
-        "description": "⑥ 动态生活状态（生成 / 注入 / 主动对话）",
+        "description": "⑥ 动态生活状态（世界线 / 注入 / 主动对话）",
         "type": "object",
-        "hint": "每天生成一份生活时间线，注入当前时段状态，并按起床/入睡与时段边界定时主动发消息。日程按机器人（平台实例）隔离：每个机器人一份，同一机器人下所有会话共用。启用前请先停用旧插件 astrbot_plugin_dynamic_life_state，否则会重复注入、重复主动发消息。",
+        "hint": "世界线由记录员（把聊天里发生的事记进来）和幕间补写（没人聊天时把接下来的空档补上）共同维护，聊天时注入给角色，并按早安 / 晚安 / 约定 / 做完一件大事定时主动发消息。世界线按机器人（平台实例）隔离：每个机器人一条线，同一机器人下所有会话共用。启用前请先停用旧插件 astrbot_plugin_dynamic_life_state，否则会重复注入、重复主动发消息。",
         "items": {
             "enabled": {
                 "description": "启用",
@@ -227,91 +227,33 @@
                 "default": []
             },
             "llm_provider_id": {
-                "description": "生成用模型",
+                "description": "记录员 / 补写用模型",
                 "type": "string",
-                "hint": "用于生成生活状态的模型；留空使用全局默认模型。多机器人是「一次调用生成几份日程」，所以几份共用这一个模型。",
+                "hint": "记录员和幕间补写调用模型时用；留空使用全局默认模型。",
                 "_special": "select_provider",
                 "default": ""
             },
             "persona_id": {
-                "description": "生成用人格",
+                "description": "补写用人格",
                 "type": "string",
-                "hint": "用于生成生活状态的人格；留空使用默认人格。",
+                "hint": "幕间补写把这份人格文本放进提示词；留空自动用机器人的默认人格。",
                 "_special": "select_persona",
                 "default": ""
             },
             "injection_mode": {
-                "description": "状态注入方式",
+                "description": "世界线注入方式",
                 "type": "string",
-                "hint": "extra_user_content_parts=临时附加上下文（推荐，不落库）；fake_tool_call=伪造一次工具调用注入历史。",
+                "hint": "把【世界线】块以哪种形式交给模型：extra_user_content_parts（默认）或 fake_tool_call。",
                 "options": [
                     "extra_user_content_parts",
                     "fake_tool_call"
                 ],
                 "default": "extra_user_content_parts"
             },
-            "history_reference_days": {
-                "description": "防重复参考天数",
-                "type": "int",
-                "hint": "生成新日程时，把最近几天的「概况」给模型看，只用来避免重复（不再给整段时间线，免得被照抄）。另外系统总会自动比对最近 3 天，把反复出现的安排列为今天不许再写，并在新日程和某天太像时要求重写。0 表示不给概况。",
-                "slider": {
-                    "min": 0,
-                    "max": 7,
-                    "step": 1
-                },
-                "default": 3
-            },
-            "together_min": {
-                "description": "和主人一起的时段（大致段数）",
-                "type": "int",
-                "hint": "主人在的日子，每天大约安排几段和主人一起的时间（三个人一起、或主人只陪其中一位都算）。只是大致倾向，实际每天在这个数上下浮动，不是硬性下限；写成打算 / 约好的口吻，主人实际在哪仍以他说的为准。人设、能力清单或附加要求里写了主人这几天不在时不排。填 0 表示不专门安排。",
-                "slider": {
-                    "min": 0,
-                    "max": 8,
-                    "step": 1
-                },
-                "default": 3
-            },
-            "pair_level": {
-                "description": "两位角色相处多少",
-                "type": "string",
-                "hint": "两位角色之间在一起的时间多少（主人在不在都算）。每天会按这个倾向随机定一个当天的样子（几乎整天黏在一起 / 大半天在一起 / 各忙各的但常碰面），不再规定固定段数。在一起的时段两边日程起止时间一致，各按自己的视角写。",
-                "options": [
-                    "多",
-                    "适中",
-                    "少",
-                    "不要求"
-                ],
-                "default": "多"
-            },
-            "together_place": {
-                "description": "平时待的大地点",
-                "type": "string",
-                "hint": "主人和两位角色平时一起待的大地点。「穗织」是从雨住的温泉古镇（建实神社那一边）；「海边的镇子」是亚托莉和主人住的海边小镇（作品里没有正式名字，提示词里会带上地点描述，不会让模型自己编地名）。",
-                "options": [
-                    "穗织",
-                    "海边的镇子"
-                ],
-                "default": "穗织"
-            },
-            "prompt_template": {
-                "description": "提示词模板",
-                "type": "text",
-                "hint": "留空使用内置默认模板（多机器人同批生成时走内置的多角色模板，不受这里影响）。单份模板可用占位符：{date}、{weekday}、{holiday}、{persona}、{history_states}、{extra_requirements}、{optional_fields}、{natural_slots}、{min_entries}、{reference_block}、{yesterday_block}（昨天的样子，没写这个占位符时会自动附在末尾）。",
-                "editor_mode": true,
-                "editor_language": "markdown",
-                "default": ""
-            },
-            "scene_enabled": {
-                "description": "共享场景（交叉注入 + 主人行踪）",
-                "type": "bool",
-                "hint": "开启后：①每次注入都带上别处那位角色此刻在哪、在干什么，两边不会再对不上；②她的回复末尾会多写一行 [[scene: 地点｜在做什么]] 尾标（发送前自动删掉，主人看不到），用来纠正日程跟实际不符的情况；③主人说过的位置会记进共享场景，另一边的角色也知道。要配 bot_labels 才认得出角色名字。",
-                "default": false
-            },
             "bot_labels": {
-                "description": "机器人名字（共享场景用）",
+                "description": "机器人名字",
                 "type": "string",
-                "hint": "格式 id=名字，逗号或换行分隔，例如 napcat=丛雨,napcat2=亚托莉；id 就是「会话名单」里填的平台实例。没配的角色在注入文本里只会显示平台 id。",
+                "hint": "平台实例到角色名的对照（例如 napcat=丛雨），页面、注入和记录都用它显示名字。",
                 "default": ""
             },
             "timezone": {
@@ -319,23 +261,6 @@
                 "type": "string",
                 "hint": "留空则用全局时区，默认 Asia/Shanghai。",
                 "default": ""
-            },
-            "retain_days": {
-                "description": "状态保留天数",
-                "type": "int",
-                "hint": "本地保留最近多少天的状态文件。",
-                "slider": {
-                    "min": 1,
-                    "max": 60,
-                    "step": 1
-                },
-                "default": 14
-            },
-            "review_enabled": {
-                "description": "每日回查修正",
-                "type": "bool",
-                "hint": "每天 0 点生成新日程前，先拿昨天「起床~入睡」之间的聊天记录小幅修正昨天那份日程：只改对不上的时段，不重写整篇；原版会备份到 life_state_revisions/。",
-                "default": true
             },
             "world_mode": {
                 "description": "世界线（新架构）",
@@ -390,10 +315,28 @@
                 "hint": "聊天时把今天最近几条世界线条目给模型看。",
                 "default": 12
             },
-            "edit_tool_enabled": {
-                "description": "日程修改工具",
+            "world_enabled": {
+                "description": "幕间补写",
                 "type": "bool",
-                "hint": "给 AI 一个 revise_life_state 工具：它能改自己今天的日程，但只能改自己那一份、且只能从当天已有的固定时段里挑一段。关闭后工具不再暴露给模型。",
+                "hint": "没人聊天时把接下来几小时的事一段段补进世界线；关了就只有记录员在记。",
+                "default": true
+            },
+            "world_llm_timeout": {
+                "description": "记录员 / 补写超时（秒）",
+                "type": "int",
+                "hint": "记录员和幕间补写调用模型的超时；网络不稳就调大。",
+                "default": 120
+            },
+            "recorder_batch": {
+                "description": "记录员批量条数",
+                "type": "int",
+                "hint": "记录员一次最多处理多少条新消息。",
+                "default": 60
+            },
+            "edit_tool_enabled": {
+                "description": "世界线修改工具",
+                "type": "bool",
+                "hint": "给模型一个修改自己世界线条目的工具；默认关。",
                 "default": true
             },
             "abilities_enabled": {
@@ -409,21 +352,10 @@
                 "default": true
             },
             "raw_log_enabled": {
-                "description": "原始消息副本（只给日程回查用）",
+                "description": "原始消息副本（供记录员读原文）",
                 "type": "bool",
-                "hint": "把配置会话里的双方消息另存一份（保留今天+昨天两个自然日），这样即使 /compact 压缩了会话历史，回查昨天日程时仍能看到原始对话。不参与任何上下文注入。",
+                "hint": "把配置会话里的双方消息另存一份（保留今天+昨天两个自然日）：记录员读它来记世界线，主动对话到点判断也用；不参与上下文注入。",
                 "default": true
-            },
-            "review_max_messages": {
-                "description": "回查最多读取消息条数",
-                "type": "int",
-                "hint": "日程回查时最多带多少条聊天记录；0 表示不限制（默认）。",
-                "slider": {
-                    "min": 0,
-                    "max": 1000,
-                    "step": 50
-                },
-                "default": 0
             },
             "debug": {
                 "description": "调试日志",
@@ -444,17 +376,6 @@
                     "type": "string"
                 },
                 "default": []
-            },
-            "proactive_middle_count": {
-                "description": "中间时段主动条数",
-                "type": "int",
-                "hint": "起床与入睡之外，白天随机挑选的主动搭话次数（彼此至少隔 30 分钟，排不下就少几条）。世界线 live 时不用这个：做完够重要的事才叫她（见「做完一件事要多重要才主动说」）。",
-                "slider": {
-                    "min": 0,
-                    "max": 24,
-                    "step": 1
-                },
-                "default": 5
             },
             "proactive_done_min_importance": {
                 "description": "做完一件事要多重要才主动说",

@@ -3228,7 +3228,7 @@
     }
     $("ledgerSub").textContent = "后来学会的事 · 答应过的事 · 服务器日期 " + (d.today || "").slice(5);
 
-    var sec = h("div", { class: "lsec" }, lsecHead("能力清单", "人设是她最初的样子，这里记后来学会的；聊天、主动对话和日程生成都会用到"));
+    var sec = h("div", { class: "lsec" }, lsecHead("能力清单", "人设是她最初的样子，这里记后来学会的；聊天、主动对话和补写都会用到"));
     if (!d.abilities_enabled) {
       sec.appendChild(h("div", { class: "notice" }, h("span", { class: "dot" }), "能力清单是关闭的：这里的内容现在不会注入。在插件配置里打开「能力清单」后生效。"));
     }
@@ -3318,7 +3318,7 @@
   ];
 
   function trainingSection(d) {
-    var sec = h("div", { class: "lsec" }, lsecHead("在练的事", "要练一阵子的本事：练了多久按日程里练它的时段算，够数就算练成，自动写进能力清单"));
+    var sec = h("div", { class: "lsec" }, lsecHead("在练的事", "要练一阵子的本事：练了多久按世界线里练它的时段算，够数就算练成，自动写进能力清单"));
     if (!d.training_enabled) {
       sec.appendChild(h("div", { class: "notice" }, h("span", { class: "dot" }), "跟着能力清单走：能力清单关着，这里不会注入，也不会自动练成。"));
     }
@@ -3352,7 +3352,7 @@
     if (x.status === "done") { when = "练成于 " + (x.completed_at || "").slice(5); }
     else if (open && p.eta) { when = "照今天的安排 " + p.eta.slice(11) + " 前后练够"; }
     else if (open && +p.today_left_hours > 0) { when = "今天还排着 " + p.today_left_hours + " 小时"; }
-    else if (open) { when = "今天日程里没排练这件事"; }
+    else if (open) { when = "今天世界线里没排练这件事"; }
     row.appendChild(h("div", { class: "lt" },
       h("div", null, h("span", { class: "what", text: x.what })),
       x.standard ? h("div", { style: "font-size:13px;color:var(--t2)", text: "标准：" + x.standard }) : null,
@@ -3430,7 +3430,7 @@
   }
 
   function promiseSection(d) {
-    var sec = h("div", { class: "lsec" }, lsecHead("约定", "答应过的事：今天的会改写那段日程并到点提起，以后的到那天必须排进日程"));
+    var sec = h("div", { class: "lsec" }, lsecHead("约定", "答应过的事：今天的会改写那段世界线并到点提起，以后的到那天必须排进去"));
     if (!d.promise_enabled) {
       sec.appendChild(h("div", { class: "notice" }, h("span", { class: "dot" }), "约定功能是关闭的：她记不了新约定，已有的也不会注入。"));
     }
@@ -3495,10 +3495,10 @@
 
   function eventSection(d) {
     var list = (d.events || []).slice().sort(function (a, b) { return (b.start || "").localeCompare(a.start || ""); });
-    var sec = h("div", { class: "lsec" }, lsecHead("事件", "日程里持续好几天的事；过了结束日只能当回忆，不会再被反复安排"));
+    var sec = h("div", { class: "lsec" }, lsecHead("事件", "世界线里持续好几天的事；过了结束日只能当回忆，不会再被反复安排"));
     var card = h("div", { class: "pc" });
     if (!list.length) {
-      card.appendChild(h("div", { class: "muted", style: "font-size:13px", text: "还没有。生成日程时出现持续多天的事（祭典、考试周之类）会记在这里。" }));
+    card.appendChild(h("div", { class: "muted", style: "font-size:13px", text: "还没有。记录或补写时出现持续多天的事（祭典、考试周之类）会记在这里。" }));
     } else {
       var rows = h("div", { class: "lrows" });
       list.forEach(function (x) {
