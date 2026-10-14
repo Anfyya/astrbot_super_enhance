@@ -575,18 +575,12 @@ class LifeStateService:
                     logger.warning("[super_enhance/life] 打算做完的主动对话没排上", exc_info=True)
                 continue
             if started is not None:
-                told = self._partner_told(bot, started, flat)
-                if told:
-                    # 两人一起出门、到家、开饭：对方已经跟主人说了，这边不再另说一遍
-                    logger.info("[super_enhance/life] [%s] %s「%s」：和%s一起的，她那边已经叫了，这边不另叫",
-                                bot, started[0], str(started[1].get("doing") or "")[:20], told)
-                else:
-                    # 出门、到家、开饭优先；同一刻做完的那件一起带上，不另叫
-                    try:
-                        await self.planner.fire_done(bot, started[1], now, kind=started[0], prev=finished)
-                    except Exception:
-                        logger.warning("[super_enhance/life] 出门 / 到家 / 开饭的主动对话没排上", exc_info=True)
-                    continue
+                # 出门、到家、开饭优先；同一刻做完的那件一起带上，不另叫
+                try:
+                    await self.planner.fire_done(bot, started[1], now, kind=started[0], prev=finished)
+                except Exception:
+                    logger.warning("[super_enhance/life] 出门 / 到家 / 开饭的主动对话没排上", exc_info=True)
+                continue
             if finished is None:
                 continue
             try:
@@ -609,30 +603,6 @@ class LifeStateService:
             )
             return False
         return True
-
-    def _partner_told(self, bot: str, started: tuple, flat: datetime.datetime) -> str:
-        """这次出门 / 到家 / 开饭是和另一个人一起的，而她那边同一种的那段更早（或同一刻、排在前面）开始：
-        她已经叫过了，返回她的名字；不是就返回空。"""
-        kind, item = started
-        start = parse_time(item.get("start"))
-        if start is None:
-            return ""
-        order = list(self.enabled_bots())
-        for other in item.get("with") or []:
-            if other == bot or other not in order:
-                continue
-            items = self.world.activities(other, flat)
-            for index, x in enumerate(items):
-                if bot not in (x.get("with") or []):
-                    continue
-                at = parse_time(x.get("start"))
-                if at is None or not (start - datetime.timedelta(minutes=10) <= at <= start):
-                    continue
-                if self._moment_kind(items, index) != kind:
-                    continue
-                if at < start or order.index(other) < order.index(bot):
-                    return self.scene.label_for(other) or other
-        return ""
 
     async def _on_early(self, bot: str, umo: str, entry: dict, said: str, now) -> None:
         """记录员发现她把日程里后面才做的事说早了：live 下叫她给主人改口。"""
