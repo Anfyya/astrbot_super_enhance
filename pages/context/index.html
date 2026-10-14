@@ -419,6 +419,12 @@
   .wprog-track{flex:1;height:6px;border-radius:3px;background:var(--sunk);overflow:hidden}
   .wprog-bar{height:100%;background:var(--accent);border-radius:3px;transition:width 1s linear}
   .wprog-t{font-size:12px;color:var(--t3);white-space:nowrap;font-variant-numeric:tabular-nums}
+  .wstep-ed{display:flex;flex-direction:column;gap:6px}
+  .wstep-row{display:flex;align-items:center;gap:6px}
+  .wstep-row .inp{flex:1;min-width:0}
+  .wstep-row .inp.wstep-m{flex:0 0 64px;text-align:right}
+  .wstep-n,.wstep-u{flex:none;font-size:12.5px;color:var(--t3);font-variant-numeric:tabular-nums}
+  .wstep-n{min-width:18px;text-align:right}
   .wsteps{margin:4px 0 0;padding-left:20px;font-size:13px;color:var(--t3)}
   .wsteps li{margin:1px 0}
   .wsteps li.done{text-decoration:line-through;opacity:.7}
@@ -3474,7 +3480,7 @@
       card.appendChild(worldEntryForm(d, null));
     } else {
       card.appendChild(h("button", { class: "addlink", type: "button", "data-wk": "e:new", onclick: function () {
-        worldOpen("e", "new", { who: who, start: d.date + " ", end: "", place: "", doing: "", steps: "", result: "", importance: "", "public": "", training: "" });
+        worldOpen("e", "new", { who: who, start: d.date + " ", end: "", place: "", doing: "", steps: [], result: "", importance: "", "public": "", training: "" });
       } }, icon("plus"), "手动加一条"));
     }
     if (!list.length) {
@@ -3517,6 +3523,29 @@
     for (var i = 0; i < mins.length; i++) { left -= mins[i]; if (left < 0) { return i; } }
     return n - 1;
   }
+  // 进度条：有分步时走正在做的那一步（第几步、这步做到几成、这步几点做完），没分步走整段。
+  // 分步的起止按分钟比例（没分钟按步数平分）摊在整段上，和 worldStepIndex 同一个算法。
+  function worldProg(el, now) {
+    var a = +el.getAttribute("data-a"), b = +el.getAttribute("data-b");
+    if (!(b > a)) { return null; }
+    var pct = Math.max(0, Math.min(100, (now - a) / (b - a) * 100));
+    var n = +el.getAttribute("data-n") || 0, width = pct;
+    var text = Math.floor(pct) + "% · 预计 " + el.getAttribute("data-end") + " 做完";
+    if (n > 0) {
+      var dm = el.getAttribute("data-m"), mins = dm ? dm.split(",").map(Number) : null;
+      var at = worldStepIndex(n, pct, mins);
+      var total = mins ? mins.reduce(function (x, y) { return x + y; }, 0) : n;
+      var done = mins ? mins.slice(0, at).reduce(function (x, y) { return x + y; }, 0) : at;
+      var s0 = a + (b - a) * done / total, s1 = a + (b - a) * (done + (mins ? mins[at] : 1)) / total;
+      width = s1 > s0 ? Math.max(0, Math.min(100, (now - s0) / (s1 - s0) * 100)) : 100;
+      text = "第 " + (at + 1) + "/" + n + " 步 · " + Math.floor(width) + "% · 这步 " + new Date(s1).toISOString().slice(11, 16) +
+        " 做完 · 整段 " + el.getAttribute("data-end");
+    }
+    el.querySelector(".wprog-bar").style.width = width.toFixed(2) + "%";
+    el.querySelector(".wprog-t").textContent = text;
+    return pct;
+  }
+
   function worldSteps(e, pct) {
     var steps = e.steps || [];
     if (!steps.length) { return null; }
@@ -3527,6 +3556,16 @@
       box.appendChild(h("li", { class: i < at ? "done" : i === at ? "now" : "", text: mins ? t + " · " + mins[i] + " 分钟" : t }));
     });
     return box;
+  }
+
+  function worldProgBar(e) {
+    var mins = worldStepMins(e);
+    var el = h("div", { class: "wprog", "data-a": String(worldMs(e.start)), "data-b": String(worldMs(e.end)), "data-end": String(e.end).slice(11, 16),
+      "data-n": String((e.steps || []).length), "data-m": mins ? mins.join(",") : "" },
+      h("div", { class: "wprog-track" }, h("div", { class: "wprog-bar" })),
+      h("span", { class: "wprog-t" }));
+    worldProg(el, worldNowMs());
+    return el;
   }
 
   function worldEntryRow(d, e, date) {
@@ -3554,9 +3593,7 @@
       e.doing ? h("div", { style: "white-space:pre-wrap", text: e.doing }) : null,
       worldSteps(e, pct),
       e.result ? h("div", { style: "font-size:13px;color:var(--t2);margin-top:2px", text: "结果：" + e.result }) : null,
-      pct !== null ? h("div", { class: "wprog", "data-a": String(worldMs(e.start)), "data-b": String(worldMs(e.end)), "data-end": String(e.end).slice(11, 16) },
-        h("div", { class: "wprog-track" }, h("div", { class: "wprog-bar", style: "width:" + pct.toFixed(2) + "%" })),
-        h("span", { class: "wprog-t", text: Math.floor(pct) + "% · 预计 " + String(e.end).slice(11, 16) + " 做完" })) : null,
+      pct !== null ? worldProgBar(e) : null,
       h("div", { class: "lm" },
         h("span", { class: "tag" + (e.source === "manual" ? " acc" : ""), text: WORLD_SRC[e.source] || e.source || "" }),
         h("span", { text: others ? "别人看到：" + others : "别人看不到" }),
@@ -3567,7 +3604,7 @@
     var acts = h("div", { class: "la" });
     var edit = h("button", { class: "btn quiet sm", type: "button", title: "编辑" }, icon("edit"));
     edit.addEventListener("click", function () {
-      worldOpen("e", e.id, { start: e.start || "", end: e.end || "", place: e.place || "", doing: e.doing || "", steps: (e.steps || []).map(function (t, i) { var m = worldStepMins(e); return m ? t + " " + m[i] : t; }).join("\n"),
+      worldOpen("e", e.id, { start: e.start || "", end: e.end || "", place: e.place || "", doing: e.doing || "", steps: (e.steps || []).map(function (t, i) { var m = worldStepMins(e); return { text: t, minutes: m ? String(m[i]) : "" }; }),
         importance: +e.importance > 0 ? String(e.importance) : "",
         result: e.result || "", "public": e["public"] || "",
         training: /^#?\d+$/.test(String(e.training || "").trim()) ? String(e.training).trim().replace(/^#/, "") : "" });
@@ -3578,6 +3615,34 @@
     acts.appendChild(del);
     row.appendChild(acts);
     return row;
+  }
+
+  // 分步：一步一行，做什么和几分钟分开填；可以加一步、删一步
+  function worldStepsEditor(f) {
+    if (!Array.isArray(f.steps)) { f.steps = []; }
+    var list = h("div", { class: "wstep-ed" });
+    function draw(focusAt) {
+      list.textContent = "";
+      f.steps.forEach(function (st, i) {
+        var t = h("input", { class: "inp", type: "text", placeholder: "第 " + (i + 1) + " 步做什么" });
+        t.value = st.text || "";
+        t.addEventListener("input", function () { st.text = t.value; });
+        var m = h("input", { class: "inp wstep-m", type: "text", inputmode: "numeric", placeholder: "—", title: "这步几分钟" });
+        m.value = st.minutes || "";
+        m.addEventListener("input", function () { st.minutes = m.value.replace(/[^\d]/g, ""); if (m.value !== st.minutes) { m.value = st.minutes; } });
+        var del = h("button", { class: "btn quiet sm danger", type: "button", title: "删掉这步" }, icon("trash"));
+        del.addEventListener("click", function () { f.steps.splice(i, 1); draw(Math.min(i, f.steps.length - 1)); });
+        list.appendChild(h("div", { class: "wstep-row" },
+          h("span", { class: "wstep-n", text: (i + 1) + "." }), t, m, h("span", { class: "wstep-u", text: "分钟" }), del));
+        if (i === focusAt) { setTimeout(function () { t.focus(); }, 0); }
+      });
+      var add = h("button", { class: "addlink", type: "button" }, icon("plus"), "加一步");
+      add.addEventListener("click", function () { f.steps.push({ text: "", minutes: "" }); draw(f.steps.length - 1); });
+      list.appendChild(add);
+    }
+    draw(-1);
+    return h("div", { class: "wfld" },
+      worldLabelLine("分步", "按进度只给她看到正在做的那步，后面的不给；没有分步就把上面整段给她。分钟每步都填才按分钟算，都不填按步数平分"), list);
   }
 
   function worldEntryForm(d, e) {
@@ -3598,8 +3663,7 @@
       worldField("结束", f.end, fileDate + " 10:30", function (v) { f.end = v; }, { hint: "空着 = 还在进行" }),
       worldField("地点", f.place, "例如：建实神社 社务所", function (v) { f.place = v; })));
     box.appendChild(worldField("在做什么", f.doing, "", function (v) { f.doing = v; }, { area: true, rows: 2, hint: "细节：本人、在场的人看得到" }));
-    box.appendChild(worldField("分步", f.steps, "例如：\n添水烧开 10\n小火炖着 15\n盛出来喝 5", function (v) { f.steps = v; },
-      { area: true, rows: 3, hint: "一行一步，行尾可写分钟；按进度只给她看到正在做的那步，后面的不给；空着就把上面整段给她" }));
+    box.appendChild(worldStepsEditor(f));
     var imp = [{ key: "", label: "不打分" }, { key: "1", label: "1" }, { key: "2", label: "2" }, { key: "3", label: "3" }, { key: "4", label: "4" }, { key: "5", label: "5" }];
     box.appendChild(h("div", { class: "wcols r1" },
       worldField("结果", f.result, "例如：秒针重新走起来，修好了", function (v) { f.result = v; }, { hint: "这件事最后怎样了；她做完才看得到" }),
@@ -3610,6 +3674,12 @@
       var start = String(f.start || "").trim();
       if (!/\d{1,2}[:：]\d{2}$/.test(start)) { toast("开始时间写成 2026-10-12 09:00 或 09:00", { err: true }); return null; }
       if (!String(f.doing || "").trim() && !String(f.place || "").trim()) { toast("地点和在做什么至少写一个", { err: true }); return null; }
+      var steps = (f.steps || []).filter(function (x) { return String(x.text || "").trim(); }).map(function (x) {
+        var m = Math.round(+String(x.minutes || "").trim());
+        return { text: String(x.text).trim(), minutes: m > 0 ? m : 0 };
+      });
+      var withMin = steps.filter(function (x) { return x.minutes > 0; }).length;
+      if (withMin && withMin < steps.length) { toast("分钟要么每步都填，要么都不填", { err: true }); return null; }
       var date = /^\d{4}-\d{2}-\d{2}/.test(start) ? start.slice(0, 10) : fileDate;
       // 新加的那条存完才有编号：按「谁 + 开始时间 + 手动」在重读的数据里找它
       var at = (/^\d{4}-\d{2}-\d{2}/.test(start) ? "" : date + " ") +
@@ -3623,7 +3693,7 @@
       };
       return worldPost({
         kind: "entry", action: e ? "update" : "add", date: e ? fileDate : date, id: e ? e.id : "", who: f.who,
-        start: start, end: String(f.end || "").trim(), place: f.place, doing: f.doing, steps: String(f.steps || ""), "public": f["public"],
+        start: start, end: String(f.end || "").trim(), place: f.place, doing: f.doing, steps: steps, "public": f["public"],
         importance: String(f.importance || "").trim() === "" ? 0 : +String(f.importance).trim(),
         result: String(f.result || ""),
         training: String(f.training || "").replace(/^#/, "").trim()
@@ -3857,11 +3927,8 @@
     if (S.view !== "world" || document.hidden || !S.world) { return; }
     var now = worldNowMs(), done = false;
     Array.prototype.forEach.call(document.querySelectorAll("#worldBody .wprog"), function (el) {
-      var a = +el.getAttribute("data-a"), b = +el.getAttribute("data-b");
-      if (!(b > a)) { return; }
-      var pct = Math.max(0, Math.min(100, (now - a) / (b - a) * 100));
-      el.querySelector(".wprog-bar").style.width = pct.toFixed(2) + "%";
-      el.querySelector(".wprog-t").textContent = Math.floor(pct) + "% · 预计 " + el.getAttribute("data-end") + " 做完";
+      var pct = worldProg(el, now);
+      if (pct === null) { return; }
       var list = el.parentNode.querySelector(".wsteps");
       if (list) {
         var dm = list.getAttribute("data-m");
