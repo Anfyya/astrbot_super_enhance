@@ -85,16 +85,17 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
 9. public 是住在一起的人自然会知道的粗粒度信息（人在哪、大概在干哪类事），可以为空。doing 是细节。
 10. 两人在一起的时段，两边的 start/end 和共同的事要一致，with 互相写上对方的 key；对方手上的事还没做完的，别写成和她在一起。对方不在「这次要你写的」里时，她那段时间做什么以「她们此刻手上的事」和「已经排好、这次不改的」为准，你改不了：只有她那边写的也是这件事、也在这个地方，才能写成和她一起；不然就别把她写进来。
 11. 段里是在练「在练的事」里的某件，training 填它的编号（例如 "#2"）；不是在练就留空，不要往里写别的。
+12. 段里做的是「各自的打算」里她的某一条，intent 填那条的编号（例如 "i2"）；不是就留空。
 {world_notes}
-注意：**不要输出 intentions，也不要写任何「接下来打算」**。上面「各自的打算」里如果有，是她们自己之前说过的，照着走就行。
+注意：**不要输出 intentions，也不要写任何「接下来打算」**。上面「各自的打算」里如果有，是之前说好要做的，照着走就行。
 
 输出 JSON（end_current 只给上面说了「先定做完时刻」的人写）：
 
 {{
   "end_current": {{"napcat": "{example_end}"}},
   "segments": {{
-    "napcat": [{{"start": "{example_start}", "end": "{example_end}", "place": "", "doing": "吃饭", "steps": [{{"text": "盛饭端上桌", "minutes": 5}}, {{"text": "边吃边说话", "minutes": 18}}, {{"text": "吃完放下碗筷", "minutes": 2}}], "result": "吃饱了，菜一点没剩", "idle": false, "importance": 2, "at_home": true, "meal": true, "public": "", "with": [], "training": ""}},
-               {{"start": "{example_end}", "end": "{example_end2}", "place": "", "doing": "洗碗", "steps": [{{"text": "碗筷泡进水盆", "minutes": 3}}, {{"text": "一只只洗净", "minutes": 9}}, {{"text": "擦干摆回架上", "minutes": 3}}], "result": "碗都洗净摆回架上了", "idle": false, "importance": 1, "at_home": true, "meal": false, "public": "", "with": [], "training": ""}}],
+    "napcat": [{{"start": "{example_start}", "end": "{example_end}", "place": "", "doing": "吃饭", "steps": [{{"text": "盛饭端上桌", "minutes": 5}}, {{"text": "边吃边说话", "minutes": 18}}, {{"text": "吃完放下碗筷", "minutes": 2}}], "result": "吃饱了，菜一点没剩", "idle": false, "importance": 2, "at_home": true, "meal": true, "public": "", "with": [], "training": "", "intent": ""}},
+               {{"start": "{example_end}", "end": "{example_end2}", "place": "", "doing": "洗碗", "steps": [{{"text": "碗筷泡进水盆", "minutes": 3}}, {{"text": "一只只洗净", "minutes": 9}}, {{"text": "擦干摆回架上", "minutes": 3}}], "result": "碗都洗净摆回架上了", "idle": false, "importance": 1, "at_home": true, "meal": false, "public": "", "with": [], "training": "", "intent": ""}}],
     "napcat2": []
   }}
 }}
@@ -217,6 +218,16 @@ class LifeStep:
             return recorder.training_id(value, bot)
         text = str(value or "").strip().lstrip("#＃").strip()
         return text if text.isdigit() else ""
+
+    def intent_id(self, value, bot: str) -> str:
+        """只认她自己那几条打算的编号；对不上就空。"""
+        text = str(value or "").strip().lower()
+        if not text:
+            return ""
+        for item in self.world.intentions():
+            if str(item.get("who")) == bot and str(item.get("id") or "").lower() == text:
+                return str(item.get("id"))
+        return ""
 
     @property
     def _timeout(self) -> float:
@@ -476,7 +487,7 @@ class LifeStep:
         if intentions:
             parts.append(
                 "各自的打算：\n"
-                + "\n".join("- %s：%s" % (x.get("who"), x.get("text")) for x in intentions)
+                + "\n".join("- %s（%s）：%s" % (x.get("id"), x.get("who"), x.get("text")) for x in intentions)
             )
         promises = self._promise_lines(flat)
         if promises:
@@ -796,6 +807,7 @@ class LifeStep:
                     "public": raw.get("public"),
                     "with": with_list,
                     "training": self.training_id(raw.get("training"), bot),
+                    "intent": "" if idle else self.intent_id(raw.get("intent"), bot),
                     "seen_by": [bot] + with_list,
                     "source": "step",
                     "created": fmt_time(flat),

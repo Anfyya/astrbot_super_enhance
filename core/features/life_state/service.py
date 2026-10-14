@@ -484,7 +484,8 @@ class LifeStateService:
         return ""
 
     async def _notify_done(self, now: datetime.datetime) -> None:
-        """世界线 live：到点叫她一次，发不发她自己定。新一段刚开始是出门、到家、开饭时叫；做完一件够分的事时叫。"""
+        """世界线 live：到点叫她一次。新一段刚开始是出门、到家、开饭时叫；做完一件够分的事时叫（发不发她自己定）；
+        做完打算里的那件事时叫（一定发），并撤掉那条打算。"""
         if not self.planner.enabled:
             return
         flat = now.replace(tzinfo=None)
@@ -497,6 +498,7 @@ class LifeStateService:
             finished = None
             started = None
             asked = None
+            intent = None
             items = self.world.activities(bot, flat)
             for index, item in enumerate(items):
                 start = parse_time(item.get("start"))
@@ -507,10 +509,20 @@ class LifeStateService:
                         started = (moment, item)
                 if start is None or end is None or not (mark < end <= flat):
                     continue
+                if item.get("intent"):
+                    if self.world.drop_intention(str(item.get("intent"))):
+                        # 打算里的那件事做完了：这条打算撤掉
+                        logger.info("[super_enhance/world] [%s] 打算 %s 做完了（%s），撤掉", bot, item.get("intent"),
+                                    str(item.get("doing") or "")[:20])
+                    else:
+                        item = dict(item, intent="")  # 打算已经撤了（对话里说过做完了）：不再另叫
                 if (flat - end).total_seconds() > 600:
                     continue  # 停机期间做完的，过了就过了
                 if item.get("asked"):
                     asked = item  # 「现在去做」接下的事：多短都算，不看重要程度
+                    continue
+                if item.get("intent"):
+                    intent = item  # 打算里的那件事：多短都算，不看重要程度
                     continue
                 if (end - start).total_seconds() < 600:
                     continue  # 几分钟的小事不算「做完一件事」
@@ -523,6 +535,13 @@ class LifeStateService:
                     await self.planner.fire_done(bot, asked, now, kind="asked")
                 except Exception:
                     logger.warning("[super_enhance/life] 接下的事做完的主动对话没排上", exc_info=True)
+                continue
+            if intent is not None:
+                # 打算做完了：一定跟主人说一声，同一刻开始的出门、开饭就不另叫了
+                try:
+                    await self.planner.fire_done(bot, intent, now, kind="intent")
+                except Exception:
+                    logger.warning("[super_enhance/life] 打算做完的主动对话没排上", exc_info=True)
                 continue
             if started is not None:
                 # 出门、到家、开饭优先；同一刻做完的那件就不另叫了

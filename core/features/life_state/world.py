@@ -223,6 +223,8 @@ class WorldStore:
             # 同级或更权威：新的赢，旧的被裁短（开口的那条到此为止）
             if old_start < start:
                 old["end"] = fmt_time(start)
+                if old.get("intent"):
+                    old["intent"] = ""  # 做到一半被打断：那条打算不算做完
                 kept.append(old)
             elif end is not None and (old_end is None or old_end > end):
                 old["start"] = fmt_time(end)
@@ -260,6 +262,8 @@ class WorldStore:
             "result": clean_text(entry.get("result"), MAX_RESULT),
             # 她用「现在去做」接下的事（多半是主人让做的）：做完不看时长和重要程度，一定叫她
             "asked": bool(entry.get("asked")) and kind != "event",
+            # 这段做的是哪条打算（编号，如 i2）：做完叫她跟主人说一声，并撤掉那条打算
+            "intent": str(entry.get("intent") or "").strip() if kind != "event" else "",
             "created": str(entry.get("created") or fmt_time(self.now_local())),
         }
         if not entry.get("id"):
@@ -280,7 +284,7 @@ class WorldStore:
             for key, limit in limits.items():
                 if fields.get(key) is not None:
                     item[key] = clean_text(fields[key], limit)
-            for key in ("start", "end", "training", "source", "kind"):
+            for key in ("start", "end", "training", "source", "kind", "intent"):
                 if fields.get(key) is not None:
                     item[key] = str(fields[key]).strip()
             if fields.get("with") is not None:

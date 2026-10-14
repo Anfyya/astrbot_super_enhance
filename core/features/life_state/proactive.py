@@ -48,14 +48,15 @@ MAX_POSTPONES = 72
 # 顺延后和同一会话的另一条相差不到这么久，就并成一条（秒）
 MERGE_SECONDS = 120
 # 并成一条时留哪条：练成 > 约定 > 晚安 > 早安 > 中段
-KIND_RANK = {"correct": 5, "asked": 5, "training": 4, "promise": 3, "night": 2, "morning": 1, "middle": 0, "done": 0,
+KIND_RANK = {"correct": 5, "asked": 5, "intent": 5, "training": 4, "promise": 3, "night": 2, "morning": 1, "middle": 0, "done": 0,
              "out": 0, "back": 0, "meal": 0}
 KIND_LABEL = {"correct": "改口", "training": "练成", "promise": "约定", "night": "晚安", "morning": "早安", "middle": "中段",
-              "done": "做完一件事", "out": "出门", "back": "回来", "meal": "开饭", "asked": "接下的事做完"}
+              "done": "做完一件事", "out": "出门", "back": "回来", "meal": "开饭", "asked": "接下的事做完",
+              "intent": "打算做完"}
 # 随手叫她的几种（做完一件事、出门、回来、开饭）：彼此不挡，只让早安晚安、约定、改口、练成这些挡住
 CASUAL_KINDS = ("done", "out", "back", "meal", "middle")
 # 必须发的几种（主人定的规矩不许开口时除外）
-MUST_SEND = ("correct", "promise", "training")
+MUST_SEND = ("correct", "promise", "training", "intent")
 # 世界线 live：做完一件事时，前后这么久里已经排着早安 / 晚安 / 约定，就不再另发（分钟）
 DONE_SKIP_MINUTES = 15
 # 做完一件事后过多久发（秒）
@@ -376,7 +377,7 @@ class ProactivePlanner:
         created = 0
         for target in targets:
             near = None
-            for job in [] if kind == "asked" else await self._pending_jobs(cron, target, exclude=""):
+            for job in [] if kind in ("asked", "intent") else await self._pending_jobs(cron, target, exclude=""):
                 payload = dict(getattr(job, "payload", None) or {})
                 run_at = _parse_iso(payload.get("run_at"), self.timezone)
                 other = self._meta_of(job, payload)["kind"]
@@ -812,7 +813,7 @@ class ProactivePlanner:
                 )
                 return None
             now_ts = time.time()
-            quiet = ASKED_QUIET_SECONDS if meta["kind"] == "asked" else QUIET_SECONDS
+            quiet = ASKED_QUIET_SECONDS if meta["kind"] in ("asked", "intent") else QUIET_SECONDS
             busy_since = self._busy_since(target, now_ts, quiet)
             if busy_since is not None:
                 if meta["postponed"] >= MAX_POSTPONES or cron is None:
@@ -1113,6 +1114,15 @@ class ProactivePlanner:
                 str(done.get("start") or "")[11:16],
                 str(done.get("end") or "")[11:16],
             )
+        if kind == "intent":
+            done = meta.get("done") or {}
+            return "你之前说好要做的那件事做完了：%s%s%s（%s–%s）。跟主人说一声。" % (
+                "%s，" % done["place"] if done.get("place") and done["place"] not in str(done.get("doing") or "") else "",
+                done.get("doing") or "",
+                "，结果：%s" % done["result"] if done.get("result") else "",
+                str(done.get("start") or "")[11:16],
+                str(done.get("end") or "")[11:16],
+            )
         if kind == "done":
             done = meta.get("done") or {}
             return "你手上那件事刚做完：%s%s%s（%s–%s）。" % (
@@ -1181,7 +1191,7 @@ class ProactivePlanner:
                 "- 结合你此刻在做的事和所在的地方来说：可以顺口带一句你在干嘛、碰到了什么，"
                 "但别写成汇报日程，也别一点不提自己在干嘛；",
                 "- 这会儿真不合适说话（比如他刚说要睡了、正忙着），可以不发，直接结束就行，不用解释%s；"
-                % ("（这次是改口、约定到点或刚练成，必须发，除非主人定的规矩不许）"
+                % ("（这次是改口、约定到点、刚练成或打算做完，必须发，除非主人定的规矩不许）"
                    if kind in MUST_SEND and (kind != "correct" or self._correct_pending(meta, now)) else ""),
                 "- 要发就调用 send_message_to_user 发出去：只有调用了才算真的发出去，光写在回复里他看不到；",
             ]
