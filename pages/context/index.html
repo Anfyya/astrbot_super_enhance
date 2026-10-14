@@ -4364,9 +4364,6 @@
       lines.appendChild(h("div", null, h("span", { class: "when-b", text: "起床" }), (r.wake || "—") + "（前后浮动 " + (r.wake_jitter_min || 0) + " 分钟）"));
       lines.appendChild(h("div", null, h("span", { class: "when-b", text: "入睡" }), (r.sleep || "—") + "（前后浮动 " + (r.sleep_jitter_min || 0) + " 分钟）"));
       lines.appendChild(h("div", null, h("span", { class: "when-b", text: "三餐" }), (r.meals || []).join("、") || "—"));
-      (r.habits || []).forEach(function (x) {
-        lines.appendChild(h("div", null, h("span", { class: "when-b", text: "习惯" }), (x.text || "") + ([x.when, x.days].filter(Boolean).length ? "（" + [x.when, x.days].filter(Boolean).join("，") + "）" : "")));
-      });
       if (r.notes) { lines.appendChild(h("div", null, h("span", { class: "when-b", text: "备注" }), r.notes)); }
       card.appendChild(lines);
       var edit = h("button", { class: "btn sm", type: "button" }, icon("edit"), "编辑");
@@ -4374,7 +4371,6 @@
         worldOpen("r", b.key, {
           wake: r.wake || "", wake_jitter_min: String(r.wake_jitter_min || 0), sleep: r.sleep || "", sleep_jitter_min: String(r.sleep_jitter_min || 0),
           meals: (r.meals || []).join("、"),
-          habits: (r.habits || []).map(function (x) { return [x.text || "", x.when || "", x.days || ""].join(" | "); }).join("\n"),
           notes: r.notes || ""
         });
       });
@@ -4389,7 +4385,6 @@
       worldField("入睡", f.sleep, "23:00", function (v) { f.sleep = v; }),
       worldField("入睡前后浮动", f.sleep_jitter_min, "30", function (v) { f.sleep_jitter_min = v; }, { hint: "分钟" })));
     box.appendChild(worldField("三餐", f.meals, "06:50–07:40、11:30–12:40、17:30–19:00", function (v) { f.meals = v; }, { hint: "每顿写一个时间段（在这段里吃就行），几顿用顿号或逗号隔开" }));
-    box.appendChild(worldField("习惯", f.habits, "去建实神社上香、转一圈 | 上午 | 每天", function (v) { f.habits = v; }, { area: true, rows: 4, hint: "一行一条：做什么 | 什么时候 | 哪几天" }));
     box.appendChild(worldField("备注", f.notes, "例如：不必每天睡觉，但要有必要的休息", function (v) { f.notes = v; }));
     worldFormFoot(box, function () { worldClose("r", b.key); }, "保存", function () {
       var clock = /^\d{1,2}[:：]\d{2}$/;
@@ -4399,10 +4394,6 @@
         wake: wake, wake_jitter_min: parseInt(f.wake_jitter_min, 10) || 0,
         sleep: sleep, sleep_jitter_min: parseInt(f.sleep_jitter_min, 10) || 0,
         meals: String(f.meals || "").split(/[、,，\s]+/).filter(Boolean),
-        habits: String(f.habits || "").split("\n").map(function (line) {
-          var p = line.split(/[|｜]/).map(function (x) { return x.trim(); });
-          return { text: p[0] || "", when: p[1] || "", days: p[2] || "" };
-        }).filter(function (x) { return x.text; }),
         notes: String(f.notes || "").trim()
       };
       return worldPost({ kind: "routine", who: b.key, data: data }, "已保存（今天的起床入睡已经定了，明天起按新的）", function () { delete S.rEdit[b.key]; },
