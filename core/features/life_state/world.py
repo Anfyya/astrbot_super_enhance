@@ -38,7 +38,6 @@ ROUTINE_NAME = "routine.json"
 
 SOURCE_RANK = {"step": 1, "chat": 2, "manual": 3}
 DEFAULT_KEEP_DAYS = 30
-INTENTION_TTL_HOURS = 12  # 打算最多活这么久，过期当没有
 HOLE_MINUTES = 2  # 排好的段之间空出超过这么久，算空档（补写要补上）
 
 MAX_PLACE = 60
@@ -549,31 +548,87 @@ class WorldStore:
     # ---------- 打算 ----------
 
     def intentions(self, who: str = "") -> list:
-        items = list(self._load_state().get("intentions") or [])
-        # 打算是有寿命的：超过 INTENTION_TTL_HOURS 小时就当作过期，不再注入
-        moment = self.now_local()
-        fresh = []
+        state = self._load_state()
+        items = list(state.get("intentions") or [])
+        # 打算不过期、不限条数：记/撤全由记录员（或网页手动）决定。
+        # 老数据没有编号，这里一次性补上，好让记录员按编号精确撤。
+        seq = self._next_intention_seq(items)
+        changed = False
         for item in items:
-            made = parse_time(item.get("created"))
-            if made is None or (moment - made).total_seconds() <= INTENTION_TTL_HOURS * 3600:
-                fresh.append(item)
-        items = fresh
+            if not str(item.get("id") or "").strip():
+                item["id"] = "i%d" % seq
+                seq += 1
+                changed = True
+        if changed:
+            state["intentions"] = items
+            self._save_state()
         if who:
             items = [x for x in items if str(x.get("who")) == str(who)]
         return items
+
+    @staticmethod
+    def _next_intention_seq(items) -> int:
+        top = 0
+        for item in items or []:
+            match = re.match(r"^i(\d+)$", str(item.get("id") or ""))
+            if match:
+                top = max(top, int(match.group(1)))
+        return top + 1
 
     def set_intention(self, who: str, text: str, window: str = "", source: str = "step"):
         body = clean_text(text, MAX_TEXT)
         if not who or not body:
             return None
         state = self._load_state()
-        items = [x for x in (state.get("intentions") or []) if str(x.get("who")) != str(who)]
-        record = {"who": who, "text": body, "window": clean_text(window, 60),
-                  "source": source, "created": fmt_time(self.now_local())}
+        items = list(state.get("intentions") or [])
+        # 同样的打算不重复记；不同的打算并存，新的不再顶掉旧的
+        for item in items:
+            if str(item.get("who")) == str(who) and str(item.get("text") or "") == body:
+                return item
+        record = {"id": "i%d" % self._next_intention_seq(items), "who": who, "text": body,
+                  "window": clean_text(window, 60), "source": source,
+                  "created": fmt_time(self.now_local())}
         items.append(record)
-        state["intentions"] = items[-12:]
+        state["intentions"] = items
         self._save_state()
         return record
+
+    def update_intention(self, intention_id: str, text=None, window=None) -> bool:
+        """按编号改一条打算（网页手动）。"""
+        if not intention_id:
+            return False
+        state = self._load_state()
+        items = list(state.get("intentions") or [])
+        hit = False
+        for item in items:
+            if str(item.get("id")) != str(intention_id):
+                continue
+            if text is not None:
+                body = clean_text(text, MAX_TEXT)
+                if body:
+                    item["text"] = body
+            if window is not None:
+                item["window"] = clean_text(window, 60)
+            item["source"] = "manual"
+            hit = True
+            break
+        if hit:
+            state["intentions"] = items
+            self._save_state()
+        return hit
+
+    def drop_intention(self, intention_id: str) -> bool:
+        """按编号撤一条打算（做完 / 对不上，由记录员或网页指定）。"""
+        if not intention_id:
+            return False
+        state = self._load_state()
+        items = list(state.get("intentions") or [])
+        left = [x for x in items if str(x.get("id")) != str(intention_id)]
+        if len(left) == len(items):
+            return False
+        state["intentions"] = left
+        self._save_state()
+        return True
 
     def clear_intention(self, who: str) -> None:
         state = self._load_state()

@@ -487,9 +487,24 @@ class ContextPageApi:
                     }))
             elif kind == "intention":
                 who = str(body.get("who") or "")
+                iid = str(body.get("id") or "")
                 if action == "delete":
-                    world.clear_intention(who)
-                    ok = True
+                    if iid:
+                        ok = world.drop_intention(iid)
+                    else:
+                        world.clear_intention(who)
+                        ok = True
+                elif iid:
+                    ok = world.update_intention(
+                        iid, text=body.get("text"), window=body.get("window")
+                    )
+                elif len(world.intentions(who)) == 1:
+                    # 只有一条时，网页的「保存」还是改那一条（老习惯）
+                    ok = world.update_intention(
+                        str(world.intentions(who)[0].get("id") or ""),
+                        text=body.get("text"),
+                        window=body.get("window"),
+                    )
                 else:
                     ok = bool(
                         world.set_intention(

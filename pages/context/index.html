@@ -4288,15 +4288,20 @@
 
   /* ---------- 打算 ---------- */
   function worldIntentionSection(d, who) {
-    var sec = h("div", { class: "lsec" }, lsecHead("打算", "她在对话里说过的，只留最新一条，过 12 小时作废；补写会照着走"));
+    var sec = h("div", { class: "lsec" }, lsecHead("打算", "她在对话里说过的；做完或对不上，由记录员按条撤掉；补写会照着走"));
     var card = h("div", { class: "pc" });
-    var it = (d.intentions || []).filter(function (x) { return x.who === who; }).slice(-1)[0];
+    var list = (d.intentions || []).filter(function (x) { return x.who === who; });
+    var latest = list.length ? list[list.length - 1] : null;
     if (S.iEdit[who]) {
-      card.appendChild(worldIntentionForm(d, it || null, who));
-    } else if (it) {
-      card.appendChild(h("div", { class: "lrows" }, worldIntentionRow(d, it)));
+      card.appendChild(worldIntentionForm(d, latest, who));
     } else {
-      card.appendChild(h("div", { class: "muted", style: "font-size:13px", text: "现在没有打算。" }));
+      if (list.length) {
+        var rows = h("div", { class: "lrows" });
+        list.forEach(function (x) { rows.appendChild(worldIntentionRow(d, x)); });
+        card.appendChild(rows);
+      } else {
+        card.appendChild(h("div", { class: "muted", style: "font-size:13px", text: "现在没有打算。" }));
+      }
       card.appendChild(h("button", { class: "addlink", type: "button", "data-wk": "i:" + who, onclick: function () {
         worldOpen("i", who, { who: who, text: "", window: "" });
       } }, icon("plus"), "替她写一条打算"));
@@ -4315,9 +4320,9 @@
         h("span", { class: "tag", text: WORLD_SRC[it.source] || it.source || "" }))));
     var acts = h("div", { class: "la" });
     var edit = h("button", { class: "btn quiet sm", type: "button", title: "编辑" }, icon("edit"));
-    edit.addEventListener("click", function () { worldOpen("i", it.who, { who: it.who, text: it.text || "", window: it.window || "" }); });
+    edit.addEventListener("click", function () { worldOpen("i", it.who, { id: it.id || "", who: it.who, text: it.text || "", window: it.window || "" }); });
     var del = h("button", { class: "btn quiet sm danger", type: "button", title: "删除" }, icon("trash"));
-    armed(del, "确认删除", function () { worldPost({ kind: "intention", action: "delete", who: it.who }, "已删除"); });
+    armed(del, "确认删除", function () { worldPost({ kind: "intention", action: "delete", who: it.who, id: it.id || "" }, "已删除"); });
     acts.appendChild(edit);
     acts.appendChild(del);
     row.appendChild(acts);
@@ -4336,8 +4341,8 @@
     box.appendChild(worldField("大概什么时候", f.window, "例如：13:00~16:00", function (v) { f.window = v; }, { hint: "可空" }));
     return worldFormFoot(box, function () { worldClose("i", key); }, "保存", function () {
       if (!String(f.text || "").trim()) { toast("打算不能空", { err: true }); return null; }
-      return worldPost({ kind: "intention", action: "set", who: f.who, text: f.text, window: f.window },
-        "已保存（她原来那条会被替换）", function () { delete S.iEdit[key]; }, { from: wk, to: wk });
+      return worldPost({ kind: "intention", action: "set", id: f.id || "", who: f.who, text: f.text, window: f.window },
+        f.id ? "已保存" : "已添加", function () { delete S.iEdit[key]; }, { from: wk, to: wk });
     }, function () { return worldDirty(f); });
   }
 
