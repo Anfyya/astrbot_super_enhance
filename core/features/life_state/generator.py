@@ -35,6 +35,7 @@ from .variety import (
     overlapping_slots,
     repeated_slots,
     seed_text,
+    twists_of,
     too_similar,
 )
 
@@ -685,7 +686,7 @@ class LifeStateGenerator:
             date_text,
             seed["tone"],
             "、".join("%s=%s" % (labels.get(b) or b, m) for b, m in seed["moods"].items()),
-            "、".join(seed["twists"]),
+            "、".join(x for items in twists_of(seed)[0].values() for x in items),
             "；意外 " + seed["accident"] if seed["accident"] else "",
         )
         parts = [seed_text(seed, labels)]

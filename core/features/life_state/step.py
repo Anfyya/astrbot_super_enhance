@@ -17,6 +17,7 @@ from astrbot.api import logger
 
 from .models import extract_json
 from .recorder import norm_time
+from .variety import twists_of
 from .world import WorldStore, clean_text, fmt_time, is_event, parse_steps, parse_time, progress_of, result_text, steps_text
 
 SYSTEM_PROMPT = (
@@ -178,11 +179,16 @@ class LifeStep:
             lines.append(
                 "- %s感情很好：不写她们之间吵架、闹别扭、冷战或互相误会。" % "和".join(names)
             )
-        twists = seed.get("night_twists") if night else seed.get("twists")
-        if twists:
+        per_bot, together = twists_of(seed, night)
+        rows = ["%s：%s" % (labels.get(bot) or bot, "；".join(items)) if bot else "；".join(items)
+                for bot, items in per_bot.items() if items and (not bot or bot in labels)]
+        if together:
+            rows.append("两人一起：%s" % "；".join(together))
+        if rows:
             lines.append(
-                "- %s可能碰上的小事：%s。她们自己说过的打算优先；打算之外的空档里才用，"
-                "这次补写最多用一件，上面今天的条目里写过的别再写。" % ("今晚" if night else "今天", "；".join(twists))
+                "- %s可能碰上的小事：\n%s\n  她们自己说过的打算优先；打算之外的空档里才用，"
+                "这次补写每人最多用一件，上面今天的条目里写过的别再写。" % (
+                    "今晚" if night else "今天", "\n".join("  - " + row for row in rows))
             )
         if seed.get("accident") and not night:
             lines.append(
