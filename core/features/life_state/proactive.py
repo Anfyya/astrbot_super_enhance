@@ -364,8 +364,10 @@ class ProactivePlanner:
             logger.info("[super_enhance/life] [%s] 已为 %s 补排 %d 条主动对话（早安 / 晚安 / 约定）", bot, date_text, created)
         return created
 
-    async def fire_done(self, bot: str, entry: dict, now: datetime.datetime | None = None, kind: str = "done") -> int:
-        """世界线 live：叫她一次（发不发她自己定）。kind：done 做完一件够分的事；out 出门；back 到家；meal 开饭。"""
+    async def fire_done(self, bot: str, entry: dict, now: datetime.datetime | None = None, kind: str = "done",
+                        prev: dict | None = None) -> int:
+        """世界线 live：叫她一次（发不发她自己定）。kind：done 做完一件够分的事；out 出门；back 到家；meal 开饭。
+        prev：同一刻刚做完、够分的上一件（出门、到家、开饭时一起带上，免得那件的结果漏掉）。"""
         if not self.enabled:
             return 0
         targets = self._targets(bot)
@@ -408,6 +410,9 @@ class ProactivePlanner:
                     "end": str(entry.get("end") or ""),
                 },
             }
+            if prev:
+                meta["done"]["prev"] = "%s%s" % (
+                    str(prev.get("doing") or ""), "（结果：%s）" % prev["result"] if prev.get("result") else "")
             if await self._add_job(cron, meta, target, at):
                 created += 1
         if created:
@@ -834,6 +839,12 @@ class ProactivePlanner:
                     meta["bot"], label, self._planned_text(meta), TIMELY_STALE_MINUTES,
                 )
                 return None
+            if meta["kind"] == "correct" and not self._correct_pending(meta, datetime.datetime.now(self.timezone)):
+                logger.info(
+                    "[super_enhance/life] [%s] 主动对话（%s，原定 %s）：那件事已经轮到她做了，用不着改口，不发了",
+                    meta["bot"], label, self._planned_text(meta),
+                )
+                return None
             quiet = ASKED_QUIET_SECONDS if meta["kind"] in ("asked", "intent") else QUIET_SECONDS
             busy_since = self._busy_since(target, now_ts, quiet)
             if busy_since is not None:
@@ -1126,11 +1137,12 @@ class ProactivePlanner:
         if kind in ("out", "back", "meal"):
             done = meta.get("done") or {}
             head = {"out": "你刚出了宿舍", "back": "你刚回到宿舍", "meal": "开饭了"}[kind]
-            return "%s：%s%s（%s 起）。" % (
+            return "%s：%s%s（%s 起）。%s" % (
                 head,
                 "%s，" % done["place"] if done.get("place") and done["place"] not in str(done.get("doing") or "") else "",
                 done.get("doing") or "",
                 str(done.get("start") or "")[11:16],
+                "这之前刚做完：%s。" % done["prev"] if done.get("prev") else "",
             )
         if kind == "asked":
             done = meta.get("done") or {}

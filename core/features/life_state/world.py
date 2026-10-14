@@ -894,7 +894,9 @@ def step_index(entry: dict, pct) -> int:
 
 
 def result_text(entry: dict) -> str:
-    """「（结果：……）」；没写结果返回空。"""
+    """「（结果：……）」；没写结果返回空。做到一半被打断的，原定的结果没做到，写「中途停下了」。"""
+    if (entry or {}).get("stopped"):
+        return "（做到一半停下了）"
     value = str((entry or {}).get("result") or "").strip()
     return "（结果：%s）" % value if value else ""
 

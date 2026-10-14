@@ -3,3 +3,6 @@ __pycache__/
 *.bak-*
 *.tmp
 .DS_Store
+
+# 本地放的线上数据副本（含聊天记录），不进仓库
+recent_5days_data/
