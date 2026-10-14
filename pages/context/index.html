@@ -3523,7 +3523,7 @@
     for (var i = 0; i < mins.length; i++) { left -= mins[i]; if (left < 0) { return i; } }
     return n - 1;
   }
-  // 进度条：有分步时走正在做的那一步（第几步、这步做到几成、这步几点做完），没分步走整段。
+  // 进度条：有分步时走正在做的那一步（做到几成、几点做完），没分步走整段。
   // 分步的起止按分钟比例（没分钟按步数平分）摊在整段上，和 worldStepIndex 同一个算法。
   function worldProg(el, now) {
     var a = +el.getAttribute("data-a"), b = +el.getAttribute("data-b");
@@ -3538,8 +3538,7 @@
       var done = mins ? mins.slice(0, at).reduce(function (x, y) { return x + y; }, 0) : at;
       var s0 = a + (b - a) * done / total, s1 = a + (b - a) * (done + (mins ? mins[at] : 1)) / total;
       width = s1 > s0 ? Math.max(0, Math.min(100, (now - s0) / (s1 - s0) * 100)) : 100;
-      text = "第 " + (at + 1) + "/" + n + " 步 · " + Math.floor(width) + "% · 这步 " + new Date(s1).toISOString().slice(11, 16) +
-        " 做完 · 整段 " + el.getAttribute("data-end");
+      text = Math.floor(width) + "% · 预计 " + new Date(s1).toISOString().slice(11, 16) + " 做完";
     }
     el.querySelector(".wprog-bar").style.width = width.toFixed(2) + "%";
     el.querySelector(".wprog-t").textContent = text;
