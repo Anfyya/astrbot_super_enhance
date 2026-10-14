@@ -353,6 +353,78 @@ def rows_for(items: list, name: str) -> list:
     return out
 
 
+def _base_weight(item: dict, name: str) -> float:
+    w = item.get("w")
+    if isinstance(w, dict):
+        return float((w.get(name) if name in TWIST_PEOPLE else max(list(w.values()) or [0])) or 0)
+    return float(w or 0)
+
+
+def pool_outlook(pools: dict, history: dict, date_text: str, labels: dict, sims: int = 400) -> dict:
+    """给网页看的：下一次抽（date_text 的第二天）时每人每条的初始权重、乘了冷却的现在权重、同组几条分摊、
+    几天前抽到（同组算）、明天抽中的机会（照 draw_seed 的抽法模拟 sims 次，种子固定，刷新不跳），
+    以及 date_text 当天给每人抽到的。"""
+    pools = normalize_pools(pools)
+    groups = group_map(pools)
+    day = datetime.date.fromisoformat(str(date_text))
+    nxt = (day + datetime.timedelta(days=1)).isoformat()
+    history = history or {}
+    counts = {bot: {kind: collections.Counter() for kind in POOL_KINDS} for bot in labels}
+    rng = random.Random("pool_outlook:" + nxt)
+    for _ in range(max(1, int(sims))):
+        seed = draw_seed(nxt, labels=labels, history=history, rng=rng, pools=pools)
+        for bot in labels:
+            for kind in ("twists", "night_twists", "pastimes"):
+                counts[bot][kind].update(seed[kind].get(bot) or [])
+            counts[bot]["together"].update(seed["together"])
+    seen = {bot: last_drawn(history, nxt, bot, groups) for bot in labels}
+    both: dict = {}
+    for bot in labels:
+        for key, days in seen[bot].items():
+            both[key] = min(days, both.get(key, days))
+    ago = {bot: drawn_days(history, date_text, bot, groups) for bot in labels}
+    own = {bot: drawn_days(history, date_text, bot, exact=True) for bot in labels}
+    record = history.get(str(date_text)) if isinstance(history.get(str(date_text)), dict) else {}
+    out = {}
+    for bot, name in labels.items():
+        rows_by_kind, today = {}, {}
+        for kind in POOL_KINDS:
+            shared = kind == "together"
+            who = "" if shared else name
+            live = rows_for(pools[kind], who)
+            size = collections.Counter(cool_key(t, groups) for t, _w in live)
+            cool = both if shared else seen[bot]
+            table = PASTIME_COOLDOWN if kind == "pastimes" else None
+            rows = []
+            for i, item in enumerate(pools[kind]):
+                text = item["text"]
+                key = cool_key(text, groups)
+                base = _base_weight(item, who)
+                factor = cool_factor(cool.get(key), table) if base > 0 else 0.0
+                days = [ago[b].get(key) for b in labels] if shared else [ago[bot].get(key)]
+                days = [d for d in days if d is not None]
+                mine = [own[b].get(text) for b in labels] if shared else [own[bot].get(text)]
+                mine = [d for d in mine if d is not None]
+                rows.append({
+                    "i": i,
+                    "base": round(base, 3),
+                    "factor": round(factor, 3),
+                    "now": round(base * factor, 3),
+                    "split": size.get(key, 0) if base > 0 else 0,
+                    "days": min(days) if days else None,
+                    "own": bool(days) and bool(mine) and min(mine) == min(days),
+                    "chance": round(counts[bot][kind][text] / max(1, int(sims)), 4),
+                })
+            rows_by_kind[kind] = rows
+            value = record.get(kind)
+            if isinstance(value, dict):
+                today[kind] = list(value.get(bot) or [])
+            else:
+                today[kind] = list(value) if isinstance(value, list) else []
+        out[bot] = {"rows": rows_by_kind, "today": today}
+    return {"date": nxt, "sims": int(sims), "bots": out}
+
+
 class PoolStore:
     """插曲 / 消遣池（``pools.json``）。没有这个文件就用代码里的默认值。"""
 
@@ -423,6 +495,7 @@ DAY_PICK = 4
 NIGHT_PICK = 2
 TOGETHER_PICK = 1
 PASTIME_PICK = 4
+POOL_PICKS = {"twists": DAY_PICK, "night_twists": NIGHT_PICK, "together": TOGETHER_PICK, "pastimes": PASTIME_PICK}
 # 冷却：同一个人抽到过的（插曲、消遣都算），按隔了几天打折；7 天回到原样，再往后每天 +0.03，最多 1.3 倍。
 # 同一天里抽到一条，同组的别的也按「隔 1 天」算
 COOLDOWN = {1: 0.03, 2: 0.1, 3: 0.25, 4: 0.45, 5: 0.65, 6: 0.85, 7: 1.0}
@@ -571,9 +644,9 @@ def _pick_cooled(pool, seen: dict, count: int, rng: random.Random, groups: dict 
     return out
 
 
-def drawn_days(history: dict, date_text: str, bot: str, groups: dict | None = None) -> dict:
-    """这个人每样东西最近一次是几天前抽到的：{cool_key: 天数}（0 是当天）。插曲、晚上的、两人一起的、
-    消遣都算，老格式那份共用的也算；COOL_LOOKBACK 天里没抽到的不在里面。"""
+def drawn_days(history: dict, date_text: str, bot: str, groups: dict | None = None, exact: bool = False) -> dict:
+    """这个人每样东西最近一次是几天前抽到的：{cool_key: 天数}（0 是当天；exact 时按原文、不按组）。
+    插曲、晚上的、两人一起的、消遣都算，老格式那份共用的也算；COOL_LOOKBACK 天里没抽到的不在里面。"""
     out: dict = {}
     for back, day in enumerate(_days_back(date_text, COOL_LOOKBACK)):
         record = (history or {}).get(day)
@@ -583,7 +656,7 @@ def drawn_days(history: dict, date_text: str, bot: str, groups: dict | None = No
             value = record.get(key)
             items = (value.get(bot) or []) if isinstance(value, dict) else (value or [])
             for text in items if isinstance(items, list) else []:
-                out.setdefault(cool_key(text, groups), back)
+                out.setdefault(str(text) if exact else cool_key(text, groups), back)
     return out
 
 

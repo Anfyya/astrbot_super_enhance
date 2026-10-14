@@ -15,7 +15,7 @@
     --accent:#4c5bd4; --on-accent:#ffffff; --accent-soft:#eef0fb; --ring:rgba(76,91,212,.3);
     --bubble:#f3f3f0; --bubble-me:#e9edfc;
     --danger:#d23c3c; --danger-soft:#fbebeb;
-    --ok:#2e9a68;
+    --ok:#2e9a68; --ok-soft:#e3f4ec; --warn:#b26b12; --warn-soft:#fbf0de;
     --c1:#4c5bd4; --c2:#d6a046; --c3:#b7b7b0; --c4:#2e9a68;
     --hl:#fde68a; --hl-t:#1d1d1b;
     --pop:0 12px 32px rgba(20,20,30,.13),0 1px 3px rgba(20,20,30,.06);
@@ -29,7 +29,7 @@
     --accent:#8d98ff; --on-accent:#11132b; --accent-soft:#252a48; --ring:rgba(141,152,255,.38);
     --bubble:#252529; --bubble-me:#2a3051;
     --danger:#f0736e; --danger-soft:#3b2325;
-    --ok:#4fc28c;
+    --ok:#4fc28c; --ok-soft:#183a2d; --warn:#e9a84f; --warn-soft:#3d2d14;
     --c1:#8d98ff; --c2:#e0a548; --c3:#55555e; --c4:#4fc28c;
     --hl:#6b5413; --hl-t:#fff6d6;
     --pop:0 16px 40px rgba(0,0,0,.55);
@@ -44,7 +44,7 @@
       --accent:#8d98ff; --on-accent:#11132b; --accent-soft:#252a48; --ring:rgba(141,152,255,.38);
       --bubble:#252529; --bubble-me:#2a3051;
       --danger:#f0736e; --danger-soft:#3b2325;
-      --ok:#4fc28c;
+      --ok:#4fc28c; --ok-soft:#183a2d; --warn:#e9a84f; --warn-soft:#3d2d14;
       --c1:#8d98ff; --c2:#e0a548; --c3:#55555e; --c4:#4fc28c;
       --hl:#6b5413; --hl-t:#fff6d6;
       --pop:0 16px 40px rgba(0,0,0,.55);
@@ -331,11 +331,88 @@
   .lrow.off .lt .what{text-decoration:line-through;text-decoration-color:var(--line2)}
   .ladd{display:flex;gap:8px;margin-top:4px}
   .ladd .inp{flex:1}
-  .ptop{max-width:720px;margin:0 auto 18px;display:flex;flex-direction:column;gap:10px}
-  .ptop .notice{margin-bottom:0;align-items:flex-start;line-height:1.6}
-  .ptop-r{display:flex;gap:8px;align-items:center}
-  .ptop-r .inp{flex:1}
-  .tag.cold{background:var(--accent-soft);color:var(--accent)}
+  /* 插曲与消遣：一次看一个人、一个池子；每条一根长条（框是初始权重，实心是乘了冷却的现在权重） */
+  .plw{max-width:900px;margin:0 auto}
+  .pl-top{display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;margin-bottom:14px}
+  .pl-top .r{display:flex;gap:8px;align-items:center;flex:1 1 240px;justify-content:flex-end;min-width:0}
+  .pl-top .r .inp{flex:1;max-width:280px}
+  .pl-who button{display:inline-flex;align-items:center;gap:6px;padding:0 14px 0 6px}
+  .pl-av{width:20px;height:20px;font-size:11px}
+  .pl-today{border:1px solid var(--line);border-radius:14px;background:var(--bg);padding:12px 16px;margin-bottom:18px;display:flex;flex-direction:column;gap:8px}
+  .pl-today-h{font-size:12.5px;font-weight:650;color:var(--t2);letter-spacing:.03em}
+  .pl-today-r{display:flex;gap:6px 10px;align-items:baseline;flex-wrap:wrap}
+  .pl-today-k{flex:none;width:64px;font-size:12px;color:var(--t3)}
+  .pl-today-v{display:flex;gap:6px;flex-wrap:wrap;flex:1;min-width:0}
+  .pl-chip{border:0;background:var(--sunk);color:var(--t1);border-radius:999px;padding:0 10px;font-size:12.5px;line-height:24px;cursor:pointer;text-align:left}
+  .pl-chip:hover{background:var(--accent-soft);color:var(--accent)}
+  .pl-tabs{display:flex;width:100%;overflow-x:auto;scrollbar-width:none;margin-bottom:10px;box-sizing:border-box}
+  .pl-tabs::-webkit-scrollbar{display:none}
+  .pl-tabs button{flex:1 0 auto}
+  .pl-note{display:flex;gap:8px 14px;align-items:center;flex-wrap:wrap;justify-content:space-between;margin:0 2px 12px}
+  .pl-note .t{font-size:12.5px;color:var(--t2);line-height:1.6;flex:1 1 320px;min-width:0}
+  .pl-note .seg button{height:26px;padding:0 10px;font-size:12px}
+  .pl-card{border:1px solid var(--line);border-radius:14px;background:var(--bg);overflow:hidden}
+  .pl-head,.pl-row{display:grid;grid-template-columns:minmax(0,1fr) 236px 64px 64px;grid-template-areas:"tx w c a";column-gap:16px;align-items:center;padding:11px 16px}
+  .pl-head{padding-top:8px;padding-bottom:8px;background:var(--side);border-bottom:1px solid var(--line);font-size:11.5px;color:var(--t3);letter-spacing:.03em}
+  .pl-head .c{text-align:right}
+  .pl-legend{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+  .pl-legend i{display:inline-block;width:12px;height:7px;border-radius:2px;margin-left:5px}
+  .pl-legend i:first-child{margin-left:0}
+  .pl-legend .lg-b{background:var(--line2)}
+  .pl-legend .lg-n{background:var(--accent)}
+  .pl-legend .lg-d{background:var(--warn)}
+  .pl-legend .lg-u{background:var(--ok)}
+  .pl-row{border-top:1px solid var(--line);cursor:pointer}
+  .pl-rows > .pl-row:first-child{border-top:0}
+  .pl-row:hover{background:var(--hover)}
+  .pl-row.on{background:var(--accent-soft)}
+  .pl-row.wflash{animation:wflash 1.8s ease-out}
+  .pl-tx{grid-area:tx;min-width:0}
+  .pl-t{font-size:14px;line-height:1.5;word-break:break-word}
+  .pl-m{display:flex;gap:5px;flex-wrap:wrap;margin-top:5px}
+  .pl-m:empty{display:none}
+  .pl-m .tag{line-height:19px;font-size:11.5px}
+  .tag.warn{background:var(--warn-soft);color:var(--warn)}
+  .tag.up{background:var(--ok-soft);color:var(--ok)}
+  .tag.grp{background:var(--hb);color:var(--hf)}
+  .pl-w{grid-area:w;display:flex;flex-direction:column;gap:5px;min-width:0}
+  .pl-track{position:relative;height:8px}
+  .pl-track span{position:absolute;top:0;bottom:0;border-radius:4px}
+  .pl-track .b{left:0;background:var(--line2)}
+  .pl-track .n{left:0;background:var(--accent);min-width:3px}
+  .pl-track .n.down{background:var(--warn)}
+  .pl-track .n.cut{border-radius:4px 0 0 4px}
+  .pl-track .x{background:var(--ok);border-radius:0 4px 4px 0}
+  .pl-wt{font-size:12px;color:var(--t3);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .pl-wt b{font-weight:650;color:var(--t1)}
+  .pl-wt b.down{color:var(--warn)}
+  .pl-wt b.up{color:var(--ok)}
+  .pl-c{grid-area:c;text-align:right;font-size:14px;font-weight:650;font-variant-numeric:tabular-nums;color:var(--t1)}
+  .pl-c.mid{color:var(--t2);font-weight:550}
+  .pl-c.lo{color:var(--t3);font-weight:500}
+  .pl-a{grid-area:a;display:flex;justify-content:flex-end;gap:0}
+  @media (hover:hover){
+    .pl-a{opacity:0;transition:opacity .12s}
+    .pl-row:hover .pl-a,.pl-row.on .pl-a,.pl-a:focus-within{opacity:1}
+  }
+  .pl-ed{padding:4px 16px 14px;background:var(--accent-soft);border-top:0}
+  .pl-ed .wform,.pl-foot .wform{margin:0;background:var(--bg);border:1px solid var(--line)}
+  .pl-ed .wform-f,.pl-foot .wform-f{background:var(--bg)}
+  .pl-foot{border-top:1px solid var(--line);padding:10px 16px;display:flex;flex-direction:column;gap:10px}
+  .pl-zero{border:0;background:transparent;color:var(--t3);font-size:12.5px;padding:0;text-align:left;display:inline-flex;align-items:center;gap:6px}
+  .pl-zero:hover{color:var(--t1)}
+  .pl-zero svg.i{width:14px;height:14px;transition:transform .15s}
+  .pl-zero.open svg.i{transform:rotate(90deg)}
+  .pl-off .pl-t{color:var(--t3)}
+  .pl-empty{padding:28px 16px;text-align:center;color:var(--t3);font-size:13px}
+  @media (max-width:640px){
+    .pl-head{display:none}
+    .pl-row{grid-template-columns:minmax(0,1fr) 56px;grid-template-areas:"tx a" "w c";row-gap:8px;padding:11px 12px}
+    .pl-ed{padding:4px 12px 12px}
+    .pl-today-k{width:100%}
+    .pl-top .r .inp{max-width:none}
+    .pl-tabs{display:grid;grid-template-columns:1fr 1fr}
+  }
   .when-b{font-variant-numeric:tabular-nums;font-weight:600;color:var(--t1);margin-right:6px}
   @media (max-width:640px){
     .lrow{flex-wrap:wrap}
@@ -928,6 +1005,7 @@
     edits: {}, auto: true, drawer: false,
     ledger: null, ledgerErr: "", ledgerLoading: false, ledEdit: {}, ledShowPast: false, trEdit: {},
     pools: null, poolsErr: "", poolsLoading: false, poolEdit: {}, poolQ: "",
+    poolWho: "", poolKind: "twists", poolSort: store.get("poolSort", "chance"), poolZero: false, poolFlash: "",
     world: null, worldErr: "", worldLoading: false, worldDate: "", worldWho: "", worldBusy: "", worldShowLifted: false, worldShowStatus: false,
     wEdit: {}, cEdit: {}, iEdit: {}, rEdit: {},
     sch: null, schErr: "", schLoading: false, schBot: store.get("schBot", ""), schDate: ""
@@ -2722,11 +2800,12 @@
 
   /* ================= 插曲与消遣 ================= */
   var POOL_NOTES = {
-    twists: "今天发生了一件事：有新鲜感、有结果。每人每天抽 4 件，抽到过的几天内很难再抽到",
-    night_twists: "天黑以后在家附近碰上的小事。每人每天抽 2 件，冷却和白天的一起算",
-    together: "两个人一起做的事。每天抽 1 件，两个人谁近来抽过都算",
-    pastimes: "闲下来顺手做的习惯：随时能停、停了能接，能做很久，天天做也不怪，不产出新东西。每人每天抽 4 样，冷却轻得多"
+    twists: "今天发生了一件事：有新鲜感、有结果，重复了扎眼，所以抽过的几天里很难再抽到。",
+    night_twists: "天黑以后在家附近碰上的小事，冷却和白天的插曲一起算。",
+    together: "两个人一起做的事，两人共用一份；谁近来抽到过都算。",
+    pastimes: "闲下来顺手做的习惯：随时能停、停了能接，天天做也不怪，所以冷却轻得多。"
   };
+  var POOL_SORTS = [["chance", "按明天抽中"], ["base", "按初始权重"], ["order", "原顺序"]];
 
   function loadPools(silent) {
     if (S.poolsLoading) { return Promise.resolve(); }
@@ -2762,7 +2841,31 @@
     return kind;
   }
 
-  function fmtW(w) { return String(Math.round(Number(w || 0) * 100) / 100); }
+  function fmtW(w) {
+    var v = Number(w || 0);
+    if (!v) { return "0"; }
+    if (v < 0.1) { return String(Number(v.toPrecision(1))); }
+    return String(Math.round(v * 100) / 100);
+  }
+
+  function fmtChance(c) {
+    var v = Number(c || 0) * 100;
+    if (!v) { return "—"; }
+    if (v < 1) { return "<1%"; }
+    return Math.round(v) + "%";
+  }
+
+  function groupHue(g) {
+    var k = 0;
+    for (var i = 0; i < g.length; i++) { k += g.charCodeAt(i); }
+    return ["h0", "h4", "h2", "h3", "h1"][k % 5];
+  }
+
+  function poolWho(d) {
+    var bots = d.bots || [];
+    if (!bots.some(function (b) { return b.id === S.poolWho; })) { S.poolWho = bots.length ? bots[0].id : ""; }
+    return S.poolWho;
+  }
 
   function poolForm(kind, it) {
     var people = (S.pools && S.pools.people) || [];
@@ -2770,6 +2873,11 @@
     if (kind === "together") { w[""] = it ? fmtW(it.w) : "0.5"; }
     else { people.forEach(function (n) { w[n] = it ? fmtW((it.w || {})[n]) : "0.5"; }); }
     return { text: it ? it.text : "", w: w, group: it ? (it.group || "") : "", to: kind };
+  }
+
+  function poolDay(text) {
+    var t = String(text || "");
+    return t ? +t.slice(5, 7) + "月" + +t.slice(8, 10) + "日" : "";
   }
 
   function renderPools() {
@@ -2780,93 +2888,213 @@
         box.appendChild(h("div", { class: "empty-state" }, h("div", { class: "big", text: "读取失败" }), h("div", { text: S.poolsErr }),
           h("button", { class: "btn sm", type: "button", text: "重试", onclick: function () { loadPools(); } })));
       } else {
-        box.appendChild(h("div", { class: "people" }, h("div", { class: "sk", style: "height:180px" }), h("div", { class: "sk", style: "height:180px" })));
+        box.appendChild(h("div", { class: "plw" }, h("div", { class: "sk", style: "height:90px;margin-bottom:16px" }), h("div", { class: "sk", style: "height:360px" })));
       }
       return;
     }
-    var top = h("div", { class: "ptop" });
-    top.appendChild(h("div", { class: "notice" }, h("span", { class: "dot" }), h("span", null,
-      "每天 0 点从这里给每人抽一份，补写排日程时拿来用。权重越大越常抽到，0 是不给她。",
-      "抽到过的会冷却几天；「组」相同的几条算同一回事，一起冷却、合起来只算一条的分量。改动从下一次抽起生效，今天已经抽好的不变。")));
-    var q = h("input", { class: "inp", type: "search", placeholder: "搜索一条…" });
+    $("poolSub").textContent = "下次抽：" + poolDay(d.next) + " 0 点 · 改了从下一次抽起生效";
+    var who = poolWho(d);
+    var wrap = h("div", { class: "plw" });
+
+    var top = h("div", { class: "pl-top" });
+    var seg = h("div", { class: "seg pl-who" });
+    (d.bots || []).forEach(function (b) {
+      seg.appendChild(h("button", { type: "button", class: b.id === who ? "on" : "", onclick: function () {
+        if (b.id === S.poolWho) { return; }
+        S.poolWho = b.id; S.poolEdit = {}; S.poolZero = false; renderPools();
+      } }, h("span", { class: "av pl-av " + hueOf(b.id), text: firstChar(b.label) }), b.label));
+    });
+    top.appendChild(seg);
+    var right = h("div", { class: "r" });
+    var q = h("input", { class: "inp", type: "search", placeholder: "搜索内容或组…" });
     q.value = S.poolQ;
-    q.addEventListener("input", function () { S.poolQ = q.value; renderPoolSections(); });
-    var reset = null;
+    q.addEventListener("input", function () { S.poolQ = q.value; renderPoolList(); });
+    right.appendChild(q);
     if (d.custom) {
-      reset = h("button", { class: "btn sm", type: "button", title: "删掉网页上的所有改动，回到代码里的默认池子" }, icon("undo"), "恢复默认");
-      armed(reset, "确认恢复默认", function () { poolPost({ action: "reset" }, "已恢复默认"); });
+      var reset = h("button", { class: "btn sm", type: "button", title: "删掉网页上的所有改动，回到代码里的默认池子" }, icon("undo"), "恢复默认");
+      armed(reset, "确认恢复默认", function () { S.poolEdit = {}; poolPost({ action: "reset" }, "已恢复默认"); });
+      right.appendChild(reset);
     }
-    top.appendChild(h("div", { class: "ptop-r" }, q, reset));
-    box.appendChild(top);
-    box.appendChild(h("div", { id: "poolSecs" }));
-    renderPoolSections();
+    top.appendChild(right);
+    wrap.appendChild(top);
+    wrap.appendChild(poolToday(d, who));
+
+    var kinds = d.kinds || [];
+    if (!kinds.some(function (k) { return k.kind === S.poolKind; })) { S.poolKind = kinds.length ? kinds[0].kind : ""; }
+    var tabs = h("div", { class: "seg pl-tabs" });
+    kinds.forEach(function (k) {
+      var rows = ((((d.view || {})[who] || {}).rows || {})[k.kind]) || [];
+      var n = rows.filter(function (r) { return r.base > 0; }).length;
+      tabs.appendChild(h("button", { type: "button", class: k.kind === S.poolKind ? "on" : "", onclick: function () {
+        if (k.kind === S.poolKind) { return; }
+        S.poolKind = k.kind; S.poolEdit = {}; S.poolZero = false; renderPools();
+      } }, k.label, h("span", { class: "wcount", text: String(n) })));
+    });
+    wrap.appendChild(tabs);
+
+    var kinfo = kinds.filter(function (k) { return k.kind === S.poolKind; })[0] || {};
+    var sortSeg = h("div", { class: "seg" });
+    POOL_SORTS.forEach(function (x) {
+      sortSeg.appendChild(h("button", { type: "button", class: S.poolSort === x[0] ? "on" : "", text: x[1], onclick: function () {
+        S.poolSort = x[0]; store.set("poolSort", x[0]); renderPools();
+      } }));
+    });
+    wrap.appendChild(h("div", { class: "pl-note" },
+      h("div", { class: "t", text: (POOL_NOTES[S.poolKind] || "") + " 每天抽 " + (kinfo.pick || 0) + " 件。" }), sortSeg));
+    wrap.appendChild(h("div", { id: "poolList" }));
+    box.appendChild(wrap);
+    renderPoolList();
   }
 
-  function renderPoolSections() {
-    var wrap = $("poolSecs");
-    if (!wrap || !S.pools) { return; }
-    clear(wrap);
-    var d = S.pools;
-    var kw = String(S.poolQ || "").trim();
+  // 今天给她抽到的：点一下跳到那一条
+  function poolToday(d, who) {
+    var today = (((d.view || {})[who] || {}).today) || {};
+    var label = ((d.bots || []).filter(function (b) { return b.id === who; })[0] || {}).label || who;
+    var card = h("div", { class: "pl-today" }, h("div", { class: "pl-today-h", text: "今天（" + poolDay(d.today) + "）给" + label + "抽到的" }));
+    var any = false;
     (d.kinds || []).forEach(function (k) {
-      var items = (d.pools || {})[k.kind] || [];
-      var sec = h("div", { class: "lsec" }, lsecHead(k.label + " · " + items.length, POOL_NOTES[k.kind] || ""));
-      var card = h("div", { class: "pc" });
-      var rows = h("div", { class: "lrows" });
-      var shown = 0;
-      items.forEach(function (it, i) {
-        var key = k.kind + ":" + i;
-        if (kw && it.text.indexOf(kw) < 0 && String(it.group || "").indexOf(kw) < 0 && !S.poolEdit[key]) { return; }
-        shown++;
-        rows.appendChild(S.poolEdit[key] ? poolEditor(k.kind, i, it) : poolRow(k.kind, i, it));
+      var list = today[k.kind] || [];
+      if (!list.length) { return; }
+      any = true;
+      var v = h("div", { class: "pl-today-v" });
+      list.forEach(function (t) {
+        v.appendChild(h("button", { class: "pl-chip", type: "button", text: t, title: "在「" + k.label + "」里看这一条", onclick: function () {
+          S.poolKind = k.kind; S.poolQ = ""; S.poolEdit = {}; S.poolZero = true; S.poolFlash = t; renderPools();
+        } }));
       });
-      if (shown) { card.appendChild(rows); }
-      else if (kw) { card.appendChild(h("div", { class: "muted", style: "font-size:13px", text: "没有对得上的。" })); }
-      var nk = k.kind + ":new";
-      if (S.poolEdit[nk]) {
-        card.appendChild(h("div", { class: "sub-sec" }, poolEditor(k.kind, -1, null)));
-      } else {
-        card.appendChild(h("div", { class: "sub-sec" }, h("button", { class: "addlink", type: "button",
-          onclick: function () { S.poolEdit[nk] = poolForm(k.kind, null); renderPoolSections(); } }, "＋ 加一条")));
-      }
-      sec.appendChild(card);
-      wrap.appendChild(sec);
+      card.appendChild(h("div", { class: "pl-today-r" }, h("span", { class: "pl-today-k", text: k.label }), v));
     });
+    if (!any) { card.appendChild(h("div", { class: "muted", style: "font-size:12.5px", text: "今天还没抽。" })); }
+    return card;
   }
 
-  function poolRow(kind, i, it) {
-    var row = h("div", { class: "lrow" });
-    var meta = h("div", { class: "lm" });
-    if (kind === "together") {
-      meta.appendChild(h("span", { text: "权重 " + fmtW(it.w) }));
-    } else {
-      meta.appendChild(h("span", { text: ((S.pools && S.pools.people) || []).map(function (n) {
-        var v = Number((it.w || {})[n] || 0);
-        return n + " " + (v > 0 ? fmtW(v) : "—");
-      }).join(" · ") }));
+  function renderPoolList() {
+    var box = $("poolList");
+    if (!box || !S.pools) { return; }
+    clear(box);
+    var d = S.pools, who = poolWho(d), kind = S.poolKind;
+    var items = (d.pools || {})[kind] || [];
+    var view = ((((d.view || {})[who] || {}).rows || {})[kind]) || [];
+    var kw = String(S.poolQ || "").trim();
+    var rows = view.map(function (r) { return { r: r, it: items[r.i] }; }).filter(function (x) { return !!x.it; });
+    if (kw) {
+      rows = rows.filter(function (x) {
+        return x.it.text.indexOf(kw) >= 0 || String(x.it.group || "").indexOf(kw) >= 0 || S.poolEdit[kind + ":" + x.r.i];
+      });
     }
-    if (it.group) { meta.appendChild(h("span", { class: "tag", title: "同组的算同一回事", text: "组：" + it.group })); }
-    Object.keys(it.last || {}).forEach(function (name) {
-      var n = (it.last || {})[name];
-      if (n === null || n === undefined) { return; }
-      meta.appendChild(h("span", { class: "tag cold", title: it.group ? "同组里有一条被抽到就算" : "",
-        text: name + (n === 0 ? " 今天抽到" : " " + n + " 天前抽到") }));
-    });
-    row.appendChild(h("div", { class: "lt" }, h("div", { text: it.text }), meta));
+    var on = rows.filter(function (x) { return x.r.base > 0; });
+    var off = rows.filter(function (x) { return !(x.r.base > 0); });
+    if (S.poolSort === "chance") { on.sort(function (a, b) { return b.r.chance - a.r.chance || b.r.now - a.r.now || a.r.i - b.r.i; }); }
+    else if (S.poolSort === "base") { on.sort(function (a, b) { return b.r.base - a.r.base || a.r.i - b.r.i; }); }
+    var scale = 0;
+    on.forEach(function (x) { scale = Math.max(scale, x.r.base, x.r.now); });
+
+    var card = h("div", { class: "pl-card" });
+    card.appendChild(h("div", { class: "pl-head" }, h("span", { text: "内容" }),
+      h("span", { class: "pl-legend", title: "灰色是初始权重；彩色是乘了冷却的现在权重：抽过被压低的是橙色，很久没抽、比初始多出来的那截是绿色" },
+        h("i", { class: "lg-b" }), "初始", h("i", { class: "lg-n" }), "现在", h("i", { class: "lg-d" }), "压低", h("i", { class: "lg-u" }), "多出"),
+      h("span", { class: "c", title: "按现在的权重照真实抽法模拟 " + (d.sims || 0) + " 次，明天抽到它的机会", text: "明天抽中" }), h("span")));
+    var list = h("div", { class: "pl-rows" });
+    on.forEach(function (x) { poolRowInto(list, kind, x.it, x.r, scale); });
+    if (!on.length) { list.appendChild(h("div", { class: "pl-empty", text: kw ? "没有对得上的。" : "这个池子里还没有给她的。" })); }
+    card.appendChild(list);
+
+    var foot = h("div", { class: "pl-foot" });
+    var nk = kind + ":new";
+    if (S.poolEdit[nk]) {
+      foot.appendChild(poolEditor(kind, -1, null));
+    } else {
+      foot.appendChild(h("button", { class: "addlink", type: "button",
+        onclick: function () { S.poolEdit[nk] = poolForm(kind, null); renderPoolList(); } }, "＋ 加一条"));
+    }
+    if (off.length) {
+      var open = S.poolZero || !!kw;
+      foot.appendChild(h("button", { class: "pl-zero" + (open ? " open" : ""), type: "button", onclick: function () {
+        S.poolZero = !S.poolZero; renderPoolList();
+      } }, icon("chev"), "她抽不到的 " + off.length + " 条（她的权重是 0；点开可以改）"));
+      if (open) {
+        var zl = h("div", { class: "pl-rows" });
+        off.forEach(function (x) { poolRowInto(zl, kind, x.it, x.r, scale); });
+        foot.appendChild(h("div", { class: "pl-card" }, zl));
+      }
+    }
+    card.appendChild(foot);
+    box.appendChild(card);
+
+    if (S.poolFlash) {
+      var target = S.poolFlash;
+      S.poolFlash = "";
+      var hit = Array.prototype.filter.call(box.querySelectorAll(".pl-row"), function (e) { return e.getAttribute("data-text") === target; })[0];
+      if (hit) {
+        hit.classList.add("wflash");
+        setTimeout(function () { hit.scrollIntoView({ block: "center", behavior: "smooth" }); }, 30);
+      }
+    }
+  }
+
+  function poolRowInto(list, kind, it, r, scale) {
+    var key = kind + ":" + r.i;
+    var editing = !!S.poolEdit[key];
+    var off = !(r.base > 0);
+    var row = h("div", { class: "pl-row" + (editing ? " on" : "") + (off ? " pl-off" : ""), "data-text": it.text });
+    var meta = h("div", { class: "pl-m" });
+    if (it.group) {
+      meta.appendChild(h("span", { class: "tag grp " + groupHue(it.group),
+        title: r.split > 1 ? "同组的 " + r.split + " 条算同一回事：一起冷却，在这个池子里合起来只算一条的分量" : "同组的算同一回事，一起冷却",
+        text: it.group + (r.split > 1 ? " · " + r.split + " 条分摊" : "") }));
+    }
+    if (!off && r.days !== null && r.days !== undefined) {
+      var when = r.days === 0 ? "今天" : r.days === 1 ? "昨天" : r.days + " 天前";
+      meta.appendChild(h("span", { class: "tag" + (r.factor < 0.999 ? " warn" : r.factor > 1.001 ? " up" : ""),
+        title: r.own ? "" : "这条没抽到，是同组的另一条抽到了",
+        text: (r.own ? "" : r.days >= 2 ? "同组 " : "同组") + when + "抽到 · ×" + fmtW(r.factor) }));
+    }
+    row.appendChild(h("div", { class: "pl-tx" }, h("div", { class: "pl-t", text: it.text }), meta));
+
+    var w = h("div", { class: "pl-w" });
+    if (off) {
+      w.appendChild(h("div", { class: "pl-wt", text: "0 · 不给她" }));
+    } else {
+      var state = r.factor < 0.999 ? "down" : r.factor > 1.001 ? "up" : "";
+      var pct = function (v) { return (scale ? v / scale * 100 : 0) + "%"; };
+      var track = h("div", { class: "pl-track", title: "初始 " + fmtW(r.base) + " → 现在 " + fmtW(r.now) });
+      track.appendChild(h("span", { class: "b", style: "width:" + pct(r.base) }));
+      track.appendChild(h("span", { class: "n" + (state === "down" ? " down" : state === "up" ? " cut" : ""), style: "width:" + pct(Math.min(r.base, r.now)) }));
+      if (state === "up") { track.appendChild(h("span", { class: "x", style: "left:" + pct(r.base) + ";width:" + pct(r.now - r.base) })); }
+      w.appendChild(track);
+      w.appendChild(h("div", { class: "pl-wt" }, fmtW(r.base),
+        state ? [" → ", h("b", { class: state, text: fmtW(r.now) })] : h("span", { text: " 没变" })));
+    }
+    row.appendChild(w);
+    var c = Number(r.chance || 0);
+    row.appendChild(h("div", { class: "pl-c" + (c >= 0.1 ? "" : c >= 0.01 ? " mid" : " lo"), text: off ? "—" : fmtChance(c) }));
+
     var edit = h("button", { class: "btn quiet sm", type: "button", title: "编辑 / 挪到别的池子" }, icon("edit"));
-    edit.addEventListener("click", function () { S.poolEdit[kind + ":" + i] = poolForm(kind, it); renderPoolSections(); });
     var del = h("button", { class: "btn quiet sm danger", type: "button", title: "删除" }, icon("trash"));
-    armed(del, "确认删除", function () { poolPost({ action: "delete", kind: kind, index: i, text: it.text }, "已删除"); });
-    row.appendChild(h("div", { class: "la" }, edit, del));
-    return row;
+    armed(del, "确认删除", function () { delete S.poolEdit[key]; poolPost({ action: "delete", kind: kind, index: r.i, text: it.text }, "已删除"); });
+    var acts = h("div", { class: "pl-a" }, edit, del);
+    acts.addEventListener("click", function (ev) { ev.stopPropagation(); });
+    edit.addEventListener("click", function () { toggle(); });
+    row.appendChild(acts);
+    function toggle() {
+      if (S.poolEdit[key]) { delete S.poolEdit[key]; } else { S.poolEdit[key] = poolForm(kind, it); }
+      renderPoolList();
+    }
+    row.addEventListener("click", function (ev) {
+      if (ev.target.closest && ev.target.closest("button,input,select,a")) { return; }
+      toggle();
+    });
+    list.appendChild(row);
+    if (editing) { list.appendChild(h("div", { class: "pl-ed" }, poolEditor(kind, r.i, it))); }
   }
 
   function poolEditor(kind, i, it) {
     var key = kind + ":" + (i < 0 ? "new" : i);
     var f = S.poolEdit[key];
     var form = h("div", { class: "wform" });
-    form.appendChild(h("div", { class: "wform-h" }, h("span", { class: "t", text: it ? "改一条" : "加一条" }),
-      h("span", { class: "m", text: poolLabel(kind) })));
+    if (!it) {
+      form.appendChild(h("div", { class: "wform-h" }, h("span", { class: "t", text: "加一条" }), h("span", { class: "m", text: "加到「" + poolLabel(kind) + "」" })));
+    }
     var text = h("input", { class: "inp", type: "text", maxlength: "80", placeholder: kind === "pastimes" ? "例如：看书，看到哪算哪" : "例如：有熟人来串门，站着聊了一会儿" });
     text.value = f.text;
     text.addEventListener("input", function () { f.text = text.value; });
@@ -2897,7 +3125,7 @@
     }
     var stop = function () { delete S.poolEdit[key]; };
     var cancel = h("button", { class: "btn sm", type: "button", text: "取消" });
-    cancel.addEventListener("click", function () { stop(); renderPoolSections(); });
+    cancel.addEventListener("click", function () { stop(); renderPoolList(); });
     var save = h("button", { class: "btn pri sm", type: "button", text: "保存" });
     save.addEventListener("click", function () {
       var t = String(f.text || "").trim();

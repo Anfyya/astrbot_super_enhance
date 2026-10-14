@@ -26,6 +26,7 @@ PLUGIN_NAME = "astrbot_plugin_super_enhance"
 PAGE_API_PREFIX = f"/{PLUGIN_NAME}/ctx"
 
 _MAX_BACKUP_FILES = 30
+_POOL_SIMS = 400  # 插曲与消遣页：「明天抽中」按这么多次模拟算
 _DEFAULT_PAGE_SIZE = 200
 
 _REMINDER_RE = re.compile(
@@ -555,7 +556,8 @@ class ContextPageApi:
     # ---------- 插曲与消遣池 ----------
 
     async def pools_view(self):
-        """插曲 / 消遣池：每条的原文、各人权重、组，以及各人最近几天前抽到过它（同组算一条）。"""
+        """插曲 / 消遣池：原样的池子（编辑用），加上每人分开看的：初始权重、乘了冷却的现在权重、
+        几天前抽到、明天抽中的机会（模拟出来的）、今天给她抽到的。"""
         life = getattr(self.plugin, "life", None)
         if life is None:
             return _err("动态生活状态未加载")
@@ -564,28 +566,28 @@ class ContextPageApi:
 
             today = life._today()
             pools = life.pool_store.load()
-            groups = variety.group_map(pools)
             history = life.seed_log.load() or {}
             bots = [{"id": bot, "label": life.scene.label_for(bot) or bot} for bot in life.enabled_bots() or []]
-            drawn = {b["id"]: variety.drawn_days(history, today, b["id"], groups) for b in bots}
-            out = {}
-            for kind in variety.POOL_KINDS:
-                rows = []
-                for item in pools.get(kind) or []:
-                    key = variety.cool_key(item["text"], groups)
-                    rows.append(dict(item, last={b["label"]: drawn[b["id"]].get(key) for b in bots}))
-                out[kind] = rows
+            labels = {b["id"]: b["label"] for b in bots}
+            # 模拟几百次抽签要零点几秒，放到线程里，别卡住收发消息
+            outlook = await asyncio.to_thread(variety.pool_outlook, pools, history, today, labels, _POOL_SIMS)
+            groups = variety.group_map(pools)
             return _ok(
                 {
                     "today": today,
+                    "next": outlook["date"],
+                    "sims": outlook["sims"],
                     "custom": life.pool_store.custom(),
                     "people": list(variety.TWIST_PEOPLE),
                     "bots": bots,
-                    "kinds": [{"kind": k, "label": variety.POOL_LABELS[k]} for k in variety.POOL_KINDS],
-                    "pools": out,
+                    "kinds": [
+                        {"kind": k, "label": variety.POOL_LABELS[k], "pick": variety.POOL_PICKS[k]}
+                        for k in variety.POOL_KINDS
+                    ],
+                    "pools": pools,
+                    "view": outlook["bots"],
                     "groups": sorted({g for g in groups.values() if g}),
-                    "cooldown": {"twist": variety.COOLDOWN, "pastime": variety.PASTIME_COOLDOWN},
-                    "lookback": variety.COOL_LOOKBACK,
+                    "cool_max": variety.COOL_MAX,
                 }
             )
         except Exception as exc:
