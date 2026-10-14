@@ -55,7 +55,7 @@ KIND_LABEL = {"correct": "改口", "training": "练成", "promise": "约定", "n
 # 随手叫她的几种（做完一件事、出门、回来、开饭）：彼此不挡，只让早安晚安、约定、改口、练成这些挡住
 CASUAL_KINDS = ("done", "out", "back", "meal", "middle")
 # 必须发的几种（主人定的规矩不许开口时除外）
-MUST_SEND = ("correct", "promise", "training", "asked")
+MUST_SEND = ("correct", "promise", "training")
 # 世界线 live：做完一件事时，前后这么久里已经排着早安 / 晚安 / 约定，就不再另发（分钟）
 DONE_SKIP_MINUTES = 15
 # 做完一件事后过多久发（秒）
@@ -837,12 +837,6 @@ class ProactivePlanner:
                         meta["bot"], self._planned_text(meta), tid,
                     )
                     return None
-            if meta["kind"] == "asked" and self._said_since_done(target, meta):
-                logger.info(
-                    "[super_enhance/life] [%s] 接下的事做完（原定 %s）：做完以后她已经在这个会话里说过话了，这次不发",
-                    meta["bot"], self._planned_text(meta),
-                )
-                return None
             self._inflight[target] = now_ts
 
         now = datetime.datetime.now(self.timezone)
@@ -1009,17 +1003,6 @@ class ProactivePlanner:
             "unreplied": [m for m in tail if m.get("src") == "proactive"],
             "items": items,
         }
-
-    def _said_since_done(self, target: str, meta: dict) -> bool:
-        """接下的那件事做完以后，她在这个会话里已经说过话了（主人问「好了没」她答过了）。"""
-        end = _parse_iso(str((meta.get("done") or {}).get("end") or "").replace(" ", "T"), self.timezone)
-        if end is None:
-            return False
-        for item in self._chat(target).get("items") or []:
-            moment = self._moment(item)
-            if item.get("role") == "assistant" and moment is not None and moment >= end:
-                return True
-        return False
 
     def _sent_today(self, chat: dict | None, now: datetime.datetime) -> list:
         """今天（凌晨 4 点起）她主动发过的话，每条带上主人后来回没回：[(时刻, 文字, 回没回)]。"""
@@ -1198,7 +1181,7 @@ class ProactivePlanner:
                 "- 结合你此刻在做的事和所在的地方来说：可以顺口带一句你在干嘛、碰到了什么，"
                 "但别写成汇报日程，也别一点不提自己在干嘛；",
                 "- 这会儿真不合适说话（比如他刚说要睡了、正忙着），可以不发，直接结束就行，不用解释%s；"
-                % ("（这次是改口、约定到点、刚练成或接下的事做完了，必须发，除非主人定的规矩不许）"
+                % ("（这次是改口、约定到点或刚练成，必须发，除非主人定的规矩不许）"
                    if kind in MUST_SEND and (kind != "correct" or self._correct_pending(meta, now)) else ""),
                 "- 要发就调用 send_message_to_user 发出去：只有调用了才算真的发出去，光写在回复里他看不到；",
             ]
