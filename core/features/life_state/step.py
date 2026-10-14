@@ -354,7 +354,7 @@ class LifeStep:
                 for h in (base.get("habits") or [])
             )
             lines.append(
-                "- %s：起床 %s（今天定的 %s，明天定的 %s）、入睡 %s（今天定的 %s）、三餐 %s、习惯 %s%s"
+                "- %s：起床 %s（今天定的 %s，明天定的 %s）、入睡 %s（今天定的 %s）、平时三餐在这几个时间段里：%s、习惯 %s%s"
                 % (
                     self.label(bot) or bot,
                     base.get("wake") or "?",
