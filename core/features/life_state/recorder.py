@@ -662,8 +662,31 @@ class Recorder:
             if entry is None or start is None or start <= since:
                 logger.info("[super_enhance/world] 记录员说%s说早了 %s，对不上日程，不管", who, entry_id)
                 continue
+            if str(entry.get("source") or "") != "step":
+                # 对话里记的、她自己用 start_doing 写的，都是她说了才有的，谈不上说早了
+                logger.info("[super_enhance/world] 记录员说%s说早了 %s，但那段不是补写排的，不管", who, entry_id)
+                continue
+            said_at = self._said_at(items, raw.get("said"))
+            if said_at is not None and said_at >= start:
+                logger.info("[super_enhance/world] 记录员说%s说早了 %s，可那句话是 %s 说的，那段已经开始了，不管",
+                            who, entry_id, said_at.strftime("%H:%M"))
+                continue
             self._early_seen.add(entry_id)
             self._early.append((who, umo, dict(entry), clean_text(raw.get("said"), 120)))
+
+    def _said_at(self, items, said) -> datetime.datetime | None:
+        """记录员摘的那句原话是哪条消息说的：那条消息的时刻（不带时区的本地时间）；找不到就 None。"""
+        probe = "".join(str(said or "").split())
+        if len(probe) < 4:
+            return None
+        for item in items or []:
+            text = "".join(str(item.get("text") or "").split())
+            if text and (probe in text or text in probe):
+                try:
+                    return datetime.datetime.fromtimestamp(float(item.get("ts")), self.tz).replace(tzinfo=None)
+                except Exception:
+                    return None
+        return None
 
     def _apply_stale(self, raws, early, now: datetime.datetime) -> None:
         """记录员说对不上了的补写段：还没开始的撤掉，正在做的到此刻为止；空出来的由补写按现在的情况重排。"""

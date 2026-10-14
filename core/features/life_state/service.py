@@ -223,8 +223,9 @@ class LifeStateService:
     def start_now(self, umo: str, what: str, minutes, place: str = "", result: str = "") -> str:
         """「现在去做」：从此刻起做一件事，写进世界线（算对话写的，补写排的让开），做完时叫她一次。
 
-        撞上的补写段：正在做的那段到此刻为止；还没开始的整段撤掉（不挪到后面，免得同一件事做两遍），
-        空出来的时间由补写接着排。返回给模型看的结果（只写事实）。
+        补写段：正在做的那段到此刻为止；后面还没开始的全部撤掉——那些是按「她这会儿不做这件事」排的，
+        这件事插进来以后可能做重了、对不上了（先做了饭，后面又排着炒菜、等开饭）。做完以后由补写按新情况接着排。
+        返回给模型看的结果（只写事实）。
         """
         if self.world_mode != "live":
             return "世界线没开，没写进去。"
@@ -255,11 +256,12 @@ class LifeStateService:
                         str(item.get("doing") or item.get("place") or "")[:30],
                     )
         removed = []
-        for date_text in dates:
+        later = sorted({*dates, (now.date() + datetime.timedelta(days=1)).isoformat()})
+        for date_text in later:
             for item in list(self.world.entries(date_text, bot)):
                 start = parse_time(item.get("start"))
                 if (
-                    start is not None and now < start < end
+                    start is not None and now < start
                     and item.get("source") == "step" and not is_event(item)
                 ):
                     self.world.delete_entry(date_text, str(item.get("id")))
