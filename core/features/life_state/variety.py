@@ -4,11 +4,13 @@
 照抄的几天在 0.37~0.52。整天超过 ``DAY_TOO_SIMILAR`` 就要求重写；
 单个时段和别的日子某段相似度超过 ``SLOT_REPEAT`` 就列进「最近反复出现」。
 
-每天的随机起点（天气、基调、小插曲、各人心情、偶尔的意外）记在 ``daily_seeds.json``，
-之后几天抽的时候避开：插曲 3 天内不重样，基调不连着两天一样，意外 30 天内不重样。
+每天的随机起点（天气、基调、小插曲、手边的消遣、各人心情、偶尔的意外）记在 ``daily_seeds.json``，
+之后几天抽的时候避开：插曲和消遣按「隔了几天没抽到」打折（刚抽过的很难再抽到，越久没抽到越容易），
+说的是同一回事的几条（翻旧物、修东西、唱歌……）算一条；基调不连着两天一样，意外 30 天内不重样。
 心情不避：心情凭性格，有人就是天天开心，两个人同一天心情一样也正常。
 """
 
+import collections
 import datetime
 import json
 import os
@@ -130,7 +132,7 @@ TOGETHER_TWISTS = (
     ("两人互相教对方一样本事", 0.5),
     ("两人一起照料院子里的花草", 0.5),
     ("两人一起帮神社干了半天活", 0.4),
-    ("两人一起大扫除，把屋子里外收拾一遍", 0.3),
+    ("两人一起大扫除，把屋子里外收拾一遍", 0.2),
 )
 
 # 晚上（天黑以后）的小事：都是在家里或附近能做的，补写写晚上的段时只拿这些
@@ -153,6 +155,97 @@ NIGHT_TWISTS = (
     ("哼着童谣打发长夜", 0.5, 0),
     ("暗处掉了东西，靠一双夜里也看得清的眼睛找了回来", 0, 0.3),
 )
+
+# 手边的消遣：在家闲着的时候拿起来做的事，做到一半去忙别的、回头还能接着做。（消遣，丛雨，亚托莉）
+# 只写泛泛的事，不写具体哪样东西，免得把某样道具天天带出来
+PASTIMES = (
+    ("看书，看到哪算哪", 1.0, 1.2),
+    ("泡一壶茶，坐着慢慢喝", 1.0, 0.8),
+    ("翻一本画册或图鉴，一页页慢慢看", 0.8, 0.6),
+    ("练字，一张纸写满了再换一张", 0.8, 0.5),
+    ("靠着打个盹", 0.8, 0.4),
+    ("画画：院子、屋檐、窗外看见的东西", 0.5, 0.7),
+    ("拼一副拼图，拼到哪算哪", 0.5, 0.7),
+    ("织点过冬的东西（围巾、手套），一针一针慢慢来", 0.5, 0.6),
+    ("折纸", 0.6, 0.6),
+    ("翻花绳", 0.5, 0.5),
+    ("编绳结", 0.6, 0.5),
+    ("写日记", 0.3, 0.5),
+    ("一个人摆将棋棋谱，琢磨下一步", 0.6, 0.4),
+    ("背和歌，对着歌牌念上句猜下句", 0.6, 0.4),
+    ("做针线，绣个小花样", 0.5, 0.4),
+    ("照料院子里的盆栽，浇水、掐黄叶", 0.6, 0.6),
+    ("逗院子里来的猫或鸟", 0.6, 0.6),
+    ("梳头、编辫子，换个发型试试", 0.5, 0.4),
+)
+
+# 说的是同一回事的几条：冷却按组算（抽到其中一条，同组的一起打折）。没列的各算各的
+GROUPS = {
+    "旧物": (
+        "翻到旧物，想起以前的事",
+        "把收藏的小物件擦亮，重新分类摆放",
+        "在商店街的旧货铺或钟表铺淘到一样旧时代的小东西（机械表、发条玩具之类）",
+        "把白天得来的小东西擦干净收好",
+        # 老池子里的说法，以前的记录里还有
+        "给收藏的小物件重新分类、摆放",
+        "在商店街淘到一样有意思的小玩意儿",
+        "收拾出一堆用不上的东西，打算送人",
+    ),
+    "修东西": (
+        "把一样坏了的旧东西拆开修，修了半天",
+        "常用的某样东西坏了，得想办法修或换",
+        "缝补一件衣服，或修补一样旧用品",
+        "一个人动手修东西，另一个在旁边看着出主意",
+    ),
+    "唱歌": (
+        "听唱片听得入了神，跟着学唱",
+        "想学一首新歌，哼了一整天",
+        "放张唱片听，或跟着学两句",
+    ),
+    "看书": (
+        "安安静静待着：看书、发呆",
+        "在书店或图书室翻到一本好书",
+        "安安静静看书或发呆",
+        "看书，看到哪算哪",
+        "安安静静宅着：看书、发呆或睡午觉",
+    ),
+    "花草": (
+        "种点花草，或照料院子里的盆栽",
+        "两人一起照料院子里的花草",
+        "照料院子里的盆栽，浇水、掐黄叶",
+    ),
+    "猫鸟": (
+        "一只猫或一只鸟老在身边转，跟着它走了一段",
+        "逗院子里来的猫或鸟",
+    ),
+    "发型": (
+        "心血来潮换个发型或换身打扮",
+        "梳头、编辫子，换个发型试试",
+    ),
+    "游戏": (
+        "两人玩一个游戏或比一场小比赛",
+        "两人在家玩个游戏或比一场小比赛",
+        "玩一个游戏或比一场小比赛",
+    ),
+}
+_GROUP_OF = {text: name for name, items in GROUPS.items() for text in items}
+
+
+def cool_key(text: str) -> str:
+    """冷却按什么算：在组里的按组，不在的按它自己。"""
+    return _GROUP_OF.get(str(text), str(text))
+
+
+def cool_factor(days) -> float:
+    """隔了 days 天没抽到时的折扣；None 是很久没抽到。"""
+    if days is None:
+        return COOL_MAX
+    if days <= 1:
+        return COOLDOWN[1]
+    if days in COOLDOWN:
+        return COOLDOWN[days]
+    return min(COOL_MAX, 1.0 + COOL_BONUS_PER_DAY * (days - 7))
+
 
 TONES = (
     "悠闲", "忙碌", "外出多", "宅家多", "热闹", "安静",
@@ -194,7 +287,13 @@ ACCIDENT_CHANCE = 0.1  # 大约十天碰上一回
 DAY_PICK = 4
 NIGHT_PICK = 2
 TOGETHER_PICK = 1
-TWIST_LOOKBACK = 3  # 同一个人最近 3 天抽过的插曲今天不再抽
+PASTIME_PICK = 4
+# 冷却：同一个人抽到过的（插曲、消遣都算），按隔了几天打折；7 天回到原样，再往后每天 +0.03，最多 1.3 倍。
+# 同一天里抽到一条，同组的别的也按「隔 1 天」算
+COOLDOWN = {1: 0.03, 2: 0.1, 3: 0.25, 4: 0.45, 5: 0.65, 6: 0.85, 7: 1.0}
+COOL_BONUS_PER_DAY = 0.03
+COOL_MAX = 1.3
+COOL_LOOKBACK = 17  # 往前看这么多天；再早没抽过的按最多那档算
 ACCIDENT_LOOKBACK = 30  # 30 天内碰过的意外不再碰
 SEED_KEEP_DAYS = 40
 
@@ -310,9 +409,27 @@ def _days_back(date_text: str, days: int) -> list[str]:
     return [(day - datetime.timedelta(days=n)).isoformat() for n in range(days + 1)]
 
 
-def _pick_weighted(pool, used: set, count: int, rng: random.Random) -> list:
-    """从 (插曲, 权重) 池里按权重抽 count 个（不放回），尽量避开 used。"""
-    return _pick([text for text, _ in pool], used, count, rng, dict(pool))
+def _pick_cooled(pool, seen: dict, count: int, rng: random.Random) -> list:
+    """从 (插曲, 权重) 池里按「权重 × 冷却折扣」抽 count 个（不放回）。
+
+    seen 是 {cool_key: 隔了几天}，抽到的会记成 0，同组的后面再抽就按刚抽过算。
+    同组的几条在这个池子里合起来只算一条的分量（各自权重除以同组条数），不然组越大越常来。"""
+    left = list(pool)
+    out = []
+    for _ in range(min(count, len(left))):
+        size = collections.Counter(cool_key(t) for t, _w in left)
+        weights = [w / size[cool_key(t)] * cool_factor(seen.get(cool_key(t))) for t, w in left]
+        point = rng.random() * sum(weights)
+        index = len(left) - 1
+        for i, weight in enumerate(weights):
+            point -= weight
+            if point <= 0:
+                index = i
+                break
+        text = left.pop(index)[0]
+        out.append(text)
+        seen[cool_key(text)] = 0
+    return out
 
 
 def pool_for(pool, name: str) -> list:
@@ -380,9 +497,10 @@ def draw_seed(
 ) -> dict:
     """抽当天的随机起点：天气（接着昨天变）、基调、小插曲、每人的心情、偶尔一个意外。
 
-    labels 是 {机器人: 角色名}，每人各抽一个心情（不防重复）、各抽一份插曲（按她在池子里的权重）；
+    labels 是 {机器人: 角色名}，每人各抽一个心情（不防重复）、各抽一份插曲和消遣（按她在池子里的权重）；
     两人一起的插曲当天一份。history 是以前每天抽到的（``SeedLog.load()``），用来防重复：
-    同一个人最近 3 天的插曲、昨天的基调今天不再抽，30 天内碰过的意外不再碰。
+    插曲和消遣按这个人隔了几天没抽到打折（``cool_factor``，同组算一条）；
+    昨天的基调今天不再抽，30 天内碰过的意外不再碰。
     """
     rng = rng or random.Random()
     history = history or {}
@@ -400,24 +518,40 @@ def draw_seed(
                 out.add(value)
         return out
 
-    def used_by(key: str, bot: str) -> set:
-        """这个人最近几天抽过的（老格式那份共用的也算）。"""
-        out: set = set()
-        for day in _days_back(date_text, TWIST_LOOKBACK):
-            value = (history.get(day) or {}).get(key) if isinstance(history.get(day), dict) else None
-            if isinstance(value, dict):
-                out.update(value.get(bot) or [])
-            elif isinstance(value, list):
-                out.update(value)
+    def seen_by(bot: str) -> dict:
+        """这个人每样东西隔了几天没抽到：{cool_key: 天数}。插曲、晚上的、两人一起的、消遣都算，
+        老格式那份共用的也算；当天重新抽时上一版也算（按隔 1 天）。"""
+        out: dict = {}
+        for back, day in enumerate(_days_back(date_text, COOL_LOOKBACK)):
+            record = history.get(day)
+            if not isinstance(record, dict):
+                continue
+            for key in ("twists", "night_twists", "together", "pastimes"):
+                value = record.get(key)
+                items = (value.get(bot) or []) if isinstance(value, dict) else (value or [])
+                for text in items if isinstance(items, list) else []:
+                    out.setdefault(cool_key(text), max(back, 1))
         return out
 
     labels = labels or {}
     moods = {bot: rng.choice(MOODS) for bot in labels}
-    twists, night_twists = {}, {}
+    seen = {bot: seen_by(bot) for bot in labels}
+    together = []
+    if len(labels) >= 2:
+        # 两人一起的两个人都算：按两人里更近抽过的那个打折
+        both = {}
+        for bot in labels:
+            for key, days in seen[bot].items():
+                both[key] = min(days, both.get(key, days))
+        together = _pick_cooled(TOGETHER_TWISTS, both, TOGETHER_PICK, rng)
+        for bot in labels:
+            for text in together:
+                seen[bot][cool_key(text)] = 0
+    twists, night_twists, pastimes = {}, {}, {}
     for bot, name in labels.items():
-        twists[bot] = _pick_weighted(pool_for(TWISTS, name), used_by("twists", bot), DAY_PICK, rng)
-        night_twists[bot] = _pick_weighted(pool_for(NIGHT_TWISTS, name), used_by("night_twists", bot), NIGHT_PICK, rng)
-    together = _pick_weighted(TOGETHER_TWISTS, used("together", TWIST_LOOKBACK), TOGETHER_PICK, rng) if len(labels) >= 2 else []
+        twists[bot] = _pick_cooled(pool_for(TWISTS, name), seen[bot], DAY_PICK, rng)
+        night_twists[bot] = _pick_cooled(pool_for(NIGHT_TWISTS, name), seen[bot], NIGHT_PICK, rng)
+        pastimes[bot] = _pick_cooled(pool_for(PASTIMES, name), seen[bot], PASTIME_PICK, rng)
     accident = ""
     if rng.random() < ACCIDENT_CHANCE:
         accident = _pick(ACCIDENTS, used("accident", ACCIDENT_LOOKBACK), 1, rng)[0]
@@ -427,6 +561,7 @@ def draw_seed(
         "twists": twists,
         "night_twists": night_twists,
         "together": together,
+        "pastimes": pastimes,
         "moods": moods,
         "accident": accident,
     }
