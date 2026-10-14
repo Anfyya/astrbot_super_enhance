@@ -58,7 +58,7 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
 13. 她在回答、解释、回忆以前的事（昨天、早上、刚才已经说过的）时，那件事不是这会儿发生的：不要按这条消息的时间再记一条；下面「今天已经记了的」里有的别重复记。确实没记过、要补的，时间写成那件事实际发生的时候。
 14. 上面列的「打算」里，她之前说过的打算如果已经做完了，或者后来的事已经和它对不上了（例如说好在社务所等，后来人已经回了宿舍），把她的 key 填进 drop_intentions；这次又说了新打算的，照常写进 intentions。
 15. 她把上面「她们后面已经排好、还没做的」里的某件事，说成已经做了、或者正在做：这件事不记成条目，也不要为它改别的条目，写进 early：who、entry（那段的编号）、said（她原话里说的那句）。只算那张单子里有的事；单子里没有的事，照上面的规则记。她说的是「待会儿去」「打算做」，不算，不写 early。
-16. 「她们后面已经排好、还没做的」是按排的那会儿的情况写的。这段对话里说的事让其中某几段对不上了的（例如主人说他回来了、出门了，她答应了这会儿去做别的，人换了地方，那段写的事已经做过了），把对不上的那几段写进 stale：who、entry（编号）、why（一句话说哪里对不上）。只写对不上的；照样做得了、不受影响的不写。写进 stale 的段会撤掉，按现在的情况重排。
+16. 「她们此刻手上的事」里补写排的、「她们后面已经排好、还没做的」，都是按排的那会儿的情况写的。这段对话里说的事让其中某几段对不上了的（例如主人说他回来了、出门了，她答应了这会儿去做别的，人换了地方，那段写的事已经做过了，另一个人那段跟她有关的事跟着变了），把对不上的那几段写进 stale：who、entry（编号）、why（一句话说哪里对不上）。只写对不上的；照样做得了、不受影响的不写。写进 stale 的段：还没开始的撤掉，正在做的到此刻为止，按现在的情况重排。
 {world_notes}
 输出这个 JSON（没有的字段留空数组）：
 
@@ -320,7 +320,8 @@ class Recorder:
             if cur is None:
                 continue
             pct = None if cur.get("idle") else progress_of(cur, flat)
-            parts.append("- 她们此刻手上的事：%s（%s）%s %s%s，%s 起%s%s" % (
+            parts.append("- 她们此刻手上的事：%s%s %s（%s）%s %s%s，%s 起%s%s" % (
+                cur.get("id"), "（补写排的）" if str(cur.get("source") or "") == "step" else "",
                 self.label(bot) or bot, bot, cur.get("place") or "", clean_text(cur.get("doing"), 400),
                 "（闲着，没在做具体的事）" if cur.get("idle") else steps_text(cur) + result_text(cur),
                 str(cur.get("start"))[11:16],
@@ -658,7 +659,7 @@ class Recorder:
             self._early.append((who, umo, dict(entry), clean_text(raw.get("said"), 120)))
 
     def _apply_stale(self, raws, early, now: datetime.datetime) -> None:
-        """记录员说对不上了的「后面排好的段」：还没开始、是补写排的才撤；撤掉的空档由补写按现在的情况重排。"""
+        """记录员说对不上了的补写段：还没开始的撤掉，正在做的到此刻为止；空出来的由补写按现在的情况重排。"""
         flat = now.replace(tzinfo=None)
         bots = set(self.raw_log.enabled_bots())
         # 同一段又被说成「说早了」的：要叫她改口，那段得留着
@@ -673,8 +674,17 @@ class Recorder:
             date_text = self.world.date_of(entry_id, who, flat)
             entry = next((x for x in self.world.entries(date_text, who) if str(x.get("id")) == entry_id), None) if date_text else None
             start = parse_time(entry.get("start")) if entry else None
-            if entry is None or start is None or start <= flat or str(entry.get("source") or "") != "step":
-                logger.info("[super_enhance/world] 记录员说%s的 %s 对不上了，但它不是还没开始的补写段，不动", who, entry_id)
+            end = parse_time(entry.get("end")) if entry and entry.get("end") else None
+            if entry is None or start is None or str(entry.get("source") or "") != "step" or (end is not None and end <= flat):
+                logger.info("[super_enhance/world] 记录员说%s的 %s 对不上了，但它不是没做完的补写段，不动", who, entry_id)
+                continue
+            if start < flat - datetime.timedelta(minutes=2):
+                # 正在做、已经做了一会儿的：到此刻为止
+                self.world.update_entry(date_text, entry_id, end=fmt_time(flat.replace(second=0, microsecond=0)))
+                logger.info(
+                    "[super_enhance/world] 记录员让%s正在做的 %s %s 到此刻为止（%s）",
+                    self.label(who) or who, entry_id, clean_text(entry.get("doing"), 30), clean_text(raw.get("why"), 60),
+                )
                 continue
             self.world.delete_entry(date_text, entry_id)
             logger.info(

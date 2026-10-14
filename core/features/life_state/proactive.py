@@ -837,6 +837,12 @@ class ProactivePlanner:
                         meta["bot"], self._planned_text(meta), tid,
                     )
                     return None
+            if meta["kind"] == "asked" and self._said_since_done(target, meta):
+                logger.info(
+                    "[super_enhance/life] [%s] 接下的事做完（原定 %s）：做完以后她已经在这个会话里说过话了，这次不发",
+                    meta["bot"], self._planned_text(meta),
+                )
+                return None
             self._inflight[target] = now_ts
 
         now = datetime.datetime.now(self.timezone)
@@ -1003,6 +1009,17 @@ class ProactivePlanner:
             "unreplied": [m for m in tail if m.get("src") == "proactive"],
             "items": items,
         }
+
+    def _said_since_done(self, target: str, meta: dict) -> bool:
+        """接下的那件事做完以后，她在这个会话里已经说过话了（主人问「好了没」她答过了）。"""
+        end = _parse_iso(str((meta.get("done") or {}).get("end") or "").replace(" ", "T"), self.timezone)
+        if end is None:
+            return False
+        for item in self._chat(target).get("items") or []:
+            moment = self._moment(item)
+            if item.get("role") == "assistant" and moment is not None and moment >= end:
+                return True
+        return False
 
     def _sent_today(self, chat: dict | None, now: datetime.datetime) -> list:
         """今天（凌晨 4 点起）她主动发过的话，每条带上主人后来回没回：[(时刻, 文字, 回没回)]。"""
