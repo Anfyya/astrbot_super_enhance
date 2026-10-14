@@ -10,7 +10,7 @@
 6. 动态生活状态      ``life_state``（自研实现：状态生成 / 注入 / 主动对话 / 查询）
 7. 新消息优先        ``reply_guard``（回复没发出去时又收到消息 → 丢掉上一轮，连带上一条重答）
 8. 主动对话上下文裁剪 ``cron_context``（cron 唤醒时只喂最近一段时间的纯对话正文，省 token）
-9. 延迟续说工具     ``sleep_for``（工具内等一小段时间，再接着说，模拟「去做件小事」）
+9. 现在去做工具     ``start_doing``（世界线 live：从此刻起做一件事写进世界线，做完叫她一次）
 
 ⚠️ 同时启用本插件与对应的旧插件会造成重复行为（输入状态等待翻倍、主动消息重复、
    注入重复、/usage 输出两次），启用某一项前请先停用对应的旧插件。
@@ -42,7 +42,6 @@ from .core.features.reply_guard import ReplyGuardFeature
 from .core.features.request_snapshot import LAST_PRIORITY, RequestSnapshotFeature
 from .core.features.silence import SilenceFeature
 from .core.features.bot_dialog import BotDialogFeature
-from .core.features.sleep_tool import SleepToolFeature
 from .core.features.typing import TypingFeature
 from .core.features.lm_edits import MemoryEditRunner
 from .core.features.tool_guide import ToolGuideFeature
@@ -102,9 +101,6 @@ class SuperEnhance(Star):
             set_timezone(str((context.get_config() or {}).get("timezone") or ""))
         except Exception:
             pass
-        self.sleep_tool = SleepToolFeature(
-            context, SectionConfig(raw, "sleep_tool")
-        )
         self.laya = LayaBridge(context, {"base_url": "", "timeout": 8.0})
         self.life = LifeStateService(
             context, SectionConfig(raw, "life_state"), data_dir
@@ -171,7 +167,7 @@ class SuperEnhance(Star):
             ("training", self.life.training_enabled and not live),
             ("make_promise", self.life.promise_enabled and not live),
             ("close_promise", self.life.promise_enabled and not live),
-            ("sleep_for", self.sleep_tool.enabled),
+            ("start_doing", self.life.enabled and live),
             ("tell", self.life.enabled),
         ):
             try:
@@ -718,31 +714,28 @@ class SuperEnhance(Star):
         await self.bot_dialog.note_delegation(event, tool, tool_args)
 
     # ------------------------------------------------------------------
-    # 9. 延迟续说工具
+    # 9. 现在去做（写进世界线）
     # ------------------------------------------------------------------
-    @filter.llm_tool(name="sleep_for")
-    async def sleep_for(
-        self, event: AstrMessageEvent, seconds: int, note: str = ""
+    @filter.llm_tool(name="start_doing")
+    async def start_doing(
+        self, event: AstrMessageEvent, what: str, minutes: int, place: str = "", result: str = ""
     ) -> str:
-        """你自己去做一件小事、过一会儿再回来接着说（只用于你自己一个人能做完的事）。
+        """把你现在开始做的一件事写进世界线（比如主人让你这会儿去做的事）：从此刻起，到 minutes 分钟后做完。
 
-        用法：先自然地说一句你要去做什么（这句话会立刻发给对方），再调用本工具等几秒到一分多钟，
-        等完接着说你自己这件事做得怎么样，一到两句话即可。
-        适合：去买个东西、去拿个东西、去看一眼锅、去确认一件只靠你自己就能确认的事。
-        不能用来找另一个角色（你是亚托莉就是丛雨，你是丛雨就是亚托莉）或任何别人说话：
-        等待期间对方什么也收不到，回来以后你也不知道她说了什么、答应了什么。
-        - 想跟她当场说话、等她回话：用 send_message_to_user 给她发消息；
-        - 只是要让她知道一件事（写进她的聊天记录，她之后开口时看得到）：用 tell。
-        更长时间的等待请用定时任务，也不要在同一轮里反复调用本工具。
+        写进去以后，世界线上你此刻就在做这件事，原来排在这段时间里的让开；到点做完时系统会叫你一次。
 
         Args:
-            seconds (int): 需要等待的秒数（几秒到一分多钟）。
-            note (string): 可选，回来后要接着说的事（只写你自己做的那件事）。
+            what (string): 做什么，例如「炒午饭的菜」。
+            minutes (int): 这件事实际要多少分钟。
+            place (string): 在哪做；空着就是你现在待的地方。
+            result (string): 可选，这件事做完的结果（做完时你才看得到）。
 
         Returns:
-            等待结束后的提示文本。
+            写进世界线的结果。
         """
-        return await self.sleep_tool.sleep_for(event, seconds, note)
+        return self.life.start_now(
+            getattr(event, "unified_msg_origin", "") or "", what, minutes, place, result
+        )
 
     # ------------------------------------------------------------------
     # 10. Laya 判定服务（本机容器，调试命令）

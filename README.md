@@ -13,7 +13,7 @@
 | ⑥ `life_state` | 每日日程、共享场景、能力清单、约定、事件、主动对话、每日回查 |
 | ⑦ `reply_guard` | 新消息优先：回复还没发出去时又来了消息，就丢掉上一轮重答 |
 | ⑧ `cron_context` | 主动对话（cron）只带最近一段纯对话，省 token |
-| ⑨ `sleep_tool` | `sleep_for`：说一句「我去拿一下」，等一会儿再接着说 |
+| ⑨ `start_doing` | 现在去做：从此刻起做一件事写进世界线，做完叫她一次（在 `life_state` 里，世界线 live 才有） |
 | ⑩ `bot_dialog` | 两个机器人互聊的节奏、跨会话记录、委托回报、`tell` 传话、发消息 / tell 的说明 |
 | ⑪ `request_snapshot` | 保存每次真实发给模型的请求（面板「上下文」页查看） |
 
@@ -36,7 +36,7 @@ core/
     typing.py  silence.py  msg_time.py  message_text.py
     context_tools.py  compact_v2.py  overflow_guard.py
     cross_session.py  cron_history.py  cron_context.py
-    reply_guard.py  sleep_tool.py  bot_dialog.py  request_snapshot.py  laya_bridge.py
+    reply_guard.py  bot_dialog.py  request_snapshot.py  laya_bridge.py
     tool_guide.py
     life_state/
       models.py  store.py  prompts.py  variety.py  generator.py  injector.py
@@ -161,11 +161,12 @@ AI 调用后本轮不发任何消息。本轮开始后又来了新消息时，�
 cron 唤醒时把上下文换成最近 `window_hours` 小时内的纯 user / assistant 文本（最多 `max_messages` 条），
 不动数据库。
 
-### ⑨ 延迟续说（`sleep_tool`）
+### ⑨ 现在去做（`start_doing`）
 
-`sleep_for(seconds, note)`：先说的那句会立刻发出，等待结束后接着说一两句。受 AstrBot `tool_call_timeout` 限制。
-只用于角色自己一个人能做完的小事；要找另一个角色当场说话用 `send_message_to_user`，只是让她知道一件事用 `tell`
-（工具说明和等待结束后的提示里都写明了：别人说了什么你不知道，不要替别人编回答）。
+`start_doing(what, minutes, place, result)`：从此刻起做一件事，写进世界线（算对话写的）。撞上的补写段：
+正在做的那段到此刻为止，还没开始的整段撤掉，空出来的时间补写接着排；手动写的段改不动。
+做完时叫她一次（主动消息「接下的事做完」：不看时长和重要程度，必须发，主人 1 分钟没说话就发）。
+原来的 `sleep_for`（工具里干等几十秒再接着说）已删：它让一件要十几分钟的事几十秒就「做完」，和世界线对不上。
 
 ### ⑩ 多机器人对话节奏（`bot_dialog`）
 

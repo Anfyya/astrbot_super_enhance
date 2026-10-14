@@ -219,6 +219,77 @@ class LifeStateService:
         value = str(self.cfg.get("world_mode") or "off").strip().lower()
         return value if value in ("off", "shadow", "live") else "off"
 
+    def start_now(self, umo: str, what: str, minutes, place: str = "", result: str = "") -> str:
+        """「现在去做」：从此刻起做一件事，写进世界线（算对话写的，补写排的让开），做完时叫她一次。
+
+        撞上的补写段：正在做的那段到此刻为止；还没开始的整段撤掉（不挪到后面，免得同一件事做两遍），
+        空出来的时间由补写接着排。返回给模型看的结果（只写事实）。
+        """
+        if self.world_mode != "live":
+            return "世界线没开，没写进去。"
+        bot = bot_of_umo(umo)
+        what = " ".join(str(what or "").split())
+        if not bot or not what:
+            return "没写进去：要写清楚做什么。"
+        try:
+            minutes = int(float(minutes))
+        except Exception:
+            return "没写进去：minutes 要写成整数分钟。"
+        minutes = max(1, min(minutes, 600))
+        now = self.world.now_local().replace(second=0, microsecond=0)
+        end = now + datetime.timedelta(minutes=minutes)
+        current = self.world.current(bot, now)
+        dates = sorted({now.date().isoformat(), end.date().isoformat()})
+        for date_text in dates:
+            for item in self.world.entries(date_text, bot):
+                start = parse_time(item.get("start"))
+                stop = parse_time(item.get("end")) if item.get("end") else None
+                if (
+                    item.get("source") == "manual" and not is_event(item) and start is not None
+                    and start < end and (stop is None or stop > now)
+                ):
+                    # 先挡下来：add_entry 撞上手动段之前可能已经裁了别的段
+                    return "没写进去：%s–%s 世界线上是主人手动排的「%s」，补写和对话都改不动。" % (
+                        str(item.get("start"))[11:16], str(item.get("end") or "")[11:16] or "…",
+                        str(item.get("doing") or item.get("place") or "")[:30],
+                    )
+        removed = []
+        for date_text in dates:
+            for item in list(self.world.entries(date_text, bot)):
+                start = parse_time(item.get("start"))
+                if (
+                    start is not None and now < start < end
+                    and item.get("source") == "step" and not is_event(item)
+                ):
+                    self.world.delete_entry(date_text, str(item.get("id")))
+                    removed.append(item)
+        same_place = not str(place or "").strip()
+        record = self.world.add_entry(now.date().isoformat(), {
+            "who": bot,
+            "start": fmt_time(now),
+            "end": fmt_time(end),
+            "place": (current or {}).get("place", "") if same_place else place,
+            "at_home": (current or {}).get("at_home") if same_place else None,
+            "doing": what,
+            "result": result,
+            "source": "chat",
+            "src_umo": umo,
+            "asked": True,
+        })
+        if record is None:
+            for item in removed:
+                self.world.add_entry(str(item.get("start"))[:10], item)
+            return "没写进去：这段时间世界线上是主人手动排的事，补写和对话都改不动。"
+        logger.info(
+            "[super_enhance/world] [%s] 现在去做：%s %s–%s%s",
+            bot, what[:30], fmt_time(now)[11:], fmt_time(end)[11:],
+            "（撤掉补写排的 %d 段）" % len(removed) if removed else "",
+        )
+        return "已写进世界线：%s–%s %s%s。做完时系统会叫你一次。" % (
+            fmt_time(now)[11:], fmt_time(end)[11:], what,
+            "（地点：%s）" % record.get("place") if record.get("place") else "",
+        )
+
     def world_text(self, bot: str, now: datetime.datetime) -> str:
         """live 时给模型的【世界线】块：线 + 约定 + 在练的事 + 能力清单。"""
         if self.world_mode != "live":
@@ -422,6 +493,7 @@ class LifeStateService:
                 continue
             finished = None
             started = None
+            asked = None
             items = self.world.activities(bot, flat)
             for index, item in enumerate(items):
                 start = parse_time(item.get("start"))
@@ -434,11 +506,21 @@ class LifeStateService:
                     continue
                 if (flat - end).total_seconds() > 600:
                     continue  # 停机期间做完的，过了就过了
+                if item.get("asked"):
+                    asked = item  # 「现在去做」接下的事：多短都算，不看重要程度
+                    continue
                 if (end - start).total_seconds() < 600:
                     continue  # 几分钟的小事不算「做完一件事」
                 finished = item
             if parse_time(self.world.done_mark(bot)) != flat:
                 self.world.set_done_mark(bot, fmt_time(flat))
+            if asked is not None:
+                # 接下的事做完了：先叫这个，同一刻开始的出门、开饭就不另叫了
+                try:
+                    await self.planner.fire_done(bot, asked, now, kind="asked")
+                except Exception:
+                    logger.warning("[super_enhance/life] 接下的事做完的主动对话没排上", exc_info=True)
+                continue
             if started is not None:
                 # 出门、到家、开饭优先；同一刻做完的那件就不另叫了
                 try:

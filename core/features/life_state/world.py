@@ -259,6 +259,8 @@ class WorldStore:
             "meal": bool(clean_flag(entry.get("meal"))),
             # 这件事最后的结果（修好了、没找着……）：不算一步，她做完才看得到
             "result": clean_text(entry.get("result"), MAX_RESULT),
+            # 她用「现在去做」接下的事（多半是主人让做的）：做完不看时长和重要程度，一定叫她
+            "asked": bool(entry.get("asked")) and kind != "event",
             "created": str(entry.get("created") or fmt_time(self.now_local())),
         }
         if not entry.get("id"):

@@ -627,52 +627,6 @@
             }
         }
     },
-    "sleep_tool": {
-        "description": "⑨ 延迟续说工具 sleep_for",
-        "type": "object",
-        "hint": "让 AI 去办件小事时先应一声、再真的等一会儿回来报结果：等待发生在工具调用内部，不建定时任务，适合几秒到一分多钟的小延迟。",
-        "items": {
-            "enabled": {
-                "description": "启用",
-                "type": "bool",
-                "hint": "关闭后该工具不会暴露给模型。",
-                "default": true
-            },
-            "min_seconds": {
-                "description": "最短等待（秒）",
-                "type": "int",
-                "hint": "模型请求低于该值时按该值等待。",
-                "slider": {
-                    "min": 1,
-                    "max": 60,
-                    "step": 1
-                },
-                "default": 5
-            },
-            "max_seconds": {
-                "description": "最长等待（秒）",
-                "type": "int",
-                "hint": "模型请求超过该值时按该值等待；实际还会被 AstrBot 的工具调用超时（默认 120 秒）压低。",
-                "slider": {
-                    "min": 10,
-                    "max": 110,
-                    "step": 5
-                },
-                "default": 90
-            },
-            "max_per_turn": {
-                "description": "每轮最多等待次数",
-                "type": "int",
-                "hint": "防止同一轮里反复等待把回复拖很久，默认 1 次。",
-                "slider": {
-                    "min": 1,
-                    "max": 3,
-                    "step": 1
-                },
-                "default": 1
-            }
-        }
-    },
     "request_snapshot": {
         "description": "⑪ 真实请求快照（上下文页面用）",
         "type": "object",
