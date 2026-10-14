@@ -73,7 +73,7 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
 规则：
 
 1. 只写「这次要你写的」里列出的人。每人从上面给的时刻开始，按时间顺序写几段，首尾相接、不重叠；最后一段的结束时间必须晚于现在（{now}）。一次最多写到 {horizon} 左右，不要把后面一整天都写完（睡觉那段除外，可以一直写到第二天起床）。
-2. **一段只写一件事**：吃饭就是吃饭，洗碗另起一段，看书再另起一段。doing 只写这件事是什么（一句话），result 写这件事最后的结果（修好了没、找着没、谁赢了这类，一句；不算一步、没有分钟；闲着和睡觉不写），不要把几件事用「然后」「又」「再」串在同一段里。steps 把这件事按先后分成 1–5 步，每步写 text（一句，到那一步时她手上在干什么，最后一步是收尾）和 minutes（这一步按常理要几分钟）。**这段做多久就是各步 minutes 加起来**，程序按它算结束时间，end 照着算好写上就行（洗碗十来分钟、吃饭二三十分钟、看书一两个小时……）；闲着和睡觉不写 steps，end 照常写。每段都是一件要花些工夫的事。上面今天已经做过的事，别再原样做一遍。
+2. **一段只写一件事**：doing 只写这件事是什么（一句话），result 写这件事最后的结果（修好了没、找着没、谁赢了这类，一句；不算一步、没有分钟；闲着和睡觉不写），不要把几件事用「然后」「又」「再」串在同一段里。steps 把这件事按先后分成 1–5 步，每步写 text（一句，到那一步时她手上在干什么）和 minutes（这一步按常理要几分钟）；最后一步是收尾，这件事用过的东西收好、归位都写在这一步里，做完就接着做下一件事。**这段做多久就是各步 minutes 加起来**，程序按它算结束时间，end 照着算好写上就行（洗碗十来分钟、吃饭二三十分钟、看书一两个小时……）；闲着和睡觉不写 steps，end 照常写。每段都是一件要花些工夫的事。上面今天已经做过的事，别再原样做一遍。
 3. **没事就写闲着**：她手上没有打算、约定、规矩要做的事，也没什么想做的，就写一段闲着，idle 填 true：doing 照上面「今天闲着的样子」里她的写，steps 留空。闲着一段最长一小时，歇够了就接着写下一件事（也可以再歇一段）。不是闲着的段 idle 填 false。
    拿起「手边的消遣」来做不算闲着：idle 填 false，照常写 steps，result 写做到哪了（看到哪、织了多少）；做到一半去忙别的，回头可以接着做。
 4. 每段写 importance（1–5）：这件事做完值不值得跟主人说一声。1 是天天都做的小事（洗碗、走路、收拾东西、把东西搁好）；2 是平常的事（吃饭、洗衣裳、看书）；3 是有点意思的事（出门逛街、去泡足汤、买点心）；4 是做成了一件像样的事、或碰上了新鲜事（修好了东西、捡到稀奇的东西、有人上门托事）；5 是难得的大事（练成一招、碰上意外）。闲着和睡觉写 1。
@@ -94,8 +94,8 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
 {{
   "end_current": {{"napcat": "{example_end}"}},
   "segments": {{
-    "napcat": [{{"start": "{example_start}", "end": "{example_end}", "place": "", "doing": "吃饭", "steps": [{{"text": "盛饭端上桌", "minutes": 5}}, {{"text": "边吃边说话", "minutes": 18}}, {{"text": "吃完放下碗筷", "minutes": 2}}], "result": "吃饱了，菜一点没剩", "idle": false, "importance": 2, "at_home": true, "meal": true, "public": "", "with": [], "training": "", "intent": ""}},
-               {{"start": "{example_end}", "end": "{example_end2}", "place": "", "doing": "洗碗", "steps": [{{"text": "碗筷泡进水盆", "minutes": 3}}, {{"text": "一只只洗净", "minutes": 9}}, {{"text": "擦干摆回架上", "minutes": 3}}], "result": "碗都洗净摆回架上了", "idle": false, "importance": 1, "at_home": true, "meal": false, "public": "", "with": [], "training": "", "intent": ""}}],
+    "napcat": [{{"start": "{example_start}", "end": "{example_end}", "place": "", "doing": "一句话写这件事", "steps": [{{"text": "第一步她手上在干什么", "minutes": 5}}, {{"text": "第二步", "minutes": 15}}, {{"text": "收尾：用过的东西收好、归位", "minutes": 5}}], "result": "这件事的结果", "idle": false, "importance": 2, "at_home": true, "meal": false, "public": "", "with": [], "training": "", "intent": ""}},
+               {{"start": "{example_end}", "end": "{example_end2}", "place": "", "doing": "下一件事", "steps": [{{"text": "第一步", "minutes": 10}}, {{"text": "收尾", "minutes": 5}}], "result": "这件事的结果", "idle": false, "importance": 2, "at_home": true, "meal": false, "public": "", "with": [], "training": "", "intent": ""}}],
     "napcat2": []
   }}
 }}
