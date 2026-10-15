@@ -1213,36 +1213,23 @@ class ProactivePlanner:
         if entry is not None and str(getattr(entry, "schedule", "") or "").strip():
             lines.append("你这会儿原本打算：%s" % entry.schedule)
             lines.append(PLAN_NOTE)
-        lines.append(self._kind_line(meta, now, chat))
+        # 世界线 live 时「刚做完一件事」不再专门点出来：世界线里本来就有，点出来她就照着报行程
+        if not (live and kind == "done"):
+            lines.append(self._kind_line(meta, now, chat))
         sent = self._sent_today(chat, now)
         if sent:
             lines.append("")
             lines.append("你今天主动发过的话：")
             for moment, text, replied in sent:
                 lines.append("- %s %s%s" % (moment.strftime("%H:%M"), text, "" if replied else "（主人还没回）"))
-        lines.extend(
-            [
-                "",
-                "先想一想现在要不要说、说什么：",
-                "- 看看最近聊了什么、主人那边是什么情况（他说过在忙、在睡、出门了……）；",
-                "- 同一件事、同一个问题（比如问主人在干什么、去哪了、吃了没）：主人没回之前最多说两次，"
-                "一天里最多说三次。%s到数了就别再提，说别的，或者这次不发；" % ("对照上面你今天主动发过的话，" if sent else ""),
-                "- 结合你此刻在做的事和所在的地方来说：可以顺口带一句你在干嘛、碰到了什么，"
-                "但别写成汇报日程，也别一点不提自己在干嘛；",
-                "- 这会儿真不合适说话（比如他刚说要睡了、正忙着），可以不发，直接结束就行，不用解释%s；"
-                % ("（这次是改口、约定到点、刚练成或打算做完，必须发，除非主人定的规矩不许）"
-                   if kind in MUST_SEND and (kind != "correct" or self._correct_pending(meta, now)) else ""),
-                "- 要发就调用 send_message_to_user 发出去：只有调用了才算真的发出去，光写在回复里他看不到；",
-            ]
-        )
+        lines.append("")
         if not live:
             # 老架构下场景要她自己记；世界线 live 时由记录员记，这个工具也收起来了
-            lines.append("- 你这会儿要是换了地方、或者在做的事变了，先用 update_my_scene 记一下再发；")
-        lines.extend(
-            [
-                "- 扮演你的人设，一到两句纯文本，不要 Markdown、不要表情符号、不要罗列清单。",
-            ]
-        )
+            lines.append("你这会儿要是换了地方、或者在做的事变了，先用 update_my_scene 记一下再发。")
+        if kind in MUST_SEND and (kind != "correct" or self._correct_pending(meta, now)):
+            lines.append("调用 send_message_to_user 发出去（这次是改口、约定到点、刚练成或打算做完，必须发，除非主人定的规矩不许）。")
+        else:
+            lines.append("要发就调用 send_message_to_user 发出去；不想发就直接结束。")
         extra = str(self.cfg.get("proactive_extra_requirements") or "").strip()
         if extra:
             lines.append("额外要求：%s" % extra)

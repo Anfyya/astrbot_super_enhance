@@ -30,6 +30,7 @@ from mcp.types import CallToolResult
 from .core.config_view import SectionConfig
 from .core.features.context_tools import ContextToolsFeature
 from .core.features.history_merge import HistoryMergeFeature
+from .core.features.history_transcript import HistoryTranscriptFeature
 from .core.features.overflow_guard import OverflowGuard
 from .core.features import error_voice
 from .core.features.cron_context import CronContextFeature
@@ -105,6 +106,10 @@ class SuperEnhance(Star):
         self.life = LifeStateService(
             context, SectionConfig(raw, "life_state"), data_dir
         )
+        # 发给模型时把历史写成一段「最近的聊天记录」（存档不动）
+        self.transcript = HistoryTranscriptFeature(
+            SectionConfig(raw, "history_transcript"), life=self.life
+        )
         # 发消息 / tell 的说明换成写死对象和会话号的中文版（只改这一轮的工具清单）
         self.tool_guide = ToolGuideFeature(
             SectionConfig(raw, "bot_dialog"),
@@ -123,7 +128,9 @@ class SuperEnhance(Star):
         await self.life.initialize()
         self.cron_context.cron_request_hooks.append(self.life.on_cron_request)
         self.cron_context.cron_request_hooks.append(self.tool_guide.on_cron_request)
+        self.cron_context.cron_request_hooks.append(self.transcript.on_cron_request)
         self.cron_context.install()
+        self.transcript.install()
         self.overflow.install()
         self.history_merge.install()
         self.proactive_think.install()
@@ -190,6 +197,7 @@ class SuperEnhance(Star):
         """插件卸载/停用时收尾。"""
         self.lm_edits.stop()
         self.cron_context.uninstall()
+        self.transcript.uninstall()
         self.overflow.uninstall()
         self.history_merge.uninstall()
         self.proactive_think.uninstall()
@@ -249,6 +257,13 @@ class SuperEnhance(Star):
     ) -> None:
         """这次模型请求要是失败了，AstrBot 发的不是「LLM 响应错误」，而是设置里备好的她自己口吻的一句。"""
         error_voice.prepare_model_error(self.config, event)
+
+    @filter.on_llm_request()
+    async def on_llm_request_transcript(
+        self, event: AstrMessageEvent, req: ProviderRequest
+    ) -> None:
+        """给这次请求打记号：真正发给模型时，历史改写成系统提示里的一段聊天记录。"""
+        await self.transcript.on_llm_request(event, req)
 
     @filter.on_llm_request()
     async def on_llm_request_msg_time(

@@ -450,6 +450,42 @@
             }
         }
     },
+    "history_transcript": {
+        "description": "⑧-2 历史写成聊天记录",
+        "type": "object",
+        "hint": "发给模型时，不再把会话历史当成她自己说过的消息一条条发，而是写成系统提示里的一段「最近的聊天记录」（带时间），只放最近几条；思考、工具调用不写进去。模型会照着自己最近几条回复的样子往下接，这样她就不会被自己之前平淡的回复带平。只改发出去的那一份，数据库里的历史一个字不动；普通聊天和主动对话都管。",
+        "items": {
+            "enabled": {
+                "description": "启用",
+                "type": "bool",
+                "hint": "关掉就回到 AstrBot 原来的发法（历史全量当消息发）。",
+                "default": false
+            },
+            "recent_messages": {
+                "description": "原样放最近几条",
+                "type": "int",
+                "hint": "只算有正文的主人 / 她的消息，默认 12。越多越接得上前文，但她越容易照着自己最近的口气说。",
+                "slider": {
+                    "min": 2,
+                    "max": 60,
+                    "step": 1
+                },
+                "default": 12
+            },
+            "include_memo": {
+                "description": "带上压缩备忘",
+                "type": "bool",
+                "hint": "会话开头有 /compact v2 写的前情备忘时，一并放进去（放在聊天记录前面）。",
+                "default": true
+            },
+            "sessions": {
+                "description": "只管这些会话",
+                "type": "list",
+                "hint": "填会话号（如 napcat2:FriendMessage:QQ号），一行一个；不填 = 开了生活状态的机器人的所有私聊。",
+                "default": []
+            }
+        }
+    },
     "bot_dialog": {
         "description": "⑩ 多机器人对话节奏（bot↔bot）",
         "type": "object",
