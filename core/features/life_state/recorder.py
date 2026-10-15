@@ -22,8 +22,26 @@ SYSTEM_PROMPT = (
 )
 
 # 给记录员对照的「后面排好的」：往后看几小时、每人最多几段
+# 新打算腾地方：时间段超过这么久就当说得太笼统，不动排好的
+MAKE_ROOM_HOURS = 3
 PLANNED_HOURS = 6
 PLANNED_MAX = 8
+
+def window_span(window, now: datetime.datetime):
+    """打算的时间段「11:25~12:00」→ (开始, 结束)，按 now 那天算；认不出返回 None。"""
+    m = re.search(r"(\d{1,2})[:：](\d{2})\s*[~～\-—–到至]\s*(\d{1,2})[:：](\d{2})", str(window or ""))
+    if not m:
+        return None
+    day = now.replace(tzinfo=None).date()
+    try:
+        lo = datetime.datetime.combine(day, datetime.time(int(m.group(1)), int(m.group(2))))
+        hi = datetime.datetime.combine(day, datetime.time(int(m.group(3)) % 24, int(m.group(4))))
+    except ValueError:
+        return None
+    if hi <= lo:
+        hi += datetime.timedelta(days=1)
+    return lo, hi
+
 
 RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，整理成结构化的条目。
 
@@ -635,11 +653,15 @@ class Recorder:
             else:
                 # 编号对不上就不动（宁可少撤一条，也不误清这个人的全部打算）
                 logger.warning("[super_enhance/world] drop_intentions 收到无法识别的编号：%s，忽略", token)
+        known = {str(x.get("id")) for x in self.world.intentions()}
         for raw in data.get("intentions") or []:
             if isinstance(raw, dict):
-                self.world.set_intention(
+                record = self.world.set_intention(
                     str(raw.get("who") or ""), raw.get("text"), raw.get("window") or "", "chat"
                 )
+                # 只有新记的才腾地方；同一条再说一遍不动（补写可能已经把它排进去了）
+                if record and str(record.get("id")) not in known:
+                    self._make_room(record, now)
         self._apply_promises(data.get("promises") or [], now, umo)
         self._collect_early(data.get("early") or [], umo, items, now)
         self._apply_stale(data.get("stale") or [], data.get("early") or [], now)
@@ -688,6 +710,43 @@ class Recorder:
                 except Exception:
                     return None
         return None
+
+    def _make_room(self, intention: dict, now: datetime.datetime) -> None:
+        """新记了一条带时间段的打算：她那段时间里补写排好的事让开——没开始的撤掉，跨进来的截到打算开始的那一刻；
+        对方写着和她一起的那几段也一样。空出来的由补写把打算排进去（顺带上对方）。
+        时间段太长（超过 MAKE_ROOM_HOURS）或已经过了的不动，免得撤掉一大片。"""
+        span = window_span(intention.get("window"), now)
+        if span is None:
+            return
+        flat = now.replace(tzinfo=None)
+        lo, hi = max(span[0], flat), span[1]
+        if hi <= lo or hi - lo > datetime.timedelta(hours=MAKE_ROOM_HOURS):
+            return
+        who = str(intention.get("who") or "")
+        bots = set(self.raw_log.enabled_bots())
+        done = []
+        for date_text in sorted({lo.date().isoformat(), hi.date().isoformat()}):
+            for item in list(self.world.entries(date_text, "")):
+                owner = str(item.get("who") or "")
+                if owner not in bots or str(item.get("source") or "") != "step" or is_event(item):
+                    continue
+                if owner != who and who not in (item.get("with") or []):
+                    continue
+                if str(item.get("intent") or "") == str(intention.get("id")):
+                    continue
+                start = parse_time(item.get("start"))
+                end = parse_time(item.get("end")) if item.get("end") else None
+                if start is None or end is None or not (start < hi and end > lo):
+                    continue
+                if start < lo:
+                    self.world.update_entry(date_text, str(item.get("id")), end=fmt_time(lo), intent="", stopped=True)
+                    done.append("%s %s 到 %s 为止" % (item.get("id"), clean_text(item.get("doing"), 20), fmt_time(lo)[11:]))
+                else:
+                    self.world.delete_entry(date_text, str(item.get("id")))
+                    done.append("%s %s 撤掉" % (item.get("id"), clean_text(item.get("doing"), 20)))
+        if done:
+            logger.info("[super_enhance/world] 新打算 %s（%s %s）腾地方：%s", intention.get("id"),
+                        self.label(who) or who, intention.get("window"), "；".join(done))
 
     def _apply_stale(self, raws, early, now: datetime.datetime) -> None:
         """记录员说对不上了的补写段：还没开始的撤掉，正在做的到此刻为止；空出来的由补写按现在的情况重排。"""
