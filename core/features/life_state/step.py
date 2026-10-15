@@ -697,6 +697,9 @@ class LifeStep:
             start = parse_time(later.get("start"))
             if start is None or start > edge + datetime.timedelta(minutes=2) or not later.get("end"):
                 return None
+            if str(later.get("id")) == str(last.get("id")):
+                # 防自环：拿回来的还是同一段，就当排到头了
+                return edge, last
             edge, last = parse_time(later.get("end")), later
         return None
 

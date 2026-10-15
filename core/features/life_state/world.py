@@ -407,15 +407,20 @@ class WorldStore:
         return found
 
     def next_after(self, who: str, moment: datetime.datetime):
-        """从 moment 起（含）开始的下一段，补写提前写好的那段。"""
+        """从 moment 起（含）开始的下一段，补写提前写好的那段。
+        已经结束的段不算：不然一条 1 分钟的段会被当成自己的「下一段」，补写来回打转。"""
         flat = moment.replace(tzinfo=None)
         for item in self.activities(who, flat, back_days=1) + [
             x for x in self.entries((flat.date() + datetime.timedelta(days=1)).isoformat(), who)
             if not is_event(x)
         ]:
             start = parse_time(item.get("start"))
-            if start is not None and start >= flat - datetime.timedelta(minutes=1):
-                return item
+            if start is None or start < flat - datetime.timedelta(minutes=1):
+                continue
+            end = parse_time(item.get("end")) if item.get("end") else None
+            if end is not None and end <= flat:
+                continue
+            return item
         return None
 
     def first_hole(self, who: str, after: datetime.datetime, until: datetime.datetime):
