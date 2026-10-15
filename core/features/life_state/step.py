@@ -239,7 +239,7 @@ class LifeStep:
         lines = [x.strip().lstrip("-• ").strip() for x in text.splitlines() if x.strip()]
         if not lines:
             return ""
-        return "补写注意事项（只给你看，务必照做）：\n" + "\n".join("   - " + x for x in lines)
+        return "注意事项（务必照做）：\n" + "\n".join("   - " + x for x in lines)
 
     @staticmethod
     def _seed_text(seed: dict, labels: dict, night: bool = False) -> str:
