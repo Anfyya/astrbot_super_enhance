@@ -568,11 +568,12 @@ class WorldStore:
         items = list(state.get("intentions") or [])
         # 打算不过期、不限条数：记/撤全由记录员（或网页手动）决定。
         # 老数据没有编号，这里一次性补上，好让记录员按编号精确撤。
-        seq = self._next_intention_seq(items)
+        seq = self._intention_seq(state)
         changed = False
         for item in items:
             if not str(item.get("id") or "").strip():
                 item["id"] = "i%d" % seq
+                state["intention_seq"] = seq
                 seq += 1
                 changed = True
         if changed:
@@ -581,6 +582,15 @@ class WorldStore:
         if who:
             items = [x for x in items if str(x.get("who")) == str(who)]
         return items
+
+    def _intention_seq(self, state: dict) -> int:
+        """下一条打算的编号：只增不减（存在 intention_seq），撤掉的编号不再用，
+        免得旧段上标着的打算编号对上别人新记的那条。"""
+        try:
+            used = int(state.get("intention_seq") or 0)
+        except (TypeError, ValueError):
+            used = 0
+        return max(self._next_intention_seq(state.get("intentions") or []), used + 1)
 
     @staticmethod
     def _next_intention_seq(items) -> int:
@@ -601,7 +611,9 @@ class WorldStore:
         for item in items:
             if str(item.get("who")) == str(who) and str(item.get("text") or "") == body:
                 return item
-        record = {"id": "i%d" % self._next_intention_seq(items), "who": who, "text": body,
+        seq = self._intention_seq(state)
+        state["intention_seq"] = seq
+        record = {"id": "i%d" % seq, "who": who, "text": body,
                   "window": clean_text(window, 60), "source": source,
                   "created": fmt_time(self.now_local())}
         items.append(record)
@@ -633,13 +645,14 @@ class WorldStore:
             self._save_state()
         return hit
 
-    def drop_intention(self, intention_id: str) -> bool:
-        """按编号撤一条打算（做完 / 对不上，由记录员或网页指定）。"""
+    def drop_intention(self, intention_id: str, who: str = "") -> bool:
+        """按编号撤一条打算（做完 / 对不上，由记录员或网页指定）；给了 who 就只撤这个人的。"""
         if not intention_id:
             return False
         state = self._load_state()
         items = list(state.get("intentions") or [])
-        left = [x for x in items if str(x.get("id")) != str(intention_id)]
+        left = [x for x in items
+                if str(x.get("id")) != str(intention_id) or (who and str(x.get("who")) != str(who))]
         if len(left) == len(items):
             return False
         state["intentions"] = left

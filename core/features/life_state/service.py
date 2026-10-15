@@ -555,7 +555,7 @@ class LifeStateService:
                 if item.get("stopped"):
                     continue  # 做到一半被打断、到此为止的：不算做完
                 if item.get("intent"):
-                    if self.world.drop_intention(str(item.get("intent"))):
+                    if self.world.drop_intention(str(item.get("intent")), bot):
                         # 打算里的那件事做完了：这条打算撤掉
                         logger.info("[super_enhance/world] [%s] 打算 %s 做完了（%s），撤掉", bot, item.get("intent"),
                                     str(item.get("doing") or "")[:20])
