@@ -6,8 +6,12 @@
 
 文件格式（放在本插件数据目录）::
 
-    {"edits": [{"id": 169, "persona": "亚托莉", "pairs": [["旧说法", "新说法"], ...]}]}
+    {"edits": [{"id": 169, "persona": "亚托莉", "pairs": [["旧说法", "新说法"], ...]},
+               {"id": 170, "persona": "亚托莉", "archive": true},
+               {"id": 171, "persona": "亚托莉", "content": "整条新正文", "metadata": {"key_facts": [...], ...}}]}
 
+- archive：用 livingmemory 自己的 archive_memories 归档（不再被召回，正文留着，面板里能恢复）；
+- content：整条换成新正文，metadata 里给了的要点 / 摘要一起换（照样走 update_memory 整条重建）；
 - 每对「旧说法」在正文、要点（key_facts）、摘要（canonical_summary / persona_summary）里替换；
 - 有任何一对哪里都找不到，这一条整条跳过，不做半截改动；persona 对不上也跳过；
 - 处理完把文件改名为 ``pending_memory_edits.done-时间.json``（附每条结果），不会重复执行；
@@ -143,7 +147,8 @@ class MemoryEditRunner:
             for p in edit.get("pairs") or []
             if isinstance(p, (list, tuple)) and len(p) == 2 and str(p[0])
         ]
-        if not pairs:
+        content = str(edit.get("content") or "").strip()
+        if not pairs and not edit.get("archive") and not content:
             return {"id": memory_id, "ok": False, "why": "没有要改的内容"}
         memory = await engine.get_memory(memory_id)
         if not memory:
@@ -152,6 +157,15 @@ class MemoryEditRunner:
         persona = str(edit.get("persona") or "")
         if persona and str(meta.get("persona_id") or "") != persona:
             return {"id": memory_id, "ok": False, "why": "角色对不上（记忆是 %s）" % meta.get("persona_id")}
+        if edit.get("archive"):
+            n = await engine.archive_memories([memory_id])
+            logger.info("[super_enhance/lm_edits] 记忆 %s %s", memory_id, "已归档" if n == 1 else "归档失败")
+            return {"id": memory_id, "ok": n == 1, "op": "archive"}
+        if content:
+            patch = {k: v for k, v in _as_dict(edit.get("metadata")).items() if k in TEXT_FIELDS}
+            ok = await engine.update_memory(memory_id, {"content": content, "metadata": patch})
+            logger.info("[super_enhance/lm_edits] 记忆 %s %s", memory_id, "已整条改写" if ok else "改写失败")
+            return {"id": memory_id, "ok": bool(ok), "op": "content", "fields": sorted(patch)}
         hits: set = set()
         text = str(memory.get("text") or "")
         new_text = apply_pairs(text, pairs, hits)
