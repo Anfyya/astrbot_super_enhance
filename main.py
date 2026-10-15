@@ -31,6 +31,7 @@ from .core.config_view import SectionConfig
 from .core.features.context_tools import ContextToolsFeature
 from .core.features.history_merge import HistoryMergeFeature
 from .core.features.history_transcript import HistoryTranscriptFeature
+from .core.features.daily_compact import DailyCompact
 from .core.features.overflow_guard import OverflowGuard
 from .core.features import error_voice
 from .core.features.cron_context import CronContextFeature
@@ -83,6 +84,10 @@ class SuperEnhance(Star):
             context, SectionConfig(raw, "context_tools"), data_dir
         )
         self.history_merge = HistoryMergeFeature()
+        # 每天 0 点自动 /compact v2（停机错过了就启动后补跑）
+        self.daily_compact = DailyCompact(
+            SectionConfig(raw, "context_tools"), self.context_tools.v2, data_dir
+        )
         self.overflow = OverflowGuard(
             context, SectionConfig(raw, "context_tools"), self.context_tools
         )
@@ -131,6 +136,7 @@ class SuperEnhance(Star):
         self.cron_context.cron_request_hooks.append(self.transcript.on_cron_request)
         self.cron_context.install()
         self.transcript.install()
+        self.daily_compact.start()
         self.overflow.install()
         self.history_merge.install()
         self.proactive_think.install()
@@ -198,6 +204,7 @@ class SuperEnhance(Star):
         self.lm_edits.stop()
         self.cron_context.uninstall()
         self.transcript.uninstall()
+        self.daily_compact.stop()
         self.overflow.uninstall()
         self.history_merge.uninstall()
         self.proactive_think.uninstall()

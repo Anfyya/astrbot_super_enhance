@@ -4,7 +4,8 @@
 新回复就跟着平淡，越平越锁死；同样的历史写成一段聊天记录给她看，语气就回到人设的样子
 （2026-10-15 用真实请求拆开测过：只给人格 / 加世界线 / 加记忆都是活的，加上最近 4 条消息就平）。
 
-- 原样只放最近 N 条（默认 12 条，只算有正文的主人 / 她的消息）；会话开头有 /compact 的前情备忘就一并放上；
+- 会话开头有 /compact v2 的前情备忘和原话摘录就放在最前面，后面是备忘之后的全部原话
+  （配合每天 0 点自动压缩：昨晚最后几句 + 今天的）；也可以只放最近 N 条；
 - 思考、工具调用、工具结果不写进去；本轮正在进行的工具调用照常是消息；
 - 只改发出去的这一份：AstrBot 回完话会把 ``run_context.messages`` 原样存回会话
   （``internal.py::_save_to_history``），所以不能改 ``req.contexts``，会把存档冲掉。
@@ -21,6 +22,7 @@ from .life_state.models import bot_of_umo
 MARK_ATTR = "_super_enhance_transcript"
 REMINDER_RE = re.compile(r"<system[-_\s]*reminder>(?P<body>.*?)</system[-_\s]*reminder>", re.IGNORECASE | re.DOTALL)
 TIME_RE = re.compile(r"(?:Current datetime|Sent at)\s*[:：]\s*\d{4}-(\d{2}-\d{2} \d{2}:\d{2})")
+PRE_RE = re.compile(r"^\[(\d{2}-\d{2} \d{2}:\d{2})\]\s*")
 MEMO_PREFIX = "（前情备忘："
 
 
@@ -46,9 +48,14 @@ def _text(message: dict) -> str:
     return ""
 
 
-def render_lines(history: list, label: str) -> tuple[list[str], str]:
-    """历史 → [「[10-15 12:18] 主人：……」, ...]，以及会话开头的前情备忘（没有就空）。"""
-    lines, memo = [], ""
+def render_lines(history: list, label: str) -> tuple[list[str], str, list[str]]:
+    """历史 → (原话行「[10-15 12:18] 主人：……」, 前情备忘, 摘录行)。
+
+    /compact v2 写进去的样子：第一条是前情备忘，紧跟着几段摘录（没有时间戳标签），
+    再往后是原样保留的对话（每条都带时间戳标签）。
+    """
+    lines, memo, excerpts = [], "", []
+    in_excerpts = False
     for raw in history:
         message = _dump(raw)
         role = message.get("role")
@@ -62,18 +69,30 @@ def render_lines(history: list, label: str) -> tuple[list[str], str]:
         if role == "user" and body.startswith(MEMO_PREFIX):
             if not memo:
                 memo = body.split("\n", 1)[1].strip() if "\n" in body else body
+                in_excerpts = True
             continue
         who = "主人" if role == "user" else label
-        lines.append("%s%s：%s" % ("[%s] " % hit.group(1) if hit else "", who, " ".join(body.split("\n"))))
-    return lines, memo
+        stamp = hit.group(1) if hit else ""
+        pre = PRE_RE.match(body)  # 摘录里主人那几句的时间写在正文开头
+        if pre:
+            stamp, body = stamp or pre.group(1), body[pre.end():]
+        line = "%s%s：%s" % ("[%s] " % stamp if stamp else "", who, " ".join(body.split("\n")))
+        if in_excerpts and not REMINDER_RE.search(text):
+            excerpts.append(line)
+            continue
+        in_excerpts = False
+        lines.append(line)
+    return lines, memo, excerpts
 
 
 def build_block(history: list, label: str, recent: int, include_memo: bool) -> tuple[str, int]:
-    lines, memo = render_lines(history, label)
-    kept = lines[-recent:] if recent > 0 else []
+    lines, memo, excerpts = render_lines(history, label)
+    kept = lines[-recent:] if recent > 0 else lines
     parts = []
     if include_memo and memo:
         parts.append("【更早聊过的事（备忘）】\n" + memo)
+        if excerpts:
+            parts.append("【更早的几段聊天原话（摘录，中间有省略）】\n" + "\n".join(excerpts))
     if kept:
         parts.append("【你和主人最近的聊天记录（按时间先后）】\n" + "\n".join(kept))
     return "\n\n".join(parts), len(kept)
@@ -118,9 +137,9 @@ class HistoryTranscriptFeature:
     @property
     def recent(self) -> int:
         try:
-            return max(0, int(self.config.get("recent_messages", 12)))
+            return max(0, int(self.config.get("recent_messages", 0)))
         except Exception:
-            return 12
+            return 0
 
     def _label(self, bot: str) -> str:
         try:
@@ -214,7 +233,8 @@ class HistoryTranscriptFeature:
             wrapped._super_enhance_orig = orig
             setattr(ToolLoopAgentRunner, name, wrapped)
             self._patches.append((ToolLoopAgentRunner, name, orig))
-        logger.info("[super_enhance/transcript] 已安装：历史写成聊天记录发给模型（最近 %d 条）", self.recent)
+        logger.info("[super_enhance/transcript] 已安装：历史写成聊天记录发给模型（%s）",
+                    "最近 %d 条" % self.recent if self.recent else "备忘之后的全部原话")
 
     def uninstall(self) -> None:
         for owner, name, orig in reversed(self._patches):

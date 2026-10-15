@@ -52,18 +52,18 @@ PROMPT = """你在帮一个角色扮演聊天机器人整理它和主人的旧�
 
 每段写成 [起始编号, 结束编号]：
 - 必须以「主人」的消息开头，以「{role}」的消息结尾，中间是连续的几条（一般 2～6 条）；
-- 片段之间不重叠，按时间顺序排列，尽量覆盖整个时间跨度，不要全挤在最后；
+- 片段之间不重叠，按时间顺序排列；哪段时间她状态好、最像她自己，就多从哪段挑，不用平均分布；
+- 话题要散开：同一样东西、同一件活最多挑一段；
 - 挑她**最像活人**的回话：撒娇、嘴硬、吃醋、闹别扭、被抓包后认错、开玩笑、接梗、关心主人、有小情绪、口癖明显的；语气要多样，不要挑一堆同一种情绪；
 - **长短要混搭，一定要有几段她只回一两句短话的**；不要挑长篇大论的回复；
-- 主人纠正她、给她立规矩、她态度转变的关键时刻要挑上；
 - 不要挑：列清单/汇报口吻/说明书口吻的回复；提到共享场景、工具、系统、尾标、日程、数据库、格式、编号的；内容重复的；前后矛盾或明显说错事实没被纠正的。
 
 ## 二、memo：前情备忘
 写给她自己看的备忘，用「你」称呼她，用「主人」称呼 {master}。只写**现在还用得着**的事：
-1. 主人立下的规矩、纠正过她的地方、明确说不喜欢的事——每条尽量附上主人的原话（20 字以内，用「」）；
+1. 现在还有效的规矩：一行一条，写清楚是什么规矩就行，可以附主人一句原话（15 字以内，用「」）；已经过时、被后来推翻的不写；
 2. 她学会的东西、两人关系的变化、共同的梗和称呼；
 3. 还没办完的事、答应过的事。
-要求：每条一行、短句、以「- 」开头；只写事实，不写评价、不写感想、不写总结性套话；不写每天几点干了什么这种流水账；不写任何关于共享场景、工具、尾标、日程、系统的内容。总长不超过 {memo_len} 字。
+要求：每条一行、短句、以「- 」开头；只写事实，不写评价、不写感想、不写总结性套话；不写每天几点干了什么这种流水账，也不写屋里有什么东西、东西放在哪；不写任何关于共享场景、工具、尾标、日程、系统的内容。总长不超过 {memo_len} 字。
 如果记录开头有一条「旧备忘」，那是上一次压缩留下的：里面仍然用得着的条目要合并进新备忘，不要丢；已经过时或被后来的对话推翻的就删掉。旧备忘本身不能选进摘录。
 记录只到 {cut_text} 为止，之后的对话会原样保留，不用你管。
 
@@ -146,7 +146,15 @@ class CompactV2:
         return str(self._cfg("v2_master_name", "主人")).strip() or "主人"
 
     def _now(self) -> datetime.datetime:
-        return datetime.datetime.now()
+        """本地时间（不带时区）：容器里是 UTC，消息里的时间戳是本地时间。"""
+        from zoneinfo import ZoneInfo
+
+        from . import turn_state
+
+        try:
+            return datetime.datetime.now(ZoneInfo(turn_state._TZ_NAME)).replace(tzinfo=None)  # noqa: SLF001
+        except Exception:
+            return datetime.datetime.now()
 
     # ---------- 入口 ----------
 
@@ -391,17 +399,12 @@ class CompactV2:
             logger.warning("[super_enhance/compact_v2] 读取人格失败：%s", e)
         return "角色"
 
-    async def _start(self, event, umo, cid, conv, keep, extra):
-        history = self._history_of(conv)
+    def _prepare(self, history: list, keep: str, role: str, cid, extra: str = ""):
+        """切分 + 拼提示词。能压的太少就返回 (None, 说明)。"""
         end, desc = self._boundary(history, keep)
-        role = await self._role_name(umo, conv)
         lines, usable = self._lines(history, end, role)
         if len(usable) < MIN_LINES:
-            yield event.plain_result(
-                "按「%s」保留原文后，能压缩的只剩 %d 条，不值得压。可以把保留范围调小，例如 /compact v2 1d、/compact v2 12h、/compact v2 40m。"
-                % (desc, len(usable))
-            )
-            return
+            return None, "按「%s」保留原文后，能压缩的只剩 %d 条，不值得压" % (desc, len(usable))
         n = len(usable)
         lo = max(4, min(16, 4 + n // 60))
         memo_len = max(600, min(1500, 600 + n * 2))
@@ -426,7 +429,18 @@ class CompactV2:
                 if isinstance(m, dict) and m.get("role") in ("user", "assistant") and _text_of(m).strip()
             ),
         }
-        async for r in self._run(event, umo, state, "正在按「%s」保留原文，压缩更早的 %d 条（%s 之前）…一般要 1～3 分钟。" % (desc, n, cut_text)):
+        return state, "正在按「%s」保留原文，压缩更早的 %d 条（%s 之前）…一般要 1～3 分钟。" % (desc, n, cut_text)
+
+    async def _start(self, event, umo, cid, conv, keep, extra):
+        history = self._history_of(conv)
+        role = await self._role_name(umo, conv)
+        state, note = self._prepare(history, keep, role, cid, extra)
+        if state is None:
+            yield event.plain_result(
+                note + "。可以把保留范围调小，例如 /compact v2 1d、/compact v2 12h、/compact v2 40m。"
+            )
+            return
+        async for r in self._run(event, umo, state, note):
             yield r
 
     async def _continue(self, event, umo, cid, conv, feedback):
@@ -560,17 +574,22 @@ class CompactV2:
         if state["cid"] != cid:
             yield event.plain_result("当前对话已经切换，旧预览作废，请重新 /compact v2。")
             return
+        ok, text = await self._commit(umo, cid, conv, state)
+        if ok or state.get("_stale"):
+            self._pending.pop(umo, None)
+        yield event.plain_result(text)
+
+    async def _commit(self, umo, cid, conv, state) -> tuple[bool, str]:
+        """备份 + 写入。返回 (写没写成, 给人看的话)。"""
         history = self._history_of(conv)
         end = state["end"]
         if len(history) < end or _fingerprint(history[:end]) != state["fp"]:
-            self._pending.pop(umo, None)
-            yield event.plain_result("预览之后压缩区的历史被改过了（比如在面板里编辑过），这版作废，请重新 /compact v2。")
-            return
+            state["_stale"] = True
+            return False, "预览之后压缩区的历史被改过了（比如在面板里编辑过），这版作废，请重新 /compact v2。"
         new_history = self._assemble(history, state)
         backup_dir = self._backup_dir(umo)
         if backup_dir is None:
-            yield event.plain_result("找不到插件数据目录，没法备份，所以没有写入。")
-            return
+            return False, "找不到插件数据目录，没法备份，所以没有写入。"
         stamp = self._now().strftime("%Y%m%d-%H%M%S")
         backup = backup_dir / ("%s.json" % stamp)
         try:
@@ -589,8 +608,7 @@ class CompactV2:
             )
         except Exception as e:
             logger.error("[super_enhance/compact_v2] 备份失败", exc_info=True)
-            yield event.plain_result("备份失败，没有写入：%s" % e)
-            return
+            return False, "备份失败，没有写入：%s" % e
         tokens = self._estimate(new_history)
         try:
             await self.context.conversation_manager.update_conversation(
@@ -598,17 +616,52 @@ class CompactV2:
             )
         except Exception as e:
             logger.error("[super_enhance/compact_v2] 写入失败", exc_info=True)
-            yield event.plain_result("写入失败，历史没动：%s" % e)
-            return
-        self._pending.pop(umo, None)
+            return False, "写入失败，历史没动：%s" % e
         self._prune(backup_dir)
         logger.info(
             "[super_enhance/compact_v2] %s 写入：%d → %d 条，备份 %s", umo, len(history), len(new_history), backup,
         )
-        yield event.plain_result(
+        return True, (
             "已写入：%d 条 → %d 条，约 %.1fk tokens。\n备份：%s\n后悔了发 /compact v2 undo。"
             % (len(history), len(new_history), tokens / 1000, backup.name)
         )
+
+    # ---------- 自动压缩（每天定时，不出预览直接写；写前照样整份备份，/compact v2 undo 能撤） ----------
+
+    async def auto_compact(self, umo: str, keep: str) -> tuple[bool, str]:
+        if umo in self._busy:
+            return False, "上一次压缩还在跑"
+        manager = self.context.conversation_manager
+        cid = await manager.get_curr_conversation_id(umo)
+        conv = await manager.get_conversation(umo, cid) if cid else None
+        if not conv:
+            return False, "没有会话"
+        role = await self._role_name(umo, conv)
+        state, note = self._prepare(self._history_of(conv), keep, role, cid)
+        if state is None:
+            return False, note
+        self._busy.add(umo)
+        try:
+            logger.info("[super_enhance/compact_v2] 自动压缩 %s：%s", umo, note)
+            out = await asyncio.wait_for(self._call_llm(state["messages"]), timeout=1200)
+            result = _extract_json(out["text"])
+            if not isinstance(result, dict) or not str(result.get("memo") or "").strip():
+                return False, "模型没给出可用的 JSON（结束原因 %s），历史没动" % out["info"].get("finish")
+            excerpts, whys, dropped = self._validate(result, state["usable"], state["end"])
+            state.update(memo=str(result["memo"]).strip(), excerpts=excerpts, whys=whys, dropped=dropped, info=out["info"])
+            conv = await manager.get_conversation(umo, cid)  # 等模型这一两分钟里可能又聊了几句：重新读，接在后面
+            if not conv:
+                return False, "会话没了"
+            ok, text = await self._commit(umo, cid, conv, state)
+            if ok:
+                text += "\n备忘 %d 字，摘录 %d 段%s" % (
+                    len(state["memo"]), len(excerpts), "（丢掉 %d 段不合格的）" % len(dropped) if dropped else "")
+            return ok, text
+        except Exception as e:
+            logger.error("[super_enhance/compact_v2] 自动压缩 %s 失败", umo, exc_info=True)
+            return False, "失败，历史没动：%s" % (e or type(e).__name__)
+        finally:
+            self._busy.discard(umo)
 
     async def _undo(self, event, umo, cid, conv):
         backup_dir = self._backup_dir(umo)
