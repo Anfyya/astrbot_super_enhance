@@ -225,6 +225,30 @@ class LifeStateService:
         value = str(self.cfg.get("world_mode") or "off").strip().lower()
         return value if value in ("off", "shadow", "live") else "off"
 
+    # 网页「世界线」页里填的补写注意事项（只进补写的提示词）
+    STEP_NOTES_NAME = "step_notes.json"
+
+    def step_notes_text(self) -> str:
+        """读补写注意事项（网页上填的）。"""
+        try:
+            data = json.loads((self.data_dir / self.STEP_NOTES_NAME).read_text(encoding="utf-8"))
+            return str((data or {}).get("text") or "")
+        except Exception:
+            return ""
+
+    def set_step_notes(self, text: str) -> bool:
+        """写补写注意事项（网页「世界线」页保存按钮）。"""
+        try:
+            (self.data_dir / self.STEP_NOTES_NAME).write_text(
+                json.dumps({"text": str(text or "")}, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            logger.info("[super_enhance/life] 补写注意事项已更新（%d 字）", len(str(text or "")))
+            return True
+        except Exception:
+            logger.warning("[super_enhance/life] 保存补写注意事项失败", exc_info=True)
+            return False
+
     def start_now(self, umo: str, what: str, minutes, place: str = "", result: str = "") -> str:
         """「现在去做」：从此刻起做一件事，写进世界线（算对话写的，补写排的让开），做完时叫她一次。
 

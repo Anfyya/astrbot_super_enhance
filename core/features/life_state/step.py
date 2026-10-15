@@ -234,8 +234,13 @@ class LifeStep:
 
     @property
     def step_notes(self) -> str:
-        """配置里写给补写的注意事项，一行一条；只有补写的提示词会带，主模型和记录员看不到。"""
-        text = str(self.cfg.get("step_notes") or "").strip()
+        """网页「世界线」页里填的补写注意事项，一行一条；只有补写的提示词会带。"""
+        text = ""
+        try:
+            data = json.loads((self.world.root / "step_notes.json").read_text(encoding="utf-8"))
+            text = str((data or {}).get("text") or "").strip()
+        except Exception:
+            text = ""
         lines = [x.strip().lstrip("-• ").strip() for x in text.splitlines() if x.strip()]
         if not lines:
             return ""

@@ -391,6 +391,7 @@ class ContextPageApi:
                     for item in world.intentions()
                 ],
                 "routine": world.all_routine(),
+                "step_notes": life.step_notes_text(),
                 "day_plan": {bot: world.day_plan(bot, date_text) for bot in bots},
                 "bots": [
                     {"key": bot, "label": self._world_label(life, bot)} for bot in bots
@@ -511,6 +512,8 @@ class ContextPageApi:
                             who, body.get("text") or "", body.get("window") or "", "manual"
                         )
                     )
+            elif kind == "step_notes":
+                ok = life.set_step_notes(str(body.get("text") or ""))
             elif kind == "routine":
                 data = body.get("data")
                 if isinstance(data, dict):

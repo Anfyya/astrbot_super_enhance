@@ -1007,7 +1007,7 @@
     pools: null, poolsErr: "", poolsLoading: false, poolEdit: {}, poolQ: "",
     poolWho: "", poolKind: "twists", poolSort: store.get("poolSort", "chance"), poolZero: false, poolFlash: "",
     world: null, worldErr: "", worldLoading: false, worldDate: "", worldWho: "", worldBusy: "", worldShowLifted: false, worldShowStatus: false,
-    wEdit: {}, cEdit: {}, iEdit: {}, rEdit: {},
+    wEdit: {}, cEdit: {}, iEdit: {}, rEdit: {}, nEdit: {},
     sch: null, schErr: "", schLoading: false, schBot: store.get("schBot", ""), schDate: ""
   };
 
@@ -3538,13 +3538,13 @@
   function worldLive() { return !!(S.world && S.world.status && S.world.status.mode === "live"); }
 
   function worldEditing() {
-    return Object.keys(S.wEdit).length || Object.keys(S.cEdit).length || Object.keys(S.iEdit).length || Object.keys(S.rEdit).length;
+    return Object.keys(S.wEdit).length || Object.keys(S.cEdit).length || Object.keys(S.iEdit).length || Object.keys(S.rEdit).length || Object.keys(S.nEdit).length;
   }
 
   /* ---------- 编辑框：同一时间只开一个 ---------- */
   // 每一项在页面上都有个 data-wk（条目 e:id、规矩 c:id、打算 i:谁、作息 r:谁），一项的「显示」和「编辑框」用同一个 key，
   // 重画前后按它对位置，开 / 关编辑框时页面不跳
-  var W_MAPS = { e: "wEdit", c: "cEdit", i: "iEdit", r: "rEdit" };
+  var W_MAPS = { e: "wEdit", c: "cEdit", i: "iEdit", r: "rEdit", n: "nEdit" };
   var W_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || "");
 
   // 开编辑框时记下原样，用来判断改没改过
@@ -3899,7 +3899,7 @@
       h("div", { class: "w-rules" }, worldConstraintSection(d, who)),
       h("div", { class: "w-intent" }, worldIntentionSection(d, who)),
       h("div", { class: "w-main" }, worldTimelineSection(d, who)),
-      h("div", { class: "w-routine" }, worldRoutineSection(d, bot))));
+      h("div", { class: "w-routine" }, worldRoutineSection(d, bot), worldStepNotesSection(d))));
   }
 
   /* ---------- 顶上一行：选人 + 选日期 ---------- */
@@ -4363,6 +4363,37 @@
       return worldPost({ kind: "intention", action: "set", id: f.id || "", who: f.who, text: f.text, window: f.window },
         f.id ? "已保存" : "已添加", function () { delete S.iEdit[key]; }, { from: wk, to: wk });
     }, function () { return worldDirty(f); });
+  }
+
+  /* ---------- 补写注意事项（只给补写看） ---------- */
+  function worldStepNotesSection(d) {
+    var sec = h("div", { class: "lsec" }, lsecHead("补写注意事项", "只给补写看；一行一条，改完从下一次补写起生效"));
+    var value = String(d.step_notes || "");
+    var card = h("div", { class: "pc", "data-wk": "n:step" });
+    var f = S.nEdit["step"];
+    if (!f) {
+      var rows = value.split(/\n/).map(function (x) { return String(x).trim(); }).filter(Boolean);
+      if (rows.length) {
+        var lines = h("div", { style: "display:flex;flex-direction:column;gap:4px;font-size:13px" });
+        rows.forEach(function (x) { lines.appendChild(h("div", { text: "· " + x })); });
+        card.appendChild(lines);
+      } else {
+        card.appendChild(h("div", { class: "muted", style: "font-size:13px", text: "还没有填。" }));
+      }
+      var edit = h("button", { class: "btn sm", type: "button" }, icon("edit"), "编辑");
+      edit.addEventListener("click", function () { worldOpen("n", "step", { text: value }); });
+      card.appendChild(h("div", { class: "pc-f" }, edit));
+    } else {
+      var box = worldFormBox(null, "正在改补写注意事项", "", "");
+      box.appendChild(worldField("注意事项", f.text, "一行一条，例如：不要总写走神；晚上不要写充电", function (v) { f.text = v; }, { area: true, rows: 5 }));
+      worldFormFoot(box, function () { worldClose("n", "step"); }, "保存", function () {
+        return worldPost({ kind: "step_notes", text: String(f.text || "") }, "已保存（下一次补写起生效）", function () { delete S.nEdit["step"]; },
+          { from: "n:step", to: "n:step" });
+      }, function () { return worldDirty(f); });
+      card.appendChild(box);
+    }
+    sec.appendChild(card);
+    return sec;
   }
 
   /* ---------- 作息骨架 ---------- */
