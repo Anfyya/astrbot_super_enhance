@@ -3517,6 +3517,21 @@
   $("ledgerRefresh").addEventListener("click", function () { loadLedger().then(function () { if (!S.ledgerErr) { toast("已刷新"); } }); });
 
   /* ================= 世界线 ================= */
+  // 溯源：补写排的这段是照什么写的（抽到的哪一条 / 打算 / 作息 / 接着前面 / 自己想的）
+  var ORIGIN_LABELS = {
+    twist: "插曲", night_twist: "晚上的插曲", together: "两人一起", accident: "意外",
+    pastime: "消遣", idle: "闲着的样子", night_idle: "晚上闲着的样子",
+    intent: "打算", promise: "约定", rule: "规矩", training: "在练", routine: "作息",
+    "continue": "接着前面", self: "自己想的", unmatched: "说是抽到的、对不上"
+  };
+  var ORIGIN_DRAWN = { twist: 1, night_twist: 1, together: 1, accident: 1, pastime: 1, idle: 1, night_idle: 1 };
+  function worldOrigin(e) {
+    var o = e.origin;
+    if (e.source !== "step" || !o || !o.kind) { return null; }
+    var label = ORIGIN_LABELS[o.kind] || o.kind;
+    var text = o.text && o.kind !== "self" && o.kind !== "routine" && o.kind !== "promise" && o.kind !== "rule" ? "「" + o.text + "」" : "";
+    return h("span", { class: "tag" + (ORIGIN_DRAWN[o.kind] ? " acc" : ""), title: "补写说这段是照什么写的（抽到的已对照当天抽到的核过）", text: "来源：" + label + text });
+  }
   var WORLD_SRC = { chat: "对话", step: "补写", manual: "手动" };
   var WORLD_ERR = { recorder: "记录员", step: "幕间补写", review: "约束复核", loop: "后台循环" };
 
@@ -4088,6 +4103,7 @@
         withs.length ? h("span", { text: "和" + withs.join("、") + "一起" }) : null,
         seen.length ? h("span", { text: "细节也给：" + seen.join("、") }) : null,
         /^#?\d+$/.test(String(e.training || "").trim()) ? h("span", { class: "tag", text: "在练 #" + String(e.training).trim().replace(/^#/, "") }) : null,
+        worldOrigin(e),
         e.src_quote ? h("span", { text: "原话：" + e.src_quote }) : null)));
     var acts = h("div", { class: "la" });
     var edit = h("button", { class: "btn quiet sm", type: "button", title: "编辑" }, icon("edit"));

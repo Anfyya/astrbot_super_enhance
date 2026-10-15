@@ -267,6 +267,8 @@ class WorldStore:
             "intent": str(entry.get("intent") or "").strip() if kind != "event" else "",
             # 做到一半被打断、到此为止的：结束时刻不算做完
             "stopped": bool(entry.get("stopped")) and kind != "event",
+            # 补写排的段是照什么写的：{"kind", "text"}（见 step.origin_of）
+            "origin": clean_origin(entry.get("origin")),
             "created": str(entry.get("created") or fmt_time(self.now_local())),
         }
         if not entry.get("id"):
@@ -891,6 +893,13 @@ def step_index(entry: dict, pct) -> int:
         if passed < 0:
             return index
     return len(steps) - 1
+
+
+def clean_origin(value) -> dict | None:
+    """溯源：{"kind": 种类, "text": 原文}；没有返回 None。"""
+    if not isinstance(value, dict):
+        return None
+    return {"kind": str(value.get("kind") or "")[:20], "text": clean_text(value.get("text"), 80)}
 
 
 def result_text(entry: dict) -> str:

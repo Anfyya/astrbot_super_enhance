@@ -86,6 +86,7 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
 10. 两人在一起的时段，两边的 start/end 和共同的事要一致，with 互相写上对方的 key；对方手上的事还没做完的，别写成和她在一起。对方不在「这次要你写的」里时，她那段时间做什么以「她们此刻手上的事」和「已经排好、这次不改的」为准，你改不了：只有她那边写的也是这件事、也在这个地方，才能写成和她一起；不然就别把她写进来。
 11. 段里是在练「在练的事」里的某件，training 填它的编号（例如 "#2"）；不是在练就留空，不要往里写别的。
 12. 段里做的是「各自的打算」里她的某一条，intent 填那条的编号（例如 "i2"）；不是就留空。
+13. 每段写 from：这段是照上面哪一样写的。照「可能碰上的小事」「手边的消遣」「闲着的样子」「今天会碰上一件意外」里的某一样写的，照抄那一样的原文；照打算、约定、规矩、在练的事、作息（起床、三餐、睡觉）写的，写「打算」「约定」「规矩」「在练」「作息」；接着前面已经做过的某件事往下写的，写「接着：」再加那件事；都不是、自己想的，写「自己想的」。
 {world_notes}
 注意：**不要输出 intentions，也不要写任何「接下来打算」**。上面「各自的打算」里如果有，是之前说好要做的，照着走就行。
 
@@ -94,12 +95,61 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
 {{
   "end_current": {{"napcat": "{example_end}"}},
   "segments": {{
-    "napcat": [{{"start": "{example_start}", "end": "{example_end}", "place": "", "doing": "一句话写这件事", "steps": [{{"text": "第一步她手上在干什么", "minutes": 5}}, {{"text": "第二步", "minutes": 15}}, {{"text": "收尾：用过的东西收好、归位", "minutes": 5}}], "result": "这件事的结果", "idle": false, "importance": 2, "at_home": true, "meal": false, "public": "", "with": [], "training": "", "intent": ""}},
-               {{"start": "{example_end}", "end": "{example_end2}", "place": "", "doing": "下一件事", "steps": [{{"text": "第一步", "minutes": 10}}, {{"text": "收尾", "minutes": 5}}], "result": "这件事的结果", "idle": false, "importance": 2, "at_home": true, "meal": false, "public": "", "with": [], "training": "", "intent": ""}}],
+    "napcat": [{{"start": "{example_start}", "end": "{example_end}", "place": "", "doing": "一句话写这件事", "steps": [{{"text": "第一步她手上在干什么", "minutes": 5}}, {{"text": "第二步", "minutes": 15}}, {{"text": "收尾：用过的东西收好、归位", "minutes": 5}}], "result": "这件事的结果", "idle": false, "importance": 2, "at_home": true, "meal": false, "public": "", "with": [], "training": "", "intent": "", "from": "照上面哪一样写的"}},
+               {{"start": "{example_end}", "end": "{example_end2}", "place": "", "doing": "下一件事", "steps": [{{"text": "第一步", "minutes": 10}}, {{"text": "收尾", "minutes": 5}}], "result": "这件事的结果", "idle": false, "importance": 2, "at_home": true, "meal": false, "public": "", "with": [], "training": "", "intent": "", "from": "照上面哪一样写的"}}],
     "napcat2": []
   }}
 }}
 """
+
+
+# 溯源的种类（网页按这个显示）
+ORIGIN_LABELS = {
+    "twist": "插曲", "night_twist": "晚上的插曲", "together": "两人一起", "accident": "意外",
+    "pastime": "消遣", "idle": "闲着的样子", "night_idle": "晚上闲着的样子",
+    "intent": "打算", "promise": "约定", "rule": "规矩", "training": "在练", "routine": "作息",
+    "continue": "接着前面", "self": "自己想的", "unmatched": "说是抽到的、对不上", "": "没写",
+}
+ORIGIN_WORDS = {"打算": "intent", "约定": "promise", "规矩": "rule", "约束": "rule", "在练": "training",
+                "作息": "routine", "自己想的": "self"}
+
+
+def _squash(text) -> str:
+    """比对用：去掉空白和标点。"""
+    return "".join(ch for ch in str(text or "") if ch.isalnum())
+
+
+def origin_of(value, bot: str, seed, intent: str = "", training: str = "") -> dict:
+    """补写说的 from 对照当天抽到的核一遍：{"kind": 种类, "text": 那一条的原文或补写写的话}。
+    抽到的那几样按原文认（互相包含也算）；说了是抽到的却对不上，记成 unmatched，原话留着。"""
+    text = clean_text(value, 80)
+    if intent:
+        return {"kind": "intent", "text": intent}
+    if training:
+        return {"kind": "training", "text": training}
+    if not text:
+        return {"kind": "", "text": ""}
+    probe = _squash(text)
+    seed = seed if isinstance(seed, dict) else {}
+    pools = []
+    for key, kind in (("twists", "twist"), ("night_twists", "night_twist"), ("pastimes", "pastime"),
+                      ("idles", "idle"), ("night_idles", "night_idle")):
+        value = seed.get(key)
+        items = (value.get(bot) or []) if isinstance(value, dict) else (value or [])
+        pools.extend((kind, str(x)) for x in items if isinstance(items, list))
+    pools.extend(("together", str(x)) for x in seed.get("together") or [])
+    if seed.get("accident"):
+        pools.append(("accident", str(seed["accident"])))
+    for kind, item in pools:
+        squashed = _squash(item)
+        if squashed and probe and (probe == squashed or (len(probe) >= 4 and (probe in squashed or squashed in probe))):
+            return {"kind": kind, "text": item}
+    for word, kind in ORIGIN_WORDS.items():
+        if probe.startswith(word):
+            return {"kind": kind, "text": text}
+    if text.startswith("接着"):
+        return {"kind": "continue", "text": text[2:].lstrip("：:").strip()}
+    return {"kind": "unmatched", "text": text}
 
 
 class LifeStep:
@@ -746,6 +796,12 @@ class LifeStep:
         end_current = data.get("end_current") if isinstance(data.get("end_current"), dict) else {}
         bots = list(self.raw_log.enabled_bots())
         written, missed = {}, []
+        seed = None
+        if self.seed_log is not None:
+            try:
+                seed = (self.seed_log.load() or {}).get(date_text)
+            except Exception:
+                seed = None
         for bot, info in tasks.items():
             start = info["start"]
             if info["mode"] == "open":
@@ -793,6 +849,8 @@ class LifeStep:
                     seg_end = min(seg_end, cursor + datetime.timedelta(minutes=MAX_IDLE_MINUTES))
                 if until is not None:
                     seg_end = min(seg_end, until)
+                intent = "" if idle else self.intent_id(raw.get("intent"), bot)
+                training = self.training_id(raw.get("training"), bot)
                 entry = {
                     "who": bot,
                     "kind": "activity",
@@ -809,8 +867,10 @@ class LifeStep:
                     "meal": raw.get("meal"),
                     "public": raw.get("public"),
                     "with": with_list,
-                    "training": self.training_id(raw.get("training"), bot),
-                    "intent": "" if idle else self.intent_id(raw.get("intent"), bot),
+                    "training": training,
+                    "intent": intent,
+                    # 溯源：这段是照什么写的（抽到的哪一条 / 打算 / 作息 / 接着前面 / 自己想的），程序对照当天抽到的核过
+                    "origin": origin_of(raw.get("from"), bot, seed, intent=intent, training=training),
                     "seen_by": [bot] + with_list,
                     "source": "step",
                     "created": fmt_time(flat),
