@@ -92,6 +92,7 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
 13. 每段写 from：这段是照上面哪一样写的。照「可能碰上的小事」「手边的消遣」「闲着的样子」「今天会碰上一件意外」里的某一样写的，照抄那一样的原文；照打算、约定、规矩、在练的事、作息（起床、三餐、睡觉）写的，写「打算」「约定」「规矩」「在练」「作息」；接着前面已经做过的某件事往下写的，写「接着：」再加那件事；都不是、自己想的，写「自己想的」。
 14. 接着前面已经写过的事往下写时，前面写定的东西照原样沿用：写过的内容、放在哪、做出来的是什么，都和前面写的一致。
 {world_notes}
+{step_notes}
 注意：**不要输出 intentions，也不要写任何「接下来打算」**。上面「各自的打算」里如果有，是之前说好要做的，照着走就行。
 
 输出 JSON（end_current 只给上面说了「先定做完时刻」的人写）：
@@ -230,6 +231,15 @@ class LifeStep:
         if not lines:
             return ""
         return "12. 故事里的固定事实（照着写，不要写出和它冲突的事）：\n" + "\n".join("   - " + x for x in lines)
+
+    @property
+    def step_notes(self) -> str:
+        """配置里写给补写的注意事项，一行一条；只有补写的提示词会带，主模型和记录员看不到。"""
+        text = str(self.cfg.get("step_notes") or "").strip()
+        lines = [x.strip().lstrip("-• ").strip() for x in text.splitlines() if x.strip()]
+        if not lines:
+            return ""
+        return "补写注意事项（只给你看，务必照做）：\n" + "\n".join("   - " + x for x in lines)
 
     @staticmethod
     def _seed_text(seed: dict, labels: dict, night: bool = False) -> str:
@@ -676,6 +686,7 @@ class LifeStep:
             ),
             seed_text=seed_text,
             world_notes=self.world_notes,
+            step_notes=self.step_notes,
             routine_block=self._routine_block(bots, now),
             context_block=self._context_block(bots, now, tasks),
             task_block=self._task_block(tasks),
