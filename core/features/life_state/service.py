@@ -68,6 +68,11 @@ TRAINING_FILE_NAME = "trainings.json"
 TRAINING_NOTICE_HOURS = 48
 # 约定注入时往后看几天
 PROMISE_LOOKAHEAD_DAYS = 7
+# 世界线块最后的一句：别每句都复述手上在干什么（问起 / 相关时照说）
+NO_REPEAT_NOTE = (
+    "（不要总复述你当前在干什么。手上在做的事前面已经跟主人说过了，就别每句都再提一遍；"
+    "主人问起、或者跟他说的事正好有关时，再顺口说一句。）"
+)
 # 当天约定过了这么多分钟还没关，就在注入里标「时间已过」
 PROMISE_OVERDUE_MINUTES = 120
 
@@ -362,6 +367,9 @@ class LifeStateService:
             blocks.append(self._training_text(bot, now))
         except Exception:
             logger.warning("[super_enhance/life] 在练的事注入失败", exc_info=True)
+        if head and self.cfg.get("world_no_repeat", True):
+            # 放在整块最后、紧挨着世界线：不然她每句都捎带「我手上正在干嘛」（2026-10-15 测过，放人设里没用）
+            blocks.append(NO_REPEAT_NOTE)
         return "\n".join(x for x in blocks if x)
 
     def state_for_planner(self, bot: str, date_text: str):

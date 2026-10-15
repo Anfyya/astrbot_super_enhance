@@ -333,6 +333,12 @@
                 "hint": "聊天时把今天最近几条世界线条目给模型看。",
                 "default": 12
             },
+            "world_no_repeat": {
+                "description": "别总复述手上在干什么",
+                "type": "bool",
+                "hint": "世界线最后加一句：手上在做的事说过了就别每句都提，主人问起或正好相关时再说。关掉她会每句都捎带一句在干嘛。",
+                "default": true
+            },
             "world_enabled": {
                 "description": "幕间补写",
                 "type": "bool",
