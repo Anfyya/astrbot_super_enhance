@@ -17,7 +17,7 @@ from astrbot.api import logger
 
 from .models import extract_json
 from .recorder import norm_time
-from .variety import twists_of
+from .variety import default_pools, twists_of, when_map, with_when
 from .world import (WorldStore, clean_text, fmt_time, is_event, is_sleep, parse_steps, parse_time, progress_of, result_text,
                     steps_text)
 
@@ -90,6 +90,7 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
 11. 段里是在练「在练的事」里的某件，training 填它的编号（例如 "#2"）；不是在练就留空，不要往里写别的。
 12. 段里做的是「各自的打算」里她的某一条，intent 填那条的编号（例如 "i2"）；不是就留空。
 13. 每段写 from：这段是照上面哪一样写的。照「可能碰上的小事」「手边的消遣」「闲着的样子」「今天会碰上一件意外」里的某一样写的，照抄那一样的原文；照打算、约定、规矩、在练的事、作息（起床、三餐、睡觉）写的，写「打算」「约定」「规矩」「在练」「作息」；接着前面已经做过的某件事往下写的，写「接着：」再加那件事；都不是、自己想的，写「自己想的」。
+14. 接着前面已经写过的事往下写时，前面写定的东西照原样沿用：写过的内容、放在哪、做出来的是什么，都和前面写的一致。
 {world_notes}
 注意：**不要输出 intentions，也不要写任何「接下来打算」**。上面「各自的打算」里如果有，是之前说好要做的，照着走就行。
 
@@ -250,6 +251,10 @@ class LifeStep:
                 "- %s感情很好：不写她们之间吵架、闹别扭、冷战或互相误会。" % "和".join(names)
             )
         per_bot, together = twists_of(seed, night)
+        # 只在特定时候才做得自然的插曲带上「什么时候」；老种子没存就按默认池子查
+        when = seed.get("when") if isinstance(seed.get("when"), dict) else when_map(default_pools())
+        per_bot = {bot: [with_when(x, when) for x in items] for bot, items in per_bot.items()}
+        together = [with_when(x, when) for x in together]
         rows = ["%s：%s" % (labels.get(bot) or bot, "；".join(items)) if bot else "；".join(items)
                 for bot, items in per_bot.items() if items and (not bot or bot in labels)]
         if together:

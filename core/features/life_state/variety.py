@@ -284,16 +284,24 @@ POOL_LABELS = {"twists": "白天的插曲", "night_twists": "晚上的插曲", "
 POOL_TEXT_MAX = 80
 POOL_GROUP_MAX = 12
 POOL_WEIGHT_MAX = 5.0
+POOL_WHEN_MAX = 20
+# 只在特定时候才做得自然的那几条：补写看到的是「插曲（什么时候）」，排进对的时段，
+# 不用为了塞进别的时段把内容扭成别的事（10-15「学做一道新菜」被排进下午，补写把它改成了点心）
+DEFAULT_WHEN = {
+    "学做一道新菜，认真尝了好几遍味道": "三餐做饭的时候",
+}
 
 
 def default_pools() -> dict:
     def per(rows):
-        return [{"text": t, "w": dict(zip(TWIST_PEOPLE, ws)), "group": _DEFAULT_GROUP.get(t, "")} for t, *ws in rows]
+        return [{"text": t, "w": dict(zip(TWIST_PEOPLE, ws)), "group": _DEFAULT_GROUP.get(t, ""),
+                 "when": DEFAULT_WHEN.get(t, "")} for t, *ws in rows]
 
     return {
         "twists": per(TWISTS),
         "night_twists": per(NIGHT_TWISTS),
-        "together": [{"text": t, "w": w, "group": _DEFAULT_GROUP.get(t, "")} for t, w in TOGETHER_TWISTS],
+        "together": [{"text": t, "w": w, "group": _DEFAULT_GROUP.get(t, ""), "when": DEFAULT_WHEN.get(t, "")}
+                     for t, w in TOGETHER_TWISTS],
         "pastimes": per(PASTIMES),
         "idles": per(IDLES),
         "night_idles": per(NIGHT_IDLES),
@@ -334,7 +342,10 @@ def clean_pool_item(kind: str, item: dict) -> dict:
             raise ValueError("至少给一个人一个大于 0 的权重")
     if kind == "together" and weight <= 0:
         raise ValueError("权重要大于 0")
-    return {"text": text, "w": weight, "group": group}
+    when = re.sub(r"\s+", " ", str(item.get("when") or "")).strip()
+    if len(when) > POOL_WHEN_MAX:
+        raise ValueError("「什么时候」太长（最多 %d 字）" % POOL_WHEN_MAX)
+    return {"text": text, "w": weight, "group": group, "when": when}
 
 
 def normalize_pools(data) -> dict:
@@ -357,6 +368,16 @@ def normalize_pools(data) -> dict:
                 clean.append(item)
         out[kind] = clean
     return out
+
+
+def when_map(pools: dict) -> dict:
+    """池子里写了「什么时候」的那几条：{原文: 什么时候}。"""
+    return {item["text"]: item["when"] for kind in POOL_KINDS for item in pools.get(kind) or [] if item.get("when")}
+
+
+def with_when(text: str, when: dict) -> str:
+    """插曲给补写看的样子：带上什么时候做（没写就原样）。"""
+    return "%s（%s）" % (text, when[text]) if when.get(text) else text
 
 
 def group_map(pools: dict) -> dict:
@@ -809,6 +830,8 @@ def draw_seed(
         "night_idles": night_idles,
         "moods": moods,
         "accident": accident,
+        "when": {t: w for t, w in when_map(pools).items()
+                 if any(t in items for items in (*twists.values(), *night_twists.values(), together))},
     }
 
 

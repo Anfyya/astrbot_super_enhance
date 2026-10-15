@@ -650,7 +650,10 @@ class ContextPageApi:
                 note = "加了"
             elif action == "update":
                 index = located()
-                item = variety.clean_pool_item(kind, payload.get("item"))
+                raw = payload.get("item")
+                if isinstance(raw, dict) and "when" not in raw:
+                    raw = dict(raw, when=rows[index].get("when") or "")  # 网页没有这一栏：改别的时候留着原来的
+                item = variety.clean_pool_item(kind, raw)
                 if exists(rows, item["text"], index):
                     raise ValueError("这个池子里已经有这一条了")
                 rows[index] = item
