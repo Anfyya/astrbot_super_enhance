@@ -152,6 +152,7 @@ def build_world_text(
     # 「你现在」= 覆盖此刻的那段事（顺带的事不算），带上做到百分之几；
     # 分了步的只给到正在做的那步，后面的和结局不给
     own_now = world.current(viewer, now)
+    above = own_now  # 上面「你现在 / 你最近」已经写了的那段，下面「你今天」不再重复
     if own_now is not None:
         # 闲着的不算进度
         pct = None if own_now.get("idle") else progress_of(own_now, now)
@@ -159,6 +160,7 @@ def build_world_text(
             staged_of(own_now, now) or "（没写）", _when(own_now), "，做了 %d%%" % pct if pct is not None else ""))
     else:
         last = world.last_activity(viewer, now)
+        above = last
         if last is not None:
             lines.append("你最近：%s%s（%s，已经做完）" % (detail_of(last) or "（没写）", result_text(last), _when(last)))
 
@@ -178,8 +180,12 @@ def build_world_text(
 
     tail = merge_close(raw)[-max(2, int(recent or 12)):]
     if tail:
-        lines.append("你今天：")
+        today_lines = []
         for item in tail:
+            if above is not None and not is_event(item) and (
+                str(item.get("id")) == str(above.get("id")) and str(item.get("start")) == str(above.get("start"))
+            ):
+                continue  # 上面已经写过，同一段写两遍会被当成要特别提的事，一遍遍挂在嘴边
             going = own_now is not None and str(item.get("id")) == str(own_now.get("id"))
             # 做完了的才带结果；正在做的只给到当前这一步
             ended = parse_time(item.get("end")) if item.get("end") else None
@@ -187,11 +193,14 @@ def build_world_text(
             text = _clip_tail(staged_of(item, now) if going else detail_of(item) + (result_text(item) if done else ""))
             if text:
                 if is_event(item):
-                    lines.append("- %s（顺带）%s" % (str(item.get("start"))[5:16], text))
+                    today_lines.append("- %s（顺带）%s" % (str(item.get("start"))[5:16], text))
                     continue
                 # 没写结束的那条到下一条开始为止；只有最后一条才算「起」
                 shown = dict(item, end=item.get("end") or item.get("_eff_end") or "")
-                lines.append("- %s %s" % (_span(shown), text))
+                today_lines.append("- %s %s" % (_span(shown), text))
+        if today_lines:
+            lines.append("你今天：")
+            lines.extend(today_lines)
 
     for item in world.intentions(viewer):
         lines.append("你说过的打算：%s%s" % (item.get("text"), "（%s）" % item.get("window") if item.get("window") else ""))
