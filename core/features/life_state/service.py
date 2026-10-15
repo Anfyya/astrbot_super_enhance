@@ -50,7 +50,7 @@ from .reviewer import DailyReviewer
 from .scene import SharedScene, build_injection
 from .store import StateStore
 from .variety import PoolStore, SeedLog
-from .world import WorldStore, fmt_time, is_event, parse_time
+from .world import WorldStore, fmt_time, is_event, is_sleep, parse_time
 from .recorder import Recorder
 from .step import LifeStep
 from .view import build_world_text
@@ -590,7 +590,7 @@ class LifeStateService:
 
     def _worth_telling(self, bot: str, item: dict) -> bool:
         """做完的这件值不值得叫她跟主人说：睡觉、闲着不算；重要程度要够设置里的线。"""
-        if any(word in str(item.get("doing") or "") for word in ("睡觉", "睡下", "入睡", "睡着")):
+        if is_sleep(item):
             return False  # 睡醒由早安那条管
         if item.get("idle"):
             return False  # 闲着到头不算做完一件事

@@ -15,7 +15,7 @@ import re
 from astrbot.api import logger
 
 from .models import bot_of_umo, extract_json
-from .world import WorldStore, clean_text, fmt_time, is_event, parse_time, progress_of, result_text, steps_text
+from .world import WorldStore, clean_text, fmt_time, is_event, is_sleep, parse_time, progress_of, result_text, steps_text
 
 SYSTEM_PROMPT = (
     "你只输出一个可以被 JSON 解析的对象，不要输出解释、Markdown 代码块或任何多余文本。"
@@ -325,7 +325,7 @@ class Recorder:
                 cur.get("id"),
                 "（补写排的）" if str(cur.get("source") or "") == "step" else "（主人让做的）" if cur.get("asked") else "",
                 self.label(bot) or bot, bot, cur.get("place") or "", clean_text(cur.get("doing"), 400),
-                "（闲着，没在做具体的事）" if cur.get("idle") else steps_text(cur) + result_text(cur),
+                "（闲着，没在做具体的事）" if cur.get("idle") else "（在睡觉）" if is_sleep(cur) else steps_text(cur) + result_text(cur),
                 str(cur.get("start"))[11:16],
                 "，预计 %s 做完" % str(cur.get("end"))[11:16] if cur.get("end") else "",
                 "，做了 %d%%" % pct if pct is not None else "",

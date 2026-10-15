@@ -18,7 +18,8 @@ from astrbot.api import logger
 from .models import extract_json
 from .recorder import norm_time
 from .variety import twists_of
-from .world import WorldStore, clean_text, fmt_time, is_event, parse_steps, parse_time, progress_of, result_text, steps_text
+from .world import (WorldStore, clean_text, fmt_time, is_event, is_sleep, parse_steps, parse_time, progress_of, result_text,
+                    steps_text)
 
 SYSTEM_PROMPT = (
     "你只输出一个可以被 JSON 解析的对象，不要输出解释、Markdown 代码块或任何多余文本。"
@@ -73,12 +74,14 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
 规则：
 
 1. 只写「这次要你写的」里列出的人。每人从上面给的时刻开始，按时间顺序写几段，首尾相接、不重叠；最后一段的结束时间必须晚于现在（{now}）。一次最多写到 {horizon} 左右，不要把后面一整天都写完（睡觉那段除外，可以一直写到第二天起床）。
-2. **一段只写一件事**：doing 只写这件事是什么（一句话），result 写这件事最后的结果（修好了没、找着没、谁赢了这类，一句；不算一步、没有分钟；闲着和睡觉不写），不要把几件事用「然后」「又」「再」串在同一段里。steps 把这件事按先后分成 1–5 步，每步写 text（一句，到那一步时她手上在干什么）和 minutes（这一步按常理要几分钟）；最后一步是收尾，这件事用过的东西收好、归位都写在这一步里，做完就接着做下一件事。**这段做多久就是各步 minutes 加起来**，程序按它算结束时间，end 照着算好写上就行（洗碗十来分钟、吃饭二三十分钟、看书一两个小时……）；闲着和睡觉不写 steps，end 照常写。每段都是一件要花些工夫的事。上面今天已经做过的事，别再原样做一遍。
-3. **没事就写闲着**：她手上没有打算、约定、规矩要做的事，也没什么想做的，就写一段闲着，idle 填 true：doing 照上面「闲着的样子」里她的写，steps 留空。闲着一段最长一小时，歇够了就接着写下一件事（也可以再歇一段）。不是闲着的段 idle 填 false。
-   拿起「手边的消遣」来做不算闲着：idle 填 false，照常写 steps，result 写做到哪了（看到哪、织了多少）；做到一半去忙别的，回头可以接着做。
-4. 每段写 importance（1–5）：这件事做完值不值得跟主人说一声。1 是天天都做的小事（洗碗、走路、收拾东西、把东西搁好）；2 是平常的事（吃饭、洗衣裳、看书）；3 是有点意思的事（出门逛街、去泡足汤、买点心）；4 是做成了一件像样的事、或碰上了新鲜事（修好了东西、捡到稀奇的东西、有人上门托事）；5 是难得的大事（练成一招、碰上意外）。闲着和睡觉写 1。
+2. **一段只写一件事**：doing 只写这件事是什么（一句话），result 写这件事最后的结果（修好了没、找着没、谁赢了这类，一句；不算一步、没有分钟；state 是「闲着」「睡觉」的段不写），不要把几件事用「然后」「又」「再」串在同一段里。steps 把这件事按先后分成 1–5 步，每步写 text（一句，到那一步时她手上在干什么）和 minutes（这一步按常理要几分钟）；最后一步是收尾，这件事用过的东西收好、归位都写在这一步里，做完就接着做下一件事。**这段做多久就是各步 minutes 加起来**，程序按它算结束时间，end 照着算好写上就行（洗碗十来分钟、吃饭二三十分钟、看书一两个小时……）；state 是「闲着」「睡觉」的段不写 steps，end 照常写。每段都是一件要花些工夫的事。上面今天已经做过的事，别再原样做一遍。
+3. **每段写 state，三选一**：「做事」「闲着」「睡觉」。
+   - 没事就写闲着：她手上没有打算、约定、规矩要做的事，也没什么想做的，就写一段闲着，state 填「闲着」：doing 照上面「闲着的样子」里她的写，steps 留空。闲着一段最长一小时，歇够了就接着写下一件事（也可以再歇一段）。
+   - 拿起「手边的消遣」来做是做事：state 填「做事」，照常写 steps，result 写做到哪了（看到哪、织了多少）；做到一半去忙别的，回头可以接着做。
+   - 睡觉 state 填「睡觉」（见第 5 条）。其余的段都填「做事」。
+4. 每段写 importance（1–5）：这件事做完值不值得跟主人说一声。1 是天天都做的小事（洗碗、走路、收拾东西、把东西搁好）；2 是平常的事（吃饭、洗衣裳、看书）；3 是有点意思的事（出门逛街、去泡足汤、买点心）；4 是做成了一件像样的事、或碰上了新鲜事（修好了东西、捡到稀奇的东西、有人上门托事）；5 是难得的大事（练成一招、碰上意外）。闲着、睡觉写 1。
    每段还要写 at_home 和 meal：at_home 是这段她人在不在宿舍（屋里、院子、廊下、门口、后头小屋都算 true；出了宿舍去别处、走在路上都算 false）；meal 是这段是不是正在吃饭（吃早饭午饭晚饭、夜宵算 true；做饭、摆碗筷、洗碗都不算）。
-5. 睡觉也是一段：到了她今天定的入睡时刻，就写一段睡觉，从入睡时刻一直写到第二天定的起床时刻；睡前那段要在入睡时刻结束。
+5. 睡觉也是一段：到了她今天定的入睡时刻，就写一段睡觉，state 填「睡觉」，从入睡时刻一直写到第二天定的起床时刻；睡前那段要在入睡时刻结束。
 6. 下面「还没做的约定」里有钟点的：到那个钟点她要已经在约定的地方、和约定的人在一起。要换地方的，在那之前写一段赶过去，留足路上的工夫；约定那件事从约定的钟点开始写。
 7. **不许生成主人的条目，也不许替主人编他做了什么、说了什么。** 主人在哪只看「主人最近的动向」：他最后说在哪、之后没说离开，就当他还在那儿，她们可以待在他身边、在他旁边做自己的事；他说了出门、去上课、睡了这类，就照那个写，别写他在场。
 8. 约束优先级最高：写着不许出门的，这段时间就得在屋里。
@@ -95,8 +98,8 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
 {{
   "end_current": {{"napcat": "{example_end}"}},
   "segments": {{
-    "napcat": [{{"start": "{example_start}", "end": "{example_end}", "place": "", "doing": "一句话写这件事", "steps": [{{"text": "第一步她手上在干什么", "minutes": 5}}, {{"text": "第二步", "minutes": 15}}, {{"text": "收尾：用过的东西收好、归位", "minutes": 5}}], "result": "这件事的结果", "idle": false, "importance": 2, "at_home": true, "meal": false, "public": "", "with": [], "training": "", "intent": "", "from": "照上面哪一样写的"}},
-               {{"start": "{example_end}", "end": "{example_end2}", "place": "", "doing": "下一件事", "steps": [{{"text": "第一步", "minutes": 10}}, {{"text": "收尾", "minutes": 5}}], "result": "这件事的结果", "idle": false, "importance": 2, "at_home": true, "meal": false, "public": "", "with": [], "training": "", "intent": "", "from": "照上面哪一样写的"}}],
+    "napcat": [{{"start": "{example_start}", "end": "{example_end}", "place": "", "doing": "一句话写这件事", "steps": [{{"text": "第一步她手上在干什么", "minutes": 5}}, {{"text": "第二步", "minutes": 15}}, {{"text": "收尾：用过的东西收好、归位", "minutes": 5}}], "result": "这件事的结果", "state": "做事", "importance": 2, "at_home": true, "meal": false, "public": "", "with": [], "training": "", "intent": "", "from": "照上面哪一样写的"}},
+               {{"start": "{example_end}", "end": "{example_end2}", "place": "", "doing": "下一件事", "steps": [{{"text": "第一步", "minutes": 10}}, {{"text": "收尾", "minutes": 5}}], "result": "这件事的结果", "state": "做事", "importance": 2, "at_home": true, "meal": false, "public": "", "with": [], "training": "", "intent": "", "from": "照上面哪一样写的"}}],
     "napcat2": []
   }}
 }}
@@ -150,6 +153,19 @@ def origin_of(value, bot: str, seed, intent: str = "", training: str = "") -> di
     if text.startswith("接着"):
         return {"kind": "continue", "text": text[2:].lstrip("：:").strip()}
     return {"kind": "unmatched", "text": text}
+
+
+STATE_WORDS = {"做事": "do", "do": "do", "闲着": "idle", "idle": "idle", "睡觉": "sleep", "sleep": "sleep"}
+
+
+def state_of(raw: dict) -> str:
+    """补写给的 state（做事 / 闲着 / 睡觉）→ do / idle / sleep。没给就看老字段 idle，再没有就按 doing 的字认睡觉。"""
+    state = STATE_WORDS.get(str(raw.get("state") or "").strip().lower())
+    if state:
+        return state
+    if raw.get("idle") is True or str(raw.get("idle")).strip().lower() == "true":
+        return "idle"
+    return "sleep" if is_sleep({"doing": raw.get("doing")}) else "do"
 
 
 class LifeStep:
@@ -497,7 +513,7 @@ class LifeStep:
             pct = None if cur.get("idle") else progress_of(cur, flat)
             now_lines.append("- %s：%s %s%s（%s 起%s%s）" % (
                 self.label(bot) or bot, cur.get("place") or "", cur.get("doing") or "",
-                "（闲着）" if cur.get("idle") else steps_text(cur) + result_text(cur),
+                "（闲着）" if cur.get("idle") else "（睡着）" if is_sleep(cur) else steps_text(cur) + result_text(cur),
                 str(cur.get("start"))[11:16],
                 "，预计 %s 做完" % str(cur.get("end"))[11:16] if cur.get("end") else "，还没定什么时候做完",
                 "，做了 %d%%" % pct if pct is not None else "",
@@ -776,13 +792,8 @@ class LifeStep:
         finally:
             self.running = False
 
-    @staticmethod
-    def _sleepy(doing) -> bool:
-        return any(word in str(doing or "") for word in ("睡", "就寝", "歇下"))
-
-    def _limit(self, start: datetime.datetime, end, doing: str) -> datetime.datetime:
-        """结束时间缺了、早于开始、或长得离谱时规整一下。"""
-        sleepy = self._sleepy(doing)
+    def _limit(self, start: datetime.datetime, end, sleepy: bool) -> datetime.datetime:
+        """结束时间缺了、早于开始、或长得离谱时规整一下（睡觉那段放宽到 MAX_SLEEP_HOURS）。"""
         cap = datetime.timedelta(hours=MAX_SLEEP_HOURS if sleepy else MAX_SEGMENT_HOURS)
         if end is None or end <= start:
             return start + datetime.timedelta(minutes=45)
@@ -816,7 +827,7 @@ class LifeStep:
                 floor = flat + datetime.timedelta(minutes=5)
                 if end is None or end < floor:
                     end = floor
-                end = self._limit(cur_start, end, cur.get("doing"))
+                end = self._limit(cur_start, end, is_sleep(cur))
                 self.world.update_entry(
                     self.world.date_of(cur.get("id"), bot, flat) or cur_start.date().isoformat(),
                     cur.get("id"), end=fmt_time(end),
@@ -839,12 +850,13 @@ class LifeStep:
                     later = seg_end + datetime.timedelta(days=1)
                     seg_end = later if later > cursor else None
                 with_list = [str(x) for x in (raw.get("with") or []) if str(x) in bots and str(x) != bot]
-                idle = raw.get("idle") is True or str(raw.get("idle")).strip().lower() == "true"
+                state = state_of(raw)
+                idle, sleep = state == "idle", state == "sleep"
                 # 分了步、写了各步分钟的：这段做多久就是分钟加起来，模型写的 end 不算（闲着、睡觉除外）
                 _texts, minutes = parse_steps(raw.get("steps"))
-                if minutes and not idle and not self._sleepy(raw.get("doing")):
+                if minutes and state == "do":
                     seg_end = cursor + datetime.timedelta(minutes=sum(minutes))
-                seg_end = self._limit(cursor, seg_end, raw.get("doing"))
+                seg_end = self._limit(cursor, seg_end, sleep)
                 if idle:
                     seg_end = min(seg_end, cursor + datetime.timedelta(minutes=MAX_IDLE_MINUTES))
                 if until is not None:
@@ -859,9 +871,10 @@ class LifeStep:
                     "end": fmt_time(seg_end),
                     "place": raw.get("place"),
                     "doing": raw.get("doing"),
-                    "steps": None if idle else raw.get("steps"),
-                    "result": None if idle else raw.get("result"),
+                    "steps": None if state != "do" else raw.get("steps"),
+                    "result": None if state != "do" else raw.get("result"),
                     "idle": idle,
+                    "sleep": sleep,
                     "importance": raw.get("importance"),
                     "at_home": raw.get("at_home"),
                     "meal": raw.get("meal"),

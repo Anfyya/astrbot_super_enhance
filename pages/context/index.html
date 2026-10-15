@@ -4089,6 +4089,7 @@
         future ? h("span", { class: "tag", style: "margin-left:6px", text: "接下来" }) : null,
         isEvent ? h("span", { class: "tag", style: "margin-left:6px", text: "顺带" }) : null,
         e.idle ? h("span", { class: "tag", style: "margin-left:6px", text: "闲着" }) : null,
+        e.sleep ? h("span", { class: "tag", style: "margin-left:6px", text: "睡觉" }) : null,
         e.at_home === false ? h("span", { class: "tag", style: "margin-left:6px", text: "在外面" }) : null,
         e.meal ? h("span", { class: "tag", style: "margin-left:6px", text: "吃饭" }) : null,
         +e.importance > 0 ? h("span", { class: "tag" + (+e.importance >= (S.world.done_min || 4) ? " acc" : ""), style: "margin-left:6px",

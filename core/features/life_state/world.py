@@ -267,6 +267,9 @@ class WorldStore:
             "intent": str(entry.get("intent") or "").strip() if kind != "event" else "",
             # 做到一半被打断、到此为止的：结束时刻不算做完
             "stopped": bool(entry.get("stopped")) and kind != "event",
+            # 睡觉那段（补写给的 state=睡觉）：一直到起床，不算闲着，做完不叫她。
+            # 记录员、网页写的不带这个字段，留 None，is_sleep 按 doing 的字认
+            "sleep": None if entry.get("sleep") is None or kind == "event" else bool(entry.get("sleep")),
             # 补写排的段是照什么写的：{"kind", "text"}（见 step.origin_of）
             "origin": clean_origin(entry.get("origin")),
             "created": str(entry.get("created") or fmt_time(self.now_local())),
@@ -302,6 +305,8 @@ class WorldStore:
                 item["idle"] = bool(fields["idle"])
             if fields.get("stopped") is not None:
                 item["stopped"] = bool(fields["stopped"])
+            if fields.get("sleep") is not None:
+                item["sleep"] = bool(fields["sleep"])
             if fields.get("importance") is not None:
                 item["importance"] = clean_importance(fields["importance"])
             if fields.get("at_home") is not None:
@@ -893,6 +898,17 @@ def step_index(entry: dict, pct) -> int:
         if passed < 0:
             return index
     return len(steps) - 1
+
+
+SLEEP_WORDS = ("睡", "就寝", "歇下")
+
+
+def is_sleep(entry: dict) -> bool:
+    """这段是不是睡觉：有 sleep 字段（补写给的 state）就看它；老条目没有，按 doing 里的字认。"""
+    entry = entry or {}
+    if "sleep" in entry and entry.get("sleep") is not None:
+        return bool(entry.get("sleep"))
+    return any(word in str(entry.get("doing") or "") for word in SLEEP_WORDS)
 
 
 def clean_origin(value) -> dict | None:
