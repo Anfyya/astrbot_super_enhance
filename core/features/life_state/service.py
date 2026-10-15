@@ -320,6 +320,22 @@ class LifeStateService:
                         out.append("%s %s 撤掉" % (item.get("id"), str(item.get("doing") or "")[:20]))
         return out
 
+    def tool_recall(self, umo: str, keyword: str = "", date: str = "", time: str = "", entry: str = "") -> str:
+        """回想工具：按关键词 / 日期 / 时间搜世界线（只列简短的几条）；填了 entry 就看那一条当时准确的世界线。"""
+        if self.world_mode != "live":
+            return "世界线没开，翻不到。"
+        bot = bot_of_umo(umo)
+        if not bot:
+            return "认不出你是谁，翻不到。"
+        from . import recall
+
+        now = self._now()
+        if str(entry or "").strip():
+            return recall.detail(self.world, bot, self.scene.label_for, now, entry, date)
+        if not any(str(x or "").strip() for x in (keyword, date, time)):
+            return "关键词、日期、时间至少填一样。"
+        return recall.search(self.world, bot, self.scene.label_for, now, keyword, date, time)
+
     def world_text(self, bot: str, now: datetime.datetime) -> str:
         """live 时给模型的【世界线】块：线 + 约定 + 在练的事 + 能力清单。"""
         if self.world_mode != "live":

@@ -168,6 +168,7 @@ class SuperEnhance(Star):
             ("make_promise", self.life.promise_enabled and not live),
             ("close_promise", self.life.promise_enabled and not live),
             ("start_doing", self.life.enabled and live),
+            ("recall", self.life.enabled and live),
             ("tell", self.life.enabled),
         ):
             try:
@@ -736,6 +737,26 @@ class SuperEnhance(Star):
         return self.life.start_now(
             getattr(event, "unified_msg_origin", "") or "", what, minutes, place, result
         )
+
+    @filter.llm_tool(name="recall")
+    async def recall(
+        self, event: AstrMessageEvent, keyword: str = "", date: str = "", time: str = "", entry: str = ""
+    ) -> str:
+        """回想以前的事：翻世界线，看你（和她们）那时候在哪、在做什么。想不起来、说不准的时候用，别凭印象编。
+
+        先搜：keyword、date、time 填一样或几样，得到简短的几条，每条前面有编号；
+        再看：entry 填其中一条的编号，看那一刻准确的世界线（那段的分步和结果、前后的事、同一时候别人在干什么）。
+
+        Args:
+            keyword (string): 关键词，几个词用空格隔开，都要对上。
+            date (string): 哪天：今天 / 昨天 / 前天 / 3天前 / 10-14。
+            time (string): 什么时候：凌晨 / 上午 / 下午 / 晚上 / 15:00-17:00 / 15:00。
+            entry (string): 搜出来的某一条的编号，填了就看那一条当时的世界线。
+
+        Returns:
+            翻到的世界线。
+        """
+        return self.life.tool_recall(getattr(event, "unified_msg_origin", "") or "", keyword, date, time, entry)
 
     # ------------------------------------------------------------------
     # 10. Laya 判定服务（本机容器，调试命令）

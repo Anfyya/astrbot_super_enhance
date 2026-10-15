@@ -21,18 +21,23 @@
 | ③ `msg_time` | 给 AI 自己的消息盖真实发送时间，并剥掉模型模仿的时间戳 |
 | ④ `context_tools` | `/usage`、`/compact`、`/compact v2`，上下文超限守卫，报错换成角色口吻 |
 | ⑤ `cross_session` | 跨会话 / 主动对话发出去的话补进对应会话历史 |
-| ⑥ `life_state` | 世界线（记录员 / 幕间补写 / 注入）、主动对话、能力与约定、在练的事、`start_doing` |
+| ⑥ `life_state` | 世界线（记录员 / 幕间补写 / 注入）、主动对话、能力与约定、在练的事、`start_doing`、`recall` |
 | ⑦ `reply_guard` | 新消息优先：回复还没发出去时又来了消息，就丢掉上一轮重答 |
 | ⑧ `cron_context` | 主动对话（cron）只带最近一段纯对话，省 token |
 | ⑩ `bot_dialog` | 两个机器人互聊的节奏、跨会话记录、委托回报、`tell` 传话、发消息 / tell 的说明 |
 | ⑪ `request_snapshot` | 保存每次真实发给模型的请求（面板「上下文」页查看） |
 
-（面板里没有 ⑨：「现在去做」并进了 ⑥——世界线 live 时才给模型 `start_doing`。）
+（面板里没有 ⑨：「现在去做」并进了 ⑥——世界线 live 时才给模型 `start_doing`、`recall`。）
 
 工具可见性跟着开关走：关掉的功能不暴露给模型；世界线 live 之后，本插件只给模型
-`stay_silent`、`tell`、`start_doing` 三个工具（状态改由程序维护，`get_full_dynamic_life_state` /
+`stay_silent`、`tell`、`start_doing`、`recall` 四个工具（状态改由程序维护，`get_full_dynamic_life_state` /
 `revise_life_state` / `update_my_scene` / `record_master_scene` / `record_ability` /
 `training` / `make_promise` / `close_promise` 全部收起）。长期记忆用 livingmemory 原生的召回和注入。
+
+`recall`（回想）：注入的【世界线】只有今天最近几段，以前的事她自己翻。先按关键词 / 日期（今天、昨天、10-14）/
+时间（下午、15:00-17:00）搜，只列简短的几条、每条带编号（如 `10-15#e40`）；再填编号看那一刻准确的世界线：
+那段的分步和结果、前后各一件、同一时候别人在干什么、顺带的事。可见范围和注入一样（别人的按 seen_by 给细节或粗粒度），
+能翻多久以前取决于 `world_keep_days`。
 
 另有两处始终生效的底层补丁：**会话历史并发合并**（`history_merge.py`）和**每轮收尾**（`turn_state.py`）；
 主动消息那一轮的思考只留档、不发给模型（`proactive_think.py`），见文末。
