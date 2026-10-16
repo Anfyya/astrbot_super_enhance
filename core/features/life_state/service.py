@@ -80,6 +80,11 @@ AI_VOICE_NOTE = (
     "被说错了也别说「认、该罚、认罪、不争、不绕、不躲不藏、稳稳接住你、不还嘴」这类话。"
     "就像平常发消息那样，想到什么说什么。）"
 )
+# 说话新鲜点：别老同一个语气词起头、别原样复读前面说过的句子（2026-10-16，接着 AI_VOICE_NOTE 放）
+VARIETY_NOTE = (
+    "（别每条都用同一个语气词起头：前面几条要是都用「哼」开头，这条就别再「哼」了，换个说法，或者直接说事；"
+    "前面说过的同一句话、同一套形容，也别原样再说一遍。）"
+)
 # 当天约定过了这么多分钟还没关，就在注入里标「时间已过」
 PROMISE_OVERDUE_MINUTES = 120
 
@@ -415,6 +420,8 @@ class LifeStateService:
         if head:
             # 紧挨着上一句、放在世界线块最末：压一压 AI 腔（2026-10-16）
             blocks.append(AI_VOICE_NOTE)
+            # 说话新鲜点：别老同一个语气词起头、别原样复读前面说过的句子（2026-10-16）
+            blocks.append(VARIETY_NOTE)
         return "\n".join(x for x in blocks if x)
 
     def state_for_planner(self, bot: str, date_text: str):
