@@ -3899,7 +3899,7 @@
       h("div", { class: "w-rules" }, worldConstraintSection(d, who)),
       h("div", { class: "w-intent" }, worldIntentionSection(d, who)),
       h("div", { class: "w-main" }, worldTimelineSection(d, who)),
-      h("div", { class: "w-routine" }, worldRoutineSection(d, bot), worldStepNotesSection(d))));
+      h("div", { class: "w-routine" }, worldRoutineSection(d, bot), worldStepNotesSection(d), worldStepThoughtsSection(d))));
   }
 
   /* ---------- 顶上一行：选人 + 选日期 ---------- */
@@ -3923,6 +3923,19 @@
       S.worldDate = dsel.value; S.worldToTop = true; loadWorld();
     });
     bar.appendChild(dsel);
+    if (who !== "master") {
+      var fire = h("button", { class: "btn sm", type: "button", title: "立刻让她主动发一条消息（跳过「刚聊过就顺延」）" }, "现在发主动消息");
+      fire.addEventListener("click", function () {
+        if (fire.disabled) { return; }
+        fire.disabled = true;
+        post("ctx/fire_proactive", { bot: who }).then(function (r) {
+          toast((r && r.message) || "已排");
+        }).catch(function (e) {
+          toast("没排上：" + errMsg(e), { err: true });
+        }).then(function () { fire.disabled = false; });
+      });
+      bar.appendChild(fire);
+    }
     return bar;
   }
 
@@ -4393,6 +4406,27 @@
       card.appendChild(box);
     }
     sec.appendChild(card);
+    return sec;
+  }
+
+  /* ---------- 最近几次补写的思考 ---------- */
+  function worldStepThoughtsSection(d) {
+    var list = d.step_thoughts || [];
+    var sec = h("div", { class: "lsec" }, lsecHead("补写的思考", "最近几次幕间补写时模型在想什么"));
+    if (!list.length) {
+      sec.appendChild(h("div", { class: "pc" }, h("div", { class: "muted", style: "font-size:13px", text: "还没有记录，补写跑过一次后就有了。" })));
+      return sec;
+    }
+    list.forEach(function (it) {
+      var card = h("div", { class: "pc" });
+      card.appendChild(h("div", { class: "pc-s" },
+        h("span", { class: "when-b", text: String(it.at || "").slice(5) }),
+        it.ok ? "补写成功" : ("没写成：" + (it.note || ""))));
+      var body = h("div", { style: "font-size:12.5px;white-space:pre-wrap;color:var(--t2);line-height:1.55;max-height:200px;overflow:auto;margin-top:6px" });
+      body.textContent = String(it.thought || "").trim() || "（这次没有思考文本）";
+      card.appendChild(body);
+      sec.appendChild(card);
+    });
     return sec;
   }
 

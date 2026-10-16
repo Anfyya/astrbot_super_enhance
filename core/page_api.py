@@ -392,6 +392,7 @@ class ContextPageApi:
                 ],
                 "routine": world.all_routine(),
                 "step_notes": life.step_notes_text(),
+                "step_thoughts": life.step_thoughts(),
                 "day_plan": {bot: world.day_plan(bot, date_text) for bot in bots},
                 "bots": [
                     {"key": bot, "label": self._world_label(life, bot)} for bot in bots
@@ -571,6 +572,23 @@ class ContextPageApi:
             logger.error("[super_enhance/ctx] 手动发送失败", exc_info=True)
             return _err(exc)
 
+    async def fire_proactive(self):
+        """网页：立刻让她发一条主动消息（当前机器人）。"""
+        try:
+            body = await request.get_json() or {}
+        except Exception:
+            body = {}
+        bot = str(body.get("bot") or "").strip()
+        if not bot:
+            return _err(ValueError("缺少 bot"))
+        try:
+            msg = await self.plugin.life.planner.fire_now(bot)
+            logger.info("[super_enhance/ctx] 手动主动消息（%s）：%s", bot, msg)
+            return _ok({"message": msg})
+        except Exception as exc:
+            logger.error("[super_enhance/ctx] 手动主动消息失败", exc_info=True)
+            return _err(exc)
+
     # ---------- 插曲与消遣池 ----------
 
     async def pools_view(self):
@@ -729,6 +747,12 @@ class ContextPageApi:
             self.manual_send,
             ["POST"],
             "手动以 bot 身份发一条消息（运维）",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/fire_proactive",
+            self.fire_proactive,
+            ["POST"],
+            "立刻发一条主动消息",
         )
         register(
             f"{PAGE_API_PREFIX}/conversations",

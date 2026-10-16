@@ -249,6 +249,17 @@ class LifeStateService:
             logger.warning("[super_enhance/life] 保存补写注意事项失败", exc_info=True)
             return False
 
+    STEP_THOUGHTS_NAME = "step_thoughts.json"
+
+    def step_thoughts(self, limit: int = 3) -> list:
+        """最近几次补写的思考（网页「世界线」页展示的话）。"""
+        try:
+            data = json.loads((self.data_dir / self.STEP_THOUGHTS_NAME).read_text(encoding="utf-8"))
+            items = data if isinstance(data, list) else []
+            return [x for x in reversed(items[-max(1, int(limit or 3)):]) if isinstance(x, dict)]
+        except Exception:
+            return []
+
     def start_now(self, umo: str, what: str, minutes, place: str = "", result: str = "") -> str:
         """「现在去做」：从此刻起做一件事，写进世界线（算对话写的，补写排的让开），做完时叫她一次。
 

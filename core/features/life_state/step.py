@@ -91,6 +91,7 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
 12. 段里做的是「各自的打算」里她的某一条，intent 填那条的编号（例如 "i2"）；不是就留空。
 13. 每段写 from：这段是照上面哪一样写的。照「可能碰上的小事」「手边的消遣」「闲着的样子」「今天会碰上一件意外」里的某一样写的，照抄那一样的原文；照打算、约定、规矩、在练的事、作息（起床、三餐、睡觉）写的，写「打算」「约定」「规矩」「在练」「作息」；接着前面已经做过的某件事往下写的，写「接着：」再加那件事；都不是、自己想的，写「自己想的」。
 14. 接着前面已经写过的事往下写时，前面写定的东西照原样沿用：写过的内容、放在哪、做出来的是什么，都和前面写的一致。
+15. **同一类事一天里做过一次就不要再排**（比如今天已经做过点心、炖过汤，就别再排第二次）；主人对做出来的东西提的意见（「甜度再多一点」「汤有点淡」）**不等于叫她现在去做**——当天不重做，想改的留到以后（改配方、下次做的时候再试），现在照常排别的事。
 {world_notes}
 {step_notes}
 注意：**不要输出 intentions，也不要写任何「接下来打算」**。上面「各自的打算」里如果有，是之前说好要做的，照着走就行。
@@ -756,6 +757,25 @@ class LifeStep:
                 tasks[bot] = {"mode": "after", "start": edge, "cur": last}
         return tasks
 
+    def _save_thought(self, moment: datetime.datetime, thought: str, ok: bool, note: str = "") -> None:
+        """把这次补写的思考存档（网页「世界线」页可看），保留最近 8 次。"""
+        try:
+            path = self.world.root / "step_thoughts.json"
+            items = []
+            if path.exists():
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(data, list):
+                    items = data
+            items.append({
+                "at": fmt_time(moment),
+                "ok": bool(ok),
+                "note": str(note or "")[:120],
+                "thought": str(thought or "")[:8000],
+            })
+            path.write_text(json.dumps(items[-8:], ensure_ascii=False, indent=1), encoding="utf-8")
+        except Exception:
+            logger.warning("[super_enhance/world] 补写思考存档失败", exc_info=True)
+
     async def run(self, now: datetime.datetime | None = None, force: bool = False) -> bool:
         # 世界线里的时间都是不带时区的本地时间，这里统一成一样的口径
         moment = (now or self._now()).replace(tzinfo=None)
@@ -771,6 +791,7 @@ class LifeStep:
         try:
             prompt = await self.build_prompt(tasks, moment)
             text = ""
+            thought = ""
             for attempt in (1, 2):
                 try:
                     response = await asyncio.wait_for(
@@ -782,6 +803,7 @@ class LifeStep:
                         timeout=self.timeout,
                     )
                     text = getattr(response, "completion_text", "") or ""
+                    thought = str(getattr(response, "reasoning_content", "") or "").strip()
                     break
                 except Exception as e:
                     if attempt == 2:
@@ -789,9 +811,11 @@ class LifeStep:
                     logger.warning("[super_enhance/world] 补写第 %d 次失败：%s", attempt, e)
             data = extract_json(text)
             if not isinstance(data, dict):
+                self._save_thought(moment, thought, False, "返回内容不是 JSON")
                 self.world.note_error("step", "返回内容不是 JSON")
                 self.world.set_last_step_attempt(fmt_time(moment))
                 return False
+            self._save_thought(moment, thought, True)
             written, missed = self.apply(data, tasks, moment)
             if missed:
                 self.world.note_error("step", "%s 没写到此刻之后" % "、".join(missed))

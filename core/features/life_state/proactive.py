@@ -48,11 +48,11 @@ MAX_POSTPONES = 72
 # 顺延后和同一会话的另一条相差不到这么久，就并成一条（秒）
 MERGE_SECONDS = 120
 # 并成一条时留哪条：练成 > 约定 > 晚安 > 早安 > 中段
-KIND_RANK = {"correct": 5, "asked": 5, "intent": 5, "training": 4, "promise": 3, "night": 2, "morning": 1, "middle": 0, "done": 0,
+KIND_RANK = {"correct": 5, "asked": 5, "intent": 5, "training": 4, "manual": 4, "promise": 3, "night": 2, "morning": 1, "middle": 0, "done": 0,
              "out": 0, "back": 0, "meal": 0}
 KIND_LABEL = {"correct": "改口", "training": "练成", "promise": "约定", "night": "晚安", "morning": "早安", "middle": "中段",
               "done": "做完一件事", "out": "出门", "back": "回来", "meal": "开饭", "asked": "接下的事做完",
-              "intent": "打算做完"}
+              "intent": "打算做完", "manual": "手动触发"}
 # 随手叫她的几种（做完一件事、出门、回来、开饭）：彼此不挡，只让早安晚安、约定、改口、练成这些挡住
 CASUAL_KINDS = ("done", "out", "back", "meal", "middle")
 # 出门、回来、开饭、做完一件事：只在那几分钟有意义，原定时刻过了这么久还没发出去（一直在聊、顺延了）就不发了（分钟）
@@ -301,6 +301,26 @@ class ProactivePlanner:
         except Exception as e:
             logger.warning("[super_enhance/life] 建立主动对话任务失败：%s", e)
             return False
+
+    async def fire_now(self, bot: str) -> str:
+        """网页上点一下：立刻排一条主动消息（不走"刚聊过就顺延"那套）。"""
+        if not self.enabled:
+            return "主动对话没开（life_state.proactive_enable）"
+        cron = self._cron()
+        if cron is None:
+            return "cron 不可用"
+        targets = self._targets(bot)
+        if not targets:
+            return "没配这个机器人的目标会话"
+        now = datetime.datetime.now(self.timezone)
+        at = now + datetime.timedelta(seconds=3)
+        meta = {
+            "kind": "manual", "bot": bot, "date": now.date().isoformat(),
+            "minute": now.hour * 60 + now.minute, "postponed": 0,
+        }
+        ok = await self._add_job(cron, meta, targets[0], at)
+        logger.info("[super_enhance/life] [%s] 网页手动发一条主动消息：%s", bot, "已排" if ok else "失败")
+        return "已排：几秒后发出" if ok else "排任务失败（看日志）"
 
     async def sync_live(self, bot: str, date_text: str, wake: str, sleep: str,
                         now: datetime.datetime | None = None) -> int:
@@ -846,7 +866,7 @@ class ProactivePlanner:
                 )
                 return None
             quiet = ASKED_QUIET_SECONDS if meta["kind"] in ("asked", "intent") else QUIET_SECONDS
-            busy_since = self._busy_since(target, now_ts, quiet)
+            busy_since = None if meta["kind"] == "manual" else self._busy_since(target, now_ts, quiet)
             if busy_since is not None:
                 at_ts = max(busy_since + quiet, now_ts + MIN_DELAY_SECONDS)
                 if self._stale(meta, at_ts):
