@@ -63,7 +63,7 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
 5. 她的条目分两种，写在 kind 里：
    - "activity"：她开始做另一件事、换了地方、把手上的事放下去干别的（主人叫她过去、叫她去做什么，她答应并去做了也算）。一条只写一件事，她说了接连要做几件的，按先后拆成几条首尾相接。end 写这件事按常理预计做完的时刻（晚于 start）；她说已经做完的，end 写做完的那一刻。
    - "event"：做手上的事当中顺带发生的一件事（递了个东西、被摸了头、答应了什么），只有一个时刻，不写 end，不打断手上那件。
-   她只是边做事边跟人说话，或者说的就是下面「她们此刻手上的事」里那件，什么都不用记：聊天本身不算一件事。她说自己做了什么、在做什么，就算做了（哪怕听着像编的）。
+   她只是边做事边跟人说话，或者说的就是「今天的简略世界线」里标着「正在做」的那件，什么都不用记：聊天本身不算一件事。她说自己做了什么、在做什么，就算做了（哪怕听着像编的）。
    只有和她手上那件真冲突，才记一段新的 activity 把它换掉。真冲突是指：她说人在别的地方；她说那件事停下了、做完了；她说正在做的事和手上那件不可能同时做。只是没提手上那件、只提了其中一部分、或者说了件能同时做的小事，都不算冲突：能记成 event 就记 event，不然什么都不记。没说不等于没做。
    手上那段标着「闲着」的：她说开始做了一件具体的事（看书、出门、做饭……），就记一段新的 activity。
 6. 之后要去做的一件具体的事（待会儿、下午、晚饭后去做什么），记成 intentions（打算），不是条目：她自己说要去做的，和主人叫她过会儿去做的，都算。text 照说出口的那件事写，不添没说的。打算可以同时有好几条，做完一条或哪条对不上了，就按编号撤那一条（见第 14 条）。往后都怎么做、往后注意什么（做法、原则），不是一件要去做的事，不记成打算：这话是主人说的，按第 4 条记成规矩；只是她自己说的，什么都不记。
@@ -75,8 +75,8 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
 12. 条目里如果是在练「在练的事」里的某件，training 填它的编号，例如 "#2"；不是在练就留空。trainings 里 update / done / drop 的 id 也填这个编号。
 13. 她在回答、解释、回忆以前的事（昨天、早上、刚才已经说过的）时，那件事不是这会儿发生的：不要按这条消息的时间再记一条；下面「今天已经记了的」里有的别重复记。确实没记过、要补的，时间写成那件事实际发生的时候。
 14. 上面列的「打算」里（每条前面有编号，比如 i3），已经做完的、或者后来的事已经和它对不上的（例如说好在社务所等，后来人已经回了宿舍），把那几条的编号填进 drop_intentions（只撤这几条，别的留着）；这次又说了新打算的，照常写进 intentions；她之前说过、还没做完也没对不上的，不用重写。
-15. 她把上面「她们后面已经排好、还没做的」里的某件事，说成已经做了、或者正在做：这件事不记成条目，也不要为它改别的条目，写进 early：who、entry（那段的编号）、said（她原话里说的那句）。只算那张单子里有的事；单子里没有的事，照上面的规则记。她说的是「待会儿去」「打算做」，不算，不写 early。
-16. 「她们此刻手上的事」里补写排的、主人让做的，「她们后面已经排好、还没做的」，都是按排的那会儿的情况写的。这段对话里说的事让其中某几段对不上了的（例如主人说他回来了、出门了，主人说那件事先不做了，她答应了这会儿去做别的，人换了地方，那段写的事已经做过了，另一个人那段跟她有关的事跟着变了），把对不上的那几段写进 stale：who、entry（编号）、why（一句话说哪里对不上）。只写对不上的；照样做得了、不受影响的不写。写进 stale 的段：还没开始的撤掉，正在做的到此刻为止，按现在的情况重排。
+15. 她把「今天的简略世界线」里标着「还没到」的某件事，说成已经做了、或者正在做：这件事不记成条目，也不要为它改别的条目，写进 early：who、entry（那段的编号）、said（她原话里说的那句）。只算那份清单里标了「还没到」的事；清单里没有的、已经做过或正在做的事，照上面的规则记（那件事前面已经做过一截、现在只是「接着」往下做的，不算说早了）。她说的是「待会儿去」「打算做」，不算，不写 early。
+16. 「今天的简略世界线」里补写排的、主人让做的（标着「正在做」「还没到」的都算），都是按排的那会儿的情况写的。这段对话里说的事让其中某几段对不上了的（例如主人说他回来了、出门了，主人说那件事先不做了，她答应了这会儿去做别的，人换了地方，那段写的事已经做过了，另一个人那段跟她有关的事跟着变了），把对不上的那几段写进 stale：who、entry（编号）、why（一句话说哪里对不上）。只写对不上的；照样做得了、不受影响的不写。写进 stale 的段：还没开始的撤掉，正在做的到此刻为止，按现在的情况重排。
 {world_notes}
 输出这个 JSON（没有的字段留空数组）：
 
@@ -263,38 +263,8 @@ class Recorder:
             )
         return "\n".join(lines)
 
-    def _recorded_today(self, now: datetime.datetime, per_person: int = 8) -> list[str]:
-        """今天每个人已经记了的最近几条（供记录员对照，别把回忆当成新的事再记一遍）。"""
-        flat = now.replace(tzinfo=None)
-        date_text = flat.date().isoformat()
-        rows = []
-        for who in list(self.raw_log.enabled_bots()) + ["master"]:
-            name = "主人" if who == "master" else (self.label(who) or who)
-            items = [x for x in self.world.entries(date_text, who)
-                     if parse_time(x.get("start")) and parse_time(x.get("start")) <= flat]
-            for item in items[-per_person:]:
-                rows.append("  - %s %s %s：%s" % (
-                    str(item.get("start"))[11:16], name, item.get("place") or "",
-                    clean_text(item.get("doing") or item.get("public"), 60) + result_text(item),
-                ))
-        return rows
-
     def _today_block(self, now: datetime.datetime) -> str:
-        date_text = now.date().isoformat()
         parts = []
-        for bot in self.raw_log.enabled_bots():
-            label = self.label(bot) or bot
-            latest = self.world.latest_for(bot, before=fmt_time(now))
-            if latest:
-                parts.append(
-                    "- %s（%s）最近一条：%s %s"
-                    % (label, bot, latest.get("start"), latest.get("doing") or latest.get("place"))
-                )
-            else:
-                parts.append("- %s（%s）：今天还没有条目" % (label, bot))
-        master = self.world.latest_for("master", before=fmt_time(now))
-        if master:
-            parts.append("- 主人最近一条动向：%s %s" % (master.get("start"), master.get("place")))
         for item in self.world.constraints(active_only=True):
             parts.append(
                 "- 生效中的约束 %s（%s，%s 起%s）：%s"
@@ -334,24 +304,44 @@ class Recorder:
             except Exception:
                 pass
         flat = now.replace(tzinfo=None)
-        for bot in self.raw_log.enabled_bots():
+        day0 = flat.replace(hour=0, minute=0, second=0, microsecond=0)
+        horizon = flat + datetime.timedelta(hours=PLANNED_HOURS)
+        bots = list(self.raw_log.enabled_bots())
+        current_ids = {}
+        for bot in bots:
             cur = self.world.current(bot, flat)
-            if cur is None:
-                continue
-            pct = None if cur.get("idle") else progress_of(cur, flat)
-            parts.append("- 她们此刻手上的事：%s%s %s（%s）%s %s%s，%s 起%s%s" % (
-                cur.get("id"),
-                "（补写排的）" if str(cur.get("source") or "") == "step" else "（主人让做的）" if cur.get("asked") else "",
-                self.label(bot) or bot, bot, cur.get("place") or "", clean_text(cur.get("doing"), 400),
-                "（闲着，没在做具体的事）" if cur.get("idle") else "（在睡觉）" if is_sleep(cur) else steps_text(cur) + result_text(cur),
-                str(cur.get("start"))[11:16],
-                "，预计 %s 做完" % str(cur.get("end"))[11:16] if cur.get("end") else "",
-                "，做了 %d%%" % pct if pct is not None else "",
-            ))
-        recorded = self._recorded_today(now)
-        if recorded:
-            parts.append("- 今天已经记了的（每人最近几条）：")
-            parts.extend(recorded)
+            current_ids[bot] = str((cur or {}).get("id") or "")
+        lines = []
+        for who in bots + ["master"]:
+            name = "主人" if who == "master" else (self.label(who) or who)
+            for day in (day0.date(), day0.date() + datetime.timedelta(days=1)):
+                for item in self.world.entries(day.isoformat(), who):
+                    start = parse_time(item.get("start"))
+                    if start is None or start < day0 or start > horizon:
+                        continue
+                    hm = str(item.get("start"))[11:16]
+                    if item.get("end"):
+                        hm += "–%s" % str(item.get("end"))[11:16]
+                    flags = []
+                    if who != "master" and str(item.get("id")) == current_ids.get(who):
+                        flags.append("正在做")
+                    if start > flat:
+                        flags.append("还没到")
+                    if item.get("idle"):
+                        flags.append("闲着")
+                    if is_sleep(item):
+                        flags.append("睡觉")
+                    place = clean_text(item.get("place") or "", 40)
+                    head = "- %s %s %s%s" % (item.get("id"), hm, name,
+                                              "（%s）" % "、".join(flags) if flags else "")
+                    if place:
+                        head += " " + place
+                    lines.append((start, head + "：" + clean_text(item.get("doing") or item.get("public"), 60)
+                                  + result_text(item)))
+        lines.sort(key=lambda x: x[0])
+        if lines:
+            parts.append("- 今天的简略世界线（一行一条，从早到晚；标「还没到」的是还没发生的）：")
+            parts.extend(text for _, text in lines)
         return "今天到目前为止（供你对照，别重复记）：\n" + ("\n".join(parts) if parts else "（空）")
 
     def _since(self, items, now: datetime.datetime) -> datetime.datetime:
@@ -365,32 +355,6 @@ class Recorder:
         if not stamps:
             return now.replace(tzinfo=None)
         return datetime.datetime.fromtimestamp(min(stamps), self.tz).replace(tzinfo=None)
-
-    def _planned_block(self, items, now: datetime.datetime) -> str:
-        """这批消息开始之后才排着的段（还没做的），给记录员对照「她是不是说早了」「后面排的还对不对得上」。"""
-        since = self._since(items, now)
-        horizon = now.replace(tzinfo=None) + datetime.timedelta(hours=PLANNED_HOURS)
-        lines = []
-        for bot in self.raw_log.enabled_bots():
-            label = self.label(bot) or bot
-            count = 0
-            for day in (since.date(), since.date() + datetime.timedelta(days=1)):
-                for item in self.world.entries(day.isoformat(), bot):
-                    start = parse_time(item.get("start"))
-                    if start is None or start <= since or start > horizon or is_event(item):
-                        continue
-                    lines.append("- %s %s（%s）%s–%s %s%s" % (
-                        item.get("id"), label, bot, str(item.get("start"))[11:16],
-                        str(item.get("end"))[11:16] or "…", "（闲着）" if item.get("idle") else "",
-                        clean_text(item.get("doing") or item.get("place"), 80) + result_text(item)))
-                    count += 1
-                    if count >= PLANNED_MAX:
-                        break
-                if count >= PLANNED_MAX:
-                    break
-        if not lines:
-            return ""
-        return "\n\n她们后面已经排好、还没做的（按安排之后才做）：\n" + "\n".join(lines)
 
     @property
     def world_notes(self) -> str:
@@ -410,7 +374,7 @@ class Recorder:
             where=self._where_text(umo),
             labels=labels or "（未配置）",
             transcript=self._transcript(items, umo),
-            today_block=self._today_block(now) + self._planned_block(items, now),
+            today_block=self._today_block(now),
             world_notes=self.world_notes,
         )
 
