@@ -92,6 +92,11 @@ VARIETY_NOTE = (
     "（别每条都用同一个语气词起头：前面几条要是都用「哼」开头，这条就别再「哼」了，换个说法，或者直接说事；"
     "前面说过的同一句话、同一套形容，也别原样再说一遍。）"
 )
+# 两人一起做过的事以世界线写下的为准，不要各自另编（2026-10-16：同一个汤一个说菌子一个说昆布那次）
+SHARED_FACT_NOTE = (
+    "（你和对方一起做过的事——一起吃的饭、一起做的东西、一起看的书——以上面世界线写下的细节为准："
+    "吃了什么、买了什么、书里讲了什么，都照着它说，别另编一套。）"
+)
 # 当天约定过了这么多分钟还没关，就在注入里标「时间已过」
 PROMISE_OVERDUE_MINUTES = 120
 
@@ -429,6 +434,8 @@ class LifeStateService:
             blocks.append(AI_VOICE_NOTE)
             # 说话新鲜点：别老同一个语气词起头、别原样复读前面说过的句子（2026-10-16）
             blocks.append(VARIETY_NOTE)
+            # 两人共同经历以世界线写下的为准（2026-10-16）
+            blocks.append(SHARED_FACT_NOTE)
         return "\n".join(x for x in blocks if x)
 
     def state_for_planner(self, bot: str, date_text: str):
