@@ -7,6 +7,7 @@
 - 会话开头有 /compact v2 的前情备忘和原话摘录就放在最前面，后面是备忘之后的全部原话
   （配合每天 0 点自动压缩：昨晚最后几句 + 今天的）；也可以只放最近 N 条；
 - 思考、工具调用、工具结果不写进去；本轮正在进行的工具调用照常是消息；
+- 她自己的话标成「你：」（不写她的名字），免得读着像别人的记录、不知道那是自己说过的（2026-10-16）；
 - 只改发出去的这一份：AstrBot 回完话会把 ``run_context.messages`` 原样存回会话
   （``internal.py::_save_to_history``），所以不能改 ``req.contexts``，会把存档冲掉。
   这里包装 ``ToolLoopAgentRunner``：``reset`` 之后记下本轮那条用户消息，
@@ -48,8 +49,8 @@ def _text(message: dict) -> str:
     return ""
 
 
-def render_lines(history: list, label: str) -> tuple[list[str], str, list[str]]:
-    """历史 → (原话行「[10-15 12:18] 主人：……」, 前情备忘, 摘录行)。
+def render_lines(history: list) -> tuple[list[str], str, list[str]]:
+    """历史 → (原话行「[10-15 12:18] 主人：……」「[10-15 12:19] 你：……」, 前情备忘, 摘录行)。
 
     /compact v2 写进去的样子：第一条是前情备忘，紧跟着几段摘录（没有时间戳标签），
     再往后是原样保留的对话（每条都带时间戳标签）。
@@ -71,7 +72,7 @@ def render_lines(history: list, label: str) -> tuple[list[str], str, list[str]]:
                 memo = body.split("\n", 1)[1].strip() if "\n" in body else body
                 in_excerpts = True
             continue
-        who = "主人" if role == "user" else label
+        who = "主人" if role == "user" else "你"
         stamp = hit.group(1) if hit else ""
         pre = PRE_RE.match(body)  # 摘录里主人那几句的时间写在正文开头
         if pre:
@@ -86,15 +87,16 @@ def render_lines(history: list, label: str) -> tuple[list[str], str, list[str]]:
 
 
 def build_block(history: list, label: str, recent: int, include_memo: bool) -> tuple[str, int]:
-    lines, memo, excerpts = render_lines(history, label)
+    lines, memo, excerpts = render_lines(history)
     kept = lines[-recent:] if recent > 0 else lines
     parts = []
     if include_memo and memo:
         parts.append("【更早聊过的事（备忘）】\n" + memo)
         if excerpts:
-            parts.append("【更早的几段聊天原话（摘录，中间有省略）】\n" + "\n".join(excerpts))
+            parts.append("【更早的几段聊天原话（摘录，中间有省略；「你：」是你自己说的）】\n" + "\n".join(excerpts))
     if kept:
-        parts.append("【你和主人最近的聊天记录（按时间先后）】\n" + "\n".join(kept))
+        parts.append("【你和主人最近的聊天记录（按时间先后；「你：」那几句就是你（%s）自己发给主人的消息）】\n" % label
+                     + "\n".join(kept))
     return "\n\n".join(parts), len(kept)
 
 
