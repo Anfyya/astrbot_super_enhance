@@ -73,6 +73,13 @@ NO_REPEAT_NOTE = (
     "（不要总复述你当前在干什么。手上在做的事前面已经跟主人说过了，就别每句都再提一遍；"
     "主人问起、或者跟他说的事正好有关时，再顺口说一句。）"
 )
+# 紧挨着 NO_REPEAT_NOTE、放在世界线块最末：压一压 AI 腔（2026-10-16）
+AI_VOICE_NOTE = (
+    "（说话别带 AI 腔：不用破折号「——」；别先甩一句结论再接着解释为什么；"
+    "别在后面补「要是猜岔了」「如果不是……就……」这种兜底；"
+    "被说错了也别说「认、该罚、认罪、不争、不绕、不躲不藏、稳稳接住你、不还嘴」这类话。"
+    "就像平常发消息那样，想到什么说什么。）"
+)
 # 当天约定过了这么多分钟还没关，就在注入里标「时间已过」
 PROMISE_OVERDUE_MINUTES = 120
 
@@ -405,6 +412,9 @@ class LifeStateService:
         if head and self.cfg.get("world_no_repeat", True):
             # 放在整块最后、紧挨着世界线：不然她每句都捎带「我手上正在干嘛」（2026-10-15 测过，放人设里没用）
             blocks.append(NO_REPEAT_NOTE)
+        if head:
+            # 紧挨着上一句、放在世界线块最末：压一压 AI 腔（2026-10-16）
+            blocks.append(AI_VOICE_NOTE)
         return "\n".join(x for x in blocks if x)
 
     def state_for_planner(self, bot: str, date_text: str):
