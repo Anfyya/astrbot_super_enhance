@@ -67,6 +67,7 @@ class MemoryEditRunner:
         self.context = context
         self.path = Path(data_dir) / FILE_NAME
         self._task: asyncio.Task | None = None
+        self._initializer = None
 
     def start(self) -> None:
         if not self.path.exists():
@@ -97,8 +98,17 @@ class MemoryEditRunner:
                     ready = False
             if init is None or not ready:
                 return None
+            self._initializer = init
             return getattr(init, "memory_engine", None)
         return None
+
+    def find_processor(self):
+        """拿到 livingmemory 的 MemoryProcessor（生成记忆原子用）；没就绪返回 None。"""
+        init = self._initializer
+        if init is None:
+            self.find_engine()
+            init = self._initializer
+        return getattr(init, "memory_processor", None) if init is not None else None
 
     async def run(self) -> None:
         try:
@@ -115,10 +125,11 @@ class MemoryEditRunner:
                 return
             await asyncio.sleep(POLL_SECONDS)
             engine = self.find_engine()
+        processor = self.find_processor()
         results = []
         for edit in plan.get("edits") or []:
             try:
-                results.append(await self.apply_one(engine, edit))
+                results.append(await self.apply_one(engine, edit, processor))
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -137,7 +148,49 @@ class MemoryEditRunner:
         ok = sum(1 for r in results if r.get("ok"))
         logger.info("[super_enhance/lm_edits] 长期记忆小改完成：成功 %d 条，跳过 / 失败 %d 条，结果见 %s", ok, len(results) - ok, done.name)
 
-    async def apply_one(self, engine, edit: dict) -> dict:
+    async def apply_add(self, engine, edit: dict, processor=None) -> dict:
+        """新建一条记忆（走 livingmemory 自己的 add_memory，原子按 key_facts 一并生成）。"""
+        content = str(edit.get("content") or "").strip()
+        if not content:
+            return {"ok": False, "why": "没有正文"}
+        md = _as_dict(edit.get("metadata"))
+        md["status"] = "active"
+        md.pop("create_time", None)
+        md.pop("last_access_time", None)
+        persona = str(edit.get("persona") or md.get("persona_id") or "").strip()
+        if persona:
+            md["persona_id"] = persona
+        try:
+            importance = float(edit.get("importance") or md.get("importance") or 0.5)
+        except Exception:
+            importance = 0.5
+        session_id = str(edit.get("session_id") or md.get("session_id") or "livingmemory:global")
+        atoms = None
+        if processor is not None:
+            try:
+                atoms = processor.classify_atoms_from_metadata(
+                    metadata=md,
+                    parent_importance=importance,
+                    session_id=session_id,
+                    persona_id=persona or None,
+                )
+            except Exception:
+                logger.warning("[super_enhance/lm_edits] 原子生成失败，改按无原子写入", exc_info=True)
+        new_id = await engine.add_memory(
+            content=content,
+            session_id=session_id,
+            persona_id=persona or None,
+            importance=importance,
+            metadata=md,
+            atoms=atoms,
+        )
+        logger.info("[super_enhance/lm_edits] 新建记忆 %s（%s，%s）",
+                    new_id, persona or "?", ("带 %d 个原子" % len(atoms)) if atoms else "无原子")
+        return {"id": new_id, "ok": bool(new_id), "op": "add", "persona": persona, "atoms": len(atoms or [])}
+
+    async def apply_one(self, engine, edit: dict, processor=None) -> dict:
+        if edit.get("add"):
+            return await self.apply_add(engine, edit, processor)
         try:
             memory_id = int(edit.get("id"))
         except Exception:
