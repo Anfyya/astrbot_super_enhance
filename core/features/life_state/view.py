@@ -266,13 +266,7 @@ def build_world_text(
                 line += "；最后说在%s（%s）" % (where.get("place"), str(where.get("start"))[11:16])
         lines.append(line)
     else:
-        line = "主人：今天还没说过他自己在哪、在干什么"
-        # 过了 0 点：带上他昨天最后说的那条（「明天还有课」这类话常在睡前说）
-        yesterday = (today - datetime.timedelta(days=1)).isoformat()
-        last, last_text = _latest_visible(world.master_trail(yesterday), viewer, now)
-        if last is not None:
-            line += "；昨天最后：%s（昨天 %s）" % (_master_text(last, last_text, label, viewer), _when(last))
-        lines.append(line)
+        lines.append("主人：今天还没说过他自己在哪、在干什么")
     # 主人说过的他自己之后的安排（只给听到的人看；过了那天程序自己撤）
     for plan in world.intentions("master"):
         heard = [str(x) for x in (plan.get("heard_by") or [])]
