@@ -44,6 +44,8 @@ MAX_PLACE = 60
 MAX_DOING = 240
 MAX_PUBLIC = 90
 MAX_TEXT = 200
+# 打算要写清楚前因后果（谁说的、因为什么、做到什么样算完），给得比别的字段长
+MAX_INTENTION_TEXT = 400
 # 一段事最多分几步、每步多长
 MAX_STEPS = 6
 MAX_STEP = 80
@@ -374,6 +376,16 @@ class WorldStore:
                 return item
         return None
 
+    def master_trail(self, date_text: str) -> list:
+        """主人这一天的动向：他自己的条目，加上两人写着和主人一起（with 里有 master）的段，按开始时刻排好。
+        她们陪着主人出门、逛夜市时，主人在哪跟着这些段走（2026-10-18）。"""
+        items = []
+        for item in self.entries(date_text, ""):
+            who = str(item.get("who") or "")
+            if who == "master" or ("master" in [str(x) for x in (item.get("with") or [])] and not is_event(item)):
+                items.append(item)
+        return items
+
     def activities(self, who: str, now: datetime.datetime, back_days: int = 1) -> list:
         """某人最近几天的 activity，按开始时间排好（跨天的睡觉那段在前一天的文件里）。"""
         moment = now.replace(tzinfo=None)
@@ -581,6 +593,12 @@ class WorldStore:
                 state["intention_seq"] = seq
                 seq += 1
                 changed = True
+        # 主人说的他自己的安排（明天有课、晚上去图书馆）：过了那天就撤；没写哪天的，记下的第二天过完撤
+        today = self.now_local().date()
+        kept = [x for x in items if not _master_plan_expired(x, today)]
+        if len(kept) != len(items):
+            items = kept
+            changed = True
         if changed:
             state["intentions"] = items
             self._save_state()
@@ -606,8 +624,11 @@ class WorldStore:
                 top = max(top, int(match.group(1)))
         return top + 1
 
-    def set_intention(self, who: str, text: str, window: str = "", source: str = "step"):
-        body = clean_text(text, MAX_TEXT)
+    def set_intention(self, who: str, text: str, window: str = "", source: str = "step",
+                      with_list=None, date: str = "", heard_by=None):
+        """记一条打算。with_list 里有 "master" = 主人提的或答应了的、要和主人一起做的事；
+        date 是哪天做（YYYY-MM-DD，可空）；heard_by 是主人自己的打算由谁听到的（主人的打算只给听到的人看）。"""
+        body = clean_text(text, MAX_INTENTION_TEXT)
         if not who or not body:
             return None
         state = self._load_state()
@@ -621,6 +642,15 @@ class WorldStore:
         record = {"id": "i%d" % seq, "who": who, "text": body,
                   "window": clean_text(window, 60), "source": source,
                   "created": fmt_time(self.now_local())}
+        together = [str(x) for x in (with_list or []) if str(x).strip() and str(x) != str(who)]
+        if together:
+            record["with"] = together
+        day = str(date or "").strip()[:10]
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
+            record["date"] = day
+        heard = [str(x) for x in (heard_by or []) if str(x).strip()]
+        if heard:
+            record["heard_by"] = heard
         items.append(record)
         state["intentions"] = items
         self._save_state()
@@ -637,7 +667,7 @@ class WorldStore:
             if str(item.get("id")) != str(intention_id):
                 continue
             if text is not None:
-                body = clean_text(text, MAX_TEXT)
+                body = clean_text(text, MAX_INTENTION_TEXT)
                 if body:
                     item["text"] = body
             if window is not None:
@@ -963,6 +993,20 @@ def staged_of(entry: dict, now: datetime.datetime) -> str:
     text = detail_of(entry)
     inner = ("做过了：%s；" % "；".join(steps[:index]) if index else "") + "正在：" + steps[index]
     return "%s（%s）" % (text, inner) if text else inner
+
+
+def _master_plan_expired(item: dict, today: datetime.date) -> bool:
+    """主人的打算过期没有：写了哪天的，那天过完；没写的，记下那天的第二天过完。她们自己的打算不过期。"""
+    if str(item.get("who") or "") != "master":
+        return False
+    day = str(item.get("date") or "")[:10] or str(item.get("created") or "")[:10]
+    try:
+        moment = datetime.date.fromisoformat(day)
+    except ValueError:
+        return False
+    if not item.get("date"):
+        moment += datetime.timedelta(days=1)
+    return moment < today
 
 
 def visible_to(entry: dict, viewer: str) -> str:

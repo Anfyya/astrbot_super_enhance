@@ -27,6 +27,8 @@ from pathlib import Path
 from astrbot.api import logger
 from astrbot.core.message.components import Node, Plain
 
+from .message_text import strip_inline_system
+
 DEFAULT_KEEP = "2d"
 DEFAULT_PROVIDER = "CmdCode/deepseek/deepseek-v4.1-flash"
 BACKUP_KEEP = 10
@@ -65,7 +67,8 @@ PROMPT = """你在帮一个角色扮演聊天机器人整理它和主人的旧�
 3. 还没办完的事、答应过的事。
 要求：每条一行、短句、以「- 」开头；只写事实，不写评价、不写感想、不写总结性套话；不写每天几点干了什么这种流水账，也不写屋里有什么东西、东西放在哪；不写任何关于共享场景、工具、尾标、日程、系统的内容。总长不超过 {memo_len} 字。
 如果记录开头有一条「旧备忘」，那是上一次压缩留下的：里面仍然用得着的条目要合并进新备忘，不要丢；已经过时或被后来的对话推翻的就删掉。旧备忘本身不能选进摘录。
-记录只到 {cut_text} 为止，之后的对话会原样保留，不用你管。
+只写往后一直成立的事，不写只管当时的状态：此刻人在哪、正在干嘛、今晚要去哪、东西明天放哪这类，过了那会儿就不对了，不写。同一件事前后说法变了的（主人改了主意、她答应的事后来不用做了），按最后的说法写，或者干脆不写。
+记录只到 {cut_text} 为止，之后的对话会原样保留，附在记录最后给你核对：备忘里不要写和它矛盾、被它改掉或推翻的事；那部分没有编号，不能选进摘录。
 
 ## 输出
 只输出一个 JSON 对象：
@@ -267,6 +270,8 @@ class CompactV2:
             if pre:
                 stamp = "%s-%s %s:%s" % pre.groups()
                 body = body[pre.end() :]
+            if m["role"] == "user":
+                body = strip_inline_system(body)  # 主人塞给她的一次性提示不进备忘
             if not body or _JUNK_RE.match(body):
                 continue
             if i == 0 and (
@@ -281,6 +286,25 @@ class CompactV2:
         return lines, usable
 
     @staticmethod
+    def _kept_lines(history: list, end: int, role: str, limit: int = 80) -> list:
+        """切点之后原样保留的那些话（不编号），给模型核对备忘别和它打架；太多只留最后 limit 条。"""
+        out = []
+        for m in history[end:]:
+            if not isinstance(m, dict) or m.get("role") not in ("user", "assistant"):
+                continue
+            text = _text_of(m)
+            hit = _FULL_STAMP_RE.search(text)
+            stamp = "%s-%s %s:%s" % hit.groups()[1:] if hit else ""
+            body = _REM_RE.sub("", text).replace("</system_reminder>", "").strip()
+            if m["role"] == "user":
+                body = strip_inline_system(body)
+            if not body or _JUNK_RE.match(body):
+                continue
+            who = "主人" if m["role"] == "user" else role
+            out.append("%s%s：%s" % (who, "[%s]" % stamp if stamp else "", " ".join(body.split("\n"))))
+        return out[-limit:]
+
+    @staticmethod
     def _excerpt_msg(m: dict) -> dict | None:
         text = _text_of(m)
         hit = _FULL_STAMP_RE.search(text)
@@ -290,6 +314,8 @@ class CompactV2:
         if pre:
             stamp = "%s-%s %s:%s" % pre.groups()
             body = body[pre.end() :].strip()
+        if m["role"] == "user":
+            body = strip_inline_system(body)  # 一次性提示不放回摘录
         if not body or _JUNK_RE.match(body):
             return None
         if m["role"] == "user" and stamp:
@@ -416,9 +442,14 @@ class CompactV2:
         )
         if extra:
             system += "\n\n## 这次的额外要求（主人临时加的，优先遵守）\n" + extra
+        content = "\n\n".join(lines)
+        kept = self._kept_lines(history, end, role)
+        if kept:
+            content += ("\n\n【%s 之后会原样保留的对话：只用来核对备忘，没有编号，不能选进摘录】\n" % cut_text
+                        + "\n".join(kept))
         messages = [
             {"role": "system", "content": system},
-            {"role": "user", "content": "\n\n".join(lines)},
+            {"role": "user", "content": content},
         ]
         state = {
             "cid": cid, "end": end, "fp": _fingerprint(history[:end]), "keep_desc": desc,

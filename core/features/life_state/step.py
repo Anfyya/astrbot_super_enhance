@@ -83,7 +83,7 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
    每段还要写 at_home 和 meal：at_home 是这段她人在不在宿舍（屋里、院子、廊下、门口、后头小屋都算 true；出了宿舍去别处、走在路上都算 false）；meal 是这段是不是正在吃饭（吃早饭午饭晚饭、夜宵算 true；做饭、摆碗筷、洗碗都不算）。
 5. 睡觉也是一段：到了她今天定的入睡时刻，就写一段睡觉，state 填「睡觉」，从入睡时刻一直写到第二天定的起床时刻；睡前那段要在入睡时刻结束。
 6. 下面「还没做的约定」里有钟点的：到那个钟点她要已经在约定的地方、和约定的人在一起。要换地方的，在那之前写一段赶过去，留足路上的工夫；约定那件事从约定的钟点开始写。
-7. **不许生成主人的条目，也不许替主人编他做了什么、说了什么。** 主人在哪只看「主人最近的动向」：他最后说在哪、之后没说离开，就当他还在那儿，她们可以待在他身边、在他旁边做自己的事；他说了出门、去上课、睡了这类，就照那个写，别写他在场。
+7. **不许生成主人的条目，也不许替主人编他做了什么、说了什么。** 主人在哪只看「主人最近的动向」：他最后说在哪、之后没说离开，就当他还在那儿，她们可以待在他身边、在他旁边做自己的事；他说了出门、去上课、睡了这类，就照那个写，别写他在场。只有一种例外：「各自的打算」里标着「和主人一起」的，是主人提的或答应了的，照着写成她和主人一起做，with 里写上 "master"；同一趟里接着往下的段（比如逛夜市逛到一半换个摊子）也写上 "master"，直到这件事做完、两人分开。除此之外 with 里不写 master。「主人说过他要做的事」是他自己的安排：那段时间他人不在，别把她们写成和他在一起。
 8. 约束优先级最高：写着不许出门的，这段时间就得在屋里。
 9. public 是住在一起的人自然会知道的粗粒度信息（人在哪、大概在干哪类事），可以为空。doing 是细节。
 10. 两人在一起的时段，两边的 start/end 和共同的事要一致，with 互相写上对方的 key；对方手上的事还没做完的，别写成和她在一起。对方不在「这次要你写的」里时，她那段时间做什么以「她们此刻手上的事」和「已经排好、这次不改的」为准，你改不了：只有她那边写的也是这件事、也在这个地方，才能写成和她一起；不然就别把她写进来。
@@ -310,6 +310,25 @@ class LifeStep:
             return recorder.training_id(value, bot)
         text = str(value or "").strip().lstrip("#＃").strip()
         return text if text.isdigit() else ""
+
+    def _intention_line(self, item: dict) -> str:
+        """补写看到的一条打算：编号（谁，和主人一起，哪天 几点）：内容。"""
+        who = str(item.get("who") or "")
+        tags = [self.label(who) or who]
+        if "master" in (item.get("with") or []):
+            tags.append("和主人一起")
+        when = " ".join(x for x in (str(item.get("date") or "")[5:], str(item.get("window") or "")) if x)
+        if when:
+            tags.append(when)
+        return "- %s（%s）：%s" % (item.get("id"), "，".join(tags), item.get("text"))
+
+    def _intent_with_master(self, intent_id: str) -> bool:
+        if not intent_id:
+            return False
+        for item in self.world.intentions():
+            if str(item.get("id")) == str(intent_id):
+                return "master" in (item.get("with") or [])
+        return False
 
     def intent_id(self, value, bot: str) -> str:
         """只认她自己那几条打算的编号；对不上就空。"""
@@ -575,32 +594,35 @@ class LifeStep:
                     for x in constraints
                 )
             )
-        intentions = self.world.intentions()
+        intentions = [x for x in self.world.intentions() if str(x.get("who")) != "master"]
         if intentions:
+            parts.append("各自的打算：\n" + "\n".join(self._intention_line(x) for x in intentions))
+        plans = self.world.intentions("master")
+        if plans:
             parts.append(
-                "各自的打算：\n"
-                + "\n".join("- %s（%s）：%s" % (x.get("id"), x.get("who"), x.get("text")) for x in intentions)
+                "主人说过他要做的事（他自己的安排，只作参考）：\n"
+                + "\n".join("- %s %s：%s" % (
+                    str(x.get("date") or "")[5:] or "日子没说", x.get("window") or "", x.get("text")) for x in plans)
             )
         promises = self._promise_lines(flat)
         if promises:
             parts.append("还没做的约定：\n" + "\n".join(promises))
-        master_latest = self.world.latest_for("master", before=fmt_time(flat))
+        # 主人的动向：他自己说的，加上她们写着和主人一起的段（陪他出门时主人跟着这些段走）
+        trail = []
+        for back in (1, 0):
+            day = (flat.date() - datetime.timedelta(days=back)).isoformat()
+            trail.extend(x for x in self.world.master_trail(day)
+                         if parse_time(x.get("start")) is not None and parse_time(x.get("start")) <= flat)
+        master_latest = trail[-1] if trail else None
         if master_latest:
             # 最近一条常常没写地点（比如只记了他说的话），地点另取最近一条写了的
-            where = None
-            for back in (0, 1):
-                day = (flat.date() - datetime.timedelta(days=back)).isoformat()
-                for item in reversed(self.world.entries(day, "master")):
-                    moment = parse_time(item.get("start"))
-                    if moment is not None and moment <= flat and str(item.get("place") or "").strip():
-                        where = item
-                        break
-                if where is not None:
-                    break
+            where = next((x for x in reversed(trail) if str(x.get("place") or "").strip()), None)
+            owner = str(master_latest.get("who") or "")
             parts.append(
-                "主人最近的动向（只作参考，不许改写、不许替他编）：%s %s%s"
+                "主人最近的动向（只作参考，不许改写、不许替他编）：%s %s%s%s"
                 % (
                     str(master_latest.get("start"))[5:16],
+                    "和%s一起，" % (self.label(owner) or owner) if owner != "master" else "",
                     master_latest.get("place") or "",
                     "，" + clean_text(master_latest.get("doing"), 80) if master_latest.get("doing") else "",
                 )
@@ -899,7 +921,8 @@ class LifeStep:
                     # 模型把日期写成今天、其实是明天早上（睡觉那段）
                     later = seg_end + datetime.timedelta(days=1)
                     seg_end = later if later > cursor else None
-                with_list = [str(x) for x in (raw.get("with") or []) if str(x) in bots and str(x) != bot]
+                raw_with = [str(x) for x in (raw.get("with") or [])]
+                with_list = [x for x in raw_with if x in bots and x != bot]
                 state = state_of(raw)
                 idle, sleep = state == "idle", state == "sleep"
                 # 分了步、写了各步分钟的：这段做多久就是分钟加起来，模型写的 end 不算（闲着、睡觉除外）
@@ -913,6 +936,13 @@ class LifeStep:
                     seg_end = min(seg_end, until)
                 intent = "" if idle else self.intent_id(raw.get("intent"), bot)
                 training = self.training_id(raw.get("training"), bot)
+                # 和主人一起：只认「和主人一起」的打算那段（必带上主人），和紧接着它、模型也写了 master 的下一段（同一趟里接着逛）
+                prev = rows[-1] if rows else self.world.latest_for(bot, before=fmt_time(cursor))
+                prev_with_master = bool(prev) and "master" in (prev.get("with") or []) and not prev.get("sleep")
+                if not idle and not sleep and (
+                    self._intent_with_master(intent) or ("master" in raw_with and prev_with_master)
+                ):
+                    with_list.append("master")
                 entry = {
                     "who": bot,
                     "kind": "activity",

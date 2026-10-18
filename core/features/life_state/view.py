@@ -131,6 +131,27 @@ def _latest_visible(items: list, viewer: str, now: datetime.datetime):
     return None, ""
 
 
+def _plan_when(item: dict, today: datetime.date) -> str:
+    """打算的「今天 / 明天 / 10-20」加钟点。"""
+    day = str(item.get("date") or "")[:10]
+    word = ""
+    if day:
+        try:
+            delta = (datetime.date.fromisoformat(day) - today).days
+            word = {0: "今天", 1: "明天", -1: "昨天"}.get(delta, day[5:])
+        except ValueError:
+            word = day
+    return " ".join(x for x in (word, str(item.get("window") or "").strip()) if x)
+
+
+def _master_text(item: dict, text: str, label, viewer: str) -> str:
+    """主人动向那一行的文字：是她们写着和主人一起的段，就写成「和你一起：……」「和丛雨一起：……」。"""
+    who = str(item.get("who") or "")
+    if who and who != "master":
+        return "和%s一起：%s" % ("你" if who == viewer else (label(who) or who), text)
+    return text
+
+
 def build_world_text(
     world: WorldStore,
     viewer: str,
@@ -203,7 +224,13 @@ def build_world_text(
             lines.extend(today_lines)
 
     for item in world.intentions(viewer):
-        lines.append("你说过的打算：%s%s" % (item.get("text"), "（%s）" % item.get("window") if item.get("window") else ""))
+        tags = []
+        if "master" in (item.get("with") or []):
+            tags.append("和主人一起")
+        when = _plan_when(item, today)
+        if when:
+            tags.append(when)
+        lines.append("你说过的打算：%s%s" % (item.get("text"), "（%s）" % "，".join(tags) if tags else ""))
     for item in world.constraints(viewer, active_only=True):
         lines.append("主人定的规矩：%s（%s 起%s）" % (
             item.get("text"),
@@ -223,10 +250,11 @@ def build_world_text(
         if item is not None:
             lines.append("%s：%s（%s）" % (name, text, _when(item)))
 
-    masters = world.entries(date_text, "master")
+    # 主人的动向：他自己说的，加上她们写着和主人一起的段（陪他出门、逛夜市时主人跟着这些段走）
+    masters = world.master_trail(date_text)
     item, text = _latest_visible(masters, viewer, now)
     if item is not None:
-        line = "主人：%s（%s）" % (text, _when(item))
+        line = "主人：%s（%s）" % (_master_text(item, text, label, viewer), _when(item))
         if not str(item.get("place") or "").strip():
             # 最近这条没写他在哪：补上他最后一次说到的地方（之后没说离开就还在那儿）
             placed = [x for x in masters if str(x.get("place") or "").strip()]
@@ -235,6 +263,19 @@ def build_world_text(
                 line += "；最后说在%s（%s）" % (where.get("place"), str(where.get("start"))[11:16])
         lines.append(line)
     else:
-        lines.append("主人：今天还没说过他自己在哪、在干什么")
+        line = "主人：今天还没说过他自己在哪、在干什么"
+        # 过了 0 点：带上他昨天最后说的那条（「明天还有课」这类话常在睡前说）
+        yesterday = (today - datetime.timedelta(days=1)).isoformat()
+        last, last_text = _latest_visible(world.master_trail(yesterday), viewer, now)
+        if last is not None:
+            line += "；昨天最后：%s（昨天 %s）" % (_master_text(last, last_text, label, viewer), _when(last))
+        lines.append(line)
+    # 主人说过的他自己之后的安排（只给听到的人看；过了那天程序自己撤）
+    for plan in world.intentions("master"):
+        heard = [str(x) for x in (plan.get("heard_by") or [])]
+        if heard and viewer not in heard:
+            continue
+        when = _plan_when(plan, today)
+        lines.append("主人说过他要：%s%s" % (plan.get("text"), "（%s）" % when if when else ""))
 
     return "\n".join(lines)

@@ -274,7 +274,7 @@ class CronContextFeature:
         return ""
 
     def _clean_text(self, role: str, raw: str) -> str:
-        """清掉系统噪声与元数据，把时间戳压成 [MM-DD HH:MM] 前缀。"""
+        """清掉系统噪声与元数据，时间戳只留一个最短的标签。"""
         text = (raw or "").strip()
         if not text:
             return ""
@@ -301,7 +301,10 @@ class CronContextFeature:
         cleaned = STAMP_TAG_RE.sub(repl, text)
         cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
         if moments:
-            return "[%s] %s" % (moments[0].strftime("%m-%d %H:%M"), cleaned)
+            # 留一个最短的时间戳标签（不再写成「[10-17 23:03] 正文」）：聊天记录（history_transcript）
+            # 靠这个标签分清「备忘后面的摘录」和「之后的原话」，没了它主动对话的最近原话全被当成旧摘录（2026-10-18）
+            return "%s\n<system_reminder>Current datetime: %s</system_reminder>" % (
+                cleaned, moments[0].strftime("%Y-%m-%d %H:%M"))
         return cleaned
 
     @staticmethod

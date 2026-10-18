@@ -7,6 +7,7 @@
 - 会话开头有 /compact v2 的前情备忘和原话摘录就放在最前面，后面是备忘之后的全部原话
   （配合每天 0 点自动压缩：昨晚最后几句 + 今天的）；也可以只放最近 N 条；
 - 思考、工具调用、工具结果不写进去；本轮正在进行的工具调用照常是消息；
+- 主人消息里随手塞的 <system>……</system> 提示只在那一轮起作用，之后的聊天记录里去掉（2026-10-18）；
 - 她自己的话标成「你：」（不写她的名字），免得读着像别人的记录、不知道那是自己说过的（2026-10-16）；
 - 只改发出去的这一份：AstrBot 回完话会把 ``run_context.messages`` 原样存回会话
   （``internal.py::_save_to_history``），所以不能改 ``req.contexts``，会把存档冲掉。
@@ -19,6 +20,7 @@ import re
 from astrbot.api import logger
 
 from .life_state.models import bot_of_umo
+from .message_text import strip_inline_system
 
 MARK_ATTR = "_super_enhance_transcript"
 REMINDER_RE = re.compile(r"<system[-_\s]*reminder>(?P<body>.*?)</system[-_\s]*reminder>", re.IGNORECASE | re.DOTALL)
@@ -65,6 +67,8 @@ def render_lines(history: list) -> tuple[list[str], str, list[str]]:
         text = _text(message)
         hit = TIME_RE.search(text)
         body = REMINDER_RE.sub("", text).strip()
+        if role == "user":
+            body = strip_inline_system(body)
         if not body:
             continue  # 只有工具调用、只剩时间戳的那几条
         if role == "user" and body.startswith(MEMO_PREFIX):

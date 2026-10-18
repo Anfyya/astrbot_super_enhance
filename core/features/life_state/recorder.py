@@ -14,6 +14,7 @@ import re
 
 from astrbot.api import logger
 
+from ..message_text import strip_inline_system
 from .models import bot_of_umo, extract_json
 from .world import WorldStore, clean_text, fmt_time, is_event, is_sleep, parse_time, progress_of, result_text, steps_text
 
@@ -58,7 +59,7 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
 
 1. 只记原文里明确说了的。时间没说的，用那条消息的时间；说不清就先不记。不许记晚于「现在」的事。
 2. 条目里的 start / end 一律写成完整的 "YYYY-MM-DD HH:MM"，**日期必须照抄对话原文里的日期**，不许只写时分、也不许自己推成别的日子。
-3. 主人说他自己的事（去了哪、在干什么），记成一条 who = "master" 的条目。
+3. 主人说他自己的事（去了哪、在干什么），记成一条 who = "master" 的条目。主人说他自己**之后**要干什么（明天有课、晚上要去图书馆、晚饭后陪她去夜市），不记成条目，记成 who = "master" 的打算（intentions）：text 写清楚他要去做什么、在哪、跟谁，date 写哪天，window 写钟点（说了才写）；要带上她一起去的，她那边另记一条 with 是 ["master"] 的打算。主人的打算过了那天程序会自己撤；他说不去了、改了主意的，照常按编号撤（第 14 条）。
 4. 主人给她定的、往后一直管着她的规矩（不许做什么、往后都要怎么做），记成 constraints（约束）：到期或主人撤了才解除。text 只写主人自己说出口的话；她回话里自己添上的、答应时顺嘴加的，都不是主人的规矩，不写进去。主人叫她去做一件做完就了结的事，不是规矩：叫她过会儿再去做的，按第 6 条记成打算；叫她现在就去做的，她去做了记成她的条目。约束的 since 填主人说这句话的那条消息的时间；主人说了期限的要换算成 until_time（"这几天"按三天算、"今晚"到当天 23:59、"明天之前"到明天 0:00），只说了条件的写进 until。新规矩不要写编号，编号由程序分配。
 5. 她的条目分两种，写在 kind 里：
    - "activity"：她开始做另一件事、换了地方、把手上的事放下去干别的（主人叫她过去、叫她去做什么，她答应并去做了也算）。一条只写一件事，她说了接连要做几件的，按先后拆成几条首尾相接。end 写这件事按常理预计做完的时刻（晚于 start）；她说已经做完的，end 写做完的那一刻。
@@ -66,7 +67,7 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
    她只是边做事边跟人说话，或者说的就是「今天的简略世界线」里标着「正在做」的那件，什么都不用记：聊天本身不算一件事。她说自己做了什么、在做什么，就算做了（哪怕听着像编的）。
    只有和她手上那件真冲突，才记一段新的 activity 把它换掉。真冲突是指：她说人在别的地方；她说那件事停下了、做完了；她说正在做的事和手上那件不可能同时做。只是没提手上那件、只提了其中一部分、或者说了件能同时做的小事，都不算冲突：能记成 event 就记 event，不然什么都不记。没说不等于没做。
    手上那段标着「闲着」的：她说开始做了一件具体的事（看书、出门、做饭……），就记一段新的 activity。
-6. 之后要去做的一件具体的事（待会儿、下午、晚饭后去做什么），记成 intentions（打算），不是条目：她自己说要去做的，和主人叫她过会儿去做的，都算。text 照说出口的那件事写，不添没说的。打算可以同时有好几条，做完一条或哪条对不上了，就按编号撤那一条（见第 14 条）。往后都怎么做、往后注意什么（做法、原则），不是一件要去做的事，不记成打算：这话是主人说的，按第 4 条记成规矩；只是她自己说的，什么都不记。
+6. 之后要去做的一件具体的事（待会儿、下午、晚饭后、明天去做什么），记成 intentions（打算），不是条目：她自己说要去做的，和主人叫她过会儿去做的，都算；她向主人提议、主人还没答应的（「中午咱们去买豆腐呗」「要不要去后山」），不算，不记。text 要写清楚，让没看过这段对话的人也能照着去做：做什么、在哪、跟谁、要带上或用到什么、做到什么样算完，最后用一句话交代是怎么说起的（几点谁说的、因为什么）；只用对话里有的信息补全，不编没说的。比如不要写「回头把体己数给主人看」，要写「把柜角小布袋里攒的铜板拿出来，当着主人的面一枚枚数给他看，说清是哪来的（10-17 晚上逛夜市时主人问她钱是哪来的，她说是香火铜板攒的，答应回头数给他）」。这件事要和主人一起做、而且是主人提的或主人答应了的，with 写 ["master"]；她一个人做的留空。date 写哪天做（YYYY-MM-DD，「明天」按对话日期换算），没说哪天留空；window 写钟点范围，没说就留空。打算可以同时有好几条，做完一条或哪条对不上了，就按编号撤那一条（见第 14 条）。往后都怎么做、往后注意什么（做法、原则），不是一件要去做的事，不记成打算：这话是主人说的，按第 4 条记成规矩；只是她自己说的，什么都不记。
 7. 两个角色之间的对话同样处理；另一个角色说的话，不能当成主人说的。
 8. 每条条目写两层：public 是住在一起的人自然会知道的粗粒度信息（人在哪、大概在干哪类事，例如"在藏经阁闭关练功"、"出门吃饭了"），可以为空表示别人完全不知道；doing 是细节，可以写具体在干什么、聊了什么。
 9. seen_by 写"谁能看到细节"：当事人自己不用写；当时在场的人、以及这段话本来是在哪段私聊里说的，写进去。
@@ -77,6 +78,7 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
 14. 上面列的「打算」里（每条前面有编号，比如 i3），已经做完的、或者后来的事已经和它对不上的（例如说好在社务所等，后来人已经回了宿舍），把那几条的编号填进 drop_intentions（只撤这几条，别的留着）；这次又说了新打算的，照常写进 intentions；她之前说过、还没做完也没对不上的，不用重写。
 15. 她把「今天的简略世界线」里标着「还没到」的某件事，说成已经做了、或者正在做：这件事不记成条目，也不要为它改别的条目，写进 early：who、entry（那段的编号）、said（她原话里说的那句）。只算那份清单里标了「还没到」的事；清单里没有的、已经做过或正在做的事，照上面的规则记（那件事前面已经做过一截、现在只是「接着」往下做的，不算说早了）。她说的是「待会儿去」「打算做」，不算，不写 early。
 16. 「今天的简略世界线」里补写排的、主人让做的（标着「正在做」「还没到」的都算），都是按排的那会儿的情况写的。这段对话里说的事让其中某几段对不上了的（例如主人说他回来了、出门了，主人说那件事先不做了，她答应了这会儿去做别的，人换了地方，那段写的事已经做过了，另一个人那段跟她有关的事跟着变了），把对不上的那几段写进 stale：who、entry（编号）、why（一句话说哪里对不上）。只写对不上的；照样做得了、不受影响的不写。写进 stale 的段：还没开始的撤掉，正在做的到此刻为止，按现在的情况重排。
+17. 对话原文里标着「（主动发的）」的，是她自己主动发给主人的消息，不是在回主人的话：里面说的打算、提议、规矩一概不记（不写 intentions，也不写 constraints）；里面说她做了什么、在做什么，照常按第 5 条记。
 {world_notes}
 输出这个 JSON（没有的字段留空数组）：
 
@@ -90,7 +92,8 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
       "since": "2026-10-12 00:11", "until": "在练的事 #3 练成", "until_time": ""}}
   ],
   "lift_constraints": ["c3"],
-  "intentions": [{{"who": "napcat", "text": "下午想去温泉街挑布", "window": "13:00~16:00"}}],
+  "intentions": [{{"who": "napcat", "text": "晚饭后跟主人去温泉街夜市，挨个摊子逛一圈、跟着他挤一回人堆（15:11 她问今晚能不能带她去，主人答应了，说周六人多）", "window": "18:40~21:00", "date": "2026-10-17", "with": ["master"]}},
+                 {{"who": "master", "text": "去鹈茅学院上课（23:03 睡前他说明天还有课）", "window": "", "date": "2026-10-18", "with": []}}],
   "drop_intentions": ["i3"],
   "early": [{{"who": "napcat2", "entry": "e88", "said": "衣裳收进屋叠好了"}}],
   "stale": [{{"who": "napcat2", "entry": "e100", "why": "排的是守着水等主人回来，主人已经回来了"}}],
@@ -256,11 +259,17 @@ class Recorder:
         lines = []
         for item in items:
             role = str(item.get("role") or "")
-            who = label if role == "assistant" else "主人"
-            lines.append(
-                "%s %s %s：%s"
-                % (item.get("date"), item.get("time"), who, str(item.get("text") or ""))
-            )
+            text = str(item.get("text") or "")
+            if role == "assistant":
+                # 她主动发给主人的（不是回话）：里面说的打算、提议不记（第 17 条）
+                who = label + ("（主动发的）" if str(item.get("src") or "") == "proactive" else "")
+            else:
+                who = "主人"
+                # 主人塞给她的一次性提示（<system>……</system>）不是他说的话，不记成规矩
+                text = strip_inline_system(text)
+                if not text.strip():
+                    continue
+            lines.append("%s %s %s：%s" % (item.get("date"), item.get("time"), who, text))
         return "\n".join(lines)
 
     def _today_block(self, now: datetime.datetime) -> str:
@@ -277,8 +286,13 @@ class Recorder:
                 )
             )
         for item in self.world.intentions():
-            parts.append("- 打算 %s（%s）：%s %s" % (
-                item.get("id"), item.get("who"), item.get("text"), item.get("window") or ""))
+            tags = [str(item.get("who"))]
+            if "master" in (item.get("with") or []):
+                tags.append("和主人一起")
+            when = " ".join(x for x in (str(item.get("date") or "")[5:], str(item.get("window") or "")) if x)
+            if when:
+                tags.append(when)
+            parts.append("- 打算 %s（%s）：%s" % (item.get("id"), "，".join(tags), item.get("text")))
         book = getattr(self, "trainings", None)
         if book is not None:
             try:
@@ -586,6 +600,12 @@ class Recorder:
                 "created": fmt_time(now),
             }
             self.world.add_entry(date_text, entry)
+        if batch and not any(str(x.get("role") or "") == "user" for x in batch):
+            # 这批全是她主动发的、主人一句没说：规矩和打算都不可能从这里来（主动消息里的不记）
+            if data.get("constraints") or data.get("intentions"):
+                logger.info("[super_enhance/world] 这批只有她主动发的消息，丢掉记录员给的 %d 条规矩、%d 条打算",
+                            len(data.get("constraints") or []), len(data.get("intentions") or []))
+            data = dict(data, constraints=[], intentions=[])
         for raw in data.get("constraints") or []:
             if not isinstance(raw, dict):
                 continue
@@ -617,14 +637,20 @@ class Recorder:
                 # 编号对不上就不动（宁可少撤一条，也不误清这个人的全部打算）
                 logger.warning("[super_enhance/world] drop_intentions 收到无法识别的编号：%s，忽略", token)
         known = {str(x.get("id")) for x in self.world.intentions()}
+        heard = bot_of_umo(umo)
         for raw in data.get("intentions") or []:
-            if isinstance(raw, dict):
-                record = self.world.set_intention(
-                    str(raw.get("who") or ""), raw.get("text"), raw.get("window") or "", "chat"
-                )
-                # 只有新记的才腾地方；同一条再说一遍不动（补写可能已经把它排进去了）
-                if record and str(record.get("id")) not in known:
-                    self._make_room(record, now)
+            if not isinstance(raw, dict):
+                continue
+            who = str(raw.get("who") or "")
+            together = [str(x) for x in (raw.get("with") or []) if str(x) == "master"]
+            record = self.world.set_intention(
+                who, raw.get("text"), raw.get("window") or "", "chat",
+                with_list=together, date=raw.get("date") or "",
+                heard_by=[heard] if who == "master" and heard else None,
+            )
+            # 只有新记的才腾地方；同一条再说一遍不动（补写可能已经把它排进去了）；主人自己的安排不腾她们的地方
+            if record and str(record.get("id")) not in known and who != "master":
+                self._make_room(record, now)
         self._apply_promises(data.get("promises") or [], now, umo)
         self._collect_early(data.get("early") or [], umo, items, now)
         self._apply_stale(data.get("stale") or [], data.get("early") or [], now)
