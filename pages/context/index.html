@@ -4188,7 +4188,7 @@
     var start = t["new"] ? true : false;
     var text = (t.what || "") + " " + id + ((t.name || names[id]) ? " " + (t.name || names[id]) : "");
     if (t.into) { text += " → " + t.into + (names[t.into] ? " " + names[t.into] : ""); }
-    if (t.left) { text += "（" + (start ? "" : "剩") + t.left + "）"; }
+    if (t.left) { var lv = String(t.left); text += "（" + ((start || lv.indexOf("剩") === 0 || lv.indexOf("还剩") === 0) ? "" : "剩") + lv + "）"; }
     return text;
   }
 
@@ -5032,7 +5032,7 @@
     var isVoid = vidx !== undefined;
     var kind = thingIsStart(st.what) ? "start" : thingIsEnd(st.what) ? "end" : "";
     var bits = [];
-    if (st.left) { bits.push((kind === "start" ? "" : "剩") + st.left); }
+    if (st.left) { var lv2 = String(st.left); bits.push(((kind === "start" || lv2.indexOf("剩") === 0 || lv2.indexOf("还剩") === 0) ? "" : "剩") + lv2); }
     if (kind === "start" || st.what === "挪地方" || st.what === "切开了") {
       var w = [st.place, st.keep, st.state].filter(Boolean).join("，");
       if (w) { bits.push(w); }

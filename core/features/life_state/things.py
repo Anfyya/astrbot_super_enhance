@@ -837,7 +837,8 @@ class ThingStore:
         last = stages[-1] if stages else {}
         fresh = last.get("what") in START_STEPS
         if last.get("left"):
-            return last["left"] if fresh else "剩" + last["left"]
+            raw = str(last["left"])
+            return raw if (fresh or raw.startswith(("剩", "还剩"))) else "剩" + raw
         return "多少没说" if fresh else "剩多少没说"
 
     def line(self, item: dict, now: datetime.datetime, view: View, label_fn=None) -> str:
@@ -873,7 +874,8 @@ class ThingStore:
             if stage.get("into"):
                 bits.append("做进了 %s" % self._name_of(view, stage["into"]))
             if stage.get("left"):
-                bits.append(("剩" if stage.get("what") not in START_STEPS else "") + stage["left"])
+                raw = str(stage["left"])
+                bits.append(raw if (stage.get("what") in START_STEPS or raw.startswith(("剩", "还剩"))) else "剩" + raw)
             if stage.get("what") in START_STEPS + ("挪地方", "切开了"):
                 bits.append("，".join(x for x in (stage.get("place"), stage.get("keep"), stage.get("state")) if x))
             if stage.get("note"):
