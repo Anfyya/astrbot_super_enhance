@@ -108,9 +108,9 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
   "early": [{{"who": "napcat2", "entry": "e88", "said": "衣裳收进屋叠好了"}}],
   "stale": [{{"who": "napcat2", "entry": "e100", "why": "排的是守着水等主人回来，主人已经回来了"}}],
   "things": [
-    {{"new": "n1", "name": "嫩豆腐", "kind": "豆腐豆制品", "origin": "主人在商店街豆腐店买的", "from": [],
+    {{"new": "n1", "name": "嫩豆腐", "kind": "鲜水豆腐", "origin": "主人在商店街豆腐店买的", "from": [],
       "at": "2026-10-18 08:30", "what": "买回来", "left": "两块", "place": "灶房·水盆里", "keep": "泡在水里", "state": "整的", "by": "master", "quote": "摘一句原文"}},
-    {{"new": "n2", "name": "豆腐味噌汤", "kind": "熟菜汤", "origin": "", "from": ["n1", "w7"],
+    {{"new": "n2", "name": "豆腐味噌汤", "kind": "熟汤羹粥", "origin": "", "from": ["n1", "w7"],
       "at": "2026-10-18 11:40", "what": "做好了", "left": "一锅", "place": "灶房·灶台", "keep": "收着放", "by": "napcat2", "quote": "摘一句原文"}},
     {{"id": "n1", "at": "2026-10-18 11:40", "what": "用掉一部分", "left": "一块", "into": "n2", "by": "napcat2", "quote": "摘一句原文"}},
     {{"id": "w7", "at": "2026-10-18 11:40", "what": "用完了", "left": "", "into": "n2", "by": "napcat2", "quote": "摘一句原文"}}
