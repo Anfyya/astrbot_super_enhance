@@ -254,6 +254,8 @@ class WorldStore:
                 parse_steps(entry.get("steps"))[1]
                 or (list(entry.get("step_minutes") or []) if not isinstance(entry.get("steps"), str) else [])
             ),
+            # 截短 / 拉长前原定的分步（fit_steps 第一次改分步时存下），再拉长回去时照它恢复
+            "steps_planned": entry.get("steps_planned") if isinstance(entry.get("steps_planned"), list) else None,
             # 闲着：没在做具体的事（不算进度、做完不叫她）
             "idle": bool(entry.get("idle")) and kind != "event",
             # 重要程度 1–5（补写打的分；0 = 没打分），够设置里的阈值，做完才叫她
@@ -303,6 +305,7 @@ class WorldStore:
                 item["seen_by"] = [str(x) for x in fields["seen_by"] if str(x).strip()]
             if fields.get("steps") is not None:
                 item["steps"], item["step_minutes"] = parse_steps(fields["steps"])
+                item.pop("steps_planned", None)  # 分步重写了：原定的那份作废
             if fields.get("idle") is not None:
                 item["idle"] = bool(fields["idle"])
             if fields.get("stopped") is not None:
@@ -317,6 +320,9 @@ class WorldStore:
                 item["meal"] = bool(clean_flag(fields["meal"]))
             if fields.get("result") is not None:
                 item["result"] = clean_text(fields["result"], MAX_RESULT)
+            if (fields.get("end") is not None or fields.get("start") is not None) and fields.get("steps") is None:
+                # 起止改了（截短 / 拉长）：分步跟着按新时长对上，别把十几分钟的分步压进一两分钟里
+                fit_steps(item)
             self._save_day(date_text)
             return item
         return None
@@ -334,6 +340,8 @@ class WorldStore:
         for key, value in fields.items():
             if value is not None:
                 merged[key] = value
+        if fields.get("steps") is not None and parse_steps(fields["steps"]) != (clean_steps(old.get("steps")), step_minutes(old)):
+            merged["steps_planned"] = None  # 网页上改了分步：原定的那份作废
         if parse_time(merged.get("start")) is None:
             return None
         self.delete_entry(date_text, entry_id)
@@ -342,6 +350,13 @@ class WorldStore:
         if record is None:
             # 不该发生（手动最高）：放回原样
             self.add_entry(date_text, old)
+        elif (record.get("start") != old.get("start") or record.get("end") != old.get("end")) and (
+            fields.get("steps") is None
+            or (clean_steps(record.get("steps")), step_minutes(record)) == (clean_steps(old.get("steps")), step_minutes(old))
+        ):
+            # 网页上只改了起止、分步没动：分步按新时长对上
+            if fit_steps(record):
+                self._save_day(str(record.get("start"))[:10])
         self.note_manual()
         return record
 
@@ -930,6 +945,43 @@ def step_minutes(entry: dict) -> list:
     except Exception:
         return []
     return mins if len(mins) == len(steps) and mins and all(x > 0 for x in mins) else []
+
+
+def fit_steps(item: dict) -> bool:
+    """按这段现在的起止把分步分钟对上（就地改 item，改了返回 True）。
+
+    截短了：从头按分钟往下数，起止之间做得到的几步留下，卡在中间的那步只留做到的分钟，后面的撤掉；
+    拉长了：多出来的分钟算在最后一步。原定的分步第一次改时存进 steps_planned，之后都从它算，
+    截短后再拉长回去能照原样恢复。没分步分钟、没写结束的不动。
+    """
+    start = parse_time(item.get("start"))
+    end = parse_time(item.get("end")) if item.get("end") else None
+    if start is None or end is None or end <= start:
+        return False
+    planned = item.get("steps_planned")
+    if isinstance(planned, list) and planned:
+        texts, mins = parse_steps(planned)
+    else:
+        texts, mins = clean_steps(item.get("steps")), step_minutes(item)
+    if not texts or not mins:
+        return False
+    total = max(1, int(round((end - start).total_seconds() / 60)))
+    if total >= sum(mins):
+        new_texts, new_mins = list(texts), mins[:-1] + [mins[-1] + total - sum(mins)]
+    else:
+        new_texts, new_mins, left = [], [], total
+        for text, value in zip(texts, mins):
+            if left <= 0:
+                break
+            new_texts.append(text)
+            new_mins.append(min(value, left))
+            left -= value
+    if new_texts == clean_steps(item.get("steps")) and new_mins == step_minutes(item):
+        return False
+    if not (isinstance(planned, list) and planned):
+        item["steps_planned"] = [{"text": t, "minutes": m} for t, m in zip(texts, mins)]
+    item["steps"], item["step_minutes"] = new_texts, new_mins
+    return True
 
 
 def step_index(entry: dict, pct) -> int:
