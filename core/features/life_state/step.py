@@ -18,7 +18,7 @@ from astrbot.api import logger
 from .models import extract_json
 from .recorder import norm_time
 from .variety import default_pools, twists_of, when_map, with_when
-from .world import (WorldStore, clean_text, fmt_time, is_event, is_sleep, parse_steps, parse_time, progress_of, result_text,
+from .world import (WorldStore, clean_text, doing_text, fmt_time, is_event, is_sleep, parse_steps, parse_time, progress_of, result_text,
                     steps_text)
 
 SYSTEM_PROMPT = (
@@ -532,7 +532,7 @@ class LifeStep:
                         str(item.get("start"))[11:],
                         str(item.get("end"))[11:] or "…",
                         item.get("place") or "",
-                        item.get("doing") or "",
+                        doing_text(item),
                         result_text(item),
                     ))
             master = [

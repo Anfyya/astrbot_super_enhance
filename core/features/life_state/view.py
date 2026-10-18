@@ -5,7 +5,7 @@
 
 import datetime
 
-from .world import WorldStore, detail_of, is_event, parse_time, progress_of, public_of, result_text, staged_of, visible_to
+from .world import WorldStore, detail_of, doing_text, is_event, parse_time, progress_of, public_of, result_text, staged_of, visible_to
 
 WEEKDAYS_CN = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
 TAG = "【世界线】"
@@ -78,9 +78,12 @@ def merge_close(items: list, gap_minutes: int = FRAGMENT_MINUTES) -> list:
                 merged["_eff_end"] = item.get("end") or (end.strftime("%Y-%m-%d %H:%M") if end else "")
                 if str(item.get("place") or "").strip():
                     merged["place"] = item.get("place")
+                # 每一截各按自己的写（中途停下的那截写成「本来要……，但……」），合成的这一行不再算停下
                 merged["doing"] = _clip_tail("；".join(
-                    x for x in (str(prev.get("doing") or "").strip(), str(item.get("doing") or "").strip()) if x
+                    x for x in (doing_text(prev), doing_text(item)) if x
                 ), 400)
+                merged["stopped"], merged["steps"], merged["stop_why"] = False, [], ""
+                merged["result"] = "" if item.get("stopped") else item.get("result")  # 结果只算最后一截的
                 merged["public"] = item.get("public") or prev.get("public")
                 out[-1] = merged
                 run_open = end is not None

@@ -16,7 +16,7 @@ from astrbot.api import logger
 
 from ..message_text import strip_inline_system
 from .models import bot_of_umo, extract_json
-from .world import WorldStore, clean_text, fmt_time, is_event, is_sleep, parse_time, progress_of, result_text, steps_text
+from .world import WorldStore, clean_text, doing_text, fmt_time, is_event, is_sleep, parse_time, progress_of, result_text, steps_text
 
 SYSTEM_PROMPT = (
     "你只输出一个可以被 JSON 解析的对象，不要输出解释、Markdown 代码块或任何多余文本。"
@@ -350,7 +350,7 @@ class Recorder:
                                               "（%s）" % "、".join(flags) if flags else "")
                     if place:
                         head += " " + place
-                    lines.append((start, head + "：" + clean_text(item.get("doing") or item.get("public"), 60)
+                    lines.append((start, head + "：" + clean_text(doing_text(item) or item.get("public"), 120)
                                   + result_text(item)))
         lines.sort(key=lambda x: x[0])
         if lines:
@@ -763,7 +763,7 @@ class Recorder:
                 # 正在做、已经做了一会儿的：到此刻为止
                 # 做到一半停下：那条打算不算做完
                 self.world.update_entry(date_text, entry_id, end=fmt_time(flat.replace(second=0, microsecond=0)), intent="",
-                                       stopped=True)
+                                       stopped=True, stop_why=clean_text(raw.get("why"), 60))
                 logger.info(
                     "[super_enhance/world] 记录员让%s正在做的 %s %s 到此刻为止（%s）",
                     self.label(who) or who, entry_id, clean_text(entry.get("doing"), 30), clean_text(raw.get("why"), 60),
