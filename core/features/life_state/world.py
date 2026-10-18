@@ -353,8 +353,9 @@ class WorldStore:
         steps_changed = fields.get("steps") is not None and parse_steps(fields["steps"]) != (clean_steps(old.get("steps")), step_minutes(old))
         if steps_changed:
             merged["steps_planned"] = None  # 网页上改了分步：原定的那份作废
-        if steps_changed or (fields.get("doing") is not None and clean_text(fields["doing"], MAX_DOING) != old.get("doing")):
-            merged["things"] = []  # 改了做的事：补写原来标的吃的跟着作废
+        doing_changed = fields.get("doing") is not None and clean_text(fields["doing"], MAX_DOING) != old.get("doing")
+        if fields.get("things") is None and (steps_changed or doing_changed):
+            merged["things"] = []  # 改了做的事：补写原来标的吃的跟着作废（网页上明确给了留哪几条的，照网页的）
         if parse_time(merged.get("start")) is None:
             return None
         self.delete_entry(date_text, entry_id)

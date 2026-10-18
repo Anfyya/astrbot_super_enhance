@@ -442,12 +442,125 @@ class ThingStore:
             if source is not None and source.get("virtual"):
                 self.materialize(source, view)
         record = {k: copy.deepcopy(v) for k, v in item.items() if k not in ("virtual", "stages")}
-        record["stages"] = [copy.deepcopy((item.get("stages") or [{}])[0])]
+        record["stages"] = [{k: v for k, v in copy.deepcopy((item.get("stages") or [{}])[0]).items() if k != "_i"}]
         record["from"] = [x for x in record.get("from") or [] if self.get(x)]
         self._load().setdefault("items", []).append(record)
         self._save()
         logger.info("[super_enhance/things] 聊天里说到了世界线里的 %s %s，存下来", record.get("id"), record.get("name"))
         return record
+
+    # ---------- 网页上改（手动） ----------
+
+    def update_item(self, thing_id, name=None, kind=None, origin=None, sources=None) -> str:
+        """改名字 / 哪一类 / 哪来的 / 用料（编号改不了）。返回不收的原因，收了返回空串。"""
+        item = self.get(thing_id)
+        if item is None:
+            return "没有 %s 这一件" % thing_id
+        if name is not None:
+            name = clean_text(name, MAX_NAME)
+            if not name:
+                return "名字不能空"
+            item["name"] = name
+        if kind is not None:
+            item["kind"] = norm_kind(kind)
+        if origin is not None:
+            item["origin"] = clean_text(origin, MAX_ORIGIN)
+        if sources is not None:
+            picked = []
+            for token in sources:
+                found = self.get(token)
+                if found is not None and found["id"] != item["id"] and found["id"] not in picked:
+                    picked.append(found["id"])
+            item["from"] = picked
+        self._save()
+        return ""
+
+    @staticmethod
+    def _check_stages(stages: list) -> str:
+        """一件的几步排好以后还说得通：第一步是买回来 / 收到 / 做好了，后面没有第二个「来」，「没了」只能是最后一步。"""
+        if not stages:
+            return "一步都没有了"
+        if any(parse_time(x.get("at")) is None for x in stages):
+            return "时间不对"
+        if stages[0].get("what") not in START_STEPS:
+            return "第一步得是买回来 / 收到 / 做好了"
+        if any(x.get("what") in START_STEPS for x in stages[1:]):
+            return "买回来 / 收到 / 做好了只能是第一步"
+        if any(x.get("what") in END_STEPS for x in stages[:-1]):
+            return "「没了」的那一步后面还有别的步"
+        return ""
+
+    @staticmethod
+    def _same_stage(stage: dict, guard: dict) -> bool:
+        """网页上看到的那一步和现在文件里的是不是同一步（时刻和做了什么都对得上）。"""
+        guard = guard or {}
+        return str(stage.get("at")) == str(guard.get("at")) and str(stage.get("what")) == str(guard.get("what"))
+
+    def update_stage(self, thing_id, index: int, guard: dict, fields: dict, now: str = "") -> str:
+        """改存下来的某一步（网页）：时刻、做了什么、剩多少、放在哪、放法、整的还是切开、谁、做进了哪件、备注。"""
+        item = self.get(thing_id)
+        if item is None:
+            return "没有 %s 这一件" % thing_id
+        stages = item.get("stages") or []
+        if not 0 <= index < len(stages) or not self._same_stage(stages[index], guard):
+            return "这一步已经变了，刷新一下再改"
+        merged = dict(stages[index])
+        for key in ("at", "what", "left", "place", "keep", "state", "by", "into", "note"):
+            if fields.get(key) is not None:
+                merged[key] = fields[key]
+        new = clean_stage(merged)
+        if not new.get("into"):
+            new.pop("into", None)
+        elif not self.get(new["into"]) or new["into"] == item["id"]:
+            return "做进了哪件：没有 %s 这一件" % new["into"]
+        if new["what"] in END_STEPS:
+            new["left"] = ""
+        if now:
+            new["edited"] = now
+        trial = stages[:index] + [new] + stages[index + 1:]
+        trial.sort(key=lambda x: str(x.get("at") or ""))
+        why = self._check_stages(trial)
+        if why:
+            return why
+        item["stages"] = trial
+        item["created"] = trial[0]["at"]
+        if new.get("into") and item["id"] not in (self.get(new["into"]).get("from") or []):
+            self.get(new["into"]).setdefault("from", []).append(item["id"])
+        self._save()
+        return ""
+
+    def void_stage(self, thing_id, index: int, guard: dict, why: str = "", now: str = "") -> str:
+        """作废存下来的某一步（网页）：挪进 voided 留着，不再算进去；第一步不能作废（整件记错了就加一步「记错了」）。"""
+        item = self.get(thing_id)
+        if item is None:
+            return "没有 %s 这一件" % thing_id
+        stages = item.get("stages") or []
+        if not 0 <= index < len(stages) or not self._same_stage(stages[index], guard):
+            return "这一步已经变了，刷新一下再改"
+        if index == 0:
+            return "第一步（它是怎么来的）不能作废；整件都是记错的，就点「记错了」"
+        stage = stages.pop(index)
+        stage["void_why"] = clean_text(why, MAX_NOTE)
+        stage["void_at"] = now
+        item.setdefault("voided", []).append(stage)
+        self._save()
+        return ""
+
+    def unvoid_stage(self, thing_id, index: int, guard: dict) -> str:
+        """把作废的那一步恢复回去（按时刻插回，插不进去就还留在作废里）。"""
+        item = self.get(thing_id)
+        if item is None:
+            return "没有 %s 这一件" % thing_id
+        voided = item.get("voided") or []
+        if not 0 <= index < len(voided) or not self._same_stage(voided[index], guard):
+            return "这一步已经变了，刷新一下再改"
+        stage = {k: v for k, v in voided[index].items() if k not in ("void_why", "void_at")}
+        why = insert_stage(item, stage)
+        if why:
+            return why
+        voided.pop(index)
+        self._save()
+        return ""
 
     # ---------- 世界线里的（现算） ----------
 
@@ -579,6 +692,9 @@ class ThingStore:
             logger.warning("[super_enhance/things] 沉世界线里的吃的失败", exc_info=True)
         data = self._load()
         items = {str(x.get("id")): copy.deepcopy(x) for x in data.get("items") or []}
+        for item in items.values():
+            for index, stage in enumerate(item.get("stages") or []):
+                stage["_i"] = index  # 存下来的第几步（网页改这一步用）；世界线现算的步没有
         alias = dict(data.get("alias") or {})
         settled = data.get("settled") or {}
         for seg in self.segments(flat):

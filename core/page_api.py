@@ -376,10 +376,23 @@ class ContextPageApi:
                 cur = world.current(bot, now)
                 if cur is not None:
                     current[bot] = str(cur.get("id") or "")
+            # 段里标的吃的（补写写的 things）：编号 → 名字，网页上显示成「用掉一部分 w3 嫩豆腐」
+            thing_names = {}
+            store = getattr(life, "things", None)
+            if store is not None:
+                try:
+                    shelf = store.view(now)
+                    thing_names = {key: str(item.get("name") or "") for key, item in shelf.items()}
+                    for old_id, real in shelf.alias.items():
+                        if real in thing_names:
+                            thing_names[old_id] = thing_names[real]
+                except Exception:
+                    logger.warning("[super_enhance/ctx] 世界线页算吃的名字失败", exc_info=True)
             return _ok({
                 "date": date_text,
                 "today": life._today(),
                 "now": now.strftime("%Y-%m-%d %H:%M:%S"),
+                "thing_names": thing_names,
                 "current": current,
                 # 做完的事够这个重要程度才叫她主动说（网页标颜色用）
                 "done_min": life._done_min_importance(),
@@ -441,6 +454,12 @@ class ContextPageApi:
                     for key in ("place", "doing", "public", "start", "end", "training", "steps", "importance", "result"):
                         if body.get(key) is not None:
                             fields[key] = body.get(key)
+                    if isinstance(body.get("things"), list):
+                        # 这段标的吃的：网页上只能删掉其中几条，留下的必须是原来就有的
+                        old = next((x for x in world.entries(date_text, "") if str(x.get("id")) == str(body.get("id") or "")), None)
+                        keep = {json.dumps(x, ensure_ascii=False, sort_keys=True) for x in body["things"] if isinstance(x, dict)}
+                        fields["things"] = [x for x in ((old or {}).get("things") or [])
+                                            if json.dumps(x, ensure_ascii=False, sort_keys=True) in keep]
                     # 改完算手动，撞上的前后条目让开
                     ok = bool(
                         world.manual_update(date_text, str(body.get("id") or ""), **fields)
@@ -589,6 +608,203 @@ class ContextPageApi:
             logger.error("[super_enhance/ctx] 手动主动消息失败", exc_info=True)
             return _err(exc)
 
+    # ---------- 家里的吃的 ----------
+
+    @staticmethod
+    def _thing_who(life, value) -> str:
+        text = str(value or "")
+        if text == "master":
+            return "主人"
+        try:
+            return life.scene.label_for(text) or text
+        except Exception:
+            return text
+
+    async def things_view(self):
+        """家里的吃的：此刻现算的每一件（存下来的 + 世界线里做完的段标的），每一步、新鲜度、用料和用它做的。"""
+        life = getattr(self.plugin, "life", None)
+        if life is None or getattr(life, "things", None) is None:
+            return _err("家里的吃的没加载")
+        try:
+            from .features.life_state import things as things_mod
+
+            store = life.things
+            now = life._now().replace(tzinfo=None)
+            shelf = store.view(now)
+
+            def name_of(tid) -> dict:
+                found = shelf.find(tid)
+                return {"id": str(found.get("id")) if found else str(tid), "name": str(found.get("name") or "") if found else ""}
+
+            def stage_row(stage: dict) -> dict:
+                row = {k: stage.get(k) for k in ("at", "what", "left", "place", "keep", "state", "by", "note", "wl",
+                                                  "src", "recorded", "edited", "void_why", "void_at")}
+                row["by_label"] = self._thing_who(life, stage.get("by"))
+                row["idx"] = stage.get("_i")
+                if stage.get("into"):
+                    row["into"] = name_of(stage["into"])
+                return row
+
+            items = []
+            for item in shelf.values():
+                if str(item.get("cat") or things_mod.CAT_FOOD) != things_mod.CAT_FOOD:
+                    continue
+                stored = store.get(item.get("id"))
+                fresh = store.freshness(item, now)
+                stages = item.get("stages") or []
+                last = stages[-1] if stages else {}
+                end = things_mod.is_ended(item)
+                items.append({
+                    "id": item.get("id"),
+                    "name": item.get("name"),
+                    "kind": item.get("kind"),
+                    "origin": item.get("origin") or "",
+                    "created": item.get("created"),
+                    "virtual": bool(item.get("virtual")),
+                    "wl": item.get("wl") or "",
+                    "from": [name_of(x) for x in item.get("from") or []],
+                    "made": [name_of(x.get("id")) for x in shelf.values() if str(item.get("id")) in (x.get("from") or [])],
+                    "stages": [stage_row(x) for x in stages],
+                    "voided": [dict(stage_row(x), vidx=i) for i, x in enumerate((stored or {}).get("voided") or [])],
+                    "ended": stage_row(end) if end else None,
+                    "left": things_mod.ThingStore.left_text(item),
+                    "place": last.get("place") or "",
+                    "keep": last.get("keep") or "",
+                    "state": last.get("state") or "",
+                    "fresh": {
+                        "level": fresh["level"], "x": fresh["x"], "word": fresh["word"],
+                        "text": store.fresh_text(item, now),
+                        "bad_since": things_mod.fmt_time(fresh["bad_since"]) if fresh["bad_since"] else "",
+                        "hurry_at": things_mod.fmt_time(fresh["hurry_at"]) if fresh["hurry_at"] else "",
+                        "bad_at": things_mod.fmt_time(fresh["bad_at"]) if fresh["bad_at"] else "",
+                    },
+                })
+            items.sort(key=lambda x: str(x.get("created") or ""))
+            bots = list(life.enabled_bots() or [])
+            return _ok({
+                "now": now.strftime("%Y-%m-%d %H:%M:%S"),
+                "items": items,
+                "kinds": [{"key": k, "hours": v[0], "word": v[1]} for k, v in things_mod.KINDS.items()],
+                "keeps": list(things_mod.KEEPS),
+                "states": list(things_mod.STATES),
+                "steps": {"start": list(things_mod.START_STEPS), "mid": list(things_mod.MID_STEPS), "end": list(things_mod.END_STEPS)},
+                "people": [{"key": b, "label": self._thing_who(life, b)} for b in bots] + [{"key": "master", "label": "主人"}],
+                "settle_days": things_mod.SETTLE_DAYS,
+            })
+        except Exception as exc:
+            logger.error("[super_enhance/ctx] 读取家里的吃的失败", exc_info=True)
+            return _err(exc)
+
+    async def things_edit(self):
+        """家里的吃的（网页手动）：add 新的一件 / stage 加一步 / update_item 改名字类别来历用料 /
+        update_stage 改某一步 / void_stage 作废某一步 / unvoid_stage 恢复 / void_item 整件记错了 / keep 把世界线里现算的存下来。
+        编号由程序发、改不了；什么都不真删。"""
+        life = getattr(self.plugin, "life", None)
+        if life is None or getattr(life, "things", None) is None:
+            return _err("家里的吃的没加载")
+        try:
+            body = await request.get_json() or {}
+        except Exception:
+            body = {}
+        try:
+            from .features.life_state import things as things_mod
+            from .features.life_state.recorder import norm_time
+
+            store = life.things
+            now = life._now().replace(tzinfo=None)
+            stamp = now.strftime("%Y-%m-%d %H:%M")
+            today = now.date().isoformat()
+            shelf = store.view(now)
+            action = str(body.get("action") or "")
+            src = {"manual": "网页"}
+
+            def keep(token) -> str:
+                """编号 → 存下来的那件的编号（世界线里现算的先存下来）。"""
+                found = shelf.find(token)
+                if found is None:
+                    return ""
+                if found.get("virtual"):
+                    store.materialize(found, shelf)
+                return str(found.get("id"))
+
+            def stage_of(raw: dict) -> tuple:
+                raw = raw if isinstance(raw, dict) else {}
+                at = norm_time(raw.get("at"), today) if raw.get("at") else stamp
+                if not at:
+                    return None, "时间写成 2026-10-18 08:30 或 08:30"
+                if things_mod.parse_time(at) > now + datetime.timedelta(minutes=5):
+                    return None, "不能晚于现在"
+                stage = {"at": at, "src": src, "recorded": stamp}
+                for key in ("what", "left", "place", "keep", "state", "by", "note"):
+                    if raw.get(key) is not None:
+                        stage[key] = raw.get(key)
+                return stage, ""
+
+            why, tid = "", str(body.get("id") or "")
+            if action == "add":
+                stage, why = stage_of(body.get("stage"))
+                if not why:
+                    sources = [x for x in (keep(t) for t in body.get("from") or []) if x]
+                    item, why = store.create(body.get("name"), body.get("kind"), body.get("origin"), sources, stage, stamp)
+                    if item is not None:
+                        tid = item["id"]
+                        for sid in item.get("from") or []:
+                            store.add_stage(sid, {"at": item["created"], "what": "用掉一部分", "into": tid, "by": stage.get("by"),
+                                                  "note": "做这盘菜时用了", "src": src, "recorded": stamp})
+            elif action == "stage":
+                stage, why = stage_of(body.get("stage"))
+                if not why:
+                    tid = keep(tid)
+                    raw = body.get("stage") or {}
+                    into = keep(raw.get("into")) if raw.get("into") else ""
+                    if not tid:
+                        why = "没有这一件"
+                    else:
+                        if into and into != tid:
+                            stage["into"] = into
+                        why = store.add_stage(tid, stage)
+                        if not why and stage.get("into"):
+                            store.link_source(into, tid)
+            elif action == "update_item":
+                tid = keep(tid)
+                sources = None
+                if isinstance(body.get("from"), list):
+                    sources = [x for x in (keep(t) for t in body["from"]) if x]
+                why = store.update_item(tid, name=body.get("name"), kind=body.get("kind"), origin=body.get("origin"),
+                                        sources=sources) if tid else "没有这一件"
+            elif action == "update_stage":
+                fields = dict(body.get("fields") or {})
+                if fields.get("at"):
+                    fields["at"] = norm_time(fields["at"], today)
+                    if not fields["at"]:
+                        why = "时间写成 2026-10-18 08:30 或 08:30"
+                    elif things_mod.parse_time(fields["at"]) > now + datetime.timedelta(minutes=5):
+                        why = "不能晚于现在"
+                if fields.get("into"):
+                    fields["into"] = keep(fields["into"]) or str(fields["into"])
+                if not why:
+                    why = store.update_stage(tid, _as_int(body.get("index"), -1), body.get("guard") or {}, fields, stamp)
+            elif action == "void_stage":
+                why = store.void_stage(tid, _as_int(body.get("index"), -1), body.get("guard") or {}, str(body.get("why") or ""), stamp)
+            elif action == "unvoid_stage":
+                why = store.unvoid_stage(tid, _as_int(body.get("index"), -1), body.get("guard") or {})
+            elif action == "void_item":
+                tid = keep(tid)
+                why = store.add_stage(tid, {"at": stamp, "what": "记错了", "note": str(body.get("why") or "网页上标的"),
+                                            "src": src, "recorded": stamp}) if tid else "没有这一件"
+            elif action == "keep":
+                tid = keep(tid)
+                why = "" if tid else "没有这一件"
+            else:
+                why = "不支持的操作：%s" % action
+            if why:
+                return _ok({"ok": False, "why": why, "id": tid})
+            logger.info("[super_enhance/ctx] 家里的吃的（网页）%s %s", action, tid)
+            return _ok({"ok": True, "id": tid})
+        except Exception as exc:
+            logger.error("[super_enhance/ctx] 改家里的吃的失败", exc_info=True)
+            return _err(exc)
+
     # ---------- 插曲与消遣池 ----------
 
     async def pools_view(self):
@@ -735,6 +951,18 @@ class ContextPageApi:
             self.world_edit,
             ["POST"],
             "世界线：条目 / 约束 / 打算 / 骨架的增删改",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/things",
+            self.things_view,
+            ["GET"],
+            "家里的吃的：此刻现算的每一件、每一步、新鲜度",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/things/edit",
+            self.things_edit,
+            ["POST"],
+            "家里的吃的：加一件、加一步、改、作废（什么都不真删）",
         )
         register(
             f"{PAGE_API_PREFIX}/world/run",
