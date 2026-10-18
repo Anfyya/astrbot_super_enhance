@@ -21,16 +21,16 @@
 | ③ `msg_time` | 给 AI 自己的消息盖真实发送时间，并剥掉模型模仿的时间戳 |
 | ④ `context_tools` | `/usage`、`/compact`、`/compact v2`，上下文超限守卫，报错换成角色口吻 |
 | ⑤ `cross_session` | 跨会话 / 主动对话发出去的话补进对应会话历史 |
-| ⑥ `life_state` | 世界线（记录员 / 幕间补写 / 注入）、主动对话、能力与约定、在练的事、`start_doing`、`recall` |
+| ⑥ `life_state` | 世界线（记录员 / 幕间补写 / 注入）、主动对话、能力与约定、在练的事、家里的吃的、`start_doing`、`recall`、`look_things` |
 | ⑦ `reply_guard` | 新消息优先：回复还没发出去时又来了消息，就丢掉上一轮重答 |
 | ⑧ `cron_context` | 主动对话（cron）只带最近一段纯对话，省 token |
 | ⑩ `bot_dialog` | 两个机器人互聊的节奏、跨会话记录、委托回报、`tell` 传话、发消息 / tell 的说明 |
 | ⑪ `request_snapshot` | 保存每次真实发给模型的请求（面板「上下文」页查看） |
 
-（面板里没有 ⑨：「现在去做」并进了 ⑥——世界线 live 时才给模型 `start_doing`、`recall`。）
+（面板里没有 ⑨：「现在去做」并进了 ⑥——世界线 live 时才给模型 `start_doing`、`recall`、`look_things`。）
 
 工具可见性跟着开关走：关掉的功能不暴露给模型；世界线 live 之后，本插件只给模型
-`stay_silent`、`tell`、`start_doing`、`recall` 四个工具（状态改由程序维护，`get_full_dynamic_life_state` /
+`stay_silent`、`tell`、`start_doing`、`recall`、`look_things` 五个工具（状态改由程序维护，`get_full_dynamic_life_state` /
 `revise_life_state` / `update_my_scene` / `record_master_scene` / `record_ability` /
 `training` / `make_promise` / `close_promise` 全部收起）。长期记忆用 livingmemory 原生的召回和注入。
 
@@ -38,6 +38,8 @@
 时间（下午、15:00-17:00）搜，只列简短的几条、每条带编号（如 `10-15#e40`）；再填编号看那一刻准确的世界线：
 那段的分步和结果、前后各一件、同一时候别人在干什么、顺带的事。可见范围和注入一样（别人的按 seen_by 给细节或粗粒度），
 能翻多久以前取决于 `world_keep_days`。
+
+`look_things`（看家里的吃的）：`kind=food` 列出家里现有的吃的（编号 w1、w2……、剩多少、放在哪、哪来的、新不新鲜、大约能放到什么时候），附最近一天吃完 / 用完的；`id` 填编号看那一件从买回来到现在的每一步、用它做了什么。存货（`things.json`）只有记录员写（聊天里说已经发生了的买、收到、做、吃、用、挪、扔，第 18 条）；补写在世界线每段上标这段用了 / 吃了 / 做了 / 买了哪几件（补写第 18 条），不写进存货。只在要用的时候现算（补写开跑、调 `look_things`、记录员开跑）：做完、没停在半路的段标的那几步算进去，世界线改了下次一算就跟着变；聊天里记的和世界线对不上时以聊天为准；做完满 7 天的段沉进存货（世界线文件到期会清）。编号由程序发、只增不减，条目不删，没了只是最后一步；做出来的菜是新的一件，`from` 写用料编号。新鲜度不存，按每一步的放法、切没切、月份 + 当天天气 + 钟点的屋里气温现算。
 
 另有两处始终生效的底层补丁：**会话历史并发合并**（`history_merge.py`）和**每轮收尾**（`turn_state.py`）；
 主动消息那一轮的思考只留档、不发给模型（`proactive_think.py`），见文末。
@@ -64,6 +66,7 @@ core/
       recorder.py           记录员：对话原文 → 世界线
       step.py               幕间补写：把接下来的空档一段段补上
       view.py               把世界线渲染成注入给模型的【世界线】块
+      things.py             家里的吃的：编号、每一步、世界线里标的现算进去、新鲜度
       training.py           在练的事：进度怎么算
       proactive.py          主动对话排期与到点判断
       variety.py            插曲 / 消遣 / 闲着的样子：每天抽的随机起点与冷却

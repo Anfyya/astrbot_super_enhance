@@ -2,7 +2,7 @@
 
 - 触发：某个会话最后一条消息过了 recorder_quiet_seconds 秒、且有没处理过的消息；
 - 输入：新消息原文（带时间、标好说话人）+ 相关人物最新条目 + 生效中的约束/打算/约定/在练的事 + 现在时间；
-- 输出：JSON（entries / constraints / intentions / promises / trainings / abilities）；
+- 输出：JSON（entries / constraints / intentions / promises / trainings / abilities / things）；
 - 失败：游标不前进，写错误记录，下次重试。
 """
 
@@ -16,6 +16,7 @@ from astrbot.api import logger
 
 from ..message_text import strip_inline_system
 from .models import bot_of_umo, extract_json
+from .things import KEEPS, KINDS, SAME_NEW_MINUTES, STEPS, find_same, norm_step, usable
 from .world import WorldStore, clean_text, doing_text, fmt_time, is_event, is_sleep, parse_time, progress_of, result_text, steps_text
 
 SYSTEM_PROMPT = (
@@ -55,6 +56,8 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
 
 {today_block}
 
+{things_block}
+
 规则（只按这些做，不要推理没说出口的东西）：
 
 1. 只记原文里明确说了的。时间没说的，用那条消息的时间；说不清就先不记。不许记晚于「现在」的事。
@@ -79,6 +82,13 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
 15. 她把「今天的简略世界线」里标着「还没到」的某件事，说成已经做了、或者正在做：这件事不记成条目，也不要为它改别的条目，写进 early：who、entry（那段的编号）、said（她原话里说的那句）。只算那份清单里标了「还没到」的事；清单里没有的、已经做过或正在做的事，照上面的规则记（那件事前面已经做过一截、现在只是「接着」往下做的，不算说早了）。她说的是「待会儿去」「打算做」，不算，不写 early。
 16. 「今天的简略世界线」里补写排的、主人让做的（标着「正在做」「还没到」的都算），都是按排的那会儿的情况写的。这段对话里说的事让其中某几段对不上了的（例如主人说他回来了、出门了，主人说那件事先不做了，她答应了这会儿去做别的，人换了地方，那段写的事已经做过了，另一个人那段跟她有关的事跟着变了），把对不上的那几段写进 stale：who、entry（编号）、why（一句话说哪里对不上）。只写对不上的；照样做得了、不受影响的不写。写进 stale 的段：还没开始的撤掉，正在做的到此刻为止，按现在的情况重排。
 17. 对话原文里标着「（主动发的）」的，是她自己主动发给主人的消息，不是在回主人的话：里面说的打算、提议、规矩一概不记（不写 intentions，也不写 constraints）；里面说她做了什么、在做什么，照常按第 5 条记。
+18. 吃的（家里的存货）：买回来的、收到的、做好的吃的，每件一个编号，从有了那一刻起每一步都记进 things。只记聊天里说已经发生了的：「待会去买」「明天做」不记；世界线里写着、聊天里没说的不记（那些程序会按世界线自己算进清单）。标「（主动发的）」的消息里说已经买了、做了、吃了的，也照记（这一条和第 17 条不一样）。
+   - 新的一件（上面「家里的吃的」里没有的）：写 new（这一批里的临时代号 n1、n2……；不要写编号，编号由程序发）、name、kind、origin、from，再加上它的第一步。第一步只能是「买回来」「收到」「做好了」：清单里没有的东西被吃了、用了，不记（不知道它是哪来的）。买回来、收到的，必须是聊天里说了真的买了、收到了；清单里已经有的同一件（同一次买的、同一锅做的）不要再建。旧的还没吃完又买了一份，是新的一件。买了当场就吃完的零嘴、米面盐糖酱油味噌油这些天天用的常备调料不用记。
+   - kind 从这几类里挑：{kinds}。origin 写哪来的（谁在哪买的、谁送的）；自己做的留空。
+   - 做菜：做好的那盘菜是新的一件，第一步「做好了」，from 写用了清单里哪几件（写编号；这一批里新记的写临时代号）；用掉的每一件，各记一步「用掉一部分」或「用完了」，into 写那盘菜。用的料清单里没有的，from 里就不写它，一件都对不上就留空。买来的、别人送的熟菜，from 留空。剩下的菜还是那一件，又吃了就记「吃了一部分」「吃完了」。
+   - 已有的那件又发生了一步：写 id（清单里的编号；这一批里新记的写临时代号）和这一步。同样的东西有好几件、说不清是哪件的，记在最早有的那件上。
+   - 每一步写：at（发生的时刻 YYYY-MM-DD HH:MM）、what（{steps}）、left（这一步之后还剩多少，比如「两块」「小半锅」；用完、吃完写空）、place（放在哪）、keep（放法：{keeps}）、state（整的 / 切开了）、by（谁：napcat / napcat2 / master，别人写名字）、into（用掉是做进了哪盘菜）、quote（摘原文里说这件事的那句话）。place、keep、state 跟上一步一样的不用写。
+   - 「记错了」只用在清单里确实记错了的那件（根本没这回事）。
 {world_notes}
 输出这个 JSON（没有的字段留空数组）：
 
@@ -97,6 +107,14 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
   "drop_intentions": ["i3"],
   "early": [{{"who": "napcat2", "entry": "e88", "said": "衣裳收进屋叠好了"}}],
   "stale": [{{"who": "napcat2", "entry": "e100", "why": "排的是守着水等主人回来，主人已经回来了"}}],
+  "things": [
+    {{"new": "n1", "name": "嫩豆腐", "kind": "豆腐豆制品", "origin": "主人在商店街豆腐店买的", "from": [],
+      "at": "2026-10-18 08:30", "what": "买回来", "left": "两块", "place": "灶房·水盆里", "keep": "泡在水里", "state": "整的", "by": "master", "quote": "摘一句原文"}},
+    {{"new": "n2", "name": "豆腐味噌汤", "kind": "熟菜汤", "origin": "", "from": ["n1", "w7"],
+      "at": "2026-10-18 11:40", "what": "做好了", "left": "一锅", "place": "灶房·灶台", "keep": "收着放", "by": "napcat2", "quote": "摘一句原文"}},
+    {{"id": "n1", "at": "2026-10-18 11:40", "what": "用掉一部分", "left": "一块", "into": "n2", "by": "napcat2", "quote": "摘一句原文"}},
+    {{"id": "w7", "at": "2026-10-18 11:40", "what": "用完了", "left": "", "into": "n2", "by": "napcat2", "quote": "摘一句原文"}}
+  ],
   "promises": [{{"action": "add", "bots": ["napcat"], "date": "2026-10-12", "time": "14:00",
                 "what": "陪主人进山看红叶", "with": "主人"}}],
   "trainings": [{{"action": "start", "bot": "napcat", "what": "收放自如", "standard": "十回连着一收一放不漏不散",
@@ -358,6 +376,14 @@ class Recorder:
             parts.extend(text for _, text in lines)
         return "今天到目前为止（供你对照，别重复记）：\n" + ("\n".join(parts) if parts else "（空）")
 
+    def _things_block(self, now: datetime.datetime) -> str:
+        """家里的吃的：现有的一件一行（编号、剩多少、在哪、哪来的、新不新鲜），附最近一天没了的。"""
+        store = getattr(self, "things", None)
+        if store is None:
+            return ""
+        flat = now.replace(tzinfo=None)
+        return "家里的吃的（存货，按第 18 条记；每件前面是程序发的编号）：\n" + store.food_list(flat, store.view(flat), self.label)
+
     def _since(self, items, now: datetime.datetime) -> datetime.datetime:
         """这批消息里最早那条的时刻（不带时区的本地时间）；拿不到就用现在。"""
         stamps = []
@@ -389,6 +415,10 @@ class Recorder:
             labels=labels or "（未配置）",
             transcript=self._transcript(items, umo),
             today_block=self._today_block(now),
+            things_block=self._things_block(now),
+            kinds=" / ".join(KINDS),
+            steps=" / ".join(STEPS),
+            keeps=" / ".join(KEEPS),
             world_notes=self.world_notes,
         )
 
@@ -656,6 +686,7 @@ class Recorder:
         self._apply_stale(data.get("stale") or [], data.get("early") or [], now)
         self._apply_trainings(data.get("trainings") or [], now)
         self._apply_abilities(data.get("abilities") or [], now)
+        self._apply_things(data.get("things") or [], umo, batch, now)
 
     def _collect_early(self, raws, umo: str, items, now: datetime.datetime) -> None:
         """记录员标出的「说早了」：核对那段确实在这批消息之后才排着，攒起来等 run 里叫她改口。"""
@@ -880,3 +911,150 @@ class Recorder:
             except Exception as e:
                 logger.warning("[super_enhance/world] 记录员写能力清单失败：%s", e)
 
+    # ---------- 家里的吃的（第 18 条） ----------
+
+    def _by(self, value) -> str:
+        """谁：napcat / napcat2 / master 原样；写成名字的对回去；别人照写。"""
+        text = clean_text(value, 12)
+        if text in ("master", "主人"):
+            return "master"
+        for bot in self.raw_log.enabled_bots():
+            if text and text in (bot, self.label(bot)):
+                return bot
+        return text
+
+    def _said_item(self, items, said):
+        """记录员摘的那句原话是哪条消息：那条原始消息；找不到就 None。"""
+        probe = "".join(str(said or "").split())
+        if len(probe) < 4:
+            return None
+        for item in items or []:
+            text = "".join(str(item.get("text") or "").split())
+            if text and (probe in text or text in probe):
+                return item
+        return None
+
+    def _thing_stage(self, raw: dict, umo: str, items, day: str, now: datetime.datetime) -> dict:
+        """记录员写的一步 → 存货里的一步；src 对回原话是哪条消息、谁说的。"""
+        hit = self._said_item(items, raw.get("quote"))
+        said = norm_time("%s %s" % (hit.get("date"), hit.get("time")), day) if hit else ""
+        src = {"umo": umo, "quote": clean_text(raw.get("quote"), 80)}
+        if hit:
+            src["at"] = said
+            if str(hit.get("role") or "") == "assistant":
+                bot = bot_of_umo(umo)
+                src["who"] = (self.label(bot) or bot) + ("（主动发的）" if str(hit.get("src") or "") == "proactive" else "")
+            else:
+                src["who"] = "主人"
+        return {
+            "at": norm_time(raw.get("at"), day, fallback=said or fmt_time(now)),
+            "what": raw.get("what"),
+            "left": raw.get("left"),
+            "place": raw.get("place"),
+            "keep": raw.get("keep"),
+            "state": raw.get("state"),
+            "by": self._by(raw.get("by")),
+            "note": raw.get("note"),
+            "src": src,
+            "recorded": fmt_time(now),
+        }
+
+    def _apply_things(self, raws, umo: str, items, now: datetime.datetime) -> None:
+        """新的一件先建（临时代号换成程序发的编号），再给已有的加步；做菜用掉的料两头都记上（菜的 from、料的 into）。
+        对照的是此刻现算的存货（含世界线里做完的段）；聊天里说到了世界线里的那件，就把它存下来（从此算确定有的）。"""
+        store = getattr(self, "things", None)
+        if store is None or not isinstance(raws, list) or not raws:
+            return
+        flat = now.replace(tzinfo=None)
+        day = str((items[0].get("date") if items else "") or flat.date().isoformat())
+        view = store.view(flat)
+        keys: dict[str, str] = {}
+        dishes = []
+
+        def resolve(token) -> str:
+            """临时代号 / 编号 → 存下来的那件的编号（世界线里现算的先存下来）；对不上返回空串。"""
+            text = str(token or "").strip()
+            if text in keys:
+                return keys[text]
+            item = view.find(text)
+            if item is None:
+                return ""
+            if item.get("virtual"):
+                store.materialize(item, view)
+            return str(item.get("id"))
+
+        def bad_time(stage) -> bool:
+            moment = parse_time(stage.get("at"))
+            return moment is None or moment > flat + datetime.timedelta(minutes=5)
+
+        for raw in raws:
+            if not isinstance(raw, dict) or not str(raw.get("new") or "").strip():
+                continue
+            key = str(raw["new"]).strip()
+            stage = self._thing_stage(raw, umo, items, day, now)
+            if bad_time(stage):
+                logger.warning("[super_enhance/things] 新的一件 %s 时间不对或晚于现在，不记：%s", raw.get("name"), stage.get("at"))
+                continue
+            moment = parse_time(stage["at"])
+            gap = datetime.timedelta(minutes=SAME_NEW_MINUTES)
+            same = find_same(view.values(), raw.get("name"), norm_step(stage.get("what")), moment - gap, moment + gap)
+            if same is not None:
+                keys[key] = resolve(same.get("id"))
+                logger.info("[super_enhance/things] %s 已经有了（%s），不再新建", raw.get("name"), same.get("id"))
+                continue
+            sources = []
+            for token in raw.get("from") or []:
+                text = str(token or "").strip()
+                source = store.get(keys[text]) if text in keys else view.find(text)
+                if source is None or not usable(source, stage["at"]):
+                    logger.warning("[super_enhance/things] %s 的用料 %s 对不上（没有这件，或那会儿还没有 / 已经没了），不写进 from",
+                                   raw.get("name"), token)
+                    continue
+                sid = resolve(text)
+                if sid and sid not in sources:
+                    sources.append(sid)
+            item, why = store.create(raw.get("name"), raw.get("kind"), raw.get("origin"), sources, stage, fmt_time(now))
+            if item is None:
+                logger.warning("[super_enhance/things] 不记 %s：%s", raw.get("name"), why)
+                continue
+            keys[key] = str(item["id"])
+            if sources:
+                dishes.append(item)
+            first = item["stages"][0]
+            logger.info("[super_enhance/things] 新记 %s %s（%s，%s %s）", item["id"], item["name"], item["kind"],
+                        first["at"][5:], first["what"])
+        for raw in raws:
+            if not isinstance(raw, dict) or str(raw.get("new") or "").strip():
+                continue
+            tid = resolve(raw.get("id"))
+            if not tid:
+                logger.warning("[super_enhance/things] 没有 %s 这一件，「%s」不记", raw.get("id"), raw.get("what"))
+                continue
+            stage = self._thing_stage(raw, umo, items, day, now)
+            if bad_time(stage):
+                logger.warning("[super_enhance/things] %s 的「%s」时间不对或晚于现在，不记：%s", tid, raw.get("what"), stage.get("at"))
+                continue
+            into = resolve(raw.get("into")) if raw.get("into") else ""
+            if into and into != tid:
+                stage["into"] = into
+            why = store.add_stage(tid, stage)
+            if why:
+                logger.info("[super_enhance/things] %s 的「%s」不记：%s", tid, raw.get("what"), why)
+                continue
+            if stage.get("into"):
+                store.link_source(into, tid)
+            logger.info("[super_enhance/things] %s 记一步：%s %s%s", tid, stage["at"][5:], norm_step(stage.get("what")),
+                        "（做进了 %s）" % into if stage.get("into") else "")
+        # 菜的 from 里写了、料那边没记「用掉」的：补一步，剩多少没说
+        for dish in dishes:
+            first = dish["stages"][0]
+            for sid in dish.get("from") or []:
+                source = store.get(sid)
+                if source is None or any(str(x.get("into") or "") == dish["id"] for x in source.get("stages") or []):
+                    continue
+                why = store.add_stage(sid, {
+                    "at": first["at"], "what": "用掉一部分", "by": first.get("by"), "into": dish["id"],
+                    "note": "做这盘菜时用了，聊天里没说剩多少", "src": first.get("src"), "recorded": fmt_time(now),
+                })
+                if why:
+                    logger.info("[super_enhance/things] %s 做进 %s 那一步补不上：%s", sid, dish["id"], why)

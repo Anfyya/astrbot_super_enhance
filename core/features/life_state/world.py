@@ -282,6 +282,8 @@ class WorldStore:
             "sleep": None if entry.get("sleep") is None or kind == "event" else bool(entry.get("sleep")),
             # 补写排的段是照什么写的：{"kind", "text"}（见 step.origin_of）
             "origin": clean_origin(entry.get("origin")),
+            # 这段用了 / 吃了 / 做了 / 买了家里哪几件吃的（补写标的，见 things.py）：只在要用的时候现算，不写进存货
+            "things": [dict(x) for x in (entry.get("things") or []) if isinstance(x, dict)][:12],
             "created": str(entry.get("created") or fmt_time(self.now_local())),
         }
         if not entry.get("id"):
@@ -348,8 +350,11 @@ class WorldStore:
         for key, value in fields.items():
             if value is not None:
                 merged[key] = value
-        if fields.get("steps") is not None and parse_steps(fields["steps"]) != (clean_steps(old.get("steps")), step_minutes(old)):
+        steps_changed = fields.get("steps") is not None and parse_steps(fields["steps"]) != (clean_steps(old.get("steps")), step_minutes(old))
+        if steps_changed:
             merged["steps_planned"] = None  # 网页上改了分步：原定的那份作废
+        if steps_changed or (fields.get("doing") is not None and clean_text(fields["doing"], MAX_DOING) != old.get("doing")):
+            merged["things"] = []  # 改了做的事：补写原来标的吃的跟着作废
         if parse_time(merged.get("start")) is None:
             return None
         self.delete_entry(date_text, entry_id)

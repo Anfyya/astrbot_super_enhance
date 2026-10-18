@@ -53,6 +53,8 @@ from .variety import PoolStore, SeedLog
 from .world import WorldStore, fmt_time, is_event, is_sleep, parse_time
 from .recorder import Recorder
 from .step import LifeStep
+from .things import FILE_NAME as THINGS_FILE_NAME
+from .things import ThingStore
 from .view import build_world_text
 
 DEFAULT_TZ = "Asia/Shanghai"
@@ -237,6 +239,12 @@ class LifeStateService:
         self.life_step.trainings = self.trainings
         self.life_step.abilities = self.abilities
         self.life_step.recorder = self.recorder
+        # 家里的吃的（存货）：记录员记聊天里说的，补写在世界线每段上标；只在要用的时候现算（见 things.py）
+        self.things = ThingStore(self.data_dir / THINGS_FILE_NAME, weather_fn=self._weathers)
+        self.things.world = self.world
+        self.things.bots_fn = self.raw_log.enabled_bots
+        self.recorder.things = self.things
+        self.life_step.things = self.things
         # 世界线 live 时，主动消息提示词里不再出「原本打算」那一行
         self.planner.live_fn = lambda: self.world_mode == "live"
         self._world_task: asyncio.Task | None = None
@@ -400,6 +408,30 @@ class LifeStateService:
         if not any(str(x or "").strip() for x in (keyword, date, time)):
             return "关键词、日期、时间至少填一样。"
         return recall.search(self.world, bot, self.scene.label_for, now, keyword, date, time)
+
+    def _weathers(self) -> dict:
+        """每天抽到的天气：{日期: 天气原文}（算吃的放了多久坏用）。"""
+        try:
+            seeds = self.seed_log.load() or {}
+        except Exception:
+            return {}
+        return {day: str(seed.get("weather") or "") for day, seed in seeds.items() if isinstance(seed, dict)}
+
+    def tool_look_things(self, umo: str, kind: str = "food", thing_id: str = "") -> str:
+        """看家里的东西：kind=food 列出家里现有的吃的；填了编号看那一件的来龙去脉。这一刻现算。"""
+        if self.world_mode != "live":
+            return "世界线没开，看不到。"
+        now = self._now().replace(tzinfo=None)
+        shelf = self.things.view(now)
+        key = str(thing_id or "").strip()
+        if key:
+            item = shelf.find(key)
+            if item is None:
+                return "没有 %s 这一件。先不填编号看一遍清单。" % key
+            return self.things.history(item, now, shelf, self.scene.label_for)
+        if str(kind or "food").strip().lower() not in ("food", "foods", "食物", "吃的", ""):
+            return "现在只能看吃的：kind 填 food。"
+        return "家里的吃的（%s）：\n%s" % (fmt_time(now), self.things.food_list(now, shelf, self.scene.label_for))
 
     def world_text(self, bot: str, now: datetime.datetime) -> str:
         """live 时给模型的【世界线】块：线 + 约定 + 在练的事 + 能力清单。"""

@@ -17,6 +17,7 @@ from astrbot.api import logger
 
 from .models import extract_json
 from .recorder import norm_time
+from .things import END_STEPS, KEEPS, KINDS, MID_STEPS, START_STEPS, norm_keep, norm_kind, norm_state, norm_step
 from .variety import default_pools, twists_of, when_map, with_when
 from .world import (WorldStore, clean_text, doing_text, fmt_time, is_event, is_sleep, parse_steps, parse_time, progress_of, result_text,
                     steps_text)
@@ -94,6 +95,11 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
 15. **同一类事一天里做过一次就不要再排**（比如今天已经做过点心、炖过汤，就别再排第二次）；主人对做出来的东西提的意见（「甜度再多一点」「汤有点淡」）**不等于叫她现在去做**——当天不重做，想改的留到以后（改配方、下次做的时候再试），现在照常排别的事。
 16. **两个人一起做的事，细节只能有一个版本，而且要写到具体**：with 里写了对方、两人一起做的事（一起吃饭、一起做点心、一起出门、一起翻一本书）——吃的是什么菜、谁掌的勺、买了什么、书或报纸上讲了什么、路上碰见了谁、做出来的东西什么样，先在聊天记录和已经写好的段落里找，找到就照原样用；找不到就由你定一份具体的（不许写成「菜炒好了、东西买回来了」这种没内容的话），两边的 doing/steps/result 都用同一份。措辞可以随视角不同，事实、名字、数量必须完全一样。只有一个人做的事不强制写具体。
 17. **亚托莉做饭的写法**：家常那几样练熟的照常做好；做没做过的新菜、或者复杂的大菜时，偶尔留一个小岔子（盐搁重了、火候偏了、形状歪了这种）；平时做饭也有小概率失手——一处就够，「笨手笨脚」落在过程和学新东西上，不是做成黑暗料理。翻车了多半由丛雨接手收拾（接过勺补救、或者干脆重做一道），把灶上收拾干净就翻篇。她嘴上怪火候怪锅，下次照旧认真学，别写成她怕进厨房。
+18. **家里的吃的**：上面「家里的吃的」是此刻家里有的（编号、剩多少、放在哪、还能放到什么时候）。段里动到家里的吃的，写进这段的 things（没动到就是空数组）：
+   - 用了、吃了家里有的：写 id（编号）、what（用掉一部分 / 用完了 / 吃了一部分 / 吃完了）、left（这段做完还剩多少，用完、吃完写空）；做进了这一次新做的菜，into 写那盘菜的临时代号。换了地方或放法、切开了：what 写「挪地方」或「切开了」，写上新的 place / keep / state。扔掉：what 写「丢了」或「坏了扔了」。
+   - 做出来的菜、买回来的、别人给的：写 new（临时代号 n1、n2……，这一次里每件一个；编号由程序发）、name、kind、what（做好了 / 买回来 / 收到）、left、place、keep；做的菜 from 写用了哪几件（编号或这一次的临时代号），买来的 origin 写在哪买的。
+   - 做饭用料先用家里有的，先用快不行了的；新鲜的料（豆腐、菜、鱼肉、蛋、水果）家里没有，就在做饭之前排一段去买回来。米、面、盐、糖、酱油、味噌、油这些常备的随手就有，things 里不用写。两人一起做的饭、一起吃的饭，things 写在其中一个人那段里。
+   - kind 从这几类里挑：{kinds}；keep 从这几样里挑：{keeps}。
 {world_notes}
 {step_notes}
 注意：**不要输出 intentions，也不要写任何「接下来打算」**。上面「各自的打算」里如果有，是之前说好要做的，照着走就行。
@@ -103,8 +109,8 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
 {{
   "end_current": {{"napcat": "{example_end}"}},
   "segments": {{
-    "napcat": [{{"start": "{example_start}", "end": "{example_end}", "place": "", "doing": "一句话写这件事", "steps": [{{"text": "这一阵子她一直在干什么", "minutes": 5}}, {{"text": "第二步", "minutes": 15}}, {{"text": "收尾：用过的东西收好、归位", "minutes": 5}}], "result": "这件事的结果", "state": "做事", "importance": 2, "at_home": true, "meal": false, "public": "", "with": [], "training": "", "intent": "", "from": "照上面哪一样写的"}},
-               {{"start": "{example_end}", "end": "{example_end2}", "place": "", "doing": "下一件事", "steps": [{{"text": "第一步", "minutes": 10}}, {{"text": "收尾", "minutes": 5}}], "result": "这件事的结果", "state": "做事", "importance": 2, "at_home": true, "meal": false, "public": "", "with": [], "training": "", "intent": "", "from": "照上面哪一样写的"}}],
+    "napcat": [{{"start": "{example_start}", "end": "{example_end}", "place": "", "doing": "一句话写这件事", "steps": [{{"text": "这一阵子她一直在干什么", "minutes": 5}}, {{"text": "第二步", "minutes": 15}}, {{"text": "收尾：用过的东西收好、归位", "minutes": 5}}], "result": "这件事的结果", "state": "做事", "importance": 2, "at_home": true, "meal": false, "public": "", "with": [], "training": "", "intent": "", "from": "照上面哪一样写的", "things": []}},
+               {{"start": "{example_end}", "end": "{example_end2}", "place": "", "doing": "下一件事", "steps": [{{"text": "第一步", "minutes": 10}}, {{"text": "收尾", "minutes": 5}}], "result": "这件事的结果", "state": "做事", "importance": 2, "at_home": true, "meal": false, "public": "", "with": [], "training": "", "intent": "", "from": "照上面哪一样写的", "things": []}}],
     "napcat2": []
   }}
 }}
@@ -310,6 +316,48 @@ class LifeStep:
             return recorder.training_id(value, bot)
         text = str(value or "").strip().lstrip("#＃").strip()
         return text if text.isdigit() else ""
+
+    def _thing_steps(self, raws, keys: dict, shelf) -> list:
+        """补写给一段标的吃的：临时代号换成程序发的编号（这一次里同一个代号是同一件）；
+        用了、吃了的得是家里有的（此刻现算的存货）或这一次里新做 / 新买的，对不上的那步丢掉。"""
+        store = getattr(self, "things", None)
+        if store is None or shelf is None or not isinstance(raws, list):
+            return []
+
+        def resolve(token) -> str:
+            text = str(token or "").strip()
+            if text in keys:
+                return keys[text]
+            item = shelf.find(text)
+            return str(item.get("id")) if item else ""
+
+        out = []
+        for raw in raws[:12]:
+            if not isinstance(raw, dict):
+                continue
+            what = norm_step(raw.get("what"))
+            key = str(raw.get("new") or "").strip()
+            if key:
+                name = clean_text(raw.get("name"), 30)
+                if what not in START_STEPS or not name:
+                    continue
+                if key not in keys:
+                    keys[key] = store.reserve_id()
+                step = {"new": keys[key], "name": name, "kind": norm_kind(raw.get("kind")),
+                        "origin": clean_text(raw.get("origin"), 60),
+                        "from": [x for x in dict.fromkeys(resolve(t) for t in raw.get("from") or []) if x]}
+            else:
+                tid = resolve(raw.get("id"))
+                if not tid or what not in MID_STEPS + END_STEPS:
+                    continue
+                step = {"id": tid}
+                into = resolve(raw.get("into"))
+                if into and into != tid:
+                    step["into"] = into
+            step.update({"what": what, "left": clean_text(raw.get("left"), 20), "place": clean_text(raw.get("place"), 40),
+                         "keep": norm_keep(raw.get("keep")), "state": norm_state(raw.get("state"))})
+            out.append({k: v for k, v in step.items() if v not in ("", None, []) or k == "left"})
+        return out
 
     def _intention_line(self, item: dict) -> str:
         """补写看到的一条打算：编号（谁，和主人一起，哪天 几点）：内容。"""
@@ -607,6 +655,13 @@ class LifeStep:
         promises = self._promise_lines(flat)
         if promises:
             parts.append("还没做的约定：\n" + "\n".join(promises))
+        store = getattr(self, "things", None)
+        if store is not None:
+            try:
+                # 补写开跑这一刻现算：世界线里做完的段标的吃的算进去，新鲜度按此刻
+                parts.append("家里的吃的（此刻；每件前面是编号）：\n" + store.food_list(flat, store.view(flat), self.label))
+            except Exception:
+                logger.warning("[super_enhance/world] 补写算家里的吃的失败", exc_info=True)
         # 主人的动向：他自己说的，加上她们写着和主人一起的段（陪他出门时主人跟着这些段走）
         trail = []
         for back in (1, 0):
@@ -720,6 +775,8 @@ class LifeStep:
             routine_block=self._routine_block(bots, now),
             context_block=self._context_block(bots, now, tasks),
             task_block=self._task_block(tasks),
+            kinds=" / ".join(KINDS),
+            keeps=" / ".join(KEEPS),
             example_start=fmt_time(example_start),
             example_end=fmt_time(example_start + datetime.timedelta(minutes=25)),
             example_end2=fmt_time(example_start + datetime.timedelta(minutes=40)),
@@ -885,6 +942,14 @@ class LifeStep:
                 seed = (self.seed_log.load() or {}).get(date_text)
             except Exception:
                 seed = None
+        # 段里标的吃的：对照此刻现算的存货；临时代号（n1、n2……）这一次里两个人共用，同一个代号就是同一件
+        store = getattr(self, "things", None)
+        try:
+            shelf = store.view(flat) if store is not None else None
+        except Exception:
+            logger.warning("[super_enhance/world] 补写算家里的吃的失败", exc_info=True)
+            shelf = None
+        thing_keys: dict = {}
         for bot, info in tasks.items():
             start = info["start"]
             if info["mode"] == "open":
@@ -965,6 +1030,7 @@ class LifeStep:
                     "intent": intent,
                     # 溯源：这段是照什么写的（抽到的哪一条 / 打算 / 作息 / 接着前面 / 自己想的），程序对照当天抽到的核过
                     "origin": origin_of(raw.get("from"), bot, seed, intent=intent, training=training),
+                    "things": self._thing_steps(raw.get("things"), thing_keys, shelf) if state == "do" else [],
                     "seen_by": [bot] + with_list,
                     "source": "step",
                     "created": fmt_time(flat),

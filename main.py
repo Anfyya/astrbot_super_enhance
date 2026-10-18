@@ -182,6 +182,7 @@ class SuperEnhance(Star):
             ("close_promise", self.life.promise_enabled and not live),
             ("start_doing", self.life.enabled and live),
             ("recall", self.life.enabled and live),
+            ("look_things", self.life.enabled and live),
             ("tell", self.life.enabled),
         ):
             try:
@@ -779,6 +780,22 @@ class SuperEnhance(Star):
             翻到的世界线。
         """
         return self.life.tool_recall(getattr(event, "unified_msg_origin", "") or "", keyword, date, time, entry)
+
+    @filter.llm_tool(name="look_things")
+    async def look_things(self, event: AstrMessageEvent, kind: str = "food", id: str = "") -> str:
+        """看家里的东西：现在有哪些吃的、各放在哪、剩多少、还新不新鲜、能放到什么时候。说到家里的吃的、做饭用什么、东西还能不能吃时先看一眼，别凭印象说。
+
+        先看清单：kind 填 food，列出家里现有的吃的（每件前面有编号），最后附最近一天吃完、用完的；
+        再看一件：id 填清单里的编号（比如 w12），看它从买回来到现在的每一步、用它做了什么。
+
+        Args:
+            kind (string): 看哪一类：food（吃的）。
+            id (string): 某一件的编号，填了就看这一件的来龙去脉。
+
+        Returns:
+            家里的东西。
+        """
+        return self.life.tool_look_things(getattr(event, "unified_msg_origin", "") or "", kind, id)
 
     # ------------------------------------------------------------------
     # 10. Laya 判定服务（本机容器，调试命令）
