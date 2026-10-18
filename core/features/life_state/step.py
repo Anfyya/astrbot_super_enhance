@@ -83,7 +83,7 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
    每段还要写 at_home 和 meal：at_home 是这段她人在不在宿舍（屋里、院子、廊下、门口、后头小屋都算 true；出了宿舍去别处、走在路上都算 false）；meal 是这段是不是正在吃饭（吃早饭午饭晚饭、夜宵算 true；做饭、摆碗筷、洗碗都不算）。
 5. 睡觉也是一段：到了她今天定的入睡时刻，就写一段睡觉，state 填「睡觉」，从入睡时刻一直写到第二天定的起床时刻；睡前那段要在入睡时刻结束。
 6. 下面「还没做的约定」里有钟点的：到那个钟点她要已经在约定的地方、和约定的人在一起。要换地方的，在那之前写一段赶过去，留足路上的工夫；约定那件事从约定的钟点开始写。
-7. **不许生成主人的条目，也不许替主人编他做了什么、说了什么。** 主人在哪只看「主人最近的动向」：他最后说在哪、之后没说离开，就当他还在那儿，她们可以待在他身边、在他旁边做自己的事；他说了出门、去上课、睡了这类，就照那个写，别写他在场。只有一种例外：「各自的打算」里标着「和主人一起」的，是主人提的或答应了的，照着写成她和主人一起做，with 里写上 "master"；同一趟里接着往下的段（比如逛夜市逛到一半换个摊子）也写上 "master"，直到这件事做完、两人分开。除此之外 with 里不写 master。「主人说过他要做的事」是他自己的安排：那段时间他人不在，别把她们写成和他在一起。
+7. **不许生成主人的条目，也不许替主人编他做了什么、说了什么。** 主人在哪只看「主人最近的动向」：他最后说在哪、之后没说离开，就当他还在那儿，她们可以待在他身边、在他旁边做自己的事；他说了出门、去上课、睡了这类，就照那个写，别写他在场。只有一种例外：「各自的打算」里标着「和主人一起」的，是主人提的或答应了的，真做到和主人一起的那一步才写成她和主人一起做，with 里写上 "master"；她自己先做的准备（比如先把要送他的东西做完）是她一个人做，不写 master；同一趟里接着往下的段（比如逛夜市逛到一半换个摊子）也写上 "master"，直到这件事做完、两人分开。除此之外 with 里不写 master。「主人说过他要做的事」是他自己的安排：那段时间他人不在，别把她们写成和他在一起。
 8. 约束优先级最高：写着不许出门的，这段时间就得在屋里。
 9. public 是住在一起的人自然会知道的粗粒度信息（人在哪、大概在干哪类事），可以为空。doing 是细节。
 10. 两人在一起的时段，两边的 start/end 和共同的事要一致，with 互相写上对方的 key；对方手上的事还没做完的，别写成和她在一起。对方不在「这次要你写的」里时，她那段时间做什么以「她们此刻手上的事」和「已经排好、这次不改的」为准，你改不了：只有她那边写的也是这件事、也在这个地方，才能写成和她一起；不然就别把她写进来。
@@ -936,11 +936,12 @@ class LifeStep:
                     seg_end = min(seg_end, until)
                 intent = "" if idle else self.intent_id(raw.get("intent"), bot)
                 training = self.training_id(raw.get("training"), bot)
-                # 和主人一起：只认「和主人一起」的打算那段（必带上主人），和紧接着它、模型也写了 master 的下一段（同一趟里接着逛）
+                # 和主人一起：模型这段写了 master，且挂的是「和主人一起」的打算、或紧接着上一段和主人一起（同一趟里接着逛）
+                # 不强塞：打算里她自己先做的准备（先把围巾织完）不算和主人一起
                 prev = rows[-1] if rows else self.world.latest_for(bot, before=fmt_time(cursor))
                 prev_with_master = bool(prev) and "master" in (prev.get("with") or []) and not prev.get("sleep")
-                if not idle and not sleep and (
-                    self._intent_with_master(intent) or ("master" in raw_with and prev_with_master)
+                if not idle and not sleep and "master" in raw_with and (
+                    self._intent_with_master(intent) or prev_with_master
                 ):
                     with_list.append("master")
                 entry = {
