@@ -283,7 +283,7 @@ class WorldStore:
             # 补写排的段是照什么写的：{"kind", "text"}（见 step.origin_of）
             "origin": clean_origin(entry.get("origin")),
             # 这段用了 / 吃了 / 做了 / 买了家里哪几件吃的（补写标的，见 things.py）：只在要用的时候现算，不写进存货
-            "things": [dict(x) for x in (entry.get("things") or []) if isinstance(x, dict)][:12],
+            "things": [dict(x) for x in (entry.get("things") or []) if isinstance(x, dict)],
             "created": str(entry.get("created") or fmt_time(self.now_local())),
         }
         if not entry.get("id"):

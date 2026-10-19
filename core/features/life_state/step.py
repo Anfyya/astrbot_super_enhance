@@ -332,7 +332,7 @@ class LifeStep:
             return str(item.get("id")) if item else ""
 
         out = []
-        for raw in raws[:12]:
+        for raw in raws:
             if not isinstance(raw, dict):
                 continue
             what = norm_step(raw.get("what"))
