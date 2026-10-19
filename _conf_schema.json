@@ -339,6 +339,12 @@
                 "hint": "世界线最后加一句：手上在做的事说过了就别每句都提，主人问起或正好相关时再说。关掉她会每句都捎带一句在干嘛。",
                 "default": true
             },
+            "world_voice_note": {
+                "description": "别当管家厨娘",
+                "type": "bool",
+                "hint": "世界线最后再加一句：她不是管家也不是厨娘，主人没问就别报菜单、碗洗没洗、菜温在哪，照她自己的性子说；主动消息另加一句别报家务清单。两个号各用各的说法。",
+                "default": true
+            },
             "world_enabled": {
                 "description": "幕间补写",
                 "type": "bool",

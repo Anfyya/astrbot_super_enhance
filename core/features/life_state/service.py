@@ -100,6 +100,22 @@ SHARED_FACT_NOTE = (
     "（你和对方一起做过的事——一起吃的饭、一起做的东西、一起看的书——以上面世界线写下的细节为准："
     "吃了什么、买了什么、书里讲了什么，都照着它说，别另编一套。）"
 )
+# 不当管家厨娘，照她自己的性子说（2026-10-19）：上下文洗干净以后不加这句，照样绕回「晚饭给你备着、回来就有热的」
+# 亚托莉那句测过（opencodeZen 免费模型回放，单轮 / 主动消息 / 8 轮连聊）；丛雨那句是同样的意思换成她的性子
+VOICE_NOTES = {
+    "亚托莉": (
+        "（你是亚托莉，不是管家也不是厨娘：做饭、买菜、收拾是你顺手做的日常，主人没问就别报菜单、报调料、报家里剩了什么，"
+        "也别总问他几点到家、说要掐着点下锅、进门就热乎。别用「好嘞」「掐着点」「说个点儿」「言语一声」「进门准热乎」这种大婶口气。"
+        "照你自己的性子说：爱逞强、爱显摆自己高性能、想被主人夸、被说中了会耍赖。）"
+    ),
+    "丛雨": (
+        "（你是丛雨，不是管家也不是厨娘：做饭、收拾是你顺手做的日常，主人没问就别报菜单、报碗洗没洗、报菜温在哪，"
+        "也别总问他回不回来吃、几点到家、想吃什么好提前备着。别用「好嘞」「掐着点」「说个点儿」「进门就热乎」这种大婶口气。"
+        "照你自己的性子说：自称本座、吾辈，嘴硬、爱逞强，被夸了得意，被说中了先嘴硬再软下来。）"
+    ),
+}
+# 主动消息再加一句（2026-10-19）：主动找主人时别报家务清单
+PROACTIVE_VOICE_NOTE = "（主动找主人的时候，说你这会儿想跟他说的事，别报家务清单：洗了什么、收了什么、菜温在哪、几点开饭，主人问起再说。）"
 # 当天约定过了这么多分钟还没关，就在注入里标「时间已过」
 PROMISE_OVERDUE_MINUTES = 120
 
@@ -469,6 +485,9 @@ class LifeStateService:
             blocks.append(VARIETY_NOTE)
             # 两人共同经历以世界线写下的为准（2026-10-16）
             blocks.append(SHARED_FACT_NOTE)
+            # 不当管家厨娘，照她自己的性子说（2026-10-19）
+            if self.cfg.get("world_voice_note", True):
+                blocks.append(VOICE_NOTES.get(self.scene.label_for(bot) or "", ""))
         return "\n".join(x for x in blocks if x)
 
     def state_for_planner(self, bot: str, date_text: str):
@@ -1405,6 +1424,8 @@ class LifeStateService:
             text = self.world_text(bot, now)
             if not text:
                 return
+            if self.cfg.get("world_voice_note", True):
+                text += "\n" + PROACTIVE_VOICE_NOTE
             parts = getattr(req, "extra_user_content_parts", None)
             if not isinstance(parts, list):
                 parts = []
