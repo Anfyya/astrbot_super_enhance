@@ -31,6 +31,7 @@ from .core.config_view import SectionConfig
 from .core.features.context_tools import ContextToolsFeature
 from .core.features.history_merge import HistoryMergeFeature
 from .core.features.history_transcript import HistoryTranscriptFeature
+from .core.features.zero_think import ZeroThinkRetryFeature
 from .core.features.daily_compact import DailyCompact
 from .core.features.overflow_guard import OverflowGuard
 from .core.features import error_voice
@@ -115,6 +116,8 @@ class SuperEnhance(Star):
         self.transcript = HistoryTranscriptFeature(
             SectionConfig(raw, "history_transcript"), life=self.life
         )
+        # 一个字没想的回复（DeepSeek 偶尔跳过思考）不发，原样再要一次
+        self.zero_think = ZeroThinkRetryFeature(SectionConfig(raw, "zero_think_retry"))
         # 发消息 / tell 的说明换成写死对象和会话号的中文版（只改这一轮的工具清单）
         self.tool_guide = ToolGuideFeature(
             SectionConfig(raw, "bot_dialog"),
@@ -137,6 +140,7 @@ class SuperEnhance(Star):
         self.cron_context.cron_request_hooks.append(self.silence.on_cron_request)
         self.cron_context.install()
         self.transcript.install()
+        self.zero_think.install()
         self.daily_compact.start()
         self.overflow.install()
         self.history_merge.install()
@@ -206,6 +210,7 @@ class SuperEnhance(Star):
         self.lm_edits.stop()
         self.cron_context.uninstall()
         self.transcript.uninstall()
+        self.zero_think.uninstall()
         self.daily_compact.stop()
         self.overflow.uninstall()
         self.history_merge.uninstall()

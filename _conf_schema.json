@@ -516,6 +516,38 @@
             }
         }
     },
+    "zero_think_retry": {
+        "description": "⑧-3 没思考就重来",
+        "type": "object",
+        "hint": "DeepSeek 偶尔一个字不想就回话，这种回复明显发飘。打开后，和主人聊天、主动消息时拿到的回复要是思考是空的，这次就不发、不存，同样的请求再要一次；重试够了次数还是没想，就用最后那次。记录员、补写、记忆总结不受影响。",
+        "items": {
+            "enabled": {
+                "description": "启用",
+                "type": "bool",
+                "hint": "关掉就跟原来一样，没想也照发。",
+                "default": true
+            },
+            "max_retries": {
+                "description": "最多重来几次",
+                "type": "int",
+                "hint": "一次没想就再要一次，最多这么多次；都没想就用最后那次。",
+                "slider": {
+                    "min": 0,
+                    "max": 5,
+                    "step": 1
+                },
+                "default": 2
+            },
+            "providers": {
+                "description": "只管这些模型源",
+                "type": "list",
+                "hint": "源的编号或模型名里带这些字的才管，一行一个；默认 deepseek。",
+                "default": [
+                    "deepseek"
+                ]
+            }
+        }
+    },
     "bot_dialog": {
         "description": "⑩ 多机器人对话节奏（bot↔bot）",
         "type": "object",
