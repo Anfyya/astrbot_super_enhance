@@ -5,7 +5,7 @@
 
 import datetime
 
-from .world import WorldStore, detail_of, doing_text, is_event, parse_time, progress_of, public_of, result_text, staged_of, visible_to
+from .world import WorldStore, detail_of, doing_text, is_event, parse_time, progress_of, public_of, real_stop, result_text, staged_of, visible_to
 
 WEEKDAYS_CN = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
 TAG = "【世界线】"
@@ -68,7 +68,7 @@ def merge_close(items: list, gap_minutes: int = FRAGMENT_MINUTES) -> list:
     for index, item in enumerate(items):
         start = parse_time(item.get("start"))
         end = ends[index]
-        if is_event(item) or item.get("stopped"):
+        if is_event(item) or real_stop(item):
             row = dict(item)
             row["_eff_end"] = end.strftime("%Y-%m-%d %H:%M") if end else ""
             out.append(row)

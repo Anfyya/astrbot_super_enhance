@@ -4294,13 +4294,15 @@
     return pct;
   }
 
-  // 停下（没做完）的段：显示口径和给模型的一致——「本来要……，但做到「最后一步」就停下了」；结果不显示
+  // 停下（没做完）的段：显示口径和给模型的一致（接口给的 doing_shown 就是给模型看的那句）；
+  // 下面两个是接口没给时的老写法
   function worldStopNote(e) {
     var steps = (e.steps && e.steps.length) ? e.steps[e.steps.length - 1] : "";
     return (steps ? "但做到「" + steps + "」就停下了" : "但做到一半就停下了") + (e.stop_why ? "，因为" + e.stop_why : "");
   }
 
   function worldDoingText(e) {
+    if (typeof e.doing_shown === "string" && e.doing_shown) { return e.doing_shown; }
     var doing = e.doing || "";
     if (!doing || !e.stopped) { return doing; }
     return "本来要" + doing + "，" + worldStopNote(e);
@@ -4353,7 +4355,7 @@
           title: "重要程度（够 " + (S.world.done_min || 4) + " 分做完才叫她主动说）", text: "重要 " + e.importance }) : null),
       e.doing ? h("div", { style: "white-space:pre-wrap", text: worldDoingText(e) }) : null,
       worldSteps(e, pct),
-      (!e.stopped && e.result) ? h("div", { style: "font-size:13px;color:var(--t2);margin-top:2px", text: "结果：" + e.result }) : null,
+      (!(e.stop_shown !== undefined ? e.stop_shown : e.stopped) && e.result) ? h("div", { style: "font-size:13px;color:var(--t2);margin-top:2px", text: "结果：" + e.result }) : null,
       pct !== null ? worldProgBar(e) : null,
       worldThings(d, e, null),
       h("div", { class: "lm" },

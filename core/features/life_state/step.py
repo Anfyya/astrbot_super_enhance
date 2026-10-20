@@ -19,7 +19,7 @@ from .models import extract_json
 from .recorder import norm_time
 from .things import END_STEPS, KEEPS, KINDS, MID_STEPS, START_STEPS, norm_keep, norm_kind, norm_state, norm_step
 from .variety import default_pools, twists_of, when_map, with_when
-from .world import (WorldStore, clean_text, doing_text, fmt_time, is_event, is_sleep, parse_steps, parse_time, progress_of, result_text,
+from .world import (WorldStore, clean_text, doing_text, fmt_time, is_event, is_sleep, parse_steps, parse_time, progress_of, real_stop, result_text,
                     steps_text)
 
 SYSTEM_PROMPT = (
@@ -101,6 +101,7 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
    - 这一次里先做好、后面又吃掉的菜，吃饭那段也要写一步：id 填它的临时代号（n1 这种），what 写吃完了或吃了一部分，left 写还剩多少（比如给主人留的那份）。
    - 做饭用料先用家里有的，先用快不行了的；新鲜的料（豆腐、菜、鱼肉、蛋、水果）家里没有，就在做饭之前排一段去买回来。米、面、盐、糖、酱油、味噌、油这些常备的随手就有，things 里不用写。两人一起做的饭、一起吃的饭，things 写在其中一个人那段里。
    - kind 从这几类里挑：{kinds}；keep 从这几样里挑：{keeps}。
+19. **被打断的事后来怎么样了**：上面「被打断、还没交代后来怎么样的事」里每一件，在 stopped_results 里用编号写一句后来怎么样了：撂下不做了、交给谁接着做完了、等手上的事忙完回头接着做完了、或者赶紧几下做完了，挑合情理的写。要和你这次排的段对得上：写了回头接着做，就把接着做的那段排上；写了交给对方，对方那段就是接着做这件事。没列出来的不写。
 {world_notes}
 {step_notes}
 注意：**不要输出 intentions，也不要写任何「接下来打算」**。上面「各自的打算」里如果有，是之前说好要做的，照着走就行。
@@ -109,6 +110,7 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
 
 {{
   "end_current": {{"napcat": "{example_end}"}},
+  "stopped_results": {{}},
   "segments": {{
     "napcat": [{{"start": "{example_start}", "end": "{example_end}", "place": "", "doing": "一句话写这件事", "steps": [{{"text": "这一阵子她一直在干什么", "minutes": 5}}, {{"text": "第二步", "minutes": 15}}, {{"text": "收尾：用过的东西收好、归位", "minutes": 5}}], "result": "这件事的结果", "state": "做事", "importance": 2, "at_home": true, "meal": false, "public": "", "with": [], "training": "", "intent": "", "from": "照上面哪一样写的", "things": []}},
                {{"start": "{example_end}", "end": "{example_end2}", "place": "", "doing": "下一件事", "steps": [{{"text": "第一步", "minutes": 10}}, {{"text": "收尾", "minutes": 5}}], "result": "这件事的结果", "state": "做事", "importance": 2, "at_home": true, "meal": false, "public": "", "with": [], "training": "", "intent": "", "from": "照上面哪一样写的", "things": []}}],
@@ -561,6 +563,19 @@ class LifeStep:
             pass
         return out
 
+    def _apply_stop_results(self, raw, date_text: str) -> None:
+        """补写给被打断的事写的「后来怎么样了」：存进那段的 stop_result，给她看成「（结果：……）」。"""
+        if not isinstance(raw, dict):
+            return
+        entries = {str(x.get("id")): x for x in self.world.entries(date_text, "")}
+        for entry_id, text in raw.items():
+            entry = entries.get(str(entry_id).strip())
+            text = clean_text(text, 80)
+            if entry is None or not text or not real_stop(entry) or entry.get("stop_result"):
+                continue
+            self.world.update_entry(date_text, str(entry.get("id")), stop_result=text)
+            logger.info("[super_enhance/world] 被打断的 %s「%s」后来：%s", entry.get("id"), clean_text(entry.get("doing"), 20), text)
+
     @staticmethod
     def _things_moment(tasks: dict | None, flat: datetime.datetime) -> datetime.datetime:
         """家里的吃的按这次补写的起点算（几个人起点不同取最晚的），不早于此刻。"""
@@ -602,6 +617,18 @@ class LifeStep:
                 )
             if lines:
                 parts.append("【%s 已经发生的】\n%s" % (date_text, "\n".join(lines)))
+        # 今天真被打断、还没交代后来怎么样的事：补写在 stopped_results 里写一句（见第 19 条）
+        stops = []
+        today_text = flat.date().isoformat()
+        for bot in bots:
+            for item in self.world.entries(today_text, bot):
+                end = parse_time(item.get("end")) if item.get("end") else None
+                if end is None or end > flat or not real_stop(item) or item.get("stop_result"):
+                    continue
+                stops.append("- %s %s %s~%s %s" % (item.get("id"), self.label(bot) or bot, str(item.get("start"))[11:16],
+                                                    str(item.get("end"))[11:16], doing_text(item)))
+        if stops:
+            parts.append("被打断、还没交代后来怎么样的事（最前面是编号）：\n" + "\n".join(stops))
         now_lines = []
         for bot in bots:
             cur = self.world.current(bot, flat)
@@ -942,6 +969,7 @@ class LifeStep:
         """校验并落库，返回（每人写进去的段，没写到此刻之后的人）。"""
         flat = now.replace(tzinfo=None)
         date_text = flat.date().isoformat()
+        self._apply_stop_results(data.get("stopped_results"), date_text)
         segments = data.get("segments") if isinstance(data.get("segments"), dict) else {}
         end_current = data.get("end_current") if isinstance(data.get("end_current"), dict) else {}
         bots = list(self.raw_log.enabled_bots())

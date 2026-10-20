@@ -232,6 +232,9 @@ class WorldStore:
                 # 做到一半被打断：不算做完（那条打算不算做完，到点也不叫她说做完了）
                 old["intent"] = ""
                 old["stopped"] = True
+                if not old.get("stop_why") and not old.get("stop_by") and str(entry.get("doing") or "").strip():
+                    then = str(entry.get("doing")).strip()
+                    old["stop_by"] = clean_text("改去" + (then[1:] if then.startswith("去") else then), MAX_STOP_WHY)
                 fit_steps(old)  # 分步跟着截，别把原定的十几分钟压进剩下的一两分钟
                 kept.append(old)
             elif end is not None and (old_end is None or old_end > end):
@@ -277,8 +280,12 @@ class WorldStore:
             "intent": str(entry.get("intent") or "").strip() if kind != "event" else "",
             # 做到一半被打断、到此为止的：结束时刻不算做完
             "stopped": bool(entry.get("stopped")) and kind != "event",
-            # 停下的原因（给她看成「本来要……，但做到……就停下了，因为……」）
+            # 停下的原因（记录员说的、她那边发生的事）：给她看成「做到……先放下了，因为……」
             "stop_why": clean_text(entry.get("stop_why"), MAX_STOP_WHY) if entry.get("stopped") else "",
+            # 被什么接上了（新的一段压上来、到了说好的打算、对方被叫走）：「……先放下了，改去……」
+            "stop_by": clean_text(entry.get("stop_by"), MAX_STOP_WHY) if entry.get("stopped") else "",
+            # 这件没做完的事后来怎么样了（补写定的：撂下了 / 交给谁 / 回头做完了）：「（结果：……）」
+            "stop_result": clean_text(entry.get("stop_result"), MAX_RESULT) if entry.get("stopped") else "",
             # 睡觉那段（补写给的 state=睡觉）：一直到起床，不算闲着，做完不叫她。
             # 记录员、网页写的不带这个字段，留 None，is_sleep 按 doing 的字认
             "sleep": None if entry.get("sleep") is None or kind == "event" else bool(entry.get("sleep")),
@@ -325,6 +332,10 @@ class WorldStore:
                 item["stopped"] = bool(fields["stopped"])
             if fields.get("stop_why") is not None:
                 item["stop_why"] = clean_text(fields["stop_why"], MAX_STOP_WHY)
+            if fields.get("stop_by") is not None:
+                item["stop_by"] = clean_text(fields["stop_by"], MAX_STOP_WHY)
+            if fields.get("stop_result") is not None:
+                item["stop_result"] = clean_text(fields["stop_result"], MAX_RESULT)
             if fields.get("sleep") is not None:
                 item["sleep"] = bool(fields["sleep"])
             if fields.get("importance") is not None:
@@ -886,25 +897,48 @@ def detail_of(entry: dict) -> str:
 
 
 # 记录员早先写的原因是「排的是……；对话里她说……」这种对照，不是她那边发生的事，不拼进她的世界线
-META_WHY_WORDS = ("排的是", "对话里", "聊天里", "日程", "补写")
+META_WHY_WORDS = ("排的是", "对话里", "聊天里", "日程", "补写", "世界线", "这段")
+
+
+def real_stop(entry: dict) -> bool:
+    """真被打断、没做完的段：给她看成「做到哪先放下了、为什么、后来怎么样」。
+    闲着、睡觉、主人自己的、记录员从聊天里记的（多半是同一件事说法更新了）、停在最后一步（收尾）的，
+    不算，照常写那段（时段截到打断那刻就是了）。"""
+    entry = entry or {}
+    if not entry.get("stopped") or entry.get("idle") or is_sleep(entry):
+        return False
+    if str(entry.get("who") or "") == "master":
+        return False
+    if str(entry.get("source") or "") == "chat" and not entry.get("asked"):
+        return False
+    planned = clean_steps(entry.get("steps_planned"))
+    kept = clean_steps(entry.get("steps"))
+    if len(planned) >= 2 and len(kept) >= len(planned):
+        return False  # 停在最后一步（收尾），正事做完了
+    return True
 
 
 def stop_note(entry: dict) -> str:
-    """「但做到「某一步」就停下了，因为……」：分步已经按停下的时刻截过（fit_steps），最后一步就是做到的那步。"""
-    steps = clean_steps((entry or {}).get("steps"))
-    head = "但做到「%s」就停下了" % steps[-1] if steps else "但做到一半就停下了"
-    why = str((entry or {}).get("stop_why") or "").strip()
+    """「做到「某一步」先放下了，因为……（结果：……）」：分步已经按停下的时刻截过（fit_steps），最后一步就是做到的那步。"""
+    entry = entry or {}
+    steps = clean_steps(entry.get("steps"))
+    head = "做到「%s」先放下了" % steps[-1] if steps else "做到一半先放下了"
+    why = str(entry.get("stop_why") or "").strip()
     if any(word in why for word in META_WHY_WORDS):
         why = ""
-    return head + ("，因为%s" % why if why else "")
+    by = str(entry.get("stop_by") or "").strip()
+    reason = "，因为%s" % why if why else ("，%s" % by if by else "")
+    result = str(entry.get("stop_result") or "").strip()
+    return head + reason + ("（结果：%s）" % result if result else "")
 
 
 def doing_text(entry: dict) -> str:
-    """这段的事；做到一半停下的，写成「本来要……，但……」，别让原定的结局（吓着了人、做好了）当成真发生了。"""
+    """这段的事；真被打断、没做完的，写成「……，做到……先放下了，因为……（结果：……）」，
+    别让原定的结局（吓着了人、做好了）当成真发生了。"""
     doing = str((entry or {}).get("doing") or "").strip()
-    if not doing or not (entry or {}).get("stopped"):
+    if not doing or not real_stop(entry):
         return doing
-    return "本来要%s，%s" % (doing, stop_note(entry))
+    return "%s，%s" % (doing, stop_note(entry))
 
 
 
@@ -1068,7 +1102,7 @@ def clean_origin(value) -> dict | None:
 
 def result_text(entry: dict) -> str:
     """「（结果：……）」；没写结果返回空。做到一半停下的，原定的结果没做到，不给（停下的事写在 doing_text 里）。"""
-    if (entry or {}).get("stopped"):
+    if real_stop(entry):
         return ""
     value = str((entry or {}).get("result") or "").strip()
     return "（结果：%s）" % value if value else ""

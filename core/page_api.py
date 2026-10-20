@@ -330,6 +330,8 @@ class ContextPageApi:
 
     async def world_view(self):
         """世界线：某天的条目 + 约束 + 打算 + 骨架 + 运行状态。"""
+        from .features.life_state.world import doing_text, real_stop
+
         try:
             date_text = ""
             if request is not None:
@@ -346,6 +348,9 @@ class ContextPageApi:
                 for item in world.entries(day, ""):
                     row = dict(item)
                     row["who_label"] = self._world_label(life, item.get("who"))
+                    # 给模型看的那句（停下的段写成「做到……先放下了，因为……（结果：……）」），网页照它显示
+                    row["doing_shown"] = doing_text(item)
+                    row["stop_shown"] = real_stop(item)
                     rows.append(row)
                 days.append({"date": day, "entries": rows})
             constraints = []

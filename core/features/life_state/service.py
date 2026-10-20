@@ -104,6 +104,12 @@ SHARED_FACT_NOTE = (
     "（你和对方一起做过的事——一起吃的饭、一起做的东西、一起看的书——以上面世界线写下的细节为准："
     "吃了什么、买了什么、书里讲了什么，都照着它说，别另编一套。）"
 )
+# 别催主人睡觉、别提前道晚安（2026-10-20：晚上九点多世界线就挂着「睡前……」「铺被褥、睡下」，她十点多就催主人睡、先道晚安）
+# 按她自己的睡觉时间算：没到她睡的点不催；过了她的点可以催（这半句按用户要求不写进提示词）
+SLEEP_NOTE = (
+    "（你自己还没到睡觉的时候，别催主人睡觉，也别问他怎么还不睡；"
+    "你自己还没真要睡的时候，别先跟他道晚安，晚安留到你真要睡了再说。）"
+)
 # 不当管家厨娘，照她自己的性子说（2026-10-19）：上下文洗干净以后不加这句，照样绕回「晚饭给你备着、回来就有热的」
 # 亚托莉那句测过（opencodeZen 免费模型回放，单轮 / 主动消息 / 8 轮连聊）；丛雨那句是同样的意思换成她的性子
 VOICE_NOTES = {
@@ -384,7 +390,7 @@ class LifeStateService:
             for item in removed:
                 self.world.add_entry(str(item.get("start"))[:10], item)
             return "没写进去：这段时间世界线上是主人手动排的事，补写和对话都改不动。"
-        released = self._release_partners(bot, now)
+        released = self._release_partners(bot, now, what)
         logger.info(
             "[super_enhance/world] [%s] 现在去做：%s %s–%s%s%s",
             bot, what[:30], fmt_time(now)[11:], fmt_time(end)[11:],
@@ -396,7 +402,7 @@ class LifeStateService:
             "（地点：%s）" % record.get("place") if record.get("place") else "",
         )
 
-    def _release_partners(self, bot: str, now: datetime.datetime) -> list:
+    def _release_partners(self, bot: str, now: datetime.datetime, what: str = "") -> list:
         """她被叫去做别的：另一个人补写排的、写着和她一起的段对不上了。
         正在做的到此刻为止，还没开始的撤掉；空出来的由补写按现在的情况重排。只写自己的段、手动写的不动。"""
         out = []
@@ -413,7 +419,9 @@ class LifeStateService:
                     if start is None or (stop is not None and stop <= now):
                         continue
                     if start < now:
-                        self.world.update_entry(date_text, str(item.get("id")), end=fmt_time(now), intent="", stopped=True)
+                        name = self.scene.label_for(bot) or bot
+                        self.world.update_entry(date_text, str(item.get("id")), end=fmt_time(now), intent="", stopped=True,
+                                                stop_by="%s改去%s了" % (name, what[:30]) if what else "%s被叫去做别的了" % name)
                         out.append("%s %s 到此刻为止" % (item.get("id"), str(item.get("doing") or "")[:20]))
                     else:
                         self.world.delete_entry(date_text, str(item.get("id")))
@@ -496,6 +504,8 @@ class LifeStateService:
             blocks.append(VARIETY_NOTE)
             # 两人共同经历以世界线写下的为准（2026-10-16）
             blocks.append(SHARED_FACT_NOTE)
+            # 别催主人睡觉、别提前道晚安（2026-10-20）
+            blocks.append(SLEEP_NOTE)
             # 不当管家厨娘，照她自己的性子说（2026-10-19）
             if self.cfg.get("world_voice_note", True):
                 blocks.append(VOICE_NOTES.get(self.scene.label_for(bot) or "", ""))

@@ -782,7 +782,8 @@ class Recorder:
                 if start is None or end is None or not (start < hi and end > lo):
                     continue
                 if start < lo:
-                    self.world.update_entry(date_text, str(item.get("id")), end=fmt_time(lo), intent="", stopped=True)
+                    self.world.update_entry(date_text, str(item.get("id")), end=fmt_time(lo), intent="", stopped=True,
+                                            stop_by="到了说好去做的事：%s" % clean_text(intention.get("text"), 30))
                     done.append("%s %s 到 %s 为止" % (item.get("id"), clean_text(item.get("doing"), 20), fmt_time(lo)[11:]))
                 else:
                     self.world.delete_entry(date_text, str(item.get("id")))
