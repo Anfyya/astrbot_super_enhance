@@ -561,6 +561,13 @@ class LifeStep:
             pass
         return out
 
+    @staticmethod
+    def _things_moment(tasks: dict | None, flat: datetime.datetime) -> datetime.datetime:
+        """家里的吃的按这次补写的起点算（几个人起点不同取最晚的），不早于此刻。"""
+        starts = [x.get("start") for x in (tasks or {}).values() if isinstance(x, dict)]
+        starts = [x for x in starts if isinstance(x, datetime.datetime)]
+        return max([flat] + [x.replace(tzinfo=None) for x in starts])
+
     def _context_block(self, bots: list, now: datetime.datetime, tasks: dict | None = None) -> str:
         parts = []
         flat = now.replace(tzinfo=None)
@@ -659,8 +666,10 @@ class LifeStep:
         store = getattr(self, "things", None)
         if store is not None:
             try:
-                # 补写开跑这一刻现算：世界线里做完的段标的吃的算进去，新鲜度按此刻
-                parts.append("家里的吃的（此刻；每件前面是编号）：\n" + store.food_list(flat, store.view(flat), self.label))
+                # 按这次补写的起点现算：世界线里那时已经做完的段标的吃的算进去（提前几分钟补写时，正在收尾那段做的菜也算）
+                moment = self._things_moment(tasks, flat)
+                when = "此刻" if moment <= flat else "到 %s" % moment.strftime("%H:%M")
+                parts.append("家里的吃的（%s；每件前面是编号）：\n" % when + store.food_list(moment, store.view(moment), self.label))
             except Exception:
                 logger.warning("[super_enhance/world] 补写算家里的吃的失败", exc_info=True)
         # 主人的动向：他自己说的，加上她们写着和主人一起的段（陪他出门时主人跟着这些段走）
@@ -946,7 +955,7 @@ class LifeStep:
         # 段里标的吃的：对照此刻现算的存货；临时代号（n1、n2……）这一次里两个人共用，同一个代号就是同一件
         store = getattr(self, "things", None)
         try:
-            shelf = store.view(flat) if store is not None else None
+            shelf = store.view(self._things_moment(tasks, flat)) if store is not None else None
         except Exception:
             logger.warning("[super_enhance/world] 补写算家里的吃的失败", exc_info=True)
             shelf = None
@@ -977,6 +986,9 @@ class LifeStep:
             cursor = start
             horizon = max(start, flat) + datetime.timedelta(hours=HORIZON_HOURS)
             until = info.get("until") if info["mode"] == "fill" else None
+            if len(items) > MAX_SEGMENTS:
+                logger.warning("[super_enhance/world] 补写给%s写了 %d 段，一次只收前 %d 段，后面的下次再写",
+                               self.label(bot) or bot, len(items), MAX_SEGMENTS)
             for raw in items[:MAX_SEGMENTS]:
                 if cursor >= horizon and cursor > flat:
                     break  # 写得够远了，后面的下次再写

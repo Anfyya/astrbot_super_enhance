@@ -70,6 +70,8 @@ TRAINING_FILE_NAME = "trainings.json"
 TRAINING_NOTICE_HOURS = 48
 # 约定注入时往后看几天
 PROMISE_LOOKAHEAD_DAYS = 7
+# 同一个人这么久之内只叫一次开饭（被截停的那顿饭又被重排时，别再叫一次）（分钟）
+MEAL_NOTIFY_GAP_MINUTES = 90
 # 世界线块最后的一句：别每句都复述手上在干什么（问起 / 相关时照说）
 NO_REPEAT_NOTE = (
     "（不要总复述你当前在干什么。手上在做的事前面已经跟主人说过了，就别每句都再提一遍；"
@@ -118,6 +120,9 @@ VOICE_NOTES = {
 }
 # 主动消息再加一句（2026-10-19）：主动找主人时别报家务清单
 PROACTIVE_VOICE_NOTE = "（主动找主人的时候，说你这会儿想跟他说的事，别报家务清单：洗了什么、收了什么、菜温在哪、几点开饭，主人问起再说。）"
+# 这两种主动消息就是来告诉主人那件事做完了（接下的事、说好的打算）：不带上面那句，
+# 不然她把「碗洗好了」当成报家务不敢说，只好没话找话（2026-10-20 22:16「还醒着没」）
+REPORT_KINDS = ("asked", "intent")
 # 当天约定过了这么多分钟还没关，就在注入里标「时间已过」
 PROMISE_OVERDUE_MINUTES = 120
 
@@ -234,12 +239,16 @@ class LifeStateService:
         # 世界线（见 world.py / recorder.py / step.py / view.py）
         self.world = WorldStore(self.data_dir)
         self.world.tz = self.timezone
+        # 每个人上一次叫开饭的时刻（同一顿饭被截停又重排时别再叫一次）
+        self._meal_notified: dict[str, datetime.datetime] = {}
         self.seed_log = SeedLog(self.data_dir / "daily_seeds.json")
         self.pool_store = PoolStore(self.data_dir / "pools.json")
         self.recorder = Recorder(
             context, cfg, self.world, self.raw_log,
             label_fn=self.scene.label_for, now_fn=self._now, tz=self.timezone,
         )
+        # 原始消息清理旧文件时，记录员还没处理完的那几天先留着
+        self.raw_log.keep_from_fn = lambda: self.recorder.unprocessed_from(self._now())
         self.recorder.promises = self.promises
         self.recorder.trainings = self.trainings
         self.recorder.abilities = self.abilities
@@ -682,6 +691,9 @@ class LifeStateService:
                     continue
                 if item.get("stopped"):
                     continue  # 做到一半被打断、到此为止的：不算做完
+                if item.get("intent") and self._intent_goes_on(bot, items, index, str(item.get("intent")), flat):
+                    # 同一件打算后面还有没做完的段：这一截只是其中一部分，先不撤、不叫
+                    item = dict(item, intent="")
                 if item.get("intent"):
                     if self.world.drop_intention(str(item.get("intent")), bot):
                         # 打算里的那件事做完了：这条打算撤掉
@@ -718,6 +730,14 @@ class LifeStateService:
                 except Exception:
                     logger.warning("[super_enhance/life] 打算做完的主动对话没排上", exc_info=True)
                 continue
+            if started is not None and started[0] == "meal":
+                last_meal = self._meal_notified.get(bot)
+                if last_meal is not None and flat - last_meal < datetime.timedelta(minutes=MEAL_NOTIFY_GAP_MINUTES):
+                    logger.info("[super_enhance/life] [%s] 开饭「%s」：%s 已经叫过一次开饭，这次不叫",
+                                bot, str(started[1].get("doing") or "")[:20], last_meal.strftime("%H:%M"))
+                    started = None
+                else:
+                    self._meal_notified[bot] = flat
             if started is not None:
                 # 出门、到家、开饭优先；同一刻做完的那件一起带上，不另叫
                 try:
@@ -731,6 +751,19 @@ class LifeStateService:
                 await self.planner.fire_done(bot, finished, now)
             except Exception:
                 logger.warning("[super_enhance/life] 做完一件事的主动对话没排上", exc_info=True)
+
+    def _intent_goes_on(self, bot: str, items: list, index: int, intent_id: str, flat: datetime.datetime) -> bool:
+        """同一件打算后面（今天、明天）还有没做完、没停下的段：做完的这一截只是其中一部分。"""
+        later = list(items[index + 1:])
+        tomorrow = (flat.date() + datetime.timedelta(days=1)).isoformat()
+        later += [x for x in self.world.entries(tomorrow, bot) if not is_event(x)]
+        for other in later:
+            if str(other.get("intent") or "") != intent_id or other.get("stopped"):
+                continue
+            end = parse_time(other.get("end")) if other.get("end") else None
+            if end is None or end > flat:
+                return True
+        return False
 
     def _worth_telling(self, bot: str, item: dict) -> bool:
         """做完的这件值不值得叫她跟主人说：睡觉、闲着不算；重要程度要够设置里的线。"""
@@ -1404,6 +1437,19 @@ class LifeStateService:
             "或长期改变的事，和人设冲突时以这里为准：\n" + text
         )
 
+    @staticmethod
+    def _cron_kind(event) -> str:
+        """这次主动对话是哪一种（asked / intent / meal……），认不出返回空串。"""
+        try:
+            payload = event.get_extra("cron_payload") or {}
+            job = event.get_extra("cron_job") or {}
+        except Exception:
+            return ""
+        kind = str(payload.get("se_kind") or "").strip() if isinstance(payload, dict) else ""
+        if not kind and isinstance(job, dict):
+            kind = str(job.get("description") or "").split("｜", 1)[0].strip()
+        return kind
+
     async def on_cron_request(self, event, req) -> None:
         """主动对话（cron）专用注入：能力清单 + 约定 + 共享场景。
 
@@ -1426,7 +1472,7 @@ class LifeStateService:
             text = self.world_text(bot, now)
             if not text:
                 return
-            if self.cfg.get("world_voice_note", True):
+            if self.cfg.get("world_voice_note", True) and self._cron_kind(event) not in REPORT_KINDS:
                 text += "\n" + PROACTIVE_VOICE_NOTE
             parts = getattr(req, "extra_user_content_parts", None)
             if not isinstance(parts, list):

@@ -35,6 +35,9 @@ TIME_RES = (
 )
 
 # 整块 system reminder 标签（含 User ID / Nickname / Current datetime 等元数据）
+# /compact v2 写在会话开头的前情备忘
+MEMO_PREFIX = "（前情备忘："
+
 STAMP_TAG_RE = re.compile(
     r"<system[-_\s]*reminder>(?P<body>.*?)</system[-_\s]*reminder>",
     re.IGNORECASE | re.DOTALL,
@@ -216,8 +219,14 @@ class CronContextFeature:
                     start = i + 1
                     break
 
+        # 开头的前情备忘（/compact v2、每天 0 点压缩写的）没有时间戳，裁窗口时会跟着更早的摘录一起被切掉：始终留着
+        memo = None
+        if start > 0 and contexts and contexts[0].get("role") == "user" \
+                and self._text_of(contexts[0]).strip().startswith(MEMO_PREFIX):
+            memo = contexts[0]
+
         kept: list[dict] = []
-        for message in contexts[start:]:
+        for message in ([memo] if memo is not None else []) + list(contexts[start:]):
             role = message.get("role")
             if role not in ("user", "assistant"):
                 continue
@@ -227,7 +236,8 @@ class CronContextFeature:
             kept.append({"role": role, "content": text})
 
         if len(kept) > self.max_messages:
-            kept = kept[-self.max_messages :]
+            head = kept[:1] if memo is not None and kept and kept[0]["content"].startswith(MEMO_PREFIX) else []
+            kept = head + kept[-(self.max_messages - len(head)) :]
 
         stats = {
             "before_n": len(contexts),
@@ -293,9 +303,13 @@ class CronContextFeature:
         moments = []
 
         def repl(match) -> str:
-            moment = self._time_of(match.group("body") or "")
+            body = match.group("body") or ""
+            moment = self._time_of(body)
             if moment is not None:
                 moments.append(moment)
+            if "系统代发" in body:
+                # 报错兜底时写进历史的说明（error_voice）：留着，她才知道那句不是自己说的
+                return "（%s）" % " ".join(body.split())
             return ""
 
         cleaned = STAMP_TAG_RE.sub(repl, text)

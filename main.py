@@ -134,6 +134,7 @@ class SuperEnhance(Star):
         self.cron_context.cron_request_hooks.append(self.life.on_cron_request)
         self.cron_context.cron_request_hooks.append(self.tool_guide.on_cron_request)
         self.cron_context.cron_request_hooks.append(self.transcript.on_cron_request)
+        self.cron_context.cron_request_hooks.append(self.silence.on_cron_request)
         self.cron_context.install()
         self.transcript.install()
         self.daily_compact.start()
@@ -616,6 +617,11 @@ class SuperEnhance(Star):
         self.silence.note_incoming(event)
         self.bot_dialog.note_incoming(event)
         await self.bot_dialog.record_exchange(event)
+        if self.bot_dialog.over_limit(event):
+            # 机器人之间来回超过上限：跨会话记录照写，这一轮不跑模型（不然白跑一轮，那句还悬在她历史末尾）
+            logger.info("[super_enhance/bot_dialog] 来回超过上限，这条不回：%s", event.unified_msg_origin)
+            event.stop_event()
+            return
         await self.reply_guard.on_incoming(event)
 
     @filter.on_llm_request()
@@ -748,6 +754,8 @@ class SuperEnhance(Star):
 
         写进去以后，世界线上你此刻就在做这件事，后面原来排的撤掉、做完再接着排；到点做完时系统会叫你一次。
 
+        和这个工具写在同一条回复里的话，会在工具跑之前先单独发给对方；工具跑完你再说的话会另发一条。
+
         Args:
             what (string): 做什么，例如「炒午饭的菜」。
             minutes (int): 这件事实际要多少分钟。
@@ -770,6 +778,8 @@ class SuperEnhance(Star):
         先搜：keyword、date、time 填一样或几样，得到简短的几条，每条前面有编号；
         再看：entry 填其中一条的编号，看那一刻准确的世界线（那段的分步和结果、前后的事、同一时候别人在干什么）。
 
+        和这个工具写在同一条回复里的话，会在工具跑之前先单独发给对方；工具跑完你再说的话会另发一条。
+
         Args:
             keyword (string): 关键词，几个词用空格隔开，都要对上。
             date (string): 哪天：今天 / 昨天 / 前天 / 3天前 / 10-14。
@@ -787,6 +797,8 @@ class SuperEnhance(Star):
 
         先看清单：kind 填 food，列出家里现有的吃的（每件前面有编号），最后附最近一天吃完、用完的；
         再看一件：id 填清单里的编号（比如 w12），看它从买回来到现在的每一步、用它做了什么。
+
+        和这个工具写在同一条回复里的话，会在工具跑之前先单独发给对方；工具跑完你再说的话会另发一条。
 
         Args:
             kind (string): 看哪一类：food（吃的）。

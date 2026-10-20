@@ -13,7 +13,7 @@ import datetime
 
 from astrbot.api import logger
 
-from .turn_state import arrived_at, is_agent_done, local_stamp
+from .turn_state import arrived_at, is_agent_done, local_stamp, mark_arrived
 
 # 故意加插件前缀，避免与旧的 stay_silent 插件互相干扰。
 SILENT_FLAG = "_super_enhance_stay_silent"
@@ -124,7 +124,18 @@ class SilenceFeature:
     def _has_newer_message(self, event) -> bool:
         umo = getattr(event, "unified_msg_origin", "")
         latest = self._latest_event.get(umo)
-        return latest is not None and latest is not event
+        if latest is None or latest is event:
+            return False
+        # 主动对话（cron）那一轮不经过 note_incoming，最近登记的还是主人几个小时前那条：
+        # 只有这一轮开始以后才到的消息才算新消息
+        own = arrived_at(event)
+        if own:
+            return arrived_at(latest) > own
+        return True
+
+    async def on_cron_request(self, event, req) -> None:
+        """主动对话（cron）开始时记下这一轮的开始时刻，静默时拿它比有没有新消息。"""
+        mark_arrived(event)
 
     def force_silent(self, event) -> None:
         """系统直接判定本轮静默（用于外部规则，如多机器人轮次超限）。
@@ -176,7 +187,12 @@ class SilenceFeature:
     @staticmethod
     def _context_has(req, text: str) -> bool:
         contexts = getattr(req, "contexts", None) or []
-        for item in contexts[-8:]:
+        # 只看最近 8 条用户消息：上一轮工具调用多时，那条用户消息早被挤出最后 8 条，会被当成没有、再插一次
+        users = [
+            item for item in contexts
+            if (item.get("role") if isinstance(item, dict) else getattr(item, "role", None)) == "user"
+        ]
+        for item in users[-8:]:
             content = (
                 item.get("content")
                 if isinstance(item, dict)

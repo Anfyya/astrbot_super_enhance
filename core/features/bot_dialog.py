@@ -261,6 +261,15 @@ class BotDialogFeature:
             count,
         )
 
+    def over_limit(self, event) -> bool:
+        """另一个机器人发来的这条已经超过来回上限：这一轮不用跑模型。"""
+        if not self.enabled:
+            return False
+        try:
+            return int(event.get_extra(ROUND_FLAG, 0) or 0) > self.max_rounds
+        except Exception:
+            return False
+
     # ---------- 请求 ----------
 
     async def on_llm_request(self, event, req) -> None:

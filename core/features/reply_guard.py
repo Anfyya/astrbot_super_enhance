@@ -285,7 +285,12 @@ class ReplyGuardFeature:
     @staticmethod
     def _context_has(req, text: str) -> bool:
         contexts = getattr(req, "contexts", None) or []
-        for item in contexts[-8:]:
+        # 只看最近 8 条用户消息：上一轮工具调用多时，那条用户消息早被挤出最后 8 条，会被当成没有、再插一次
+        users = [
+            item for item in contexts
+            if (item.get("role") if isinstance(item, dict) else getattr(item, "role", None)) == "user"
+        ]
+        for item in users[-8:]:
             content = (
                 item.get("content")
                 if isinstance(item, dict)

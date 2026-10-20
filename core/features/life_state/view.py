@@ -31,15 +31,19 @@ LINE_LIMIT = 160
 # 「接下来（还没做）」往后看多少分钟、最多列几件
 NEXT_MINUTES = 90
 NEXT_MAX = 3
+# 主人最近那条结束（没写结束的按开始算）过了这么久，就注明之后他没再说过（分钟）
+MASTER_STALE_MINUTES = 30
 
 
 def _effective_ends(items: list) -> list:
-    """每条的实际结束时刻：写了结束就用它，没写就到下一条开始为止；最后一条没写就是还在进行（None）。"""
+    """每条的实际结束时刻：写了结束就用它，没写就到下一件事（顺带的不算）开始为止；后面没有就是还在进行（None）。"""
     out = []
     for index, item in enumerate(items):
         end = parse_time(item.get("end")) if item.get("end") else None
-        if end is None and index + 1 < len(items):
-            end = parse_time(items[index + 1].get("start"))
+        if end is None:
+            later = next((x for x in items[index + 1:] if not is_event(x)), None)
+            if later is not None:
+                end = parse_time(later.get("start"))
         out.append(end)
     return out
 
@@ -55,6 +59,7 @@ def merge_close(items: list, gap_minutes: int = FRAGMENT_MINUTES) -> list:
 
     合成后：起点取第一条，结束取最后一条（最后一条还在进行就保持开口），
     地点取最后一条写了的，内容按先后连起来、太长只留后半截。
+    顺带的事、做到一半停下的段各占一行，不和别的并（并进去时段会丢、停下的原因会和别的事搅在一起）。
     """
     items = list(items or [])
     ends = _effective_ends(items)
@@ -63,6 +68,12 @@ def merge_close(items: list, gap_minutes: int = FRAGMENT_MINUTES) -> list:
     for index, item in enumerate(items):
         start = parse_time(item.get("start"))
         end = ends[index]
+        if is_event(item) or item.get("stopped"):
+            row = dict(item)
+            row["_eff_end"] = end.strftime("%Y-%m-%d %H:%M") if end else ""
+            out.append(row)
+            run_open = False
+            continue
         short = start is not None and end is not None and (end - start).total_seconds() <= FRAGMENT_MINUTES * 60
         if out and run_open and (short or end is None):
             prev = out[-1]
@@ -264,6 +275,10 @@ def build_world_text(
             where, _text = _latest_visible(placed, viewer, now)
             if where is not None:
                 line += "；最后说在%s（%s）" % (where.get("place"), str(where.get("start"))[11:16])
+        # 那条早就结束了：只是他最后一次说到的，不一定是他现在的样子（他走了没说也不知道）
+        anchor = parse_time(item.get("end")) if item.get("end") else parse_time(item.get("start"))
+        if anchor is not None and now - anchor > datetime.timedelta(minutes=MASTER_STALE_MINUTES):
+            line += "；这之后他没再说过自己在哪、在干什么"
         lines.append(line)
     else:
         lines.append("主人：今天还没说过他自己在哪、在干什么")

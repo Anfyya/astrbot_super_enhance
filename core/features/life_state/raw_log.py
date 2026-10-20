@@ -23,6 +23,10 @@ from .models import bot_of_umo
 
 FOLDER_NAME = "raw_messages"
 KEEP_DAYS = 2  # 今天 + 昨天
+# 记录员还没处理完的那几天先留着，但最多往前留这么多天
+MAX_KEEP_DAYS = 7
+# 同一个会话、同一角色、同样开头的话，前后这么久里只留一条（启动回补的时间只到分钟，跟实时记的那条常差一分钟）（秒）
+DUP_SECONDS = 120
 DEFAULT_TZ = "Asia/Shanghai"
 
 
@@ -33,6 +37,8 @@ class RawMessageLog:
         self.context = context
         self.cfg = cfg
         self.folder = Path(data_dir) / FOLDER_NAME
+        # () -> 记录员还没处理完的最早那天（YYYY-MM-DD，没有就空串）；清理旧文件时这天以后的先不删
+        self.keep_from_fn = None
 
     # ---------- 基础 ----------
 
@@ -117,8 +123,7 @@ class RawMessageLog:
         try:
             self.folder.mkdir(parents=True, exist_ok=True)
             path = self.folder / ("%s.jsonl" % day)
-            key = self._key(role, moment, body)
-            if key in self._keys(path):
+            if self._has_close(path, role, str(umo), body, moment.timestamp()):
                 return False
             item = {
                 "date": day,
@@ -139,45 +144,57 @@ class RawMessageLog:
             return False
 
     @staticmethod
-    def _key(role: str, when: datetime.datetime, text: str) -> str:
-        return "%s|%s|%s" % (role, when.strftime("%H:%M"), text[:60])
-
-    @staticmethod
-    def _keys(path: Path) -> set[str]:
-        keys: set[str] = set()
+    def _has_close(path: Path, role: str, umo: str, text: str, ts: float) -> bool:
+        """这个文件里已经有同一会话、同一角色、同样开头、前后 DUP_SECONDS 秒内的一条。"""
         if not path.exists():
-            return keys
+            return False
+        head = text[:60]
         try:
-            for line in path.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    item = json.loads(line)
-                except Exception:
-                    continue
-                keys.add(
-                    "%s|%s|%s"
-                    % (
-                        item.get("role"),
-                        str(item.get("time") or "")[:5],
-                        str(item.get("text") or "")[:60],
-                    )
-                )
+            lines = path.read_text(encoding="utf-8").splitlines()
         except Exception:
-            return keys
-        return keys
+            return False
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                item = json.loads(line)
+            except Exception:
+                continue
+            if item.get("role") != role or str(item.get("text") or "")[:60] != head:
+                continue
+            if item.get("umo") and str(item.get("umo")) != umo:
+                continue
+            try:
+                if abs(float(item.get("ts") or 0) - ts) <= DUP_SECONDS:
+                    return True
+            except Exception:
+                continue
+        return False
 
     def cleanup(self) -> None:
-        """只保留「今天 + 昨天」两个自然日。"""
+        """只保留「今天 + 昨天」两个自然日；记录员还没处理完的那几天先留着（最多 MAX_KEEP_DAYS 天）。"""
         try:
             if not self.folder.exists():
                 return
             today = datetime.datetime.now(self._tz()).date()
             keep = {(today - datetime.timedelta(days=i)).isoformat() for i in range(KEEP_DAYS)}
-            for path in self.folder.glob("*.jsonl"):
-                if path.stem not in keep:
-                    path.unlink()
+            old = [path for path in self.folder.glob("*.jsonl") if path.stem not in keep]
+            if not old:
+                return
+            need = ""
+            if self.keep_from_fn is not None:
+                try:
+                    need = str(self.keep_from_fn() or "")
+                except Exception:
+                    logger.warning("[super_enhance/raw_log] 查记录员处理到哪天失败，照常清理", exc_info=True)
+            floor = (today - datetime.timedelta(days=MAX_KEEP_DAYS - 1)).isoformat()
+            for path in old:
+                if need and path.stem >= need and path.stem >= floor:
+                    continue
+                if need and path.stem >= need:
+                    logger.warning("[super_enhance/raw_log] %s 里还有记录员没处理的消息，但已经超过 %d 天，删掉", path.name, MAX_KEEP_DAYS)
+                path.unlink()
         except Exception as e:
             logger.warning("[super_enhance/raw_log] 清理旧文件失败：%s", e)
 

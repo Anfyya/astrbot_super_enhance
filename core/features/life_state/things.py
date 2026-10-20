@@ -93,6 +93,8 @@ DEFAULT_STATE = "整的"
 START_STEPS = ("买回来", "收到", "做好了")
 MID_STEPS = ("挪地方", "切开了", "用掉一部分", "吃了一部分")
 END_STEPS = ("用完了", "吃完了", "丢了", "坏了扔了", "送人了", "记错了")
+# 做菜用掉料的那两步
+USE_STEPS = ("用掉一部分", "用完了")
 STEPS = START_STEPS + MID_STEPS + END_STEPS
 STEP_WORDS = (
     ("记错", "记错了"), ("用完", "用完了"), ("用光", "用完了"), ("吃完", "吃完了"), ("吃光", "吃完了"),
@@ -682,6 +684,13 @@ class ThingStore:
             for sid in dish.get("from") or []:
                 source = items.get(sid)
                 if source is None or any(str(x.get("into") or "") == dish["id"] for x in source.get("stages") or []):
+                    continue
+                # 这一段里已经记了它用掉多少（补写常常不写 into）：into 补在那一步上，不再另补一步空的把剩多少盖掉
+                used = [x for x in source.get("stages") or [] if x.get("wl") == ref and x.get("what") in USE_STEPS]
+                if used:
+                    blank = next((x for x in used if not x.get("into")), None)
+                    if blank is not None:
+                        blank["into"] = dish["id"]
                     continue
                 insert_stage(source, clean_stage({"at": at, "what": "用掉一部分", "by": by, "into": dish["id"],
                                                   "note": "做这盘菜时用了，没说剩多少", "src": src, "wl": ref}))

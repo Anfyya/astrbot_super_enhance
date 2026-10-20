@@ -15,6 +15,7 @@
   ``_sanitize_contexts_for_provider``（每次真正发请求前都会过）里把它前面的历史换掉。
 """
 
+import datetime
 import re
 
 from astrbot.api import logger
@@ -27,6 +28,10 @@ REMINDER_RE = re.compile(r"<system[-_\s]*reminder>(?P<body>.*?)</system[-_\s]*re
 TIME_RE = re.compile(r"(?:Current datetime|Sent at)\s*[:：]\s*\d{4}-(\d{2}-\d{2} \d{2}:\d{2})")
 PRE_RE = re.compile(r"^\[(\d{2}-\d{2} \d{2}:\d{2})\]\s*")
 MEMO_PREFIX = "（前情备忘："
+# 报错兜底时写进历史的那句说明（error_voice）：不是时间戳，要留给她看，不然她以为那句话是自己说的
+NOTE_MARK = "系统代发"
+# 本轮那条前面紧挨着、还没回的主人消息，离本轮不超过这么久的也算本轮（连发几句、上一句的回复被作废）（分钟）
+TURN_PULL_MINUTES = 5
 
 
 def _dump(message) -> dict:
@@ -66,11 +71,14 @@ def render_lines(history: list) -> tuple[list[str], str, list[str]]:
             continue
         text = _text(message)
         hit = TIME_RE.search(text)
+        notes = [" ".join(m.group("body").split()) for m in REMINDER_RE.finditer(text) if NOTE_MARK in m.group("body")]
         body = REMINDER_RE.sub("", text).strip()
         if role == "user":
             body = strip_inline_system(body)
         if not body:
             continue  # 只有工具调用、只剩时间戳的那几条
+        if notes:
+            body += "".join("（%s）" % note for note in notes)
         if role == "user" and body.startswith(MEMO_PREFIX):
             if not memo:
                 memo = body.split("\n", 1)[1].strip() if "\n" in body else body
@@ -110,11 +118,43 @@ def _with_content(message, content: str):
     return message.model_copy(update={"content": content})
 
 
+def _stamp_of(message) -> datetime.datetime | None:
+    hit = TIME_RE.search(_text(_dump(message)))
+    if not hit:
+        return None
+    try:
+        return datetime.datetime.strptime("2000-" + hit.group(1), "%Y-%m-%d %H:%M")
+    except ValueError:
+        return None
+
+
+def _turn_start(contexts: list, index: int) -> int:
+    """本轮从哪条算起：本轮那条前面紧挨着的、几分钟内的主人消息（中间没有她的回复）也算本轮，
+    不然主人连发的前一句会被当成聊天记录里早就说过的话。"""
+    now = _stamp_of(contexts[index])
+    if now is None:
+        return index
+    start = index
+    for pos in range(index - 1, -1, -1):
+        prev = _dump(contexts[pos])
+        role = prev.get("role")
+        if role == "tool" or (role == "assistant" and prev.get("tool_calls") and not _text(prev).strip()):
+            continue  # 被作废那一轮留下的工具调用（话没发出去）：跳过去接着往前看
+        if role != "user" or _text(prev).strip().startswith(MEMO_PREFIX):
+            break
+        moment = _stamp_of(contexts[pos])
+        if moment is None or abs((now - moment).total_seconds()) > TURN_PULL_MINUTES * 60:
+            break
+        start = pos
+    return start
+
+
 def transform(contexts: list, turn_message, label: str, recent: int, include_memo: bool):
     """把本轮那条用户消息之前的历史换成系统提示里的一段聊天记录。找不到本轮消息就返回 None。"""
     index = next((i for i, m in enumerate(contexts) if m is turn_message), None)
     if index is None:
         return None
+    index = _turn_start(contexts, index)
     head, rest = contexts[:index], contexts[index:]
     system = head[0] if head and _dump(head[0]).get("role") == "system" else None
     history = head[1:] if system is not None else head

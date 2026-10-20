@@ -16,8 +16,11 @@ from astrbot.api import logger
 
 from ..message_text import strip_inline_system
 from .models import bot_of_umo, extract_json
-from .things import KEEPS, KINDS, SAME_NEW_MINUTES, STEPS, find_same, norm_step, usable
+from .things import KEEPS, KINDS, SAME_NEW_MINUTES, SAME_STEP_MINUTES, STEPS, USE_STEPS, find_same, norm_step, usable
 from .world import WorldStore, clean_text, doing_text, fmt_time, is_event, is_sleep, parse_time, progress_of, result_text, steps_text
+
+# 记录员停过一阵时，往前最多翻几天的原始消息（原始消息副本最多也只留这么久）
+RAW_BACK_DAYS = 6
 
 SYSTEM_PROMPT = (
     "你只输出一个可以被 JSON 解析的对象，不要输出解释、Markdown 代码块或任何多余文本。"
@@ -62,7 +65,7 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
 
 1. 只记原文里明确说了的。时间没说的，用那条消息的时间；说不清就先不记。不许记晚于「现在」的事。
 2. 条目里的 start / end 一律写成完整的 "YYYY-MM-DD HH:MM"，**日期必须照抄对话原文里的日期**，不许只写时分、也不许自己推成别的日子。
-3. 主人说他自己的事（去了哪、在干什么），记成一条 who = "master" 的条目。主人说他自己**之后**要干什么（明天有课、晚上要去图书馆、晚饭后陪她去夜市），不记成条目，记成 who = "master" 的打算（intentions）：text 写清楚他要去做什么、在哪、跟谁，date 写哪天，window 写钟点（说了才写）；要带上她一起去的，她那边另记一条 with 是 ["master"] 的打算。主人的打算过了那天程序会自己撤；他说不去了、改了主意的，照常按编号撤（第 14 条）。
+3. 主人说他自己的事（去了哪、在干什么），记成一条 who = "master" 的条目。他说还在外面、还没回来、还得一会才回去，也是他这会儿的情况，照样记一条（人在外面、还没回宿舍），要回来那件事另记打算。他的反问、抱怨、随口一问（例如「你知道我几点回来？」）不是他的安排，不记。主人说他自己**之后**要干什么（明天有课、晚上要去图书馆、晚饭后陪她去夜市），不记成条目，记成 who = "master" 的打算（intentions）：text 写清楚他要去做什么、在哪、跟谁，date 写哪天，window 写钟点（说了才写）；要带上她一起去的，她那边另记一条 with 是 ["master"] 的打算。主人的打算过了那天程序会自己撤；他说不去了、改了主意的，照常按编号撤（第 14 条）。
 4. 主人给她定的、往后一直管着她的规矩（不许做什么、往后都要怎么做），记成 constraints（约束）：到期或主人撤了才解除。text 只写主人自己说出口的话；她回话里自己添上的、答应时顺嘴加的，都不是主人的规矩，不写进去。主人叫她去做一件做完就了结的事，不是规矩：叫她过会儿再去做的，按第 6 条记成打算；叫她现在就去做的，她去做了记成她的条目。约束的 since 填主人说这句话的那条消息的时间；主人说了期限的要换算成 until_time（"这几天"按三天算、"今晚"到当天 23:59、"明天之前"到明天 0:00），只说了条件的写进 until。新规矩不要写编号，编号由程序分配。
 5. 她的条目分两种，写在 kind 里：
    - "activity"：她开始做另一件事、换了地方、把手上的事放下去干别的（主人叫她过去、叫她去做什么，她答应并去做了也算）。一条只写一件事，她说了接连要做几件的，按先后拆成几条首尾相接。end 写这件事按常理预计做完的时刻（晚于 start）；她说已经做完的，end 写做完的那一刻。
@@ -80,7 +83,7 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
 13. 她在回答、解释、回忆以前的事（昨天、早上、刚才已经说过的）时，那件事不是这会儿发生的：不要按这条消息的时间再记一条；下面「今天已经记了的」里有的别重复记。确实没记过、要补的，时间写成那件事实际发生的时候。
 14. 上面列的「打算」里（每条前面有编号，比如 i3），已经做完的、或者后来的事已经和它对不上的（例如说好在社务所等，后来人已经回了宿舍），把那几条的编号填进 drop_intentions（只撤这几条，别的留着）；这次又说了新打算的，照常写进 intentions；她之前说过、还没做完也没对不上的，不用重写。
 15. 她把「今天的简略世界线」里标着「还没到」的某件事，说成已经做了、或者正在做：这件事不记成条目，也不要为它改别的条目，写进 early：who、entry（那段的编号）、said（她原话里说的那句）。只算那份清单里标了「还没到」的事；清单里没有的、已经做过或正在做的事，照上面的规则记（那件事前面已经做过一截、现在只是「接着」往下做的，不算说早了）。她说的是「待会儿去」「打算做」，不算，不写 early。
-16. 「今天的简略世界线」里补写排的、主人让做的（标着「正在做」「还没到」的都算），都是按排的那会儿的情况写的。这段对话里说的事让其中某几段对不上了的（例如主人说他回来了、出门了，主人说那件事先不做了，她答应了这会儿去做别的，人换了地方，那段写的事已经做过了，另一个人那段跟她有关的事跟着变了），把对不上的那几段写进 stale：who、entry（编号）、why（一句话说哪里对不上）。只写对不上的；照样做得了、不受影响的不写。写进 stale 的段：还没开始的撤掉，正在做的到此刻为止，按现在的情况重排。
+16. 「今天的简略世界线」里补写排的、主人让做的（标着「正在做」「还没到」的都算），都是按排的那会儿的情况写的。这段对话里说的事让其中某几段对不上了的（例如主人说他回来了、出门了，主人说那件事先不做了，她答应了这会儿去做别的，人换了地方，那段写的事已经做过了，另一个人那段跟她有关的事跟着变了），把对不上的那几段写进 stale：who、entry（编号）、why（一句话写那件事为什么停下、不做了，用她那边发生的事来说，例如「主人已经回来了，不用再守着水等他」）。只写对不上的；照样做得了、不受影响的不写。写进 stale 的段：还没开始的撤掉，正在做的到此刻为止，按现在的情况重排。
 17. 对话原文里标着「（主动发的）」的，是她自己主动发给主人的消息，不是在回主人的话：里面说的打算、提议、规矩一概不记（不写 intentions，也不写 constraints）；里面说她做了什么、在做什么，照常按第 5 条记。
 18. 吃的（家里的存货）：买回来的、收到的、做好的吃的，每件一个编号，从有了那一刻起每一步都记进 things。只记聊天里说已经发生了的：「待会去买」「明天做」不记；世界线里写着、聊天里没说的不记（那些程序会按世界线自己算进清单）。标「（主动发的）」的消息里说已经买了、做了、吃了的，也照记（这一条和第 17 条不一样）。
    - 新的一件（上面「家里的吃的」里没有的）：写 new（这一批里的临时代号 n1、n2……；不要写编号，编号由程序发）、name、kind、origin、from，再加上它的第一步。第一步只能是「买回来」「收到」「做好了」：清单里没有的东西被吃了、用了，不记（不知道它是哪来的）。买回来、收到的，必须是聊天里说了真的买了、收到了；清单里已经有的同一件（同一次买的、同一锅做的）不要再建。旧的还没吃完又买了一份，是新的一件。买了当场就吃完的零嘴、米面盐糖酱油味噌油这些天天用的常备调料不用记。
@@ -106,7 +109,7 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
                  {{"who": "master", "text": "去鹈茅学院上课（23:03 睡前他说明天还有课）", "window": "", "date": "2026-10-18", "with": []}}],
   "drop_intentions": ["i3"],
   "early": [{{"who": "napcat2", "entry": "e88", "said": "衣裳收进屋叠好了"}}],
-  "stale": [{{"who": "napcat2", "entry": "e100", "why": "排的是守着水等主人回来，主人已经回来了"}}],
+  "stale": [{{"who": "napcat2", "entry": "e100", "why": "主人已经回来了，不用再守着水等他"}}],
   "things": [
     {{"new": "n1", "name": "嫩豆腐", "kind": "鲜水豆腐", "origin": "主人在商店街豆腐店买的", "from": [],
       "at": "2026-10-18 08:30", "what": "买回来", "left": "两块", "place": "灶房·水盆里", "keep": "泡在水里", "state": "整的", "by": "master", "quote": "摘一句原文"}},
@@ -219,8 +222,28 @@ class Recorder:
 
     # ---------- 待处理的消息 ----------
 
-    def _day_texts(self, now: datetime.datetime) -> list[str]:
-        return [(now.date() - datetime.timedelta(days=i)).isoformat() for i in range(1, -1, -1)]
+    def _day_texts(self, now: datetime.datetime, since_ts: float = 0.0) -> list[str]:
+        """要翻的几天：昨天和今天；游标停在更早（记录员停过一阵）就从那天翻起，最多往前 RAW_BACK_DAYS 天。"""
+        first = now.date() - datetime.timedelta(days=1)
+        if since_ts:
+            try:
+                day = datetime.datetime.fromtimestamp(since_ts, now.tzinfo).date()
+                first = max(min(first, day), now.date() - datetime.timedelta(days=RAW_BACK_DAYS))
+            except Exception:
+                pass
+        days = (now.date() - first).days
+        return [(now.date() - datetime.timedelta(days=i)).isoformat() for i in range(days, -1, -1)]
+
+    def unprocessed_from(self, now: datetime.datetime) -> str:
+        """还有没处理的消息的会话里，游标停在的最早那天（原始消息清理时这天以后的先留着）；都处理完了返回空串。"""
+        days = []
+        for umo in self.sessions():
+            if not self.pending(umo, now):
+                continue
+            ts = float(self.world.cursor(umo).get("ts") or 0)
+            if ts:
+                days.append(datetime.datetime.fromtimestamp(ts, now.tzinfo).date().isoformat())
+        return min(days) if days else ""
 
     def pending(self, umo: str, now: datetime.datetime) -> list[dict]:
         """这个会话里，游标之后还没处理的原始消息。"""
@@ -228,7 +251,7 @@ class Recorder:
         last_ts = float(cursor.get("ts") or 0)
         last_hash = str(cursor.get("hash") or "")
         out = []
-        for date_text in self._day_texts(now):
+        for date_text in self._day_texts(now, last_ts):
             for item in self.raw_log.read_day(date_text):
                 if str(item.get("umo") or "") != str(umo):
                     continue
@@ -1048,9 +1071,17 @@ class Recorder:
         # 菜的 from 里写了、料那边没记「用掉」的：补一步，剩多少没说
         for dish in dishes:
             first = dish["stages"][0]
+            made_at = parse_time(first.get("at"))
             for sid in dish.get("from") or []:
                 source = store.get(sid)
                 if source is None or any(str(x.get("into") or "") == dish["id"] for x in source.get("stages") or []):
+                    continue
+                # 做菜那会儿已经记了它用掉多少（只是没写 into）：不再补一步空的，把剩多少盖掉
+                if made_at is not None and any(
+                    x.get("what") in USE_STEPS and parse_time(x.get("at")) is not None
+                    and abs((parse_time(x.get("at")) - made_at).total_seconds()) <= SAME_STEP_MINUTES * 60
+                    for x in source.get("stages") or []
+                ):
                     continue
                 why = store.add_stage(sid, {
                     "at": first["at"], "what": "用掉一部分", "by": first.get("by"), "into": dish["id"],

@@ -169,7 +169,8 @@ class CrossSessionFeature:
             if not isinstance(history, list):
                 history = []
 
-            history.append({"role": "assistant", "content": content_parts})
+            # 带上发送时间，不然之后压缩、聊天记录会借前一条（可能是几天前）的时间
+            history.append({"role": "assistant", "content": list(content_parts) + [{"type": "text", "text": self._stamp_text()}]})
             await conv_mgr.update_conversation(target_umo, cid, history=history)
             self._debug(
                 f"inserted to {target_umo} cid={cid} "
@@ -235,7 +236,9 @@ class CrossSessionFeature:
             return
 
         if target_umo == current_umo:
-            self._debug(f"skip same session {target_umo}")
+            # 显式填了自己这个会话：跟留空一样（主动对话并进本次会话；普通对话由 pipeline 自己保存）
+            if cron_history.is_cron_event(event):
+                await self._append_to_live_conversation(current_umo, messages)
             return
 
         # 仅修私聊跨会话（群聊由 send_message 的 group_history 处理）。

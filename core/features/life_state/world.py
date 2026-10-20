@@ -46,6 +46,8 @@ MAX_PUBLIC = 90
 MAX_TEXT = 200
 # 打算要写清楚前因后果（谁说的、因为什么、做到什么样算完），给得比别的字段长
 MAX_INTENTION_TEXT = 400
+# 一天最多留这么多条世界线（超了丢最早的，记一条警告）
+MAX_DAY_ENTRIES = 400
 # 一段做到一半停下的原因：记录员撤段时给的那句（没给就不写）
 MAX_STOP_WHY = 80
 # 一段事最多分几步、每步多长
@@ -290,7 +292,10 @@ class WorldStore:
             day["next_id"] = int(day.get("next_id") or 1) + 1
         kept.append(record)
         kept.sort(key=lambda x: str(x.get("start") or ""))
-        day["entries"] = kept[-400:]
+        if len(kept) > MAX_DAY_ENTRIES:
+            logger.warning("[super_enhance/world] %s 的世界线超过 %d 条，最早的 %d 条不留了",
+                           date_text, MAX_DAY_ENTRIES, len(kept) - MAX_DAY_ENTRIES)
+        day["entries"] = kept[-MAX_DAY_ENTRIES:]
         self._save_day(date_text)
         return record
 
@@ -880,11 +885,17 @@ def detail_of(entry: dict) -> str:
     return "，".join(x for x in parts if x)
 
 
+# 记录员早先写的原因是「排的是……；对话里她说……」这种对照，不是她那边发生的事，不拼进她的世界线
+META_WHY_WORDS = ("排的是", "对话里", "聊天里", "日程", "补写")
+
+
 def stop_note(entry: dict) -> str:
     """「但做到「某一步」就停下了，因为……」：分步已经按停下的时刻截过（fit_steps），最后一步就是做到的那步。"""
     steps = clean_steps((entry or {}).get("steps"))
     head = "但做到「%s」就停下了" % steps[-1] if steps else "但做到一半就停下了"
     why = str((entry or {}).get("stop_why") or "").strip()
+    if any(word in why for word in META_WHY_WORDS):
+        why = ""
     return head + ("，因为%s" % why if why else "")
 
 
@@ -1032,7 +1043,9 @@ def step_index(entry: dict, pct) -> int:
     return len(steps) - 1
 
 
-SLEEP_WORDS = ("睡", "就寝", "歇下")
+# 没有 sleep 字段的条目（记录员、网页写的）按字认睡觉：只认明确的说法，「睡不着」「分开睡」「睡前」这类不算
+SLEEP_WORDS = ("睡觉", "睡下", "睡着", "睡了", "睡到", "接着睡", "入睡", "就寝", "歇下", "钻被窝", "钻进被窝")
+NOT_SLEEP_WORDS = ("睡不着", "没睡", "不睡", "没再睡", "睡前", "睡醒", "醒着", "问", "吗")
 
 
 def is_sleep(entry: dict) -> bool:
@@ -1040,7 +1053,10 @@ def is_sleep(entry: dict) -> bool:
     entry = entry or {}
     if "sleep" in entry and entry.get("sleep") is not None:
         return bool(entry.get("sleep"))
-    return any(word in str(entry.get("doing") or "") for word in SLEEP_WORDS)
+    doing = str(entry.get("doing") or "")
+    if doing.strip() == "睡":
+        return True
+    return any(word in doing for word in SLEEP_WORDS) and not any(word in doing for word in NOT_SLEEP_WORDS)
 
 
 def clean_origin(value) -> dict | None:

@@ -17,6 +17,7 @@
 
 import asyncio
 import datetime
+import math
 import random
 import time
 from zoneinfo import ZoneInfo
@@ -60,6 +61,11 @@ TIMELY_KINDS = ("done", "out", "back", "meal")
 TIMELY_STALE_MINUTES = 10
 # 必须发的几种（主人定的规矩不许开口时除外）
 MUST_SEND = ("correct", "promise", "training", "intent")
+# 主人一直没回时先收着的几种：今天没回的主动消息，这个号够 UNREPLIED_LIMIT 条、或几个号加起来够
+# UNREPLIED_TOTAL_LIMIT 条，就先不发；他回了话就恢复。必须发的、接下的事做完、网页手动的照发
+HUSH_KINDS = CASUAL_KINDS + ("morning", "night")
+UNREPLIED_LIMIT = 2
+UNREPLIED_TOTAL_LIMIT = 3
 # 世界线 live：做完一件事时，前后这么久里已经排着早安 / 晚安 / 约定，就不再另发（分钟）
 DONE_SKIP_MINUTES = 15
 # 做完一件事后过多久发（秒）
@@ -883,6 +889,14 @@ class ProactivePlanner:
                     return None
                 await self._postpone(cron, job, payload, meta, at_ts, busy_since)
                 return None
+            if meta["kind"] in HUSH_KINDS:
+                hush = self._hush_reason(target, now_ts)
+                if hush:
+                    logger.info(
+                        "[super_enhance/life] [%s] 主动对话（%s，原定 %s）不发了：%s",
+                        meta["bot"], label, self._planned_text(meta), hush,
+                    )
+                    return None
             if meta["kind"] == "training" and self.training_done_fn is not None:
                 tid = str((meta.get("training") or {}).get("id") or "")
                 try:
@@ -976,7 +990,8 @@ class ProactivePlanner:
 
     async def _postpone(self, cron, job, payload: dict, meta: dict, at_ts: float, busy_since: float) -> None:
         tz = self.timezone
-        at = datetime.datetime.fromtimestamp(at_ts, tz).replace(microsecond=0)
+        # 向上取整到秒：往下取会比「聊完 5 分钟」早一点点醒，又撞一次「刚聊过」
+        at = datetime.datetime.fromtimestamp(math.ceil(at_ts), tz)
         target = str(payload.get("session") or "")
         label = KIND_LABEL.get(meta["kind"], meta["kind"])
         # 顺延后和同一会话的另一条撞在一起：并成一条，留更要紧的
@@ -1062,6 +1077,43 @@ class ProactivePlanner:
             "unreplied": [m for m in tail if m.get("src") == "proactive"],
             "items": items,
         }
+
+    def _master_chats(self, target: str) -> list[str]:
+        """和这位主人的几个私聊（每个号一个）：会话名去掉开头那段机器人一样的就是。"""
+        tail = target.split(":", 1)[1] if ":" in target else target
+        out = [target]
+        for key in ("proactive_targets", "session_list"):
+            for item in self.cfg.get(key) or []:
+                text = str(item or "").strip()
+                if ":" in text and text.split(":", 1)[1] == tail and text not in out:
+                    out.append(text)
+        return out
+
+    def _hush_reason(self, target: str, now_ts: float) -> str:
+        """主人今天连着没回的主动消息够多了，一般的先不发：返回原因；没到返回空串。"""
+        now = datetime.datetime.fromtimestamp(now_ts, self.timezone)
+        start = now.replace(hour=DAY_START_HOUR, minute=0, second=0, microsecond=0)
+        if now < start:
+            start -= datetime.timedelta(days=1)
+        floor = start.timestamp()
+
+        def ts(item) -> float:
+            try:
+                return float((item or {}).get("ts") or 0)
+            except Exception:
+                return 0.0
+
+        chats = {umo: self._chat(umo) for umo in self._master_chats(target)}
+        own = [m for m in chats[target]["unreplied"] if ts(m) >= floor]
+        if len(own) >= UNREPLIED_LIMIT:
+            return "今天主人还没回她的 %d 条主动消息" % len(own)
+        # 几个号加起来：主人在哪个号上说过话都算回了
+        last_user = max((ts(c["last_user"]) for c in chats.values() if c["last_user"]), default=0.0)
+        total = [m for c in chats.values() for m in c["items"]
+                 if m.get("src") == "proactive" and ts(m) >= floor and ts(m) > last_user]
+        if len(total) >= UNREPLIED_TOTAL_LIMIT:
+            return "今天主人还没回她们的 %d 条主动消息" % len(total)
+        return ""
 
     def _sent_today(self, chat: dict | None, now: datetime.datetime) -> list:
         """今天（凌晨 4 点起）她主动发过的话，每条带上主人后来回没回：[(时刻, 文字, 回没回)]。"""
