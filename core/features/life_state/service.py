@@ -346,6 +346,23 @@ class LifeStateService:
             return "没写进去：minutes 要写成整数分钟。"
         minutes = max(1, min(minutes, 600))
         now = self.world.now_local().replace(second=0, microsecond=0)
+        bed = self.world.sleep_at(bot, now)
+        if bed is not None:
+            # 睡觉不打断：记成睡着中间顺带的一件事，那段觉照旧睡到起床，后面排好的不动，做完也不叫她
+            self.world.add_entry(now.date().isoformat(), {
+                "who": bot,
+                "kind": "event",
+                "start": fmt_time(now),
+                "place": place if str(place or "").strip() else bed.get("place", ""),
+                "doing": what,
+                "source": "chat",
+                "src_umo": umo,
+            })
+            logger.info("[super_enhance/world] [%s] 现在去做：%s（在睡觉，记成顺带）", bot, what[:30])
+            return "你这会儿在睡觉（%s 睡下%s）。睡觉不打断：这件事只记成睡着中间顺带的一件事（%s %s），不另排时段，做完也不会再叫你。" % (
+                str(bed.get("start"))[11:16], "，睡到 %s" % str(bed.get("end"))[11:16] if bed.get("end") else "",
+                fmt_time(now)[11:], what,
+            )
         end = now + datetime.timedelta(minutes=minutes)
         current = self.world.current(bot, now)
         dates = sorted({now.date().isoformat(), end.date().isoformat()})
@@ -414,6 +431,8 @@ class LifeStateService:
                 for item in list(self.world.entries(date_text, other)):
                     if item.get("source") != "step" or is_event(item) or bot not in (item.get("with") or []):
                         continue
+                    if is_sleep(item):
+                        continue  # 睡觉不打断：对方的觉照旧睡
                     start = parse_time(item.get("start"))
                     stop = parse_time(item.get("end")) if item.get("end") else None
                     if start is None or (stop is not None and stop <= now):

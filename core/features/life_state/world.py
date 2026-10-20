@@ -18,6 +18,9 @@
   记录员在她说开始做另一件事时也写这种，结束时间按常理估。同一个人的 activity 不重叠。
 - event：做事当中顺带发生的一件事（递了个东西、说好了什么），只有一个时刻，不打断手上那段。
 
+睡觉不打断：她已经睡下的那段觉，记录员、「现在去做」、补写都截不动；睡着中间冒出来的事记成顺带（event），
+那段觉照旧睡到起床。只有网页手动改的能动它。
+
 「她此刻在做什么」= 覆盖此刻的那段 activity；进度按开始到结束的时间算。
 """
 
@@ -200,6 +203,18 @@ class WorldStore:
         source = str(entry.get("source") or "step")
         rank = SOURCE_RANK.get(source, 0)
         kind = "event" if str(entry.get("kind") or "") == "event" else "activity"
+        if kind == "activity" and source != "manual" and who != "master":
+            bed = self.sleep_at(who, start)
+            if bed is not None:
+                if is_sleep(entry):
+                    # 已经睡下了，又记一段睡觉：原来那段接着睡，这条不要
+                    logger.info("[super_enhance/world] %s 已经睡下了（%s 起），又一段睡觉不记：%s",
+                                who, str(bed.get("start"))[11:16], clean_text(entry.get("doing"), 30))
+                    return None
+                # 睡觉不打断：睡着中间的事记成顺带的一件事，那段觉照旧睡到起床
+                logger.info("[super_enhance/world] %s 在睡觉（%s 起），%s 的「%s」记成顺带，不截睡觉",
+                            who, str(bed.get("start"))[11:16], fmt_time(start)[11:], clean_text(entry.get("doing"), 30))
+                kind = "event"
         if kind == "event":
             end = None
         day = self._load_day(date_text)
@@ -452,6 +467,22 @@ class WorldStore:
             end = parse_time(item.get("end")) if item.get("end") else None
             found = item if (end is None or end > moment) else None
         return found
+
+    def sleep_at(self, who: str, moment: datetime.datetime):
+        """moment 这一刻她已经睡下、还没到起床的那段觉（moment 之前就开始了；跨夜的在前一天的文件里）；不在睡返回 None。"""
+        flat = moment.replace(tzinfo=None)
+        items = [x for x in self.activities(who, flat)
+                 if parse_time(x.get("start")) is not None and parse_time(x.get("start")) < flat]
+        for index, item in enumerate(items):
+            if not is_sleep(item):
+                continue
+            end = parse_time(item.get("end")) if item.get("end") else None
+            if end is None:
+                if len(items) == index + 1:  # 没写结束：后面没开始别的事，就还在睡
+                    return item
+            elif end > flat:
+                return item
+        return None
 
     def last_activity(self, who: str, now: datetime.datetime):
         """已经开始了的最近一段（可能已经结束）。"""
