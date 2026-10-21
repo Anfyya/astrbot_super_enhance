@@ -17,6 +17,8 @@ from typing import Any
 
 from astrbot.api import logger
 
+from .features.message_text import clean_message, text_of, time_of
+
 try:  # AstrBot 面板为插件页面提供的 quart 兼容层
     from quart import request  # type: ignore
 except Exception:  # pragma: no cover - 理论上不会发生
@@ -1485,12 +1487,14 @@ class ContextPageApi:
         except Exception as exc:
             logger.error("[super_enhance/ctx] 删除写回失败", exc_info=True)
             return _err(exc)
+        forgot = self._forget_raw(conv, [history[i] for i in sorted(indexes)])
         logger.info(
-            "[super_enhance/ctx] 删除 %d 条（连带 %d），%s 现存 %d 条",
+            "[super_enhance/ctx] 删除 %d 条（连带 %d），%s 现存 %d 条；原始消息副本跟着删 %d 条",
             len(indexes),
             extra,
             cid,
             len(kept),
+            forgot,
         )
         return _ok(
             {
@@ -1501,6 +1505,28 @@ class ContextPageApi:
                 "backup": backup,
             }
         )
+
+    def _forget_raw(self, conv, removed: list) -> int:
+        """网页上删掉的消息，原始消息副本里同一条也删掉。
+
+        主动对话列「你今天主动发过的话」、算主人回没回，读的是副本不是历史（2026-10-22：删了还被她看见）。
+        """
+        life = getattr(self.plugin, "life", None)
+        raw_log = getattr(life, "raw_log", None)
+        if raw_log is None:
+            return 0
+        umo = str(getattr(conv, "user_id", "") or "")
+        count = 0
+        for message in removed:
+            role = message.get("role") if isinstance(message, dict) else None
+            if role not in ("user", "assistant"):
+                continue
+            raw = text_of(message)
+            try:
+                count += raw_log.forget(umo, role, clean_message(role, raw), time_of(raw))
+            except Exception:
+                logger.warning("[super_enhance/ctx] 原始消息副本跟着删失败", exc_info=True)
+        return count
 
     async def edit_item(self):
         payload = await request.get_json(silent=True) or {}

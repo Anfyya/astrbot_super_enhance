@@ -172,6 +172,53 @@ class RawMessageLog:
                 continue
         return False
 
+    def forget(self, umo: str, role: str, text: str, when) -> int:
+        """删掉同一会话、同一角色、同样开头、前后 DUP_SECONDS 秒内的那条（网页上删了历史里的消息时跟着删）。
+
+        认法和去重一样；when 取自历史里的时间戳（只到分钟、不带时区）。返回删了几条。
+        """
+        body = (text or "").strip()
+        if not body or when is None:
+            return 0
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=self._tz())
+        path = self.folder / ("%s.jsonl" % when.strftime("%Y-%m-%d"))
+        if not path.exists():
+            return 0
+        head, ts = body[:60], when.timestamp()
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except Exception as e:
+            logger.error("[super_enhance/raw_log] 读取 %s 失败：%s", path.name, e)
+            return 0
+        kept: list[str] = []
+        removed = 0
+        for line in lines:
+            try:
+                item = json.loads(line) if line.strip() else None
+            except Exception:
+                item = None
+            if (
+                isinstance(item, dict)
+                and item.get("role") == role
+                and str(item.get("umo") or umo) == str(umo)
+                and str(item.get("text") or "")[:60] == head
+            ):
+                self._fix_ts(item)
+                try:
+                    close = abs(float(item.get("ts") or 0) - ts) <= DUP_SECONDS
+                except Exception:
+                    close = False
+                if close:
+                    removed += 1
+                    continue
+            kept.append(line)
+        if removed:
+            temp = path.with_name(path.name + ".tmp")
+            temp.write_text("".join(line + "\n" for line in kept), encoding="utf-8")
+            temp.replace(path)
+        return removed
+
     def cleanup(self) -> None:
         """只保留「今天 + 昨天」两个自然日；记录员还没处理完的那几天先留着（最多 MAX_KEEP_DAYS 天）。"""
         try:
