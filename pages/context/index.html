@@ -619,30 +619,18 @@
   .wdate select.inp{width:auto}
   .wdate .btn.sm{height:var(--ctl);width:var(--ctl);border-radius:8px}
 
-  /* 一天的条带：0–24 点，每 3 小时一道刻度 */
-  .wday{display:flex;flex-direction:column;gap:6px}
-  .wday-t{position:relative;height:24px;border-radius:6px;background-color:var(--sunk);overflow:hidden;
-    background-image:linear-gradient(to right,var(--line2) 1px,transparent 1px);background-size:12.5% 100%;background-position:-1px 0}
-  .wday-b{position:absolute;top:5px;bottom:5px;border:0;padding:0;border-radius:3px;min-width:2px;cursor:pointer;opacity:.88;transition:opacity .12s,box-shadow .12s}
-  .wday-b:hover{opacity:1;box-shadow:0 0 0 2px var(--ring);z-index:1}
-  .wday-b.f{opacity:.36}
-  .wday-b.on{opacity:1;box-shadow:0 0 0 2px var(--ring)}
-  .wc-d{background:var(--accent)}.wc-m{background:var(--ok)}.wc-o{background:var(--c2)}.wc-i{background:var(--c3)}.wc-s{background:var(--t4)}
-  .wday-now{position:absolute;top:0;bottom:0;width:2px;margin-left:-1px;background:var(--accent);box-shadow:0 0 0 1.5px var(--bg);pointer-events:none;z-index:2}
-  .wday-x{position:relative;height:14px;font-size:11px;line-height:14px;color:var(--t3);font-variant-numeric:tabular-nums}
-  .wday-x span{position:absolute;top:0;transform:translateX(-50%)}
-  .wday-x span:nth-child(1){left:0;transform:none}
-  .wday-x span:nth-child(2){left:12.5%}.wday-x span:nth-child(3){left:25%}.wday-x span:nth-child(4){left:37.5%}
-  .wday-x span:nth-child(5){left:50%}.wday-x span:nth-child(6){left:62.5%}.wday-x span:nth-child(7){left:75%}
-  .wday-x span:nth-child(8){left:87.5%}.wday-x span:nth-child(9){left:100%;transform:translateX(-100%)}
-  .wday-lg{display:flex;gap:4px 16px;flex-wrap:wrap;font-size:12px;line-height:18px;color:var(--t3);margin-top:2px}
-  .wday-lg span{display:inline-flex;align-items:center;gap:6px}
-  .wday-lg i{display:inline-block;width:8px;height:8px;border-radius:2px}
+  /* 人物切换：放在滚动区外，时间轴怎么滚都保持在上方 */
+  .wpeople{flex:none;background:var(--bg);border-bottom:1px solid var(--line);z-index:2}
+  .wpeople-in{width:100%;max-width:calc(var(--page) + var(--gutter) * 2);margin-inline:auto;padding:8px var(--gutter);display:flex;align-items:center;gap:10px}
+  .wpeople-in .seg{display:flex;flex:1 1 auto;min-width:0}
+  .wpeople-in .seg button{flex:1;min-width:0}
+  .wpeople-in > .btn{flex:none}
+  .wpeople-in > .btn.reserve{visibility:hidden;pointer-events:none}
 
-  /* 时间线：接下来的在上面，往下是正在做的和已经发生的，一根竖线串起每一段：还没到的是虚线，过去的是实线，
-     正在做的那段（连同它里面已经发生的顺带事）是主色实线。「现在」是那段里的一个点，跟着正在做的那一步走；
-     这会儿没在做什么（上一段做完了、下一段还没开始），两段中间单起一小行「现在」 */
-  .lrows{--wpast:var(--accent-line)}
+  /* 时间线：从早到晚往下排，一根竖线串起每一段：走过的是实线，还没到的是虚线，线本身就是进度。
+     「现在」是线上的一个点：正在做的那段里，它跟着做到的那一步往下走，点上面那截是主色实线、下面是虚线；
+     这会儿没在做什么（上一段做完了、下一段还没开始），点停在上一段末尾 */
+  .lrows{--wpast:var(--accent)}
   .wrow{position:relative;display:grid;grid-template-columns:60px 24px minmax(0,1fr) auto;align-items:start;column-gap:0;border-top:0;padding:10px 0}
   .lrows > .wrow:first-child{padding-top:0}
   .lrows > .wrow:last-child{padding-bottom:0}
@@ -660,25 +648,21 @@
   .lrows > .wrow:last-child.wnowin .wnode::after{bottom:0}
   .lrows > .wrow:only-child:not(.wnowin) .wnode::after{display:none}
   .wn-d{--wc:var(--accent)}.wn-m{--wc:var(--ok)}.wn-o{--wc:var(--c2)}.wn-i{--wc:var(--c3)}.wn-s{--wc:var(--t4)}
-  .wfuture .wnode::after{background:repeating-linear-gradient(to bottom,var(--line2) 0 4px,transparent 4px 8px)}
+  .wfuture .wnode::after,.wtail .wnode::after{background:repeating-linear-gradient(to bottom,var(--accent) 0 4px,transparent 4px 8px)}
   .wfuture .wnode::before{background:var(--bg);box-shadow:inset 0 0 0 2px var(--wc),0 0 0 3px var(--bg)}
-  .wrow.going .wnode::before{box-shadow:0 0 0 3px var(--bg),0 0 0 6px var(--ring)}
   .wrow.wevent .wnode::before{width:8px;height:8px;margin-left:-4px;top:7px;border-radius:2px;transform:rotate(45deg)}
-  /* 正在做的那段、它里面的顺带事、「现在」那一小行：线头到点接上面的虚线，点往下是这一段自己的线（正在做的主色，空档那行照过去的） */
-  .wrow.wnowin,.wrow.wtail{--wfill:var(--accent)}
-  .wrow.wgaprow,.wrow.wnowin:not(.going){--wfill:var(--wpast)}
-  .wrow.wnowin .wnode::after,.wrow.wtail .wnode::after,.wrow.wgaprow .wnode::after{background:
-    linear-gradient(var(--wfill),var(--wfill)) 0 var(--wtop) / 100% 100% no-repeat,
-    repeating-linear-gradient(to bottom,var(--line2) 0 4px,transparent 4px 8px)}
-  .wrow.wtail + .wrow.wnowin .wnode::after,.wrow.wtail + .wrow.wtail .wnode::after{background:var(--wfill)}
-  .wgaprow{padding:6px 0}
-  .lrows > .wgaprow:first-child{padding-top:0}
-  .wnowc{color:var(--accent) !important}
+  /* 「现在」在这一段里：线头到点照走过的画，点到「现在」实线（正在做的用主色），再往下虚线；--wf 由脚本每秒算 */
+  .wrow.wnowin{--wfill:var(--wpast)}
+  .wrow.wnowin.going{--wfill:var(--accent)}
+  .wrow.wnowin .wnode::after{background:
+    linear-gradient(var(--wpast),var(--wpast)) 0 0 / 100% var(--wtop) no-repeat,
+    linear-gradient(var(--wfill),var(--wfill)) 0 var(--wtop) / 100% var(--wf,0px) no-repeat,
+    repeating-linear-gradient(to bottom,var(--accent) 0 4px,transparent 4px 8px)}
   .wnowdot{position:absolute;left:50%;top:calc(11px + var(--wf,0px));width:12px;height:12px;margin:-6px 0 0 -6px;border-radius:50%;
     background:var(--accent);box-shadow:0 0 0 3px var(--bg);z-index:1;pointer-events:none}
   .wnowdot::after{content:"";position:absolute;inset:0;border-radius:50%;animation:wpulse 2.4s ease-out infinite}
   @keyframes wpulse{0%{box-shadow:0 0 0 0 var(--ring)}70%,100%{box-shadow:0 0 0 9px transparent}}
-  .wgap{font-size:13px;line-height:22px;color:var(--accent);font-weight:500}
+  .wgap{margin-top:8px;font-size:12px;line-height:20px;color:var(--accent);font-weight:500}
   .wnowt{position:absolute;left:0;margin-top:-9px;font-size:12px;line-height:18px;font-weight:600;color:var(--accent);white-space:nowrap;pointer-events:none}
   .wrow > .lt{grid-column:3}
   .wrow > .la{grid-column:4;margin-left:12px}
@@ -1069,6 +1053,7 @@
           <button class="btn quiet ibtn" id="worldRefresh" data-icon="refresh" title="刷新" type="button"></button>
         </div>
       </div></header>
+      <div class="wpeople"><div class="wpeople-in" id="worldWhoSwitch"></div></div>
       <div class="scroller scroll"><div class="scene" id="worldBody"></div></div>
     </section>
 
@@ -4365,6 +4350,7 @@
         h("span", { class: "dot" }), "后台最近报过错：" + errs.map(function (k) { return WORLD_ERR[k] || k; }).join("、") + "（点这里看）")));
     }
     var who = worldPerson(d);
+    renderWorldPeople(d, who);
     box.appendChild(worldToolbar(d, who));
     if (who !== "master") { box.appendChild(worldJump(d, who)); }
     if (who === "master") {
@@ -4379,18 +4365,41 @@
       h("div", { class: "w-routine", "data-sec": "routine" }, worldRoutineSection(d, bot), worldStepNotesSection(d), worldStepThoughtsSection(d))));
   }
 
-  /* ---------- 顶上一行：选人 + 选日期 ---------- */
-  function worldToolbar(d, who) {
-    var bar = h("div", { class: "wbar" });
+  /* ---------- 人物切换：固定在滚动区上面 ---------- */
+  function renderWorldPeople(d, who) {
+    var box = clear($("worldWhoSwitch"));
     var seg = h("div", { class: "seg" });
     worldWhoList(d).forEach(function (w) {
       var rules = w.key === "master" ? 0 : (d.constraints || []).filter(function (c) { return c.who === w.key && c.status === "active"; }).length;
       seg.appendChild(h("button", { type: "button", class: who === w.key ? "on" : "", onclick: function () {
         if (w.key === S.worldWho || !worldGuard()) { return; }
-        S.worldWho = w.key; renderWorld({ toNow: true });
+        S.worldWho = w.key;
+        renderWorld({ toNow: true });
       } }, w.label, rules ? h("span", { class: "wcount", text: String(rules) }) : null));
     });
-    bar.appendChild(seg);
+    box.appendChild(seg);
+    var fire = h("button", { class: "btn sm" + (who === "master" ? " reserve" : ""), type: "button", title: "立刻让她主动发一条消息（跳过「刚聊过就顺延」）", text: "发主动消息" });
+    if (who !== "master") {
+      fire.addEventListener("click", function () {
+        if (fire.disabled) { return; }
+        fire.disabled = true;
+        post("ctx/fire_proactive", { bot: who }).then(function (r) {
+          toast((r && r.message) || "已排");
+        }).catch(function (e) {
+          toast("没排上：" + errMsg(e), { err: true });
+        }).then(function () { fire.disabled = false; });
+      });
+    } else {
+      fire.disabled = true;
+      fire.tabIndex = -1;
+      fire.setAttribute("aria-hidden", "true");
+    }
+    box.appendChild(fire);
+  }
+
+  /* ---------- 顶上一行：选人 + 选日期 ---------- */
+  function worldToolbar(d, who) {
+    var bar = h("div", { class: "wbar" });
     var dates = (d.dates || []).slice();
     if (dates.indexOf(d.date) < 0) { dates.push(d.date); }
     dates.sort().reverse();
@@ -4410,19 +4419,6 @@
       h("button", { class: "btn ibtn sm", type: "button", title: older ? "前一天（" + older + "）" : "没有更早的了", disabled: !older, onclick: function () { goDay(older); } }, icon("left")),
       dsel,
       h("button", { class: "btn ibtn sm", type: "button", title: newer ? "后一天（" + newer + "）" : "已经是最新的一天", disabled: !newer, onclick: function () { goDay(newer); } }, icon("right"))));
-    if (who !== "master") {
-      var fire = h("button", { class: "btn sm", type: "button", title: "立刻让她主动发一条消息（跳过「刚聊过就顺延」）" }, "现在发主动消息");
-      fire.addEventListener("click", function () {
-        if (fire.disabled) { return; }
-        fire.disabled = true;
-        post("ctx/fire_proactive", { bot: who }).then(function (r) {
-          toast((r && r.message) || "已排");
-        }).catch(function (e) {
-          toast("没排上：" + errMsg(e), { err: true });
-        }).then(function () { fire.disabled = false; });
-      });
-      bar.appendChild(fire);
-    }
     return bar;
   }
 
@@ -4485,46 +4481,6 @@
     return bar;
   }
 
-  /* ---------- 一天的条带：0–24 点每一段一块，点一下跳到那一段 ---------- */
-  function worldDayStrip(d, who, day) {
-    var t0 = worldMs(day.date + " 00:00");
-    if (t0 === null) { return null; }
-    var t1 = t0 + 86400000, now = worldNowMs();
-    var track = h("div", { class: "wday-t" }), any = false;
-    // 昨天睡下、今天才起的那段存在昨天的文件里，也画上
-    (d.days || []).slice(0, 2).forEach(function (dd) {
-      (dd.entries || []).forEach(function (e) {
-        if (e.who !== who || e.kind === "event") { return; }
-        var a = worldMs(e.start), b = worldMs(e.end);
-        if (a === null) { return; }
-        var going = !!(d.current && d.current[e.who] === e.id);
-        if (b === null) { b = going ? Math.max(now, a + 60000) : a + 15 * 60000; }
-        var future = !going && a > now;
-        a = Math.max(a, t0); b = Math.min(b, t1);
-        if (b <= a) { return; }
-        any = true;
-        var c = e.sleep ? "s" : e.idle ? "i" : e.meal ? "m" : e.at_home === false ? "o" : "d";
-        track.appendChild(h("button", {
-          class: "wday-b wc-" + c + (going ? " on" : "") + (future ? " f" : ""), type: "button",
-          style: "left:" + ((a - t0) / 864000).toFixed(3) + "%;width:" + ((b - a) / 864000).toFixed(3) + "%",
-          title: worldSpan(e, day.date) + " " + (worldDoingText(e) || e.place || ""),
-          onclick: function () { if (worldItem("e:" + e.id)) { worldReveal("e:" + e.id, true); } }
-        }));
-      });
-    });
-    if (!any) { return null; }
-    if (now >= t0 && now < t1) {
-      track.appendChild(h("span", { class: "wday-now", "data-t0": String(t0), style: "left:" + ((now - t0) / 864000).toFixed(3) + "%" }));
-    }
-    var ticks = h("div", { class: "wday-x" });
-    ["0", "3", "6", "9", "12", "15", "18", "21", "24"].forEach(function (x) { ticks.appendChild(h("span", { text: x })); });
-    var legend = h("div", { class: "wday-lg" });
-    [["d", "做事"], ["m", "吃饭"], ["o", "在外面"], ["i", "闲着"], ["s", "睡觉"]].forEach(function (x) {
-      legend.appendChild(h("span", null, h("i", { class: "wc-" + x[0] }), x[1]));
-    });
-    return h("div", { class: "wday" }, track, ticks, legend);
-  }
-
   /* ---------- 段里标的吃的和东西（补写写的 things；做完、没停在半路才算进清单） ---------- */
   // 吃的以外的东西：编号 p 开头（新记的带 cat=item）
   function worldThingIsObj(t) { return t.cat === "item" || /^p\d/i.test(String(t["new"] || t.id || "")); }
@@ -4573,8 +4529,6 @@
       : "对话 = 记录员从聊天里记的，补写 = 没人聊天时补的，手动 = 在这里写的；同一时间撞上时 手动 > 对话 > 补写";
     var sec = h("div", { class: "lsec" }, lsecHead(day.date === d.today ? "今天发生的事" : String(day.date).slice(5) + " 发生的事", sub));
     var card = h("div", { class: "pc" });
-    var strip = worldDayStrip(d, who, day);
-    if (strip) { card.appendChild(strip); }
     if (S.wEdit["new"]) {
       card.appendChild(worldEntryForm(d, null));
     } else {
@@ -4586,10 +4540,9 @@
       card.appendChild(h("div", { class: "muted", style: "font-size:13px", text: "这一天还没有记录。" }));
     } else {
       var rows = h("div", { class: "lrows" });
-      // 接下来的在上面，往下是正在做的和已经发生的。「现在」落在今天最后一段已经开始的里面（正在做的那段）；
-      // 那段已经做完、下一段还没开始，就在它上面单起一小行「现在：这会儿空着」。
-      // 顺带的事挂在它发生时正在做的那段上（那段开始以后、结束以前），不另算一站：「现在」不落在它上面，
-      // 正在做的那段里已经发生的顺带事（tail）排在那段上面，线和那段一样画成正在做的
+      // 从早到晚往下排；今天的「现在」落在最后一段已经开始的里面（正在做的那段，或者刚做完、下一段还没开始的那段）。
+      // 顺带的事挂在它发生时正在做的那段下面（那段开始以后、结束以前），不另算一站：「现在」不落在它上面，
+      // 正在做的那段下面挂着的已经发生的顺带事，线照那段剩下的画成虚线（tail）
       list = list.slice().sort(function (a, b) { return String(a.start || "").localeCompare(String(b.start || "")); });
       var now = worldNowMs(), today = day.date === d.today, nowAt = -1, parent = -1, owner = [];
       list.forEach(function (e, i) {
@@ -4602,21 +4555,13 @@
         if (e.kind !== "event") { parent = i; }
         if (today && a !== null && a <= now && owner[i] < 0) { nowAt = i; }
       });
-      var gap = null;
-      if (nowAt >= 0) {
-        var cur = list[nowAt], end = worldMs(cur.end);
-        if (!(d.current && d.current[cur.who] === cur.id) && end !== null && end <= now) {
-          gap = list.slice(nowAt + 1).filter(function (x) { return x.kind !== "event"; })[0] || null;
-          gap = { next: gap };
-        }
-      }
-      for (var i = list.length - 1; i >= 0; i--) {
-        var e = list[i], where = "";
-        if (i === nowAt) { where = gap ? "" : "now"; }
-        else if (today && i > nowAt) { where = owner[i] >= 0 && owner[i] <= nowAt && !gap && (worldMs(e.start) || 0) <= now ? "tail" : "future"; }
-        if (i === nowAt && gap) { rows.appendChild(worldGapRow(gap.next)); }
-        rows.appendChild(S.wEdit[e.id] ? worldEntryForm(d, e) : worldEntryRow(d, e, day.date, where));
-      }
+      list.forEach(function (e, i) {
+        var where = "";
+        if (i === nowAt) { where = "now"; }
+        else if (today && i > nowAt) { where = owner[i] >= 0 && owner[i] <= nowAt && (worldMs(e.start) || 0) <= now ? "tail" : "future"; }
+        var next = i === nowAt ? list.slice(i + 1).filter(function (x) { return x.kind !== "event"; })[0] || null : null;
+        rows.appendChild(S.wEdit[e.id] ? worldEntryForm(d, e) : worldEntryRow(d, e, day.date, where, next));
+      });
       card.appendChild(rows);
     }
     sec.appendChild(card);
@@ -4711,24 +4656,18 @@
       var b = +row.getAttribute("data-b");
       if (row.classList.contains("going") && b > 0 && now >= b) { due = true; }
     });
-    // 下一段已经到点开始了（这会儿没在做什么的时候没人会喊重读）；接下来的排在上面，最近的一段是最后一个
-    var fut = body.querySelectorAll(".wrow.wfuture"), next = fut.length ? fut[fut.length - 1] : null;
+    // 下一段已经到点开始了（这会儿没在做什么的时候没人会喊重读）
+    var next = body.querySelector(".wrow.wfuture");
     if (next && +next.getAttribute("data-a") > 0 && now >= +next.getAttribute("data-a")) { due = true; }
-    Array.prototype.forEach.call(body.querySelectorAll(".wday-now"), function (el) {
-      var t0 = +el.getAttribute("data-t0");
-      if (t0) { el.style.left = Math.max(0, Math.min(100, (now - t0) / 864000)).toFixed(3) + "%"; }
-    });
     return due;
   }
 
-  // 打开世界线、换人、换日期：回到最上面；今天「现在」那个点在一屏里看不到（接下来的排得多），就把它挪到视口偏上的地方
+  // 今天：把「现在」那个点挪到视口偏上的地方（打开世界线、换人、换日期时）；没有这个点（不是今天）回到最上面
   function worldScrollToNow() {
     var sc = worldScroller();
-    sc.scrollTop = 0;
-    var dot = $("worldBody").querySelector(".wnowdot");
-    if (!dot) { return; }
-    var y = dot.getBoundingClientRect().top - sc.getBoundingClientRect().top;
-    if (y > sc.clientHeight * 0.75) { sc.scrollTop = Math.max(0, y - sc.clientHeight * 0.38); }
+    var dot = $("worldBody").querySelector(".wrow.wnowin .wnowdot");
+    if (!dot) { sc.scrollTop = 0; return; }
+    sc.scrollTop = Math.max(0, sc.scrollTop + dot.getBoundingClientRect().top - sc.getBoundingClientRect().top - sc.clientHeight * 0.38);
   }
 
   // 停下（没做完）的段：显示口径和给模型的一致（接口给的 doing_shown 就是给模型看的那句）；
@@ -4757,18 +4696,10 @@
     return box;
   }
 
-  // 「现在」这会儿没在做什么：上一段做完了、下一段还没开始，在两段中间单起一小行写明
-  function worldGapRow(next) {
-    return h("div", { class: "lrow wrow wgaprow" },
-      h("div", { class: "wtime" }, h("span", { class: "w0 wnowc", text: "现在" })),
-      h("span", { class: "wnode", "aria-hidden": "true" }, h("i", { class: "wnowdot" })),
-      h("div", { class: "lt" }, h("div", { class: "wgap",
-        text: next ? "这会儿空着，下一段 " + String(next.start || "").slice(11, 16) + " 开始" : "上一段做完了，接下来的还没排" })));
-  }
-
-  // where：now = 「现在」落在这一段里（今天正在做的那段），future = 还没开始，
-  //        tail = 正在做的那段里已经发生的顺带事（排在那段上面，线和那段一样），空 = 已经过去了
-  function worldEntryRow(d, e, date, where) {
+  // where：now = 「现在」落在这一段里（今天最后一段已经开始的），future = 还没开始，
+  //        tail = 挂在「现在」那段下面、已经发生的顺带事（线照那段剩下的画虚线），空 = 已经开始过了
+  // next：「现在」落在这一段、这段又已经做完了的时候，下一段（写一句这会儿空着）
+  function worldEntryRow(d, e, date, where, next) {
     var going = !!(d.current && d.current[e.who] === e.id);
     var future = !going && where === "future";
     var isEvent = e.kind === "event";
@@ -4809,7 +4740,9 @@
         seen.length ? h("span", { text: "细节也给：" + seen.join("、") }) : null,
         /^#?\d+$/.test(String(e.training || "").trim()) ? h("span", { class: "tag", text: "在练 #" + String(e.training).trim().replace(/^#/, "") }) : null,
         worldOrigin(e),
-        e.src_quote ? h("span", { text: "原话：" + e.src_quote }) : null)));
+        e.src_quote ? h("span", { text: "原话：" + e.src_quote }) : null),
+      where === "now" && !going && e.end ? h("div", { class: "wgap",
+        text: next ? "这会儿空着，下一段 " + String(next.start || "").slice(11, 16) + " 开始" : "这段做完了，接下来的还没排" }) : null));
     var acts = h("div", { class: "la" });
     var edit = h("button", { class: "btn quiet sm", type: "button", title: "编辑" }, icon("edit"));
     edit.addEventListener("click", function () {
