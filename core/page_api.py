@@ -626,7 +626,8 @@ class ContextPageApi:
             return text
 
     async def things_view(self):
-        """家里的吃的：此刻现算的每一件（存下来的 + 世界线里做完的段标的），每一步、新鲜度、用料和用它做的。"""
+        """家里的吃的：此刻现算的每一件（存下来的 + 世界线里做完的段标的），每一步、新鲜度、用料和用它做的；
+        按量记的另给现算的剩多少。objects 是吃的以外的东西：每一步在哪、谁手上、什么样、归谁。"""
         life = getattr(self.plugin, "life", None)
         if life is None or getattr(life, "things", None) is None:
             return _err("家里的吃的没加载")
@@ -641,19 +642,36 @@ class ContextPageApi:
                 found = shelf.find(tid)
                 return {"id": str(found.get("id")) if found else str(tid), "name": str(found.get("name") or "") if found else ""}
 
+            counted = {}  # 按量记的那几件：每一步现算的用了多少、之后剩多少（网页上显示 left_shown）
+
             def stage_row(stage: dict) -> dict:
-                row = {k: stage.get(k) for k in ("at", "what", "left", "place", "keep", "state", "by", "note", "wl",
-                                                  "src", "recorded", "edited", "void_why", "void_at")}
+                row = {k: stage.get(k) for k in ("at", "what", "left", "amount", "used", "place", "keep", "state", "holder", "owner",
+                                                  "by", "note", "wl", "src", "recorded", "edited", "void_why", "void_at")}
                 row["by_label"] = self._thing_who(life, stage.get("by"))
                 row["idx"] = stage.get("_i")
                 if stage.get("into"):
                     row["into"] = name_of(stage["into"])
+                for key in ("holder", "owner"):
+                    if stage.get(key):
+                        row[key + "_label"] = self._thing_who(life, stage.get(key))
+                if id(stage) in counted:
+                    used, left, unit = counted[id(stage)]
+                    if stage.get("what") in things_mod.START_STEPS:
+                        row["left_shown"] = "一共 " + things_mod.fmt_amount(left, unit)
+                    elif stage.get("what") == "清点":
+                        row["left_shown"] = "清点出还有 " + things_mod.fmt_amount(left, unit)
+                    elif used is not None:
+                        row["left_shown"] = "用了 %s，剩 %s" % (things_mod.fmt_amount(used, unit), things_mod.fmt_amount(left, unit))
                 return row
 
-            items = []
+            items, objects = [], []
             for item in shelf.values():
-                if str(item.get("cat") or things_mod.CAT_FOOD) != things_mod.CAT_FOOD:
+                if things_mod.cat_of(item) == things_mod.CAT_ITEM:
+                    objects.append(item)
                     continue
+                info = things_mod.measure(item)
+                for stage, used, left in (info or {}).get("rows") or []:
+                    counted[id(stage)] = (used, left, info["unit"])
                 stored = store.get(item.get("id"))
                 fresh = store.freshness(item, now)
                 stages = item.get("stages") or []
@@ -683,8 +701,46 @@ class ContextPageApi:
                         "hurry_at": things_mod.fmt_time(fresh["hurry_at"]) if fresh["hurry_at"] else "",
                         "bad_at": things_mod.fmt_time(fresh["bad_at"]) if fresh["bad_at"] else "",
                     },
+                    "measured": {"unit": info["unit"], "pack": info["pack"], "per_use": info["per_use"], "left": info["left"],
+                                 "low": info["low"], "per_use_text": things_mod.fmt_amount(info["per_use"], info["unit"])} if info else None,
                 })
             items.sort(key=lambda x: str(x.get("created") or ""))
+            # 吃的以外的东西：每一步在哪、谁手上、什么样、归谁；同一种（kind 一样）有几件
+            kinds_count = {}
+            for item in objects:
+                if things_mod.is_ended(item) is None:
+                    kinds_count[str(item.get("kind") or "")] = kinds_count.get(str(item.get("kind") or ""), 0) + 1
+            obj_rows = []
+            for item in objects:
+                stored = store.get(item.get("id"))
+                stages = item.get("stages") or []
+                last = stages[-1] if stages else {}
+                end = things_mod.is_ended(item)
+                owner = store.owner_of(item)
+                obj_rows.append({
+                    "id": item.get("id"),
+                    "name": item.get("name"),
+                    "kind": item.get("kind") or "",
+                    "look": item.get("look") or "",
+                    "owner": owner,
+                    "owner_label": self._thing_who(life, owner) if owner else "",
+                    "origin": item.get("origin") or "",
+                    "note": item.get("note") or "",
+                    "created": item.get("created"),
+                    "virtual": bool(item.get("virtual")),
+                    "wl": item.get("wl") or "",
+                    "from": [name_of(x) for x in item.get("from") or []],
+                    "made": [name_of(x.get("id")) for x in shelf.values() if str(item.get("id")) in (x.get("from") or [])],
+                    "stages": [stage_row(x) for x in stages],
+                    "voided": [dict(stage_row(x), vidx=i) for i, x in enumerate((stored or {}).get("voided") or [])],
+                    "ended": stage_row(end) if end else None,
+                    "place": last.get("place") or "",
+                    "holder": last.get("holder") or "",
+                    "holder_label": self._thing_who(life, last.get("holder")) if last.get("holder") else "",
+                    "state": last.get("state") or "",
+                    "same": kinds_count.get(str(item.get("kind") or ""), 0),
+                })
+            obj_rows.sort(key=lambda x: str(x.get("created") or ""))
             bots = list(life.enabled_bots() or [])
             return _ok({
                 "now": now.strftime("%Y-%m-%d %H:%M:%S"),
@@ -693,6 +749,10 @@ class ContextPageApi:
                 "keeps": list(things_mod.KEEPS),
                 "states": list(things_mod.STATES),
                 "steps": {"start": list(things_mod.START_STEPS), "mid": list(things_mod.MID_STEPS), "end": list(things_mod.END_STEPS)},
+                "objects": obj_rows,
+                "item_steps": {"start": list(things_mod.ITEM_START_STEPS), "mid": list(things_mod.ITEM_MID_STEPS),
+                               "end": list(things_mod.ITEM_END_STEPS)},
+                "measured_kinds": list(things_mod.MEASURED_KINDS),
                 "people": [{"key": b, "label": self._thing_who(life, b)} for b in bots] + [{"key": "master", "label": "主人"}],
                 "settle_days": things_mod.SETTLE_DAYS,
             })
@@ -701,9 +761,9 @@ class ContextPageApi:
             return _err(exc)
 
     async def things_edit(self):
-        """家里的吃的（网页手动）：add 新的一件 / stage 加一步 / update_item 改名字类别来历用料 /
-        update_stage 改某一步 / void_stage 作废某一步 / unvoid_stage 恢复 / void_item 整件记错了 / keep 把世界线里现算的存下来。
-        编号由程序发、改不了；什么都不真删。"""
+        """家里的吃的和别的东西（网页手动）：add 新的一件（cat=item 是吃的以外的东西）/ stage 加一步 / update_item 改名字类别来历用料
+        （东西另有样子、归谁）/ update_stage 改某一步 / void_stage 作废某一步 / unvoid_stage 恢复 / void_item 整件记错了 /
+        keep 把世界线里现算的存下来。编号由程序发、改不了；什么都不真删。"""
         life = getattr(self.plugin, "life", None)
         if life is None or getattr(life, "things", None) is None:
             return _err("家里的吃的没加载")
@@ -740,7 +800,7 @@ class ContextPageApi:
                 if things_mod.parse_time(at) > now + datetime.timedelta(minutes=5):
                     return None, "不能晚于现在"
                 stage = {"at": at, "src": src, "recorded": stamp}
-                for key in ("what", "left", "place", "keep", "state", "by", "note"):
+                for key in ("what", "left", "amount", "used", "place", "keep", "state", "holder", "owner", "by", "note"):
                     if raw.get(key) is not None:
                         stage[key] = raw.get(key)
                 return stage, ""
@@ -750,10 +810,13 @@ class ContextPageApi:
                 stage, why = stage_of(body.get("stage"))
                 if not why:
                     sources = [x for x in (keep(t) for t in body.get("from") or []) if x]
-                    item, why = store.create(body.get("name"), body.get("kind"), body.get("origin"), sources, stage, stamp)
+                    cat = things_mod.CAT_ITEM if body.get("cat") == things_mod.CAT_ITEM else things_mod.CAT_FOOD
+                    item, why = store.create(body.get("name"), body.get("kind"), body.get("origin"), sources, stage, stamp,
+                                             cat=cat, look=body.get("look") or "", owner=body.get("owner") or "")
                     if item is not None:
                         tid = item["id"]
-                        for sid in item.get("from") or []:
+                        # 网页上加的菜：用料各补一步用掉（东西用什么做的只是来历，不补）
+                        for sid in (item.get("from") or []) if cat == things_mod.CAT_FOOD else []:
                             store.add_stage(sid, {"at": item["created"], "what": "用掉一部分", "into": tid, "by": stage.get("by"),
                                                   "note": "做这盘菜时用了", "src": src, "recorded": stamp})
             elif action == "stage":
@@ -776,7 +839,7 @@ class ContextPageApi:
                 if isinstance(body.get("from"), list):
                     sources = [x for x in (keep(t) for t in body["from"]) if x]
                 why = store.update_item(tid, name=body.get("name"), kind=body.get("kind"), origin=body.get("origin"),
-                                        sources=sources) if tid else "没有这一件"
+                                        sources=sources, look=body.get("look"), owner=body.get("owner")) if tid else "没有这一件"
             elif action == "update_stage":
                 fields = dict(body.get("fields") or {})
                 if fields.get("at"):

@@ -13,8 +13,15 @@
   世界线文件到期会清掉：做完满 SETTLE_DAYS 天的段，把它标的那几步沉进 things.json。
 - 新鲜度不存，按每一步现算：每一段按当时的放法、整的还是切开了、屋里的气温（月份 + 当天天气 + 钟点）
   算出老化得多快，一段段加起来，跟这一类东西「20 度、收着放」能放多久比。
+- 剩多少分三种：米面油盐、调料干货、腌菜这些按量用、用得慢的（MEASURED_KINDS）记准确的量（克 / 毫升），
+  每一步存「这次用了多少」（used）或「一共 / 清点出来还有多少」（amount），剩多少按先后现算（measure），
+  没写用了多少的按平常一次的用量扣（STAPLES），扣到 0 就算用完了；一盘菜这种照旧写「吃了一半」；按个数的写「两块」。
 
-文件：things.json（临时文件 + 原子替换）。以后别的物件也放这里，按 cat 分开（吃的是 food）。
+吃的以外的东西（cat=item，编号 p1、p2……，另一套只增不减的号）也放这里，同样每件记来历和每一步：
+放在哪（place）、在谁手上（holder）、什么样（state，随便写）、归谁（owner）；kind 是它是什么（围巾、窗花、纸条……），
+同一种东西有好几件的，清单里排在一起、提醒认准编号。没有新鲜度。
+
+文件：things.json（临时文件 + 原子替换）。按 cat 分开（吃的是 food，别的东西是 item）。
 """
 
 import copy
@@ -31,6 +38,10 @@ from .world import clean_text, fmt_time, parse_time
 
 FILE_NAME = "things.json"
 CAT_FOOD = "food"
+CAT_ITEM = "item"
+# 编号的头一个字母：吃的 w1、w2……，别的东西 p1、p2……；各一套只增不减的号（存在 seq / seq_item）
+ID_PREFIX = {CAT_FOOD: "w", CAT_ITEM: "p"}
+SEQ_KEY = {CAT_FOOD: "seq", CAT_ITEM: "seq_item"}
 
 # 吃的分几类：20 度、收着放时大约能放几个小时；放坏了是什么样。
 # 名字即带代表食物，方便记录员 / 补写一眼挑中（提示词会把清单原样列给模型）。
@@ -90,13 +101,16 @@ KEEP_WORDS = (
 STATES = {"整的": 1.0, "切开了": 1.5}
 DEFAULT_STATE = "整的"
 
-START_STEPS = ("买回来", "收到", "做好了")
-MID_STEPS = ("挪地方", "切开了", "用掉一部分", "吃了一部分")
+# 原来就有：家里一直备着、还没记进清单的（盐罐、米缸这类），头一回说到时记下来
+START_STEPS = ("买回来", "收到", "做好了", "原来就有")
+# 清点：按量记的东西重新看了还剩多少（amount 写多少），之后从这个数接着扣
+MID_STEPS = ("挪地方", "切开了", "用掉一部分", "吃了一部分", "清点")
 END_STEPS = ("用完了", "吃完了", "丢了", "坏了扔了", "送人了", "记错了")
 # 做菜用掉料的那两步
 USE_STEPS = ("用掉一部分", "用完了")
 STEPS = START_STEPS + MID_STEPS + END_STEPS
 STEP_WORDS = (
+    ("原来", "原来就有"), ("本来", "原来就有"), ("一直有", "原来就有"), ("清点", "清点"), ("盘点", "清点"),
     ("记错", "记错了"), ("用完", "用完了"), ("用光", "用完了"), ("吃完", "吃完了"), ("吃光", "吃完了"),
     ("坏了", "坏了扔了"), ("扔", "丢了"), ("倒掉", "丢了"), ("丢", "丢了"),
     ("送来", "收到"), ("送的", "收到"), ("被送", "收到"), ("送", "送人了"),
@@ -105,6 +119,177 @@ STEP_WORDS = (
 )
 # 这几步之后剩多少不变（没写 left 就照上一步）
 KEEP_LEFT_STEPS = ("挪地方", "切开了")
+
+# ---------- 按量记的（米面油盐、调料干货、腌菜） ----------
+
+MEASURED_KINDS = ("干货调料粮食", "腌菜酱菜泡菜")
+# 名字里带这些字 →（单位, 一包 / 一瓶大约多少, 平常做一次饭用多少）；先认细的（玉米淀粉别认成米、米醋别认成米）
+STAPLES = (
+    (("淀粉", "生粉"), "克", 400, 10),
+    (("醋",), "毫升", 500, 10),
+    (("料酒", "米酒", "黄酒"), "毫升", 500, 10),
+    (("酱油", "生抽", "老抽"), "毫升", 500, 10),
+    (("蚝油",), "毫升", 500, 10),
+    (("香油", "麻油"), "毫升", 250, 3),
+    (("油",), "毫升", 1800, 20),
+    (("豆瓣",), "克", 500, 15),
+    (("豆豉",), "克", 200, 10),
+    (("味噌",), "克", 500, 25),
+    (("椒盐",), "克", 100, 3),
+    (("花椒",), "克", 100, 2),
+    (("辣椒",), "克", 100, 5),
+    (("芝麻",), "克", 200, 10),
+    (("盐",), "克", 500, 3),
+    (("糖",), "克", 500, 5),
+    (("面粉", "白面"), "克", 2500, 250),
+    (("面条", "挂面"), "克", 1000, 200),
+    (("糯米",), "克", 2500, 200),
+    (("米",), "克", 5000, 250),
+    (("香菇", "蘑菇"), "克", 250, 20),
+    (("木耳",), "克", 200, 10),
+    (("笋干",), "克", 250, 50),
+    (("海带", "昆布"), "克", 250, 20),
+    (("裙带菜",), "克", 100, 5),
+    (("紫菜",), "克", 50, 5),
+    (("茶",), "克", 250, 5),
+    (("萝卜",), "克", 1500, 50),
+)
+# 名字对不上上面那些时，按哪一类给：（单位, 一包多少, 一次用多少）
+MEASURED_DEFAULT = {"干货调料粮食": ("克", 500, 10), "腌菜酱菜泡菜": ("克", 1000, 50)}
+# 剩到「一包的这么几成」或「够用这么几次」以下（取大的，最多一包的 3 成），算快用完了
+LOW_SHARE = 0.15
+LOW_USES = 4
+LOW_CAP = 0.3
+
+_CN_DIGITS = {"零": 0, "〇": 0, "一": 1, "二": 2, "两": 2, "俩": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+_CN_UNITS = {"十": 10, "百": 100, "千": 1000}
+# 单位 → (折成克或毫升乘多少, 克 / 毫升；勺、撮这种两边都算)
+_AMOUNT_UNITS = {
+    "千克": (1000, "克"), "公斤": (1000, "克"), "kg": (1000, "克"), "克": (1, "克"), "g": (1, "克"),
+    "斤": (500, "克"), "两": (50, "克"), "毫升": (1, "毫升"), "ml": (1, "毫升"), "升": (1000, "毫升"), "l": (1000, "毫升"),
+    "大勺": (15, ""), "汤勺": (15, ""), "汤匙": (15, ""), "小勺": (5, ""), "茶匙": (5, ""), "小匙": (5, ""),
+    "勺": (15, ""), "撮": (1, ""), "杯": (200, "毫升"),
+}
+_AMOUNT_RE = re.compile(
+    r"(半)?(\d+(?:\.\d+)?|[零〇一二两俩三四五六七八九十百千]+)?\s*"
+    r"(千克|公斤|kg|克|g|斤|两|毫升|ml|升|l|大勺|汤勺|汤匙|小勺|茶匙|小匙|勺|撮|杯)(半)?",
+    re.IGNORECASE,
+)
+# 「大半袋」「小半罐」这种说法 → 一包的几成（先认长的）
+FRACTION_WORDS = (
+    ("见底", 0.08), ("罐底", 0.08), ("袋底", 0.08), ("瓶底", 0.08), ("一点点", 0.08), ("一丁点", 0.08), ("少许", 0.08),
+    ("没剩多少", 0.1), ("不多了", 0.2), ("小半", 0.3), ("多半", 0.65), ("大半", 0.7), ("一半", 0.5), ("半", 0.5),
+    ("快满", 0.95), ("满", 1.0), ("没开封", 1.0), ("没拆", 1.0), ("整", 1.0),
+)
+_PACK_RE = re.compile(r"(\d+|[一二两三四五六七八九十])\s*(袋|罐|瓶|盒|包|坛|桶|箱|缸|壶|筐)")
+
+
+# ---------- 吃的以外的东西 ----------
+
+# 开始做：没做完的（起了个头的围巾）；做好了：一回就做成的，或者没做完的那件后来做完了（所以两边都有）
+ITEM_START_STEPS = ("买回来", "收到", "捡到", "开始做", "做好了", "原来就有")
+ITEM_MID_STEPS = ("挪地方", "交给", "用了", "做了一截", "做好了", "变了样")
+ITEM_END_STEPS = ("送人了", "丢了", "坏了扔了", "用完了", "记错了")
+ITEM_STEPS = tuple(dict.fromkeys(ITEM_START_STEPS + ITEM_MID_STEPS + ITEM_END_STEPS))
+ITEM_STEP_WORDS = (
+    ("记错", "记错了"), ("用完", "用完了"), ("用光", "用完了"), ("坏了扔", "坏了扔了"), ("扔", "丢了"), ("丢", "丢了"),
+    ("送人", "送人了"), ("送出去", "送人了"), ("送来", "收到"), ("送的", "收到"), ("赢", "收到"),
+    ("原来", "原来就有"), ("本来", "原来就有"), ("一直有", "原来就有"), ("捡", "捡到"), ("拾", "捡到"),
+    ("起头", "开始做"), ("开始", "开始做"), ("动手", "开始做"),
+    ("做完", "做好了"), ("做好", "做好了"), ("织好", "做好了"), ("缝好", "做好了"), ("剪好", "做好了"),
+    ("画好", "做好了"), ("写好", "做好了"), ("完工", "做好了"),
+    ("一截", "做了一截"), ("接着", "做了一截"), ("织了", "做了一截"), ("缝了", "做了一截"),
+    ("修", "变了样"), ("补", "变了样"), ("洗", "变了样"), ("弄脏", "变了样"), ("坏", "变了样"), ("改", "变了样"),
+    ("收起", "挪地方"), ("收好", "挪地方"), ("买", "买回来"), ("收", "收到"),
+    ("挪", "挪地方"), ("搬", "挪地方"), ("搁", "挪地方"), ("放", "挪地方"), ("挂", "挪地方"), ("压", "挪地方"),
+    ("交", "交给"), ("给", "交给"), ("递", "交给"), ("用", "用了"),
+)
+MAX_LOOK = 60
+MAX_ITEM_STATE = 40
+MAX_ITEM_KIND = 10
+# 东西清单里写全多少件（再多的只列编号和名字，留最近动过的）
+ITEM_LIST_MAX = 60
+
+
+def steps_of(cat: str) -> tuple:
+    """这一类东西的（来 / 中间 / 没了）三组步。"""
+    if cat == CAT_ITEM:
+        return ITEM_START_STEPS, ITEM_MID_STEPS, ITEM_END_STEPS
+    return START_STEPS, MID_STEPS, END_STEPS
+
+
+def cat_of(item: dict) -> str:
+    return CAT_ITEM if str((item or {}).get("cat") or "") == CAT_ITEM else CAT_FOOD
+
+
+def cn_number(text) -> float | None:
+    """「15」「十五」「一百二十」「两」→ 数；认不出返回 None。"""
+    text = str(text or "").strip()
+    if re.fullmatch(r"\d+(?:\.\d+)?", text):
+        return float(text)
+    if not text:
+        return None
+    section, num = 0, 0
+    for ch in text:
+        if ch in _CN_DIGITS:
+            num = _CN_DIGITS[ch]
+        elif ch in _CN_UNITS:
+            section += (num or 1) * _CN_UNITS[ch]
+            num = 0
+        else:
+            return None
+    return float(section + num)
+
+
+def parse_amount(value) -> tuple | None:
+    """「500克」「1.5斤」「一斤半」「半斤」「2两」「15毫升」「两勺」「300」→（克或毫升的数, 克 / 毫升 / 空）；认不出返回 None。"""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return (float(value), "") if value >= 0 else None
+    text = str(value or "").strip()
+    if not text:
+        return None
+    for m in _AMOUNT_RE.finditer(text):
+        lead, number, unit, tail = m.groups()
+        if unit == "两" and not number:
+            continue  # 「两块」的两是数，不是一两
+        count = cn_number(number) if number else 1.0
+        if count is None:
+            continue
+        if lead and not number:
+            count = 0.5
+        elif tail:
+            count += 0.5
+        rate, family = _AMOUNT_UNITS.get(unit.lower()) or _AMOUNT_UNITS[unit]
+        return count * rate, family
+    bare = re.fullmatch(r"(?:约|大约|还剩|剩)?\s*(\d+(?:\.\d+)?)", text)
+    return (float(bare.group(1)), "") if bare else None
+
+
+def fraction_of(text) -> float | None:
+    """「大半袋」「两瓶」「见底了」→ 一包的几倍；说的不是这种就 None。"""
+    text = re.sub(r"\s+", "", str(text or ""))
+    if not text:
+        return None
+    for word, share in FRACTION_WORDS:
+        if word in text:
+            return share
+    m = _PACK_RE.search(text)
+    if m:
+        return cn_number(m.group(1))
+    return None
+
+
+def _num_text(value: float) -> str:
+    value = max(0.0, float(value))
+    return str(int(round(value))) if value >= 10 or value == int(value) else ("%.1f" % value).rstrip("0").rstrip(".")
+
+
+def fmt_amount(value: float, unit: str) -> str:
+    """「380 克」「3500 克（7 斤）」「420 毫升」。"""
+    text = "%s %s" % (_num_text(value), unit or "克")
+    if (unit or "克") == "克" and value >= 500:
+        text += "（%s 斤）" % _num_text(value / 500)
+    return text
 
 MAX_NAME = 30
 MAX_PLACE = 40
@@ -171,7 +356,9 @@ def norm_state(value) -> str:
     return _pick(value, tuple(STATES), (("切", "切开了"), ("整", "整的")))
 
 
-def norm_step(value) -> str:
+def norm_step(value, cat: str = CAT_FOOD) -> str:
+    if cat == CAT_ITEM:
+        return _pick(value, ITEM_STEPS, ITEM_STEP_WORDS)
     return _pick(value, STEPS, STEP_WORDS)
 
 
@@ -250,12 +437,89 @@ def when_text(moment: datetime.datetime, now: datetime.datetime) -> str:
     return day + part_of_day(moment)
 
 
-def is_ended(item: dict) -> dict | None:
-    """这件已经没了：返回那一步；还在就 None。"""
+def staple_of(item: dict) -> tuple | None:
+    """按量记的那件：（单位, 一包多少, 平常一次用多少）；不是按量记的返回 None。"""
+    item = item or {}
+    if cat_of(item) != CAT_FOOD:
+        return None
+    kind = str(item.get("kind") or "")
+    if kind not in MEASURED_KINDS and not item.get("unit"):
+        return None
+    name = re.sub(r"\s+", "", str(item.get("name") or ""))
+    found = next(((unit, pack, per) for keys, unit, pack, per in STAPLES if any(k in name for k in keys)), None)
+    unit, pack, per = found or MEASURED_DEFAULT.get(kind) or MEASURED_DEFAULT["干货调料粮食"]
+    return item.get("unit") or unit, pack, per
+
+
+def _guess(value, pack: float) -> float | None:
+    """「300 克」「剩大半袋」→ 克 / 毫升的数（说的是几成的按一包算）；认不出 None。"""
+    got = parse_amount(value)
+    if got is not None:
+        return got[0]
+    share = fraction_of(value)
+    return share * pack if share is not None else None
+
+
+def measure(item: dict) -> dict | None:
+    """按量记的那件按先后现算每一步用了多少、之后剩多少：
+    来 / 清点 → 剩 amount（没写按 left 估，再没有按一包算）；用掉 → 减 used（没写按 left 对，再没有按平常一次的量）；
+    用完 / 吃完 / 没了 → 0。返回 {unit, pack, per_use, rows: [(那一步, 用了多少, 之后剩多少)], left, zero, low}；
+    不是按量记的返回 None。扣到 0 的那一步记在 zero（之后就算用完了）。"""
+    info = staple_of(item)
+    if info is None:
+        return None
+    unit, pack, per_use = info
+    left, rows, zero = 0.0, [], None
     for stage in item.get("stages") or []:
-        if stage.get("what") in END_STEPS:
+        what = stage.get("what")
+        used = None
+        if what in START_STEPS or what == "清点":
+            amount = _guess(stage.get("amount"), pack)
+            if amount is None:
+                amount = _guess(stage.get("left"), pack)
+            if amount is None:
+                amount = pack if what in START_STEPS else left
+            if what in START_STEPS and parse_amount(stage.get("amount")) is not None:
+                pack = amount  # 头一回写了准数：一包就是这么多
+            left = amount
+        elif what in ("用完了", "吃完了"):
+            used, left = left, 0.0
+        elif what in END_STEPS:
+            left = 0.0
+        elif what in ("用掉一部分", "吃了一部分"):
+            got = parse_amount(stage.get("used"))
+            if got is not None:
+                used = min(got[0], left)
+            else:
+                rest = _guess(stage.get("left"), pack)
+                used = left - min(left, rest) if rest is not None else min(per_use, left)
+            left -= used
+        rows.append((stage, used, left))
+        if left <= 0 and what not in END_STEPS:
+            zero = zero or stage
+        elif left > 0 and what == "清点":
+            zero = None  # 扣到 0 以后又清点出还有：照清点的接着算
+    low_mark = min(max(pack * LOW_SHARE, per_use * LOW_USES), pack * LOW_CAP)
+    return {"unit": unit, "pack": pack, "per_use": per_use, "rows": rows, "left": max(0.0, left),
+            "zero": zero, "low": 0 < left <= low_mark}
+
+
+def is_ended(item: dict) -> dict | None:
+    """这件已经没了：返回那一步；还在就 None。按量记的扣到 0 也算（返回一个「用完了」的那一步，带 _auto）。"""
+    _start, _mid, ends = steps_of(cat_of(item))
+    for stage in item.get("stages") or []:
+        if stage.get("what") in ends:
             return stage
+    info = measure(item) if cat_of(item) == CAT_FOOD else None
+    if info is not None and info["zero"] is not None:
+        return dict(info["zero"], what="用完了", _auto=True)
     return None
+
+
+def had_before(items, name) -> dict | None:
+    """同名（一字不差）的吃的以前记过没有（用完了的也算）：记过的那件；「原来就有」只给从来没记过的用。"""
+    key = re.sub(r"\s+", "", str(name or ""))
+    return next((x for x in items if cat_of(x) == CAT_FOOD and re.sub(r"\s+", "", str(x.get("name") or "")) == key), None) if key else None
 
 
 def _same_name(a, b) -> bool:
@@ -264,17 +528,31 @@ def _same_name(a, b) -> bool:
     return bool(a and b) and (a == b or a in b or b in a)
 
 
-def clean_stage(stage: dict) -> dict:
-    """一步规整成固定的几个字段；place / keep / state 空着的，插进去时照上一步。"""
+def clean_stage(stage: dict, cat: str = CAT_FOOD) -> dict:
+    """一步规整成固定的几个字段；place / keep / state 空着的，插进去时照上一步。
+    按量记的另带 amount（一共 / 清点出来有多少）、used（这次用了多少），原样留着字（「15 克」「半斤」），算的时候再折。
+    吃的以外的东西：state 随便写（织到一半），另有 holder（在谁手上）、owner（归属换了才写）。"""
     out = {
         "at": str(stage.get("at") or ""),
-        "what": norm_step(stage.get("what")),
+        "what": norm_step(stage.get("what"), cat),
         "left": clean_text(stage.get("left"), MAX_LEFT),
         "place": clean_text(stage.get("place"), MAX_PLACE),
-        "keep": norm_keep(stage.get("keep")),
-        "state": norm_state(stage.get("state")),
         "by": clean_text(stage.get("by"), 12),
     }
+    if cat == CAT_ITEM:
+        out["state"] = clean_text(stage.get("state"), MAX_ITEM_STATE)
+        out["holder"] = clean_text(stage.get("holder"), 12)
+        if stage.get("owner"):
+            out["owner"] = clean_text(stage.get("owner"), 12)
+    else:
+        out["keep"] = norm_keep(stage.get("keep"))
+        out["state"] = norm_state(stage.get("state"))
+        for key in ("amount", "used"):
+            value = stage.get(key)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                out[key] = value
+            elif str(value or "").strip():
+                out[key] = clean_text(value, MAX_LEFT)
     for key in ("into", "note", "recorded", "wl"):
         if stage.get(key):
             out[key] = clean_text(stage.get(key), MAX_NOTE)
@@ -285,9 +563,12 @@ def clean_stage(stage: dict) -> dict:
 
 def insert_stage(item: dict, new: dict) -> str:
     """给一件加一步（clean_stage 过的），按时刻插进去；返回不收的原因，收了返回空串。不存盘。
-    先在的步算数：它没了以后的步、它后面还有步时的「没了」、和已有的同一步重复的，都不收。"""
+    先在的步算数：它没了以后的步、它后面还有步时的「没了」、和已有的同一步重复的，都不收。
+    按量记的扣到 0 以后，「清点」还能记（聊天里说其实还有）。"""
+    cat = cat_of(item)
+    _start, mids, ends = steps_of(cat)
     moment = parse_time(new.get("at"))
-    if new.get("what") not in MID_STEPS + END_STEPS:
+    if new.get("what") not in mids + ends:
         return "「%s」不是已有的东西能记的一步" % new.get("what")
     if moment is None:
         return "时间不对"
@@ -296,9 +577,9 @@ def insert_stage(item: dict, new: dict) -> str:
     if created is not None and moment < created:
         return "早于它有的时候（%s）" % item.get("created")
     end = is_ended(item)
-    if end is not None and (parse_time(end.get("at")) or moment) <= moment:
+    if end is not None and (parse_time(end.get("at")) or moment) <= moment and not (end.get("_auto") and new["what"] == "清点"):
         return "它 %s 已经%s了" % (str(end.get("at"))[5:16], end.get("what"))
-    if new["what"] in END_STEPS and any((parse_time(x.get("at")) or moment) > moment for x in stages):
+    if new["what"] in ends and any((parse_time(x.get("at")) or moment) > moment for x in stages):
         return "后面还记着别的步"
     for old in stages:
         when = parse_time(old.get("at"))
@@ -310,9 +591,15 @@ def insert_stage(item: dict, new: dict) -> str:
     while index > 0 and (parse_time(stages[index - 1].get("at")) or moment) > moment:
         index -= 1
     prev = stages[index - 1] if index > 0 else {}
-    for key in ("place", "keep", "state"):
-        new[key] = new.get(key) or prev.get(key) or ""
-    if new["what"] in END_STEPS:
+    if cat == CAT_ITEM:
+        # 放下了（写了在哪、没写谁拿着）就不在谁手上；交到谁手上（没写在哪）就跟着那个人走；都没写照上一步
+        if not new.get("place") and not new.get("holder"):
+            new["place"], new["holder"] = prev.get("place") or "", prev.get("holder") or ""
+        new["state"] = new.get("state") or prev.get("state") or ""
+    else:
+        for key in ("place", "keep", "state"):
+            new[key] = new.get(key) or prev.get(key) or ""
+    if new["what"] in ends:
         new["left"] = ""
     elif not new.get("left") and new["what"] in KEEP_LEFT_STEPS:
         new["left"] = prev.get("left") or ""
@@ -395,44 +682,63 @@ class ThingStore:
         key = str(thing_id or "").strip().lower()
         return next((x for x in self._load().get("items") or [] if str(x.get("id")).lower() == key), None)
 
-    def reserve_id(self) -> str:
-        """发一个新编号：只增不减（存 seq），用过的、发了没用上的都不再发。"""
+    def reserve_id(self, cat: str = CAT_FOOD) -> str:
+        """发一个新编号：只增不减（吃的存 seq、别的东西存 seq_item），用过的、发了没用上的都不再发。"""
         data = self._load()
+        prefix, key = ID_PREFIX.get(cat, "w"), SEQ_KEY.get(cat, "seq")
         used = 0
         for item in data.get("items") or []:
-            m = re.fullmatch(r"w(\d+)", str(item.get("id") or ""))
+            m = re.fullmatch(prefix + r"(\d+)", str(item.get("id") or ""))
             if m:
                 used = max(used, int(m.group(1)))
-        seq = max(int(data.get("seq") or 0), used) + 1
-        data["seq"] = seq
+        seq = max(int(data.get(key) or 0), used) + 1
+        data[key] = seq
         self._save()
-        return "w%d" % seq
+        return "%s%d" % (prefix, seq)
 
     # ---------- 记录员记（存下来） ----------
 
-    def create(self, name, kind, origin, sources, stage: dict, recorded: str = "", cat: str = CAT_FOOD):
-        """新的一件：第一步只能是买回来 / 收到 / 做好了。返回 (那件, 不收的原因)。"""
+    def create(self, name, kind, origin, sources, stage: dict, recorded: str = "", cat: str = CAT_FOOD,
+               look: str = "", owner: str = ""):
+        """新的一件：第一步只能是来的那几种（吃的：买回来 / 收到 / 做好了 / 原来就有；东西另有捡到、开始做）。
+        返回 (那件, 不收的原因)。别的东西另记 look（样子）、owner（归谁）；kind 是它是什么（围巾、窗花）。"""
+        cat = CAT_ITEM if cat == CAT_ITEM else CAT_FOOD
+        starts = steps_of(cat)[0]
         name = clean_text(name, MAX_NAME)
-        first = clean_stage(stage)
+        first = clean_stage(stage, cat)
         if not name:
             return None, "没写是什么"
-        if first["what"] not in START_STEPS:
+        if first["what"] not in starts:
             return None, "第一步是「%s」，不知道它是哪来的" % (first["what"] or stage.get("what"))
         if parse_time(first["at"]) is None:
             return None, "时间不对"
-        first["keep"] = first["keep"] or DEFAULT_KEEP
-        first["state"] = first["state"] or DEFAULT_STATE
+        if cat == CAT_FOOD and first["what"] == "原来就有":
+            if norm_kind(kind) not in MEASURED_KINDS:
+                return None, "「原来就有」只用在米面油盐、调料干货、腌菜这些常备的上，别的吃的得先买"
+            old = had_before(self._load().get("items") or [], name)
+            if old is not None:
+                return None, "「%s」以前记过（%s），没了得去买" % (name, old.get("id"))
+        if cat == CAT_FOOD:
+            first["keep"] = first["keep"] or DEFAULT_KEEP
+            first["state"] = first["state"] or DEFAULT_STATE
         item = {
-            "id": self.reserve_id(),
+            "id": self.reserve_id(cat),
             "cat": cat,
             "name": name,
-            "kind": norm_kind(kind),
+            "kind": norm_kind(kind) if cat == CAT_FOOD else clean_text(kind, MAX_ITEM_KIND),
             "origin": clean_text(origin, MAX_ORIGIN),
             "from": [str(x) for x in (sources or []) if self.get(x)],
             "created": first["at"],
             "recorded": recorded or first["at"],
             "stages": [first],
         }
+        if cat == CAT_ITEM:
+            item["look"] = clean_text(look, MAX_LOOK)
+            item["owner"] = clean_text(owner, 12)
+        elif item["kind"] in MEASURED_KINDS:
+            got = parse_amount(first.get("amount")) or parse_amount(first.get("left"))
+            if got is not None and got[1]:
+                item["unit"] = got[1]  # 头一回写的是毫升还是克，以后就按它算
         self._load().setdefault("items", []).append(item)
         self._save()
         return item, ""
@@ -442,7 +748,7 @@ class ThingStore:
         item = self.get(thing_id)
         if item is None:
             return "没有 %s 这一件" % thing_id
-        why = insert_stage(item, clean_stage(stage))
+        why = insert_stage(item, clean_stage(stage, cat_of(item)))
         if not why:
             self._save()
         return why
@@ -477,8 +783,8 @@ class ThingStore:
 
     # ---------- 网页上改（手动） ----------
 
-    def update_item(self, thing_id, name=None, kind=None, origin=None, sources=None) -> str:
-        """改名字 / 哪一类 / 哪来的 / 用料（编号改不了）。返回不收的原因，收了返回空串。"""
+    def update_item(self, thing_id, name=None, kind=None, origin=None, sources=None, look=None, owner=None) -> str:
+        """改名字 / 哪一类 / 哪来的 / 用料（编号改不了）；别的东西另能改样子、归谁。返回不收的原因，收了返回空串。"""
         item = self.get(thing_id)
         if item is None:
             return "没有 %s 这一件" % thing_id
@@ -488,9 +794,14 @@ class ThingStore:
                 return "名字不能空"
             item["name"] = name
         if kind is not None:
-            item["kind"] = norm_kind(kind)
+            item["kind"] = clean_text(kind, MAX_ITEM_KIND) if cat_of(item) == CAT_ITEM else norm_kind(kind)
         if origin is not None:
             item["origin"] = clean_text(origin, MAX_ORIGIN)
+        if cat_of(item) == CAT_ITEM:
+            if look is not None:
+                item["look"] = clean_text(look, MAX_LOOK)
+            if owner is not None:
+                item["owner"] = clean_text(owner, 12)
         if sources is not None:
             picked = []
             for token in sources:
@@ -502,17 +813,19 @@ class ThingStore:
         return ""
 
     @staticmethod
-    def _check_stages(stages: list) -> str:
-        """一件的几步排好以后还说得通：第一步是买回来 / 收到 / 做好了，后面没有第二个「来」，「没了」只能是最后一步。"""
+    def _check_stages(stages: list, cat: str = CAT_FOOD) -> str:
+        """一件的几步排好以后还说得通：第一步是来的那几种，后面没有第二个「来」，「没了」只能是最后一步。
+        （东西的「做好了」既能是第一步，也能是没做完的那件后来做完。）"""
+        starts, mids, ends = steps_of(cat)
         if not stages:
             return "一步都没有了"
         if any(parse_time(x.get("at")) is None for x in stages):
             return "时间不对"
-        if stages[0].get("what") not in START_STEPS:
-            return "第一步得是买回来 / 收到 / 做好了"
-        if any(x.get("what") in START_STEPS for x in stages[1:]):
-            return "买回来 / 收到 / 做好了只能是第一步"
-        if any(x.get("what") in END_STEPS for x in stages[:-1]):
+        if stages[0].get("what") not in starts:
+            return "第一步得是%s" % " / ".join(starts)
+        if any(x.get("what") in starts and x.get("what") not in mids for x in stages[1:]):
+            return "%s只能是第一步" % " / ".join(x for x in starts if x not in mids)
+        if any(x.get("what") in ends for x in stages[:-1]):
             return "「没了」的那一步后面还有别的步"
         return ""
 
@@ -531,21 +844,21 @@ class ThingStore:
         if not 0 <= index < len(stages) or not self._same_stage(stages[index], guard):
             return "这一步已经变了，刷新一下再改"
         merged = dict(stages[index])
-        for key in ("at", "what", "left", "place", "keep", "state", "by", "into", "note"):
+        for key in ("at", "what", "left", "amount", "used", "place", "keep", "state", "holder", "owner", "by", "into", "note"):
             if fields.get(key) is not None:
                 merged[key] = fields[key]
-        new = clean_stage(merged)
+        new = clean_stage(merged, cat_of(item))
         if not new.get("into"):
             new.pop("into", None)
         elif not self.get(new["into"]) or new["into"] == item["id"]:
             return "做进了哪件：没有 %s 这一件" % new["into"]
-        if new["what"] in END_STEPS:
+        if new["what"] in steps_of(cat_of(item))[2]:
             new["left"] = ""
         if now:
             new["edited"] = now
         trial = stages[:index] + [new] + stages[index + 1:]
         trial.sort(key=lambda x: str(x.get("at") or ""))
-        why = self._check_stages(trial)
+        why = self._check_stages(trial, cat_of(item))
         if why:
             return why
         item["stages"] = trial
@@ -631,34 +944,59 @@ class ThingStore:
             key = alias.get(key, key)
             return key if key in items else ""
 
+        def stage_of(step: dict, cat: str, what) -> dict:
+            fields = {"at": at, "what": what, "left": step.get("left"), "place": step.get("place"), "state": step.get("state"),
+                      "by": by, "src": src, "wl": ref}
+            if cat == CAT_ITEM:
+                fields.update(holder=step.get("holder"), owner=step.get("owner"))
+            else:
+                fields.update(keep=step.get("keep"), amount=step.get("amount"), used=step.get("used"))
+            return clean_stage(fields, cat)
+
         made = []
         for step in seg["steps"]:
             if not isinstance(step, dict) or not step.get("new"):
                 continue
             tid = str(step["new"])
             if tid in items or tid in alias:
-                continue  # 聊天里已经认过它（存下来了），或者早认成了别的那件
-            what = norm_step(step.get("what"))
-            name = clean_text(step.get("name"), MAX_NAME)
-            if what not in START_STEPS or not name:
+                # 聊天里已经认过它（存下来了），或者早认成了别的那件；是这一段做出来的，用料那头照样补「用掉」
+                known = items.get(alias.get(tid, tid))
+                if known is not None and known.get("wl") == ref and known not in made:
+                    made.append(known)
                 continue
-            same = find_same(items.values(), name, what, start - datetime.timedelta(minutes=SEG_SAME_MINUTES),
-                             moment + datetime.timedelta(minutes=SEG_SAME_MINUTES))
+            cat = CAT_ITEM if step.get("cat") == CAT_ITEM else CAT_FOOD
+            what = norm_step(step.get("what"), cat)
+            name = clean_text(step.get("name"), MAX_NAME)
+            if what not in steps_of(cat)[0] or not name:
+                continue
+            if cat == CAT_FOOD and what == "原来就有" and (
+                    norm_kind(step.get("kind")) not in MEASURED_KINDS or had_before(items.values(), name) is not None):
+                continue  # 只有从没记过的常备调料能「原来就有」；用完了的得买
+            same = find_same([x for x in items.values() if cat_of(x) == cat], name, what,
+                             start - datetime.timedelta(minutes=SEG_SAME_MINUTES), moment + datetime.timedelta(minutes=SEG_SAME_MINUTES))
             if same is not None:
                 alias[tid] = str(same["id"])
                 continue
-            first = clean_stage({"at": at, "what": what, "left": step.get("left"), "place": step.get("place"),
-                                 "keep": step.get("keep"), "state": step.get("state"), "by": by, "src": src, "wl": ref})
-            first["keep"] = first["keep"] or DEFAULT_KEEP
-            first["state"] = first["state"] or DEFAULT_STATE
+            first = stage_of(step, cat, what)
+            if cat == CAT_FOOD:
+                first["keep"] = first["keep"] or DEFAULT_KEEP
+                first["state"] = first["state"] or DEFAULT_STATE
             sources = []
             for token in step.get("from") or []:
                 sid = resolve(token)
                 if sid and sid not in sources and usable(items[sid], at):
                     sources.append(sid)
-            item = {"id": tid, "cat": CAT_FOOD, "name": name, "kind": norm_kind(step.get("kind")),
+            item = {"id": tid, "cat": cat, "name": name,
+                    "kind": clean_text(step.get("kind"), MAX_ITEM_KIND) if cat == CAT_ITEM else norm_kind(step.get("kind")),
                     "origin": clean_text(step.get("origin"), MAX_ORIGIN), "from": sources,
                     "created": at, "recorded": at, "stages": [first], "wl": ref}
+            if cat == CAT_ITEM:
+                item["look"] = clean_text(step.get("look"), MAX_LOOK)
+                item["owner"] = clean_text(step.get("owner"), 12)
+            elif item["kind"] in MEASURED_KINDS:
+                got = parse_amount(first.get("amount")) or parse_amount(first.get("left"))
+                if got is not None and got[1]:
+                    item["unit"] = got[1]
             if persist:
                 self._load().setdefault("items", []).append(item)
             else:
@@ -671,8 +1009,8 @@ class ThingStore:
             tid = resolve(step.get("id"))
             if not tid:
                 continue
-            stage = clean_stage({"at": at, "what": step.get("what"), "left": step.get("left"), "place": step.get("place"),
-                                 "keep": step.get("keep"), "state": step.get("state"), "by": by, "src": src, "wl": ref})
+            cat = cat_of(items[tid])
+            stage = stage_of(step, cat, step.get("what"))
             into = resolve(step.get("into"))
             if into and into != tid:
                 stage["into"] = into
@@ -681,9 +1019,13 @@ class ThingStore:
             if stage.get("into") and tid not in (items[into].get("from") or []):
                 items[into].setdefault("from", []).append(tid)
         for dish in made:
+            if cat_of(dish) != CAT_FOOD:
+                continue  # 东西用什么做的只是来历，不替料补「用掉」
             for sid in dish.get("from") or []:
                 source = items.get(sid)
-                if source is None or any(str(x.get("into") or "") == dish["id"] for x in source.get("stages") or []):
+                if source is None or cat_of(source) != CAT_FOOD:
+                    continue
+                if any(str(x.get("into") or "") == dish["id"] for x in source.get("stages") or []):
                     continue
                 # 这一段里已经记了它用掉多少（补写常常不写 into）：into 补在那一步上，不再另补一步空的把剩多少盖掉
                 used = [x for x in source.get("stages") or [] if x.get("wl") == ref and x.get("what") in USE_STEPS]
@@ -692,8 +1034,9 @@ class ThingStore:
                     if blank is not None:
                         blank["into"] = dish["id"]
                     continue
+                # 按量记的（盐、油这种）没写用了多少：measure 按平常一次的量扣
                 insert_stage(source, clean_stage({"at": at, "what": "用掉一部分", "by": by, "into": dish["id"],
-                                                  "note": "做这盘菜时用了，没说剩多少", "src": src, "wl": ref}))
+                                                  "note": "做这盘菜时用了，没说用了多少", "src": src, "wl": ref}))
 
     def settle(self, now: datetime.datetime) -> int:
         """世界线里做完满 SETTLE_DAYS 天的段：把它标的那几步沉进 things.json（世界线文件到期会清掉）。"""
@@ -842,6 +1185,9 @@ class ThingStore:
 
     @staticmethod
     def left_text(item: dict) -> str:
+        info = measure(item)
+        if info is not None:
+            return "还剩 %s%s" % (fmt_amount(info["left"], info["unit"]), "，快用完了" if info["low"] else "")
         stages = item.get("stages") or []
         last = stages[-1] if stages else {}
         fresh = last.get("what") in START_STEPS
@@ -852,6 +1198,8 @@ class ThingStore:
 
     def line(self, item: dict, now: datetime.datetime, view: View, label_fn=None) -> str:
         """一件一行：编号 名字〔哪类；用什么做的〕：剩多少｜在哪、怎么放｜哪来的｜新不新鲜。"""
+        if cat_of(item) == CAT_ITEM:
+            return self.item_line(item, view, label_fn)
         stages = item.get("stages") or [{}]
         first, last = stages[0], stages[-1]
         tags = [str(item.get("kind") or DEFAULT_KIND)]
@@ -871,18 +1219,31 @@ class ThingStore:
 
     def history(self, item: dict, now: datetime.datetime, view: View, label_fn=None) -> str:
         """一件的来龙去脉：哪来的、每一步、用它做了什么、现在怎么样。"""
+        if cat_of(item) == CAT_ITEM:
+            return self.item_history(item, view, label_fn)
         head = "%s %s〔%s〕" % (item.get("id"), item.get("name"), item.get("kind") or DEFAULT_KIND)
         if item.get("origin"):
             head += "：%s" % item["origin"]
         lines = [head]
         if item.get("from"):
             lines.append("用这几件做的：%s" % "、".join(self._name_of(view, x) for x in item["from"]))
+        info = measure(item)
+        counted = {id(stage): (used, left) for stage, used, left in (info or {}).get("rows") or []}
         for stage in item.get("stages") or []:
-            text = "- %s %s（%s）" % (str(stage.get("at"))[5:16], stage.get("what"), self._who(stage.get("by"), label_fn))
+            who = self._who(stage.get("by"), label_fn)
+            text = "- %s %s%s" % (str(stage.get("at"))[5:16], stage.get("what"), "（%s）" % who if who else "")
             bits = []
             if stage.get("into"):
                 bits.append("做进了 %s" % self._name_of(view, stage["into"]))
-            if stage.get("left"):
+            if info is not None and id(stage) in counted:
+                used, left = counted[id(stage)]
+                if stage.get("what") in START_STEPS:
+                    bits.append("一共 %s" % fmt_amount(left, info["unit"]))
+                elif stage.get("what") == "清点":
+                    bits.append("清点出还有 %s" % fmt_amount(left, info["unit"]))
+                elif used is not None:
+                    bits.append("用了 %s，剩 %s" % (fmt_amount(used, info["unit"]), fmt_amount(left, info["unit"])))
+            elif stage.get("left"):
                 raw = str(stage["left"])
                 bits.append(raw if (stage.get("what") in START_STEPS or raw.startswith(("剩", "还剩"))) else "剩" + raw)
             if stage.get("what") in START_STEPS + ("挪地方", "切开了"):
@@ -894,8 +1255,126 @@ class ThingStore:
         made = [x for x in view.values() if str(item.get("id")) in (x.get("from") or [])]
         if made:
             lines.append("用它做了：%s" % "、".join("%s %s" % (x.get("id"), x.get("name")) for x in made))
-        lines.append("现在：%s" % self.fresh_text(item, now))
+        now_text = self.fresh_text(item, now)
+        if info is not None and not is_ended(item):
+            now_text = "%s｜%s（平常一次用 %s 上下）" % (self.left_text(item), now_text, fmt_amount(info["per_use"], info["unit"]))
+        lines.append("现在：%s" % now_text)
         return "\n".join(lines)
+
+    # ---------- 吃的以外的东西 ----------
+
+    @staticmethod
+    def owner_of(item: dict) -> str:
+        """现在归谁：最后一次写了 owner 的那一步，没有就是记下它时写的。"""
+        for stage in reversed(item.get("stages") or []):
+            if stage.get("owner"):
+                return str(stage["owner"])
+        return str(item.get("owner") or "")
+
+    def _where(self, stage: dict, label_fn) -> str:
+        place, holder = str(stage.get("place") or ""), str(stage.get("holder") or "")
+        if holder:
+            return "%s在%s手上" % (place + "，" if place else "", self._who(holder, label_fn))
+        return place
+
+    def item_line(self, item: dict, view: View, label_fn=None) -> str:
+        """一件东西一行：编号 名字〔是什么；用什么做的〕：样子｜现在什么样｜在哪（谁手上）｜哪来的｜归谁。
+        写了来历的只写来历（谁做的、哪来的），没写的才写哪天谁怎么有的。"""
+        stages = item.get("stages") or [{}]
+        first, last = stages[0], stages[-1]
+        tags = [str(item.get("kind") or "东西")]
+        if item.get("from"):
+            tags.append("用 %s 做的" % "、".join(self._name_of(view, x) for x in item["from"]))
+        came = item.get("origin") or "%s %s%s" % (str(first.get("at"))[5:16], self._who(first.get("by"), label_fn), first.get("what"))
+        owner = self.owner_of(item)
+        look, state = str(item.get("look") or ""), str(last.get("state") or "")
+        parts = [x for x in (look, "" if state and state in look else state, self._where(last, label_fn), came,
+                             "归%s" % self._who(owner, label_fn) if owner else "") if x]
+        return "%s %s〔%s〕：%s" % (item.get("id"), item.get("name"), "；".join(tags), "｜".join(parts))
+
+    def item_history(self, item: dict, view: View, label_fn=None) -> str:
+        """一件东西的来龙去脉：哪来的、样子、每一步（在哪、谁手上、什么样）、用它做了什么、现在怎么样。"""
+        head = "%s %s〔%s〕" % (item.get("id"), item.get("name"), item.get("kind") or "东西")
+        if item.get("origin"):
+            head += "：%s" % item["origin"]
+        lines = [head]
+        if item.get("look"):
+            lines.append("样子：%s" % item["look"])
+        if item.get("from"):
+            lines.append("用这几件做的：%s" % "、".join(self._name_of(view, x) for x in item["from"]))
+        for stage in item.get("stages") or []:
+            who = self._who(stage.get("by"), label_fn)
+            text = "- %s %s%s" % (str(stage.get("at"))[5:16], stage.get("what"), "（%s）" % who if who else "")
+            bits = [self._where(stage, label_fn), stage.get("state")]
+            if stage.get("owner"):
+                bits.append("归%s" % self._who(stage["owner"], label_fn))
+            if stage.get("into"):
+                bits.append("做进了 %s" % self._name_of(view, stage["into"]))
+            if stage.get("note"):
+                bits.append(stage["note"])
+            bits = [x for x in bits if x]
+            lines.append(text + ("：" + "｜".join(bits) if bits else ""))
+        made = [x for x in view.values() if str(item.get("id")) in (x.get("from") or [])]
+        if made:
+            lines.append("用它做了：%s" % "、".join("%s %s" % (x.get("id"), x.get("name")) for x in made))
+        end = is_ended(item)
+        if end is not None:
+            lines.append("现在：已经没了（%s %s）" % (str(end.get("at"))[5:16], end.get("what")))
+        else:
+            last = (item.get("stages") or [{}])[-1]
+            owner = self.owner_of(item)
+            now_bits = [x for x in (self._where(last, label_fn), last.get("state"),
+                                    "归%s" % self._who(owner, label_fn) if owner else "") if x]
+            lines.append("现在：%s" % ("｜".join(now_bits) or "在家里，在哪没说"))
+        return "\n".join(lines)
+
+    def item_list(self, now: datetime.datetime, view: View, label_fn=None, gone_hours: int = 24, gone_max: int = 8,
+                  limit: int = ITEM_LIST_MAX) -> str:
+        """家里现有的东西（吃的以外），一件一行：同一种东西（kind 一样）有好几件的先列，每组前面提一句认准编号；
+        只有一件的列在后面。太多时只写全最近动过的 limit 件，别的只列编号和名字；最后附最近 gone_hours 小时里没了的。"""
+        flat = now.replace(tzinfo=None)
+        current, gone = [], []
+        for item in view.values():
+            if cat_of(item) != CAT_ITEM:
+                continue
+            end = is_ended(item)
+            if end is None:
+                current.append(item)
+                continue
+            when = parse_time(end.get("at"))
+            if when is not None and flat - when <= datetime.timedelta(hours=gone_hours):
+                gone.append((when, "%s %s：%s %s" % (item.get("id"), item.get("name"), str(end.get("at"))[5:16], end.get("what"))))
+        hidden = set()
+        if len(current) > limit:
+            recent = sorted(current, key=lambda x: str(((x.get("stages") or [{}])[-1]).get("at") or ""), reverse=True)
+            hidden = {id(x) for x in recent[limit:]}
+        kind_of = lambda x: re.sub(r"\s+", "", str(x.get("kind") or "")) or str(x.get("name") or "")
+        groups: dict = {}
+        for item in sorted(current, key=lambda x: str(x.get("created") or "")):
+            groups.setdefault(kind_of(item), []).append(item)
+        name_of = lambda x: "%s %s" % (x.get("id"), x.get("name"))
+        lines, far = [], []
+        for kind in sorted(k for k, v in groups.items() if len(v) > 1):
+            members = groups[kind]
+            older = [x for x in members if id(x) in hidden]
+            head = "「%s」有 %d 件，长得像，认准编号" % (kind, len(members))
+            if older:
+                head += "（%s 更早没动过，填编号能看）" % "、".join(name_of(x) for x in older)
+            lines.append(head + "：")
+            lines.extend("- " + self.item_line(x, view, label_fn) for x in members if id(x) not in hidden)
+        singles = sorted((v[0] for v in groups.values() if len(v) == 1), key=lambda x: str(x.get("created") or ""))
+        rest = [x for x in singles if id(x) not in hidden]
+        if rest and lines:
+            lines.append("别的：")
+        lines.extend("- " + self.item_line(x, view, label_fn) for x in rest)
+        far = [x for x in singles if id(x) in hidden]
+        text = "\n".join(lines) if lines else "（家里还没记着别的东西）"
+        if far:
+            text += "\n更早没动过的（只列名字，填编号能看）：" + "、".join(name_of(x) for x in far)
+        if gone:
+            gone.sort(key=lambda x: x[0])
+            text += "\n最近一天没了的：\n" + "\n".join("- " + bit for _, bit in gone[-gone_max:])
+        return text
 
     def food_list(self, now: datetime.datetime, view: View, label_fn=None, gone_hours: int = 24, gone_max: int = 8,
                   bad_max: int = 10) -> str:

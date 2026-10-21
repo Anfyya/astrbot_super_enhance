@@ -472,7 +472,7 @@ class LifeStateService:
         return {day: str(seed.get("weather") or "") for day, seed in seeds.items() if isinstance(seed, dict)}
 
     def tool_look_things(self, umo: str, kind: str = "food", thing_id: str = "") -> str:
-        """看家里的东西：kind=food 列出家里现有的吃的；填了编号看那一件的来龙去脉。这一刻现算。"""
+        """看家里的东西：kind=food 列出家里现有的吃的，kind=item 列出吃的以外的东西；填了编号看那一件的来龙去脉。这一刻现算。"""
         if self.world_mode != "live":
             return "世界线没开，看不到。"
         now = self._now().replace(tzinfo=None)
@@ -483,8 +483,11 @@ class LifeStateService:
             if item is None:
                 return "没有 %s 这一件。先不填编号看一遍清单。" % key
             return self.things.history(item, now, shelf, self.scene.label_for)
-        if str(kind or "food").strip().lower() not in ("food", "foods", "食物", "吃的", ""):
-            return "现在只能看吃的：kind 填 food。"
+        word = str(kind or "food").strip().lower()
+        if word in ("item", "items", "东西", "物品", "物件"):
+            return "家里的东西（吃的以外，%s）：\n%s" % (fmt_time(now), self.things.item_list(now, shelf, self.scene.label_for))
+        if word not in ("food", "foods", "食物", "吃的", ""):
+            return "kind 填 food（吃的）或 item（吃的以外的东西）。"
         return "家里的吃的（%s）：\n%s" % (fmt_time(now), self.things.food_list(now, shelf, self.scene.label_for))
 
     def world_text(self, bot: str, now: datetime.datetime) -> str:
