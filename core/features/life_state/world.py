@@ -53,8 +53,7 @@ MAX_INTENTION_TEXT = 400
 MAX_DAY_ENTRIES = 400
 # 一段做到一半停下的原因：记录员撤段时给的那句（没给就不写）
 MAX_STOP_WHY = 80
-# 一段事最多分几步、每步多长
-MAX_STEPS = 6
+# 每一步的文字长度
 MAX_STEP = 80
 MAX_RESULT = 80
 
@@ -1012,8 +1011,6 @@ def parse_steps(value) -> tuple:
             continue
         texts.append(text)
         minutes.append(max(0, min(mins, 600)))
-        if len(texts) >= MAX_STEPS:
-            break
     if not texts or any(x <= 0 for x in minutes):
         minutes = []
     return texts, minutes
@@ -1040,7 +1037,7 @@ def clean_importance(value) -> int:
 
 
 def clean_steps(value) -> list:
-    """分步的文字：去空、截长、最多 MAX_STEPS 步。"""
+    """分步的文字：去空、截长，不限制步数。"""
     return parse_steps(value)[0]
 
 
