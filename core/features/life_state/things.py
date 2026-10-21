@@ -599,6 +599,20 @@ def _same_name(a, b) -> bool:
     return bool(a and b) and (a == b or a in b or b in a)
 
 
+MAX_BY = 4  # 一步最多记几个人
+
+
+def clean_by(value) -> str:
+    """谁：一个人照旧写编号；几个人一起的（网页上多选）存成「napcat,napcat2」，列表、顿号、逗号隔开的都认。"""
+    parts = value if isinstance(value, (list, tuple)) else re.split(r"[,，、]", str(value or ""))
+    out = []
+    for part in parts:
+        text = clean_text(part, 12)
+        if text and text not in out:
+            out.append(text)
+    return ",".join(out[:MAX_BY])
+
+
 def clean_stage(stage: dict, cat: str = CAT_FOOD) -> dict:
     """一步规整成固定的几个字段；place / keep / state 空着的，插进去时照上一步。
     按量记的另带 amount（一共 / 清点出来有多少）、used（这次用了多少），原样留着字（「15 克」「半斤」），算的时候再折。
@@ -608,7 +622,7 @@ def clean_stage(stage: dict, cat: str = CAT_FOOD) -> dict:
         "what": norm_step(stage.get("what"), cat),
         "left": clean_text(stage.get("left"), MAX_LEFT),
         "place": clean_text(stage.get("place"), MAX_PLACE),
-        "by": clean_text(stage.get("by"), 12),
+        "by": clean_by(stage.get("by")),
     }
     if cat == CAT_ITEM:
         out["state"] = clean_text(stage.get("state"), MAX_ITEM_STATE)
@@ -886,8 +900,9 @@ class ThingStore:
 
     # ---------- 网页上改（手动） ----------
 
-    def update_item(self, thing_id, name=None, kind=None, origin=None, sources=None, look=None, owner=None) -> str:
-        """改名字 / 哪一类 / 哪来的 / 用料（编号改不了）；别的东西另能改样子、归谁。返回不收的原因，收了返回空串。"""
+    def update_item(self, thing_id, name=None, kind=None, origin=None, sources=None, look=None, owner=None, now: str = "") -> str:
+        """改名字 / 哪一类 / 哪来的 / 用料（编号改不了）；别的东西另能改样子、归谁。返回不收的原因，收了返回空串。
+        吃的改了用料：新挑进来的料补一步用掉、去掉的料把网页当初补的那步作废（_sync_sources）。"""
         item = self.get(thing_id)
         if item is None:
             return "没有 %s 这一件" % thing_id
@@ -911,9 +926,36 @@ class ThingStore:
                 found = self.get(token)
                 if found is not None and found["id"] != item["id"] and found["id"] not in picked:
                     picked.append(found["id"])
+            before = list(item.get("from") or [])
             item["from"] = picked
+            if cat_of(item) == CAT_FOOD:
+                self._sync_sources(item, before, picked, now)
         self._save()
         return ""
+
+    def _sync_sources(self, dish: dict, before: list, after: list, now: str = "") -> None:
+        """网页上改了一盘菜的用料：新挑进来的料补一步「用掉一部分」（做进了这盘菜），和「加一件」时一样；
+        去掉的料，网页当初替它补的那一步挪进作废的（能恢复）。记录员、世界线记的那步不动。不存盘。"""
+        first = (dish.get("stages") or [{}])[0]
+        for sid in after:
+            source = self.get(sid)
+            if sid in before or source is None or cat_of(source) != CAT_FOOD:
+                continue
+            if any(str(x.get("into") or "") == dish["id"] for x in source.get("stages") or []):
+                continue
+            insert_stage(source, clean_stage({"at": dish.get("created") or first.get("at"), "what": "用掉一部分", "by": first.get("by"),
+                                              "into": dish["id"], "note": "做这盘菜时用了", "src": {"manual": "网页"},
+                                              "recorded": now}))
+        for sid in before:
+            source = self.get(sid)
+            if sid in after or source is None:
+                continue
+            stages = source.get("stages") or []
+            for stage in [x for x in stages[1:] if str(x.get("into") or "") == dish["id"] and self._manual_stage(x)]:
+                stages.remove(stage)
+                stage["void_why"] = clean_text("网页上从 %s 的用料里去掉了" % dish["id"], MAX_NOTE)
+                stage["void_at"] = now
+                source.setdefault("voided", []).append(stage)
 
     @staticmethod
     def _check_stages(stages: list, cat: str = CAT_FOOD) -> str:
@@ -1190,6 +1232,127 @@ class ThingStore:
                 self._apply_segment(items, alias, seg)
         return View(items, alias)
 
+    def future(self, now: datetime.datetime) -> list:
+        """世界线里还没做完的段要新添的（要买回来、要做好的……）：编号是补写 / 网页先发好的，那段做完才算进存货（view），
+        这之前网页上列在「未来」里。每件：{id, cat, step（那段里新添它的那一步）, made（哪一段添的）, later（之后几段排好的去向）}。
+        聊天里已经认过的（存下来了、或者认成了别的那件）不算。"""
+        if self.world is None:
+            return []
+        try:
+            bots = set(self.bots_fn() if self.bots_fn else [])
+        except Exception:
+            bots = set()
+        flat = now.replace(tzinfo=None)
+        data = self._load()
+        known = {str(x.get("id")) for x in data.get("items") or []} | {str(k) for k in (data.get("alias") or {})}
+        rows, found, later = [], {}, []
+        for back in (1, 0, -1):
+            day = (flat.date() - datetime.timedelta(days=back)).isoformat()
+            for entry in self.world.entries(day):
+                steps = entry.get("things")
+                if not isinstance(steps, list) or not steps or entry.get("stopped"):
+                    continue
+                if bots and str(entry.get("who")) not in bots:
+                    continue
+                end = parse_time(entry.get("end"))
+                if end is not None and end <= flat:
+                    continue  # 做完了：已经算进存货
+                start = parse_time(entry.get("start"))
+                made = {"ref": "%s/%s" % (day, entry.get("id")), "date": day, "entry": str(entry.get("id")), "who": str(entry.get("who")),
+                        "start": str(entry.get("start") or ""), "end": str(entry.get("end") or ""),
+                        "doing": clean_text(entry.get("doing"), 60), "going": start is not None and start <= flat}
+                for step in steps:
+                    if not isinstance(step, dict):
+                        continue
+                    tid = str(step.get("new") or "").strip()
+                    if tid and tid not in known and tid not in found:
+                        found[tid] = {"id": tid, "cat": CAT_ITEM if step.get("cat") == CAT_ITEM else CAT_FOOD,
+                                      "step": dict(step), "made": made, "later": []}
+                        rows.append(found[tid])
+                    elif not tid and step.get("id"):
+                        later.append((str(step.get("id")), made, dict(step)))
+        for tid, made, step in later:
+            row = found.get(tid)
+            if row is not None and made["start"] >= row["made"]["start"] and made["ref"] != row["made"]["ref"]:
+                row["later"].append({"made": made, "step": step})
+        return rows
+
+    def entry_steps(self, raws, old, now: datetime.datetime) -> list:
+        """网页上改世界线一段标的吃的（世界线编辑框、家里的吃的「未来」里改那件）：
+        用掉 / 吃了家里有的（编号得是家里有的、这一段里新添的、或者「未来」里更早那段要添的），
+        做好 / 买回来新的（临时代号换成程序发的编号，原来发过的照旧）；对不上的那步丢掉。
+        吃的以外的东西网页上只能删：留下的必须和原来的那条一模一样。"""
+        old = [x for x in (old or []) if isinstance(x, dict)]
+        if not isinstance(raws, list):
+            return [dict(x) for x in old]
+        shelf = self.view(now)
+        future_food = {r["id"] for r in self.future(now) if r["cat"] == CAT_FOOD}
+        old_new = {str(x.get("new")) for x in old if x.get("new")}
+        old_ids = {str(x.get("id")) for x in old if x.get("id")}
+
+        def dump(step) -> str:
+            return json.dumps(step, ensure_ascii=False, sort_keys=True)
+
+        def is_item(step: dict) -> bool:
+            if step.get("cat") == CAT_ITEM:
+                return True
+            found = shelf.find(step.get("id")) if step.get("id") else None
+            return found is not None and cat_of(found) == CAT_ITEM
+
+        old_items = {dump(x) for x in old if is_item(x)}
+        news = []
+        for raw in raws:
+            if not isinstance(raw, dict) or is_item(raw) or not str(raw.get("new") or "").strip():
+                continue
+            if norm_step(raw.get("what")) in START_STEPS and clean_text(raw.get("name"), MAX_NAME):
+                news.append(str(raw["new"]).strip())
+        keys = {}
+        for key in news:
+            if key not in keys:
+                keys[key] = key if key in old_new else self.reserve_id(CAT_FOOD)
+
+        def resolve(token) -> str:
+            text = str(token or "").strip()
+            if not text:
+                return ""
+            if text in keys:
+                return keys[text]
+            found = shelf.find(text)
+            if found is not None:
+                return str(found.get("id")) if cat_of(found) == CAT_FOOD else ""
+            return text if text in future_food or text in old_ids or text in old_new else ""
+
+        out = []
+        for raw in raws:
+            if not isinstance(raw, dict):
+                continue
+            if is_item(raw):
+                if dump(raw) in old_items:
+                    out.append(dict(raw))
+                continue
+            what = norm_step(raw.get("what"))
+            key = str(raw.get("new") or "").strip()
+            if key:
+                if key not in keys:
+                    continue
+                tid = keys[key]
+                step = {"new": tid, "name": clean_text(raw.get("name"), MAX_NAME), "kind": norm_kind(raw.get("kind")),
+                        "origin": clean_text(raw.get("origin"), MAX_ORIGIN),
+                        "from": [x for x in dict.fromkeys(resolve(t) for t in raw.get("from") or []) if x and x != tid]}
+            else:
+                tid = resolve(raw.get("id"))
+                if not tid or what not in MID_STEPS + END_STEPS:
+                    continue
+                step = {"id": tid}
+                into = resolve(raw.get("into"))
+                if into and into != tid:
+                    step["into"] = into
+            step.update({"what": what, "left": clean_text(raw.get("left"), MAX_LEFT), "place": clean_text(raw.get("place"), MAX_PLACE),
+                         "keep": norm_keep(raw.get("keep")), "state": norm_state(raw.get("state")),
+                         "amount": clean_text(raw.get("amount"), MAX_LEFT), "used": clean_text(raw.get("used"), MAX_LEFT)})
+            out.append({k: v for k, v in step.items() if v not in ("", None, []) or k == "left"})
+        return out
+
     # ---------- 新鲜度 ----------
 
     def _weathers(self) -> dict:
@@ -1290,10 +1453,13 @@ class ThingStore:
 
     @staticmethod
     def _who(value, label_fn) -> str:
-        text = str(value or "")
-        if text == "master":
-            return "主人"
-        return (label_fn(text) if label_fn else "") or text
+        """谁：编号换成名字；几个人一起的用顿号连起来。"""
+        names = []
+        for text in str(value or "").split(","):
+            text = text.strip()
+            if text:
+                names.append("主人" if text == "master" else (label_fn(text) if label_fn else "") or text)
+        return "、".join(names)
 
     @staticmethod
     def left_text(item: dict) -> str:

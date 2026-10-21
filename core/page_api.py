@@ -391,6 +391,8 @@ class ContextPageApi:
                     for old_id, real in shelf.alias.items():
                         if real in thing_names:
                             thing_names[old_id] = thing_names[real]
+                    for row in store.future(now):
+                        thing_names.setdefault(row["id"], str(row["step"].get("name") or ""))
                 except Exception:
                     logger.warning("[super_enhance/ctx] 世界线页算吃的名字失败", exc_info=True)
             return _ok({
@@ -429,6 +431,14 @@ class ContextPageApi:
             logger.error("[super_enhance/ctx] 读取世界线失败", exc_info=True)
             return _err(exc)
 
+    @staticmethod
+    def _entry_things(life, raws, old) -> list:
+        """网页给世界线一段的「家里的吃的」：交给 ThingStore.entry_steps 规整（发编号、对编号）；吃的没加载就原样留着原来的。"""
+        store = getattr(life, "things", None)
+        if store is None:
+            return [dict(x) for x in old or [] if isinstance(x, dict)]
+        return store.entry_steps(raws, old, life._now().replace(tzinfo=None))
+
     async def world_edit(self):
         """世界线：条目 / 约束 / 打算 / 骨架的增删改。"""
         try:
@@ -460,16 +470,15 @@ class ContextPageApi:
                         if body.get(key) is not None:
                             fields[key] = body.get(key)
                     if isinstance(body.get("things"), list):
-                        # 这段标的吃的：网页上只能删掉其中几条，留下的必须是原来就有的
+                        # 这段标的吃的：网页上能改、能加（用掉 / 吃了家里有的，做好 / 买回来新的）；东西只能删
                         old = next((x for x in world.entries(date_text, "") if str(x.get("id")) == str(body.get("id") or "")), None)
-                        keep = {json.dumps(x, ensure_ascii=False, sort_keys=True) for x in body["things"] if isinstance(x, dict)}
-                        fields["things"] = [x for x in ((old or {}).get("things") or [])
-                                            if json.dumps(x, ensure_ascii=False, sort_keys=True) in keep]
+                        fields["things"] = self._entry_things(life, body["things"], (old or {}).get("things") or [])
                     # 改完算手动，撞上的前后条目让开
                     ok = bool(
                         world.manual_update(date_text, str(body.get("id") or ""), **fields)
                     )
                 else:
+                    things = self._entry_things(life, body.get("things"), []) if isinstance(body.get("things"), list) else []
                     ok = bool(world.add_entry(date_text, {
                         "who": body.get("who"),
                         "start": body.get("start"),
@@ -483,6 +492,7 @@ class ContextPageApi:
                         "with": body.get("with") or [],
                         "training": body.get("training"),
                         "seen_by": body.get("seen_by") or [],
+                        "things": things,
                         "source": "manual",
                     }))
                     world.note_manual()
@@ -617,13 +627,71 @@ class ContextPageApi:
 
     @staticmethod
     def _thing_who(life, value) -> str:
-        text = str(value or "")
-        if text == "master":
-            return "主人"
-        try:
-            return life.scene.label_for(text) or text
-        except Exception:
-            return text
+        """谁：编号换成名字；几个人一起的用顿号连起来。"""
+        names = []
+        for text in str(value or "").split(","):
+            text = text.strip()
+            if not text:
+                continue
+            try:
+                names.append("主人" if text == "master" else life.scene.label_for(text) or text)
+            except Exception:
+                names.append(text)
+        return "、".join(names)
+
+    def _things_future(self, life, store, shelf, now) -> list:
+        """「未来」：世界线里还没做完的段要添的（要买回来、要做好的……），编号是先发好的；那段做完才进存货。
+        每件带哪一段添的（谁、几点到几点、在做什么）、之后几段排好的去向；用料写名字（家里有的、或者也在「未来」里的）。"""
+        rows = store.future(now)
+        names = {key: str(item.get("name") or "") for key, item in shelf.items()}
+        names.update({r["id"]: str(r["step"].get("name") or "") for r in rows})
+
+        def made_of(info: dict) -> dict:
+            return dict(info, who_label=self._world_label(life, info.get("who")))
+
+        out = []
+        for row in rows:
+            step = row["step"]
+            item = {k: step.get(k) or "" for k in ("what", "name", "kind", "origin", "left", "amount", "place", "keep", "state",
+                                                    "look", "owner", "holder")}
+            item.update({
+                "id": row["id"],
+                "cat": row["cat"],
+                "from": [{"id": x, "name": names.get(x, "")} for x in step.get("from") or []],
+                "made": made_of(row["made"]),
+                "later": [dict({k: x["step"].get(k) or "" for k in ("what", "left", "used", "amount", "place", "keep", "state", "holder")},
+                               made=made_of(x["made"])) for x in row["later"]],
+            })
+            if item["owner"]:
+                item["owner_label"] = self._thing_who(life, item["owner"])
+            out.append(item)
+        out.sort(key=lambda x: (x["made"]["end"] or x["made"]["start"], x["id"]))
+        return out
+
+    @staticmethod
+    def _plan_update(life, store, ref: str, tid: str, fields: dict, now) -> str:
+        """改「未来」里的一件：找到世界线那一段（ref = 日期/编号）里添它的那一步，改完整段交给 entry_steps 规整，
+        照网页手改存（manual_update：那段算手动，补写、记录员不再动它）。返回不收的原因。"""
+        m = re.fullmatch(r"(\d{4}-\d{2}-\d{2})/(.+)", ref)
+        if not m or not tid:
+            return "找不到世界线里那一段"
+        date_text, entry_id = m.group(1), m.group(2)
+        entry = next((x for x in life.world.entries(date_text, "") if str(x.get("id")) == entry_id), None)
+        if entry is None:
+            return "世界线里那一段已经不在了"
+        steps = [dict(x) for x in entry.get("things") or [] if isinstance(x, dict)]
+        target = next((x for x in steps if str(x.get("new") or "") == tid), None)
+        if target is None:
+            return "世界线那一段里已经没有 %s 了" % tid
+        for key in ("what", "name", "kind", "origin", "from", "left", "amount", "place", "keep", "state"):
+            if key in fields and fields[key] is not None:
+                target[key] = fields[key]
+        if not str(target.get("name") or "").strip():
+            return "名字不能空"
+        new_steps = store.entry_steps(steps, entry.get("things") or [], now)
+        if not any(str(x.get("new") or "") == tid for x in new_steps):
+            return "这样改对不上（比如怎么来的不是买回来、收到、做好了）"
+        return "" if life.world.manual_update(date_text, entry_id, things=new_steps) else "没存上：世界线那一段改不动"
 
     async def things_view(self):
         """家里的吃的：此刻现算的每一件（存下来的 + 世界线里做完的段标的），每一步、新鲜度、用料和用它做的；
@@ -745,10 +813,12 @@ class ContextPageApi:
                     "same": kinds_count.get(str(item.get("kind") or ""), 0),
                 })
             obj_rows.sort(key=lambda x: str(x.get("created") or ""))
+            future = self._things_future(life, store, shelf, now)
             bots = list(life.enabled_bots() or [])
             return _ok({
                 "now": now.strftime("%Y-%m-%d %H:%M:%S"),
                 "items": items,
+                "future": future,
                 "kinds": [{"key": k, "hours": v[0], "word": v[1]} for k, v in things_mod.KINDS.items()],
                 "keeps": list(things_mod.KEEPS),
                 "states": list(things_mod.STATES),
@@ -843,7 +913,7 @@ class ContextPageApi:
                 if isinstance(body.get("from"), list):
                     sources = [x for x in (keep(t) for t in body["from"]) if x]
                 why = store.update_item(tid, name=body.get("name"), kind=body.get("kind"), origin=body.get("origin"),
-                                        sources=sources, look=body.get("look"), owner=body.get("owner")) if tid else "没有这一件"
+                                        sources=sources, look=body.get("look"), owner=body.get("owner"), now=stamp) if tid else "没有这一件"
             elif action == "update_stage":
                 fields = dict(body.get("fields") or {})
                 if fields.get("at"):
@@ -867,6 +937,8 @@ class ContextPageApi:
             elif action == "keep":
                 tid = keep(tid)
                 why = "" if tid else "没有这一件"
+            elif action == "plan_update":
+                why = self._plan_update(life, store, str(body.get("ref") or ""), tid, body.get("fields") or {}, now)
             else:
                 why = "不支持的操作：%s" % action
             if why:

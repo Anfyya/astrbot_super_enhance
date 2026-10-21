@@ -489,7 +489,6 @@
   .nlist{display:flex;flex-direction:column;gap:4px;font-size:13px;line-height:20px;margin:0;padding:0;list-style:none}
   .nlist > div{position:relative;padding-left:14px}
   .nlist > div::before{content:"";position:absolute;left:2px;top:9px;width:4px;height:4px;border-radius:50%;background:var(--t3)}
-  .thought{font-size:12.5px;line-height:1.65;white-space:pre-wrap;color:var(--t2);max-height:200px;overflow:auto}
   .pc > .pc-s .when-b{font-weight:600;color:var(--t2)}
   .empty-note{font-size:13px;line-height:1.7;color:var(--t3)}
 
@@ -648,6 +647,33 @@
   .ed-addrow:hover{background:var(--hover);color:var(--accent)}
   .ed-addrow svg.i{width:14px;height:14px}
 
+  /* 世界线编辑框里的「家里的吃的」：一行一样，收着是一句话，点开就地改（同一时间只开一行） */
+  .wt-list{display:flex;flex-direction:column;gap:2px;margin:0 -10px}
+  .wt-item{border-radius:9px;transition:background-color .12s}
+  .wt-item.open{background:var(--sunk)}
+  .wt-row{display:flex;align-items:center;gap:8px;min-height:34px;padding:3px 4px 3px 10px;border-radius:9px;font-size:13px;line-height:20px;cursor:pointer;outline:none}
+  .wt-row:hover{background:var(--hover)}
+  .wt-item.open > .wt-row:hover{background:transparent}
+  .wt-row:focus-visible{box-shadow:inset 0 0 0 2px var(--ring)}
+  .wt-what{flex:none;min-width:5.2em;font-size:12px;color:var(--t3)}
+  .wt-item.new .wt-what{color:var(--ok)}
+  .wt-row .id{flex:none;font:11.5px/1 var(--mono);color:var(--t3)}
+  .wt-row .nm{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500;color:var(--t1)}
+  .wt-row .sum{flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--t3)}
+  .wt-row .chev{display:inline-grid;place-items:center;flex:none;width:20px;color:var(--t4)}
+  .wt-row .chev svg.i{width:14px;height:14px;transition:transform .15s}
+  .wt-item.open .chev svg.i{transform:rotate(90deg)}
+  .wt-row .ed-x{opacity:0}
+  .wt-row:hover .ed-x,.wt-item.open .ed-x,.wt-row:focus-within .ed-x{opacity:1}
+  @media (hover:none){.wt-row .ed-x{opacity:1}}
+  .wt-body{padding:2px 12px 10px 10px}
+  .wt-body .ed-v > .gi,.wt-body .ed-auto{background:transparent}
+  .wt-item.open .gi:hover{background:var(--press)}
+  .wt-item.open .gi:focus{background:var(--bg)}
+  .wt-empty{padding:4px 10px}
+  .wt-item.open .ed-tag{background:var(--bg);box-shadow:0 0 0 1px var(--line)}
+  .wt-adds{position:relative;display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  .wt-objs{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin-top:10px}
   .ed .wform-f{margin:0;padding:10px 20px;background:var(--bg);border-radius:0 0 12px 12px}
 
   /* ============ 插曲与消遣 ============ */
@@ -838,6 +864,8 @@
   .ogroup:first-child{padding-top:0}
   .tlist .ogroup + .trow{border-top:0;padding-top:6px}
   .tdot.acc{background:var(--accent)}.tdot.warn{background:var(--warn)}.tdot.bad{background:var(--danger)}.tdot.gone{background:var(--line2)}
+  /* 未来那一栏：还没有的，空心的点 */
+  .tdot.future{background:transparent;box-shadow:inset 0 0 0 2px var(--accent)}
   .tmain{min-width:0;font-size:14px;line-height:22px;word-break:break-word}
   .thead{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;min-height:24px}
   .tid{font-family:var(--mono);font-size:12px;color:var(--t3);min-width:20px}
@@ -1036,7 +1064,6 @@
   .prow-h{display:grid;grid-template-columns:104px minmax(0,1fr);column-gap:12px;align-items:baseline}
   .prow-h .when-b{margin:0}
   .prow-m{padding-left:116px}
-  .pc > .thought{margin-top:-8px}
   @container main (max-width:600px){
     .prow-h{grid-template-columns:minmax(0,1fr)}
     .prow-m{padding-left:0}
@@ -1796,10 +1823,15 @@
           if (hit && hit.ended && S.thingsFilter === "now") { S.thingsFilter = "all"; }
         }
       }
+      if (focusId) {
+        // 跳过来找一件：搜索框清掉，未来里的那几件也得在「没了的」以外才看得到
+        if (S.thingsCat === "item") { S.objQ = ""; if (S.objFilter === "gone" && futureFind(focusId)) { S.objFilter = "now"; } }
+        else { S.thingsQ = ""; if (S.thingsFilter === "gone" && futureFind(focusId)) { S.thingsFilter = "now"; } }
+      }
       showView();
+      loadThings();
       if (!focusId && saved && saved.cat === S.thingsCat) { renderThings({ anchor: saved.a }); }
       else { renderThings(was !== S.thingsCat ? { toTop: true } : {}); }
-      loadThings();
     });
   }
 
@@ -4160,15 +4192,79 @@
     return sel;
   }
 
+  // 能搜的下拉，挂在 wrap 下面（wrap 要 position:relative）：输入就筛，上下键挑、回车选、Esc 收起（不往上冒）、点外面收起。
+  // cands() 给候选 [{ id, name, sub, ended }]；opt.skip(id) 不列哪些，opt.live 没了的不列，opt.keep 挑完不收（多选），
+  // opt.back() 按 Esc 收起后光标放回哪儿；onPick(id) 挑了一件，onClose() 收起来以后
+  function edPopup(wrap, cands, opt, onPick, onClose) {
+    opt = opt || {};
+    var q = h("input", { class: "inp", type: "text", placeholder: opt.ph || "搜编号、名字" });
+    var list = h("div", { class: "ed-pop-l", role: "listbox" });
+    var pop = h("div", { class: "ed-pop" }, q, list);
+    var rows = [], hi = 0, done = false;
+    wrap.appendChild(pop);
+    function mark() {
+      Array.prototype.forEach.call(list.children, function (el, i) { el.classList.toggle("hi", i === hi); });
+      var el = list.children[hi];
+      if (el && el.scrollIntoView) { el.scrollIntoView({ block: "nearest" }); }
+    }
+    function relist() {
+      var s = q.value.trim().toLowerCase();
+      rows = cands().filter(function (c) {
+        return !(opt.skip && opt.skip(c.id)) && !(opt.live && c.ended) && (!s || (c.id + " " + c.name + " " + (c.sub || "")).toLowerCase().indexOf(s) >= 0);
+      }).slice(0, 100);
+      list.textContent = "";
+      if (!rows.length) { list.appendChild(h("div", { class: "ed-pop-e", text: s ? "没有对得上的" : "没有可挑的了" })); }
+      hi = Math.max(0, Math.min(hi, rows.length - 1));
+      rows.forEach(function (c, i) {
+        var b = h("button", { type: "button", role: "option", class: "ed-pop-i" + (i === hi ? " hi" : "") },
+          h("span", { class: "id", text: c.label || c.id }), h("span", { class: "nm", text: c.name }), c.sub ? h("span", { class: "k", text: c.sub }) : null);
+        // 按下时不抢走搜索框的焦点
+        b.addEventListener("mousedown", function (ev) { ev.preventDefault(); });
+        b.addEventListener("click", function () { pick(c.id); });
+        list.appendChild(b);
+      });
+    }
+    function close() {
+      if (done) { return; }
+      done = true;
+      pop.remove();
+      document.removeEventListener("mousedown", off, true);
+      if (onClose) { onClose(); }
+    }
+    function pick(id) {
+      onPick(id);
+      if (opt.keep && !done) { q.value = ""; hi = 0; relist(); q.focus(); } else { close(); }
+    }
+    function off(ev) { if (!wrap.contains(ev.target)) { close(); } }
+    q.addEventListener("input", function () { hi = 0; relist(); });
+    q.addEventListener("keydown", function (ev) {
+      if (ev.isComposing || ev.keyCode === 229) { return; }
+      if (ev.key === "Escape") {
+        // 只收起下拉，不往上冒（不然整个编辑框跟着取消了）
+        ev.preventDefault();
+        ev.stopPropagation();
+        close();
+        if (opt.back) { opt.back(); }
+      }
+      else if (ev.key === "ArrowDown") { ev.preventDefault(); hi = Math.min(rows.length - 1, hi + 1); mark(); }
+      else if (ev.key === "ArrowUp") { ev.preventDefault(); hi = Math.max(0, hi - 1); mark(); }
+      else if (ev.key === "Enter" && !ev.metaKey && !ev.ctrlKey) { ev.preventDefault(); if (rows[hi]) { pick(rows[hi].id); } }
+    });
+    document.addEventListener("mousedown", off, true);
+    relist();
+    try { q.focus({ preventScroll: true }); } catch (e) { q.focus(); }
+    return { close: close, relist: relist };
+  }
+
   // 从家里挑：多选（f[field] 是编号数组）或单选（f[field] 是编号或空）。挑好的是一排带 × 的标签，后面一个「+」点开能搜的列表；
-  // cands() 给候选 [{ id, name, sub, ended }]；opt.live：没了的不列（已经挑上的照样显示）
+  // cands() 给候选 [{ id, name, sub, ended, label（编号那格写什么，默认编号） }]；opt.live：没了的不列（已经挑上的照样显示）
   function edPicker(f, field, cands, opt) {
     opt = opt || {};
     var multi = Array.isArray(f[field]);
     var wrap = h("div", { class: "ed-pick" });
     var tags = h("div", { class: "ed-tags" });
     wrap.appendChild(tags);
-    var pop = null, off = null, relist = null;
+    var pop = null;
     function picked() { return multi ? f[field] : (f[field] ? [f[field]] : []); }
     function find(id) { return cands().filter(function (c) { return c.id === id; })[0] || { id: id, name: "", ended: false }; }
     function set(id, on) {
@@ -4177,88 +4273,64 @@
         if (on && i < 0) { f[field].push(id); }
         if (!on && i >= 0) { f[field].splice(i, 1); }
       } else { f[field] = on ? id : ""; }
+      if (opt.onChange) { opt.onChange(); }
     }
     function draw() {
       tags.textContent = "";
       picked().forEach(function (id) {
         var c = find(id);
         tags.appendChild(h("span", { class: "ed-tag" + (c.ended ? " gone" : ""), title: c.sub || null },
-          h("span", { class: "id", text: id }), c.name ? h("span", { class: "nm", text: c.name }) : null,
+          h("span", { class: "id", text: c.label || id }), c.name ? h("span", { class: "nm", text: c.name }) : null,
           h("button", { class: "x", type: "button", title: "去掉", "aria-label": "去掉 " + id, onclick: function () {
             set(id, false);
             draw();
-            if (relist) { relist(); }
+            if (pop) { pop.relist(); }
           } }, icon("x"))));
       });
       if (multi || !picked().length) {
         tags.appendChild(h("button", { class: "ed-add" + (pop ? " on" : ""), type: "button", "aria-expanded": pop ? "true" : "false",
-          onclick: function () { if (pop) { close(); } else { open(); } } }, icon("plus"), opt.add || "挑一件"));
+          onclick: function () { if (pop) { pop.close(); } else { open(); } } }, icon("plus"), opt.add || "挑一件"));
       }
-    }
-    function close() {
-      if (!pop) { return; }
-      pop.remove();
-      pop = null;
-      relist = null;
-      document.removeEventListener("mousedown", off, true);
-      draw();
     }
     function open() {
-      var q = h("input", { class: "inp", type: "text", placeholder: opt.ph || "搜编号、名字" });
-      var list = h("div", { class: "ed-pop-l", role: "listbox" });
-      var rows = [], hi = 0;
-      pop = h("div", { class: "ed-pop" }, q, list);
-      wrap.appendChild(pop);
-      function mark() {
-        Array.prototype.forEach.call(list.children, function (el, i) { el.classList.toggle("hi", i === hi); });
-        var el = list.children[hi];
-        if (el && el.scrollIntoView) { el.scrollIntoView({ block: "nearest" }); }
-      }
-      function pick(id) {
-        set(id, true);
-        if (multi) { q.value = ""; hi = 0; draw(); relist(); q.focus(); } else { close(); }
-      }
-      relist = function () {
-        var s = q.value.trim().toLowerCase(), have = picked();
-        rows = cands().filter(function (c) {
-          return have.indexOf(c.id) < 0 && !(opt.live && c.ended) && (!s || (c.id + " " + c.name + " " + (c.sub || "")).toLowerCase().indexOf(s) >= 0);
-        }).slice(0, 100);
-        list.textContent = "";
-        if (!rows.length) { list.appendChild(h("div", { class: "ed-pop-e", text: s ? "没有对得上的" : "没有可挑的了" })); }
-        hi = Math.max(0, Math.min(hi, rows.length - 1));
-        rows.forEach(function (c, i) {
-          var b = h("button", { type: "button", role: "option", class: "ed-pop-i" + (i === hi ? " hi" : "") },
-            h("span", { class: "id", text: c.id }), h("span", { class: "nm", text: c.name }), c.sub ? h("span", { class: "k", text: c.sub }) : null);
-          // 按下时不抢走搜索框的焦点
-          b.addEventListener("mousedown", function (ev) { ev.preventDefault(); });
-          b.addEventListener("click", function () { pick(c.id); });
-          list.appendChild(b);
-        });
-      };
-      q.addEventListener("input", function () { hi = 0; relist(); });
-      q.addEventListener("keydown", function (ev) {
-        if (ev.isComposing || ev.keyCode === 229) { return; }
-        if (ev.key === "Escape") {
-          // 只收起下拉，不往上冒（不然整个编辑框跟着取消了）
-          ev.preventDefault();
-          ev.stopPropagation();
-          close();
-          var add = tags.querySelector(".ed-add");
-          if (add) { add.focus(); }
-        }
-        else if (ev.key === "ArrowDown") { ev.preventDefault(); hi = Math.min(rows.length - 1, hi + 1); mark(); }
-        else if (ev.key === "ArrowUp") { ev.preventDefault(); hi = Math.max(0, hi - 1); mark(); }
-        else if (ev.key === "Enter" && !ev.metaKey && !ev.ctrlKey) { ev.preventDefault(); if (rows[hi]) { pick(rows[hi].id); } }
-      });
-      off = function (ev) { if (!wrap.contains(ev.target)) { close(); } };
-      document.addEventListener("mousedown", off, true);
-      relist();
+      pop = edPopup(wrap, cands, {
+        ph: opt.ph, live: opt.live, keep: multi,
+        skip: function (id) { return picked().indexOf(id) >= 0; },
+        back: function () { var add = tags.querySelector(".ed-add"); if (add) { add.focus(); } }
+      }, function (id) { set(id, true); draw(); }, function () { pop = null; draw(); });
       draw();
-      try { q.focus({ preventScroll: true }); } catch (e) { q.focus(); }
     }
     draw();
     return wrap;
   }
+
+  // 一排胶囊（多选）：vals 是编号数组，点一下加上 / 去掉。数组按 opts 的顺序排（点的先后不同不算改过）；
+  // vals 里有 opts 没有的（老数据写的名字），照样列出来、照样能去掉
+  function edMulti(opts, vals, onChange) {
+    var wrap = h("div", { class: "ed-chips", role: "group" });
+    var on = {}, all = opts.slice();
+    (vals || []).forEach(function (v) {
+      on[v] = true;
+      if (!all.some(function (o) { return o.key === v; })) { all.push({ key: v, label: v }); }
+    });
+    all.forEach(function (o) {
+      var b = h("button", { type: "button", "aria-pressed": on[o.key] ? "true" : "false", class: "ed-chip" + (on[o.key] ? " on" : ""), text: o.label });
+      b.addEventListener("click", function () {
+        on[o.key] = !on[o.key];
+        b.classList.toggle("on", !!on[o.key]);
+        b.setAttribute("aria-pressed", on[o.key] ? "true" : "false");
+        onChange(all.filter(function (x) { return on[x.key]; }).map(function (x) { return x.key; }));
+      });
+      wrap.appendChild(b);
+    });
+    return wrap;
+  }
+  // 谁：丛雨、亚托莉、主人（多选用，不带「没说」——都不选就是没说）
+  function edWho() {
+    return ((S.things && S.things.people) || []).map(function (p) { return { key: p.key, label: p.label }; });
+  }
+  // 存的「谁」（napcat,napcat2）↔ 编辑框里的数组
+  function byList(by) { return String(by || "").split(",").map(function (x) { return x.trim(); }).filter(Boolean); }
 
   // 收起来的一组：收着时后面写着里面现在填了什么（都没填就写有哪几项）；ui[k] 记着开没开（不算改动）
   function edFold(ui, k, label, names, summary, build) {
@@ -4311,7 +4383,7 @@
     return out;
   }
   // 显示用：base 那天只写钟点；after 给了（结束时间）：开始的第二天、钟点又早于开始的也只写钟点，别的第二天写「次日」；
-  // rel：昨天、前天写成字
+  // rel：明天、昨天、前天写成字
   function shortTime(full, base, after, rel) {
     var s = String(full || "").slice(0, 16);
     if (s.length < 16) { return s; }
@@ -4322,6 +4394,7 @@
       if (next && t < String(after).slice(11, 16)) { return t; }
       if (next) { return "次日 " + t; }
     }
+    if (rel && d === dayShift(base, 1)) { return "明天 " + t; }
     if (rel && d === dayShift(base, -1)) { return "昨天 " + t; }
     if (rel && d === dayShift(base, -2)) { return "前天 " + t; }
     return d.slice(0, 4) === String(base).slice(0, 4) ? d.slice(5) + " " + t : s;
@@ -4526,6 +4599,7 @@
       if (done) { done(); }
       if (okMsg) { toast(okMsg); }
       if (focus) { S.worldFocus = focus; }
+      if (S.things) { loadThings(true); }
       return loadWorld(true);
     }).catch(function (e) {
       toast("没保存：" + errMsg(e), { err: true });
@@ -4713,7 +4787,7 @@
       h("div", { class: "w-rules", "data-sec": "rules" }, worldConstraintSection(d, who)),
       h("div", { class: "w-intent", "data-sec": "intent" }, worldIntentionSection(d, who)),
       h("div", { class: "w-main" }, worldTimelineSection(d, who)),
-      h("div", { class: "w-routine", "data-sec": "routine" }, worldRoutineSection(d, bot), worldStepNotesSection(d), worldStepThoughtsSection(d))));
+      h("div", { class: "w-routine", "data-sec": "routine" }, worldRoutineSection(d, bot), worldStepNotesSection(d))));
   }
 
   /* ---------- 人物切换：固定在滚动区上面 ---------- */
@@ -4880,13 +4954,6 @@
       : "对话 = 记录员从聊天里记的，补写 = 没人聊天时补的，手动 = 在这里写的；同一时间撞上时 手动 > 对话 > 补写";
     var sec = h("div", { class: "lsec" }, lsecHead(day.date === d.today ? "今天发生的事" : String(day.date).slice(5) + " 发生的事", sub));
     var card = h("div", { class: "pc" });
-    if (S.wEdit["new"]) {
-      card.appendChild(worldEntryForm(d, null));
-    } else {
-      card.appendChild(h("button", { class: "addlink", type: "button", "data-wk": "e:new", onclick: function () {
-        worldOpen("e", "new", { who: who, when: "", place: "", doing: "", steps: [], result: "", importance: "", "public": "", training: "" });
-      } }, icon("plus"), "手动加一条"));
-    }
     if (!list.length) {
       card.appendChild(h("div", { class: "muted", style: "font-size:13px", text: "这一天还没有记录。" }));
     } else {
@@ -4914,6 +4981,14 @@
         rows.appendChild(S.wEdit[e.id] ? worldEntryForm(d, e) : worldEntryRow(d, e, day.date, where, next));
       });
       card.appendChild(rows);
+    }
+    // 手动加一条放在最底下（时间线从早到晚往下排，新加的多半接在最后）
+    if (S.wEdit["new"]) {
+      card.appendChild(worldEntryForm(d, null));
+    } else {
+      card.appendChild(h("button", { class: "addlink", type: "button", "data-wk": "e:new", onclick: function () {
+        worldOpen("e", "new", { who: who, when: "", place: "", doing: "", steps: [], result: "", importance: "", "public": "", training: "", things: [] });
+      } }, icon("plus"), "手动加一条"));
     }
     sec.appendChild(card);
     return sec;
@@ -5101,7 +5176,7 @@
         importance: +e.importance > 0 ? String(e.importance) : "",
         result: e.result || "", "public": e["public"] || "",
         training: /^#?\d+$/.test(String(e.training || "").trim()) ? String(e.training).trim().replace(/^#/, "") : "",
-        things: (e.things || []).slice() });
+        things: JSON.parse(JSON.stringify(e.things || [])) });
     });
     var del = h("button", { class: "btn quiet sm danger", type: "button", title: "删除" }, icon("trash"));
     armed(del, "确认删除", function () { worldPost({ kind: "entry", action: "delete", date: date, id: e.id }, "已删除"); });
@@ -5190,6 +5265,241 @@
     return { el: sec, refresh: refresh };
   }
 
+  /* ---------- 世界线一段动了家里哪些吃的：用掉 / 吃了家里有的，做好 / 买回来新的 ---------- */
+  // 一行一样：收着是一句话（这一步、编号、名字、多少），点开就地改，同一时间只开一行；新加的那行直接开着。
+  // 新的先用临时代号（n1、n2……），存的时候程序发编号；这一段里别的步、用料能指着它。东西（p 开头）只能删
+  var WT_NEW = ["买回来", "收到", "做好了"];
+
+  // 一件吃的叫什么、是不是盘菜、按不按量记：这一段新添的看那一步，家里有的看清单，未来里的看世界线那一步
+  function wtInfo(f, id) {
+    var mine = (f.things || []).filter(function (t) { return t["new"] === id; })[0];
+    if (mine) { return { name: mine.name || "", dish: mine.what === "做好了", measured: thingMeasuredKind(mine.kind) }; }
+    var it = thingFind(id);
+    if (it) { return { name: it.name, dish: ((it.stages || [])[0] || {}).what === "做好了", measured: !!it.measured }; }
+    var fu = futureFind(id);
+    if (fu) { return { name: fu.name, dish: fu.what === "做好了", measured: thingMeasuredKind(fu.kind) }; }
+    return { name: ((S.world && S.world.thing_names) || {})[id] || "", dish: false, measured: false };
+  }
+  // 能挑来用掉、吃掉、当用料的：这一段新添的、家里现在有的、未来里要添的（这一段开始前就添上的才列；start 认不出就都列）
+  function wtStock(f, start) {
+    var out = [], seen = {};
+    function add(c) { if (!seen[c.id]) { seen[c.id] = true; out.push(c); } }
+    (f.things || []).forEach(function (t) {
+      if (t["new"] && !worldThingIsObj(t)) {
+        add({ id: t["new"], label: /^n\d+$/.test(t["new"]) ? "新" : t["new"], name: t.name || "（还没起名）", sub: "这一段" + (t.what === "做好了" ? "做好的" : t.what + "的") });
+      }
+    });
+    ((S.things && S.things.items) || []).forEach(function (x) {
+      if (!x.ended) { add({ id: x.id, name: x.name, sub: [x.kind, String(x.left || "").replace(/，快用完了$/, "")].filter(Boolean).join(" · ") }); }
+    });
+    ((S.things && S.things.future) || []).forEach(function (x) {
+      var at = String((x.made || {}).end || (x.made || {}).start || "").slice(0, 16);
+      if (x.cat === "food" && (!start || !at || at <= start)) { add({ id: x.id, name: x.name, sub: "未来 · " + futureVerb(x) + " " + futureWhen(x) }); }
+    });
+    return out;
+  }
+  // 收着时那一句后面的：多少、用料几样、挪到哪
+  function wtSum(t) {
+    var bits = [];
+    if (t["new"]) {
+      if (t.kind) { bits.push(t.kind); }
+      if (t.amount || t.left) { bits.push(t.amount || t.left); }
+      if ((t.from || []).length) { bits.push("用料 " + t.from.length + " 样"); }
+    } else {
+      var end = S.things && S.things.steps.end.indexOf(t.what) >= 0;
+      if (t.used) { bits.push("用了 " + t.used); }
+      if (t.amount) { bits.push("清点出 " + t.amount); }
+      if (t.left && !end) { bits.push((/^还?剩/.test(t.left) ? "" : "剩") + t.left); }
+      if (t.place) { bits.push((t.what === "挪地方" ? "挪到 " : "在 ") + t.place); }
+    }
+    return bits.join(" · ");
+  }
+
+  function worldThingsEditor(d, f) {
+    if (!Array.isArray(f.things)) { f.things = []; }
+    var ready = !!S.things;  // 家里的吃的没读到：只能看、只能删
+    var ui = edState(f);
+    function stock() { return wtStock(f, parseRange(f.when, d.date).start); }
+    if (ui.wt === undefined) { ui.wt = -1; }
+    var list = h("div", { class: "wt-list" });
+    var adds = h("div", { class: "wt-adds" });
+    var objWrap = h("div");
+    var sec = edSec([h("div", { class: "ed-cap" },
+      h("span", { class: "l", text: "家里的吃的",
+        title: "这一段用掉、吃了家里哪些吃的，做好、买回来了什么；这段做完才算进家里的吃的。改了在做什么，原来标的看一眼还对不对" }),
+      h("span", { class: "ed-n", text: "这段做完才算进家里" })), list, adds, objWrap]);
+
+    function draw(focus) {
+      list.textContent = "";
+      var n = 0;
+      f.things.forEach(function (t) {
+        if (worldThingIsObj(t)) { return; }
+        n += 1;
+        list.appendChild(item(t));
+      });
+      if (!n) { list.appendChild(h("div", { class: "ed-n wt-empty", text: "这一段没动家里的吃的" })); }
+      drawAdds();
+      drawObjs();
+      edFitIn(sec);
+      if (focus) {
+        var inp = list.querySelector(".wt-item.open [data-wt-focus]");
+        if (inp) { try { inp.focus({ preventScroll: true }); } catch (e) { inp.focus(); } }
+      }
+    }
+
+    function item(t) {
+      var open = ui.wt === f.things.indexOf(t), isNew = !!t["new"], id = t["new"] || t.id || "";
+      var nm = h("span", { class: "nm" }), sum = h("span", { class: "sum" });
+      function head() {
+        nm.textContent = (isNew ? t.name : wtInfo(f, id).name) || "（还没起名）";
+        sum.textContent = wtSum(t);
+      }
+      head();
+      var del = h("button", { class: "ed-x", type: "button", title: "删掉这一条", "aria-label": "删掉这一条" }, icon("x"));
+      del.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        if (isNew) {
+          // 删掉新添的那样：这一段里吃它、拿它当用料的也一起去掉
+          f.things = f.things.filter(function (x) { return x === t || x.id !== id; });
+          f.things.forEach(function (x) { if (Array.isArray(x.from)) { x.from = x.from.filter(function (y) { return y !== id; }); } });
+        }
+        f.things.splice(f.things.indexOf(t), 1);
+        ui.wt = -1;
+        draw();
+      });
+      var row = h("div", { class: "wt-row", role: "button", tabindex: "0", "aria-expanded": open ? "true" : "false" },
+        h("span", { class: "wt-what", text: t.what || "选一步" }),
+        h("span", { class: "id", text: isNew && /^n\d+$/.test(id) ? "新" : id }), nm, sum,
+        h("span", { class: "chev", "aria-hidden": "true" }, icon("chev")), del);
+      function toggle() {
+        if (!ready) { toast("家里的吃的还没读到，刷新一下再改", { err: true }); return; }
+        ui.wt = open ? -1 : f.things.indexOf(t);
+        draw(!open);
+      }
+      row.addEventListener("click", toggle);
+      row.addEventListener("keydown", function (ev) {
+        if (ev.target === row && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); toggle(); }
+      });
+      var box = h("div", { class: "wt-item" + (open ? " open" : "") + (isNew ? " new" : "") }, row);
+      if (open) { box.appendChild(isNew ? newBody(t, head) : useBody(t, head)); }
+      return box;
+    }
+
+    function focusMark(el) { el.setAttribute("data-wt-focus", "1"); return el; }
+
+    // 用掉 / 吃了家里有的那一行：这一步、用了多少或还剩多少；挪地方、切开了写放在哪、放法
+    function useBody(t, head) {
+      var info = wtInfo(f, t.id);
+      var p = edProps();
+      var steps = edOpts(S.things.steps.mid).concat(S.things.steps.end.map(function (x, i) { return { key: x, label: x, end: true, br: i === 0 }; }));
+      edRow(p, "这一步", edChips(steps, t.what, function (v) {
+        if (v === t.what) { return; }
+        t.what = v;
+        if (v === "切开了" && !t.state) { t.state = "切开了"; }
+        draw();
+      }));
+      var set = function (k) { return function (v) { t[k] = v; head(); }; };
+      if (t.what === "用掉一部分" || t.what === "吃了一部分") {
+        if (info.measured) { edRow(p, "用了多少", focusMark(edInput(t.used, "例如 3 克、15 毫升；空着按平常一次的量扣", set("used")))); }
+        else { edRow(p, "还剩多少", focusMark(edInput(t.left, "例如：两个、小半锅", set("left")))); }
+      } else if (t.what === "清点") {
+        if (info.measured) { edRow(p, "清点出", focusMark(edInput(t.amount, "例如 300 克", set("amount")))); }
+        else { edRow(p, "还剩多少", focusMark(edInput(t.left, "例如：两个", set("left")))); }
+      } else if (t.what === "挪地方" || t.what === "切开了") {
+        edRow(p, "放在哪", focusMark(edInput(t.place, "没挪就空着", set("place"))));
+        edRow(p, "放法", edChips(edOpts(S.things.keeps, "照上一步"), t.keep || "", set("keep")));
+      }
+      return h("div", { class: "wt-body" }, p);
+    }
+
+    // 新添的那一行：怎么来的、名字、哪一类、多少、用料（做好了才有）；放在哪、放法收在「更多」里
+    function newBody(t, head) {
+      var measured = thingMeasuredKind(t.kind);
+      var p = edProps();
+      var set = function (k) { return function (v) { t[k] = v; head(); }; };
+      edRow(p, "怎么来的", edChips(edOpts(WT_NEW), t.what, function (v) {
+        if (v === t.what) { return; }
+        t.what = v;
+        if (v === "做好了" && !Array.isArray(t.from)) { t.from = []; }
+        draw();
+      }));
+      edRow(p, "名字", focusMark(edInput(t.name, t.what === "做好了" ? "做的什么，例如：水煮鱼" : "买的什么，例如：嫩豆腐", set("name"))));
+      edRow(p, "哪一类", [edSelect([{ key: "", label: "选一类…" }].concat((S.things.kinds || []).map(function (k) { return { key: k.key, label: k.key }; })), t.kind || "", function (v) {
+        var was = thingMeasuredKind(t.kind);
+        t.kind = v;
+        if (was === thingMeasuredKind(v)) { head(); return; }
+        if (!was && !t.amount && t.left) { t.amount = t.left; t.left = ""; }
+        if (was && !t.left && t.amount) { t.left = t.amount; t.amount = ""; }
+        draw();
+      }), h("span", { class: "ed-n", text: "决定能放多久" })]);
+      if (measured) { edRow(p, "一共多少", edInput(t.amount, "例如：5 斤、500 毫升", set("amount"))); }
+      else { edRow(p, "有多少", edInput(t.left, t.what === "做好了" ? "例如：一盘、两碗" : "例如：两块、一袋", set("left"))); }
+      if (t.what === "做好了" || (t.from || []).length) {
+        if (!Array.isArray(t.from)) { t.from = []; }
+        edRow(p, "用料", edPicker(t, "from", function () { return stock().filter(function (c) { return c.id !== t["new"]; }); },
+          { add: "挑用料", onChange: head }), "做这道菜用了家里哪几件；这一段没另写用了多少的，按平常一次的量扣");
+      }
+      var body = h("div", { class: "wt-body" }, p);
+      body.appendChild(edFold(edState(t), "more", "更多", "放在哪、放法", function () {
+        return [t.place, t.keep].filter(Boolean).join(" · ");
+      }, function () {
+        var q = edProps();
+        edRow(q, "放在哪", edInput(t.place, "例如：堂屋·矮桌", set("place")));
+        edRow(q, "放法", edChips(edOpts(S.things.keeps, "没说"), t.keep || "", set("keep")));
+        return q;
+      }));
+      return body;
+    }
+
+    function drawAdds() {
+      adds.textContent = "";
+      if (!ready) { adds.appendChild(h("span", { class: "ed-n", text: "家里的吃的还没读到，刷新一下才能加" })); return; }
+      var pop = null;
+      var useBtn = h("button", { class: "ed-add", type: "button" }, icon("plus"), "用掉 / 吃了家里的");
+      useBtn.addEventListener("click", function () {
+        if (pop) { pop.close(); return; }
+        useBtn.classList.add("on");
+        pop = edPopup(adds, stock, {
+          skip: function (id) { return f.things.some(function (x) { return x.id === id; }); },
+          back: function () { useBtn.focus(); }
+        }, function (id) {
+          f.things.push({ id: id, what: wtInfo(f, id).dish ? "吃了一部分" : "用掉一部分", left: "" });
+          ui.wt = f.things.length - 1;
+          draw(true);
+        }, function () { pop = null; useBtn.classList.remove("on"); });
+      });
+      var newBtn = h("button", { class: "ed-add", type: "button" }, icon("plus"), "做好 / 买回来新的");
+      newBtn.addEventListener("click", function () {
+        var k = 1;
+        while (f.things.some(function (x) { return x["new"] === "n" + k; })) { k += 1; }
+        f.things.push({ "new": "n" + k, what: "做好了", name: "", kind: "", left: "", from: [] });
+        ui.wt = f.things.length - 1;
+        draw(true);
+      });
+      adds.appendChild(useBtn);
+      adds.appendChild(newBtn);
+    }
+
+    // 段里标的东西（p 开头）：网页上只能删
+    function drawObjs() {
+      objWrap.textContent = "";
+      var objs = f.things.filter(worldThingIsObj);
+      if (!objs.length) { return; }
+      var tags = h("div", { class: "ed-tags" });
+      objs.forEach(function (t) {
+        tags.appendChild(h("span", { class: "ed-tag" }, h("span", { class: "nm", text: worldThingText(d, t) }),
+          h("button", { class: "x", type: "button", title: "删掉这条（标错了）", "aria-label": "删掉这条", onclick: function () {
+            f.things.splice(f.things.indexOf(t), 1);
+            draw();
+          } }, icon("x"))));
+      });
+      objWrap.appendChild(h("div", { class: "wt-objs" }, h("span", { class: "ed-n", text: "东西（只能删）" }), tags));
+    }
+
+    draw();
+    return { el: sec, open: function (i) { ui.wt = i; draw(true); } };
+  }
+
   // 改 / 手动加一段：上面和显示时一样排（起止、地点、在做什么，字大一号），中间分步，下面一张属性表
   function worldEntryForm(d, e) {
     var key = e ? e.id : "new";
@@ -5239,6 +5549,9 @@
 
     steps = worldStepsEditor(f, span);
     box.appendChild(steps.el);
+    // 主人那条线的段标吃的不算进家里（只算她们的），不给这一块
+    var things = (e ? e.who : f.who) === "master" ? null : worldThingsEditor(d, f);
+    if (things) { box.appendChild(things.el); }
 
     var p = edProps();
     if (!e && !f.who) {
@@ -5252,19 +5565,6 @@
         String(f.importance || ""), function (v) { f.importance = v; }),
       h("span", { class: "ed-n", text: "够 " + doneMin + " 分，做完会叫她说一声" })]);
     edRow(p, "在练的事", edInput(f.training, "编号，没有就空着", function (v) { f.training = v; }, { cls: "ed-num", auto: true }));
-    if (e && (e.things || []).length) {
-      var tagBox = h("div", { class: "ed-tags" });
-      var drawTags = function () {
-        tagBox.textContent = "";
-        if (!f.things.length) { tagBox.appendChild(h("span", { class: "ed-n", text: "都删掉了：这段不再算动了家里的东西" })); }
-        f.things.forEach(function (t, i) {
-          tagBox.appendChild(h("span", { class: "ed-tag" }, h("span", { class: "nm", text: worldThingText(d, t) }),
-            h("button", { class: "x", type: "button", title: "删掉这条（标错了）", "aria-label": "删掉这条", onclick: function () { f.things.splice(i, 1); drawTags(); } }, icon("x"))));
-        });
-      };
-      drawTags();
-      edRow(p, "家里的", tagBox, "补写在这段标的吃的和东西，这段做完才算进去。只能删掉标错的；改了在做什么，原来标的多半也对不上了，看一眼");
-    }
     box.appendChild(edSec(p));
 
     return worldFormFoot(box, function () { worldClose("e", key); }, e ? "保存" : "添加", function () {
@@ -5279,6 +5579,8 @@
       });
       var withMin = stepList.filter(function (x) { return x.minutes > 0; }).length;
       if (withMin && withMin < stepList.length) { toast("分钟要么每步都填，要么都不填", { err: true }); return null; }
+      var nameless = things && (f.things || []).filter(function (t) { return t["new"] && !worldThingIsObj(t) && !String(t.name || "").trim(); })[0];
+      if (nameless) { things.open(f.things.indexOf(nameless)); toast("新做 / 买回来的那样写个名字", { err: true }); return null; }
       // 新加的那条存完才有编号：按「谁 + 开始时间 + 手动」在重读的数据里找它
       var findNew = function (w) {
         var hit = null;
@@ -5293,7 +5595,7 @@
         importance: String(f.importance || "").trim() === "" ? 0 : +String(f.importance).trim(),
         result: String(f.result || ""),
         training: String(f.training || "").replace(/^#/, "").trim(),
-        things: e && (e.things || []).length ? f.things : undefined
+        things: things ? f.things || [] : undefined
       }, e ? "已保存" : "已添加", function () { delete S.wEdit[key]; }, { from: wk, to: e ? wk : findNew });
     }, function () { return worldDirty(f); });
   }
@@ -5490,27 +5792,6 @@
       card.appendChild(box);
     }
     sec.appendChild(card);
-    return sec;
-  }
-
-  /* ---------- 最近几次补写的思考 ---------- */
-  function worldStepThoughtsSection(d) {
-    var list = d.step_thoughts || [];
-    var sec = h("div", { class: "lsec" }, lsecHead("补写的思考", "最近几次幕间补写时模型在想什么"));
-    if (!list.length) {
-      sec.appendChild(h("div", { class: "pc" }, h("div", { class: "muted", style: "font-size:13px", text: "还没有记录，补写跑过一次后就有了。" })));
-      return sec;
-    }
-    list.forEach(function (it) {
-      var card = h("div", { class: "pc" });
-      card.appendChild(h("div", { class: "pc-s" },
-        h("span", { class: "when-b", text: String(it.at || "").slice(5) }),
-        it.ok ? "补写成功" : ("没写成：" + (it.note || ""))));
-      var body = h("div", { class: "thought" });
-      body.textContent = String(it.thought || "").trim() || "（这次没有思考文本）";
-      card.appendChild(body);
-      sec.appendChild(card);
-    });
     return sec;
   }
 
@@ -5792,7 +6073,7 @@
     bar.appendChild(h("div", { class: "grow" }));
     bar.appendChild(h("button", { class: "btn sm", type: "button", onclick: function () {
       thingOpenForm("new", { name: "", kind: "", origin: "", from: [], what: d.steps.start[0], at: thingAt(d.now), left: "",
-        amount: "", place: "", keep: d.keeps[0], state: d.states[0], by: "", note: "" });
+        amount: "", place: "", keep: d.keeps[0], state: d.states[0], by: [], note: "" });
     } }, icon("plus"), "加一件"));
     box.appendChild(bar);
 
@@ -5825,8 +6106,10 @@
       }
     }
     if (S.thingsFocus) {
-      var focusEl = $("thingsBody").querySelector('[data-tk="t:' + S.thingsFocus + '"]');
-      S.thingsFocus = "";
+      var focusId = S.thingsFocus;
+      var focusEl = $("thingsBody").querySelector('[data-tk="t:' + focusId + '"]');
+      if (focusEl || !S.thingsLoading) { S.thingsFocus = ""; }
+      if (!focusEl && !S.thingsLoading && S.things) { toast("找不到 " + focusId + "：可能世界线里那一段已经撤掉了", { err: true }); }
       if (focusEl) {
         // 没整个露出来：把行头放到视口上面一点的地方
         var sc = thingsScroller(), top0 = sc.getBoundingClientRect().top, r = focusEl.getBoundingClientRect();
@@ -5855,16 +6138,161 @@
       var ba = a.fresh.bad_at || "9999", bb = b.fresh.bad_at || "9999";
       return ba === bb ? String(a.created).localeCompare(String(b.created)) : ba.localeCompare(bb);
     });
+    var fut = S.thingsFilter === "gone" ? [] : futureList("food", q);
+    var rows = h("div", { class: "lrows" });
+    if (fut.length) {
+      rows.appendChild(futureHead());
+      fut.forEach(function (x) { rows.appendChild(futureRow(x)); });
+      rows.appendChild(h("div", { class: "ogroup", text: S.thingsFilter === "all" ? "家里有的和没了的" : "家里有的" }));
+    }
     if (!list.length) {
       var empty = !(S.things.items || []).length;
-      card.appendChild(h("div", { class: "muted", style: "font-size:13px;line-height:1.7", text: empty
+      rows.appendChild(h("div", { class: "muted", style: "font-size:13px;line-height:1.7", text: empty
         ? "家里还没有记着的吃的。聊天里说买了、收到了、做好了，记录员会记下来；补写在世界线里排的买菜、做饭，那一段做完也会算进来。也可以点右上角「加一件」手动记。"
         : (q ? "没有对得上的。" : S.thingsFilter === "gone" ? "还没有吃完、用完的。" : "家里现在没有了，都吃完用完了。") }));
-      return;
     }
-    var rows = h("div", { class: "lrows" });
     list.forEach(function (it) { rows.appendChild(thingRow(it)); });
     card.appendChild(rows);
+  }
+
+  /* ---------- 未来：世界线里还没做完的段要添的（要买回来、要做好的……） ---------- */
+  // 编号是补写 / 网页先发好的，那一段做完才算进下面的清单。吃的在这里能改：改的就是世界线那一段（两边同一份），存了那段算手动
+  function futureFind(id) {
+    var key = String(id || "").toLowerCase();
+    return ((S.things && S.things.future) || []).filter(function (x) { return String(x.id).toLowerCase() === key; })[0] || null;
+  }
+  function futureVerb(x) {
+    return { "做好了": "要做好", "买回来": "要买回来", "收到": "要收到", "原来就有": "要记上", "开始做": "要开始做", "捡到": "要捡到" }[x.what] ||
+      "要" + (x.what || "添");
+  }
+  // 几点添上：那一段结束的时候（没写结束写开始）
+  function futureWhen(x) {
+    var m = x.made || {};
+    return thingAt(m.end || m.start);
+  }
+  function futureList(cat, q) {
+    return ((S.things && S.things.future) || []).filter(function (x) {
+      if ((x.cat || "food") !== cat) { return false; }
+      return !q || [x.id, x.name, x.kind, x.origin, x.place, x.look].join(" ").toLowerCase().indexOf(q) >= 0;
+    });
+  }
+  // 当用料挑：家里的吃的 + 未来里别的几件
+  function futureStock(exceptId) {
+    var out = thingCands(exceptId);
+    ((S.things && S.things.future) || []).forEach(function (y) {
+      if (y.cat !== "item" && y.id !== exceptId) { out.push({ id: y.id, name: y.name, sub: "未来 · " + futureVerb(y) + " " + futureWhen(y), ended: false }); }
+    });
+    return out;
+  }
+  function futureEntryLink(m) {
+    return h("button", { class: "tlink", type: "button", title: "到世界线看这一段", onclick: function () { openWorldEntry(m.date, m.entry, m.who); } },
+      "世界线 " + String(m.date || "").slice(5) + " " + (m.who_label || "") + " " + rangeText(m.start, m.end, m.date));
+  }
+  // 未来那一栏的头：两页共用
+  function futureHead() {
+    return h("div", { class: "ogroup" }, h("span", { class: "tag acc", text: "未来" }),
+      h("span", { text: "世界线里还没做完的段要添的，编号先发好了；那一段做完才算进家里" }));
+  }
+
+  function futureRow(x) {
+    var m = x.made || {};
+    var key = "f:" + x.id;
+    var row = h("div", { class: "trow tfut", "data-tk": "t:" + x.id });
+    row.appendChild(h("span", { class: "tdot future", title: "还没有：世界线那一段做完才算" }));
+    var main = h("div", { class: "tmain" });
+    main.appendChild(h("div", { class: "thead" },
+      h("span", { class: "tid", text: x.id }),
+      h("span", { class: "tname", text: x.name || "（还没起名）" }),
+      x.kind ? h("span", { class: "tag", text: x.kind }) : null,
+      h("span", { class: "tag acc", text: (m.going ? "正在做 · " : "") + futureVerb(x) + " · " + (m.who_label ? m.who_label + " " : "") + futureWhen(x) })));
+    var meta = [x.amount || x.left, [x.place, x.keep].filter(Boolean).join("，"), x.look].filter(Boolean);
+    if (meta.length) { main.appendChild(h("div", { class: "tmeta", text: meta.join(" · ") })); }
+    var line = h("div", { class: "tfrom" }, futureEntryLink(m), m.doing ? h("span", { text: m.doing }) : null);
+    if ((x.from || []).length) {
+      line.appendChild(h("span", { text: x.cat === "item" ? "材料" : "用料" }));
+      x.from.forEach(function (y) { line.appendChild(thingLink(y)); });
+    }
+    main.appendChild(line);
+    if ((x.later || []).length) {
+      var later = h("div", { class: "tfrom" }, h("span", { text: "之后" }));
+      x.later.forEach(function (y) {
+        var end = S.things.steps.end.indexOf(y.what) >= 0;
+        var text = thingAt(y.made.start) + " " + y.what + (y.used ? " " + y.used : "") +
+          (y.left && !end ? "，剩" + String(y.left).replace(/^还?剩/, "") : "") + (y.place ? " → " + y.place : "");
+        later.appendChild(h("button", { class: "tlink", type: "button", title: "到世界线看这一段",
+          onclick: function () { openWorldEntry(y.made.date, y.made.entry, y.made.who); } }, text));
+      });
+      main.appendChild(later);
+    }
+    if (S.tEdit[key]) { main.appendChild(h("div", { class: "tdetail" }, futureForm(x))); }
+    row.appendChild(main);
+    var acts = h("div", { class: "tacts" });
+    if (x.cat !== "item" && !S.tEdit[key]) {
+      acts.appendChild(h("button", { class: "btn quiet sm", type: "button", title: "改这一件（改的是世界线那一段）", onclick: function () {
+        thingOpenForm(key, { what: x.what, name: x.name || "", kind: x.kind || "", origin: x.origin || "",
+          from: (x.from || []).map(function (y) { return y.id; }), left: x.left || "", amount: x.amount || "",
+          place: x.place || "", keep: x.keep || "", state: x.state || "" });
+      } }, icon("edit")));
+    }
+    row.appendChild(acts);
+    return row;
+  }
+
+  // 改未来里的一件吃的：名字、怎么来的、哪一类、多少、用料；放在哪、放法、切开没收在「更多」里
+  function futureForm(x) {
+    var key = "f:" + x.id;
+    var f = S.tEdit[key];
+    var m = x.made || {};
+    var box = edBox(null, "改未来这一件", x.id + " · 世界线 " + String(m.date || "").slice(5) + " " + (m.who_label || "") + " " + rangeText(m.start, m.end, m.date),
+      "改的就是世界线那一段，存了那段算手动");
+    box.setAttribute("data-tf", key);
+    box.appendChild(edSec(edInput(f.name, "叫什么", function (v) { f.name = v; }, { cls: "ed-title", focus: true })));
+    var dyn = h("div", { class: "ed-dyn" });
+    box.appendChild(dyn);
+    var ui = edState(f);
+    function draw() {
+      dyn.textContent = "";
+      var measured = thingMeasuredKind(f.kind);
+      var p = edProps();
+      edRow(p, "怎么来的", edChips(edOpts(WT_NEW), f.what, function (v) {
+        var redo = (v === "做好了") !== (f.what === "做好了");
+        f.what = v;
+        if (redo) { draw(); }
+      }));
+      edRow(p, "哪一类", [edSelect(S.things.kinds.map(function (k) { return { key: k.key, label: k.key }; }), f.kind, function (v) {
+        var was = thingMeasuredKind(f.kind);
+        f.kind = v;
+        if (was === thingMeasuredKind(v)) { return; }
+        if (!was && !f.amount && f.left) { f.amount = f.left; f.left = ""; }
+        if (was && !f.left && f.amount) { f.left = f.amount; f.amount = ""; }
+        draw();
+      }), h("span", { class: "ed-n", text: "决定能放多久" })]);
+      if (measured) { edRow(p, "一共多少", edInput(f.amount, "例如：5 斤、500 毫升", function (v) { f.amount = v; })); }
+      else { edRow(p, "有多少", edInput(f.left, f.what === "做好了" ? "例如：一盘、两碗" : "例如：两块、一袋", function (v) { f.left = v; })); }
+      if (f.what === "做好了" || f.from.length) {
+        edRow(p, "用料", edPicker(f, "from", function () { return futureStock(x.id); }, { add: "挑用料", live: true }),
+          "做这道菜用了家里哪几件（也能挑未来里更早要添的）；那一段做完时，没另写用了多少的料按平常一次的量扣");
+      }
+      edRow(p, "哪来的", edInput(f.origin, "可空", function (v) { f.origin = v; }));
+      var sec = edSec(p);
+      sec.appendChild(edFold(ui, "more", "更多", "放在哪、放法、切开没", function () {
+        return [f.place, f.keep, f.state].filter(Boolean).join(" · ");
+      }, function () {
+        var q = edProps();
+        edRow(q, "放在哪", edInput(f.place, "例如：堂屋·矮桌", function (v) { f.place = v; }));
+        edRow(q, "放法", edChips(edOpts(S.things.keeps, "没说"), f.keep || "", function (v) { f.keep = v; }));
+        edRow(q, "切开没", edChips(edOpts(S.things.states, "没说"), f.state || "", function (v) { f.state = v; }));
+        return q;
+      }));
+      dyn.appendChild(sec);
+    }
+    draw();
+    return worldFormFoot(box, function () { thingCloseForm(key); }, "保存", function () {
+      if (!String(f.name || "").trim()) { toast("名字不能空", { err: true }); return null; }
+      return thingPost({ action: "plan_update", id: x.id, ref: m.ref, fields: { what: f.what, name: f.name, kind: f.kind, origin: f.origin,
+        from: f.from, left: f.left, amount: f.amount, place: f.place, keep: f.keep, state: f.state } },
+        "已保存，世界线那一段跟着改了", function () { delete S.tEdit[key]; if (S.world) { loadWorld(true); } }, x.id);
+    }, function () { return worldDirty(f); });
   }
 
   function thingLink(x) {
@@ -5885,7 +6313,20 @@
       return;
     }
     var it = thingFind(id);
-    if (!it) { toast("没有 " + id + " 这一件", { err: true }); return; }
+    if (!it) {
+      var fu = futureFind(id);
+      if (!fu) { toast("没有 " + id + " 这一件", { err: true }); return; }
+      var cat = fu.cat === "item" ? "item" : "food";
+      if (S.thingsCat !== cat && !thingGuard()) { return; }
+      var moved = S.thingsCat !== cat;
+      S.thingsCat = cat;
+      if (cat === "item") { if (S.objFilter === "gone") { S.objFilter = "now"; } S.objQ = ""; }
+      else { if (S.thingsFilter === "gone") { S.thingsFilter = "now"; } S.thingsQ = ""; }
+      S.thingsFocus = fu.id;
+      renderSide();
+      renderThings(moved ? { toTop: true } : {});
+      return;
+    }
     var switched = S.thingsCat !== "food";
     if (switched) {
       if (!thingGuard()) { return; }
@@ -5986,7 +6427,7 @@
       acts.appendChild(h("button", { class: "btn quiet sm", type: "button", title: "改这一步", onclick: function () {
         thingOpenForm("e:" + it.id + ":" + st.idx, { what: st.what, at: thingAt(st.at), left: st.left || "",
           amount: st.amount || "", used: st.used || "", place: st.place || "",
-          keep: st.keep || "", state: st.state || "", by: st.by || "", into: st.into ? st.into.id : "", note: st.note || "" });
+          keep: st.keep || "", state: st.state || "", by: byList(st.by), into: st.into ? st.into.id : "", note: st.note || "" });
       } }, icon("edit")));
       if (st.idx > 0) {
         var del = h("button", { class: "btn quiet sm danger", type: "button", title: "作废这一步（留着，不再算）" }, icon("trash"));
@@ -6030,7 +6471,7 @@
       foot.appendChild(h("button", { class: "btn sm", type: "button", onclick: function () {
         thingOpenForm("s:" + it.id, { what: it.measured ? "用掉一部分" : "吃了一部分",
           at: thingAt(S.things.now), left: "", amount: "", used: "",
-          place: "", keep: "", state: "", by: "", into: "", note: "" });
+          place: "", keep: "", state: "", by: [], into: "", note: "" });
       } }, icon("plus"), "加一步"));
     }
     if (!S.tEdit["i:" + it.id]) {
@@ -6067,7 +6508,7 @@
   }
 
   // 吃的某一步要填的一格。c：{ first 第一步（怎么来的）, measured 按克 / 毫升记的, perUse 平常一次用多少, exceptId 它自己, af 光标先放第一格 }
-  var THING_FIELDS = { left: "还剩多少", amount: "清点出", used: "用了多少", place: "放在哪", keep: "放法", state: "切开没", into: "做进了" };
+  var THING_FIELDS = { left: "还剩多少", amount: "清点出", used: "用了多少", place: "放在哪", keep: "放法", state: "切开没" };
   function thingFieldRow(p, f, k, c) {
     var af = function () { var on = !!c.af; c.af = false; return on; };
     if (k === "left") {
@@ -6084,8 +6525,6 @@
       edRow(p, "放法", edChips(edOpts(S.things.keeps, c.first ? null : "照上一步"), f.keep, function (v) { f.keep = v; }));
     } else if (k === "state") {
       edRow(p, "切开没", edChips(edOpts(S.things.states, c.first ? null : "照上一步"), f.state, function (v) { f.state = v; }));
-    } else if (k === "into") {
-      edRow(p, "做进了", edPicker(f, "into", function () { return thingCands(c.exceptId); }, { add: "挑一件" }), "用掉、做成了别的菜时选");
     }
   }
   // 收在「更多」里的几格：收着时写出填了的值
@@ -6093,12 +6532,12 @@
     return keys.map(function (k) {
       var v = String(f[k] || "").trim();
       if (!v) { return ""; }
-      if (k === "into") { var it = thingFind(v); return "做进了 " + v + (it ? " " + it.name : ""); }
       return k === "left" ? "剩" + v.replace(/^还?剩/, "") : k === "used" ? "用了 " + v : k === "amount" ? "清点出 " + v : v;
     }).filter(Boolean).join(" · ");
   }
-  // 选了哪一步，先露这一步要填的；别的收在「更多」里（存的时候照样带上）
-  var THING_MAIN = { "挪地方": ["place", "keep"], "切开了": ["state", "keep"], "用掉一部分": ["qty", "into"], "吃了一部分": ["qty"], "清点": ["qty"], "用完了": ["into"] };
+  // 选了哪一步，先露这一步要填的；别的收在「更多」里（存的时候照样带上）。
+  // 做进了哪道菜不在这儿挑：料和菜的关系只从菜那头记（加一件、改名字和来历里挑用料，料那头自动补一步用掉）
+  var THING_MAIN = { "挪地方": ["place", "keep"], "切开了": ["state", "keep"], "用掉一部分": ["qty"], "吃了一部分": ["qty"], "清点": ["qty"] };
 
   function thingNewForm(d) {
     var key = "new";
@@ -6128,7 +6567,7 @@
         if (redo) { draw(); }
       }));
       edRow(p, "什么时候", edInput(f.at, "现在", function (v) { f.at = v; }, { cls: "ed-num", auto: true }), THING_AT_TIP);
-      edRow(p, "谁", edChips(edPeople("没说"), f.by, function (v) { f.by = v; }));
+      edRow(p, "谁", edMulti(edWho(), f.by, function (v) { f.by = v; }), "可以多选；都不选就是没说");
       edRow(p, "哪来的", edInput(f.origin, "例如：主人在商店街豆腐店买的", function (v) { f.origin = v; }));
       if (f.what === "做好了" || f.from.length) {
         edRow(p, "用料", edPicker(f, "from", function () { return thingCands(""); }, { add: "挑用料", live: true }),
@@ -6147,7 +6586,7 @@
       var at = fullTime(f.at, thingToday());
       if (at === null) { toast("时间写成 08:30、昨天 08:30 或 10-18 08:30", { err: true }); return null; }
       return thingPost({ action: "add", name: f.name, kind: f.kind, origin: f.origin, from: f.from,
-        stage: { what: f.what, at: at, left: f.left, amount: f.amount, place: f.place, keep: f.keep, state: f.state, by: f.by, note: f.note } },
+        stage: { what: f.what, at: at, left: f.left, amount: f.amount, place: f.place, keep: f.keep, state: f.state, by: (f.by || []).join(","), note: f.note } },
         "已添加", function () { delete S.tEdit[key]; });
     }, function () { return worldDirty(f); });
   }
@@ -6167,14 +6606,14 @@
       dyn.textContent = "";
       var c = { first: first, measured: measured, perUse: measured ? it.measured.per_use_text : "", exceptId: it.id, af: true };
       var qty = first || f.what === "清点" ? (measured ? "amount" : "left") : (measured ? "used" : "left");
-      var all = first ? [qty, "place", "keep", "state"] : (measured ? ["used", "amount"] : ["left"]).concat(["place", "keep", "state", "into"]);
+      var all = first ? [qty, "place", "keep", "state"] : (measured ? ["used", "amount"] : ["left"]).concat(["place", "keep", "state"]);
       var main = (first ? ["qty", "place", "keep", "state"] : THING_MAIN[f.what] || []).map(function (k) { return k === "qty" ? qty : k; });
       var steps = first ? edOpts(S.things.steps.start)
         : edOpts(S.things.steps.mid).concat(S.things.steps.end.map(function (x, i) { return { key: x, label: x, end: true, br: i === 0 }; }));
       var p = edProps();
       edRow(p, "这一步", edChips(steps, f.what, function (v) { if (v !== f.what) { f.what = v; draw(); } }));
       edRow(p, "什么时候", edInput(f.at, "现在", function (v) { f.at = v; }, { cls: "ed-num", auto: true }), THING_AT_TIP);
-      edRow(p, "谁", edChips(edPeople("没说"), f.by, function (v) { f.by = v; }));
+      edRow(p, "谁", edMulti(edWho(), f.by, function (v) { f.by = v; }), "可以多选；都不选就是没说");
       main.forEach(function (k) { thingFieldRow(p, f, k, c); });
       edRow(p, "备注", edInput(f.note, "可空", function (v) { f.note = v; }));
       var sec = edSec(p);
@@ -6192,7 +6631,7 @@
       var at = fullTime(f.at, thingToday());
       if (at === null) { toast("时间写成 08:30、昨天 08:30 或 10-18 08:30", { err: true }); return null; }
       var stage = { what: f.what, at: at || (st ? String(st.at || "").slice(0, 16) : ""), left: f.left, amount: f.amount, used: f.used,
-        place: f.place, keep: f.keep, state: f.state, by: f.by, into: f.into, note: f.note };
+        place: f.place, keep: f.keep, state: f.state, by: (f.by || []).join(","), into: f.into, note: f.note };
       if (st) {
         return thingPost({ action: "update_stage", id: it.id, index: st.idx, guard: { at: st.at, what: st.what }, fields: stage },
           "已保存", function () { delete S.tEdit[key]; }, it.id);
@@ -6286,7 +6725,7 @@
     bar.appendChild(h("div", { class: "grow" }));
     bar.appendChild(h("button", { class: "btn sm", type: "button", onclick: function () {
       thingOpenForm("onew", { name: "", kind: "", look: "", owner: "", origin: "", from: [], what: d.item_steps.start[0],
-        at: thingAt(d.now), place: "", holder: "", state: "", by: "", note: "" });
+        at: thingAt(d.now), place: "", holder: "", state: "", by: [], note: "" });
     } }, icon("plus"), "加一件"));
     box.appendChild(bar);
 
@@ -6317,11 +6756,20 @@
       if (!q) { return true; }
       return [x.id, x.name, x.kind, x.look, x.origin, x.place, x.holder_label, x.state, x.owner_label].join(" ").toLowerCase().indexOf(q) >= 0;
     });
+    var fut = S.objFilter === "gone" ? [] : futureList("item", q);
+    var rows = h("div", { class: "lrows" });
+    // 未来那一栏只给看（东西网页上不在这儿改），点世界线那一段过去改
+    if (fut.length) {
+      rows.appendChild(futureHead());
+      fut.forEach(function (x) { rows.appendChild(futureRow(x)); });
+    }
     if (!list.length) {
       var empty = !(S.things.objects || []).length;
-      card.appendChild(h("div", { class: "muted", style: "font-size:13px;line-height:1.7", text: empty
+      if (fut.length) { rows.appendChild(h("div", { class: "ogroup", text: "家里有的" })); }
+      rows.appendChild(h("div", { class: "muted", style: "font-size:13px;line-height:1.7", text: empty
         ? "家里还没记着别的东西。聊天里说买了、收到了、做好了、挪了、交给谁了，记录员会记下来；补写在世界线里排的做手工、收拾东西，那一段做完也会算进来。也可以点右上角「加一件」手动记。"
         : (q ? "没有对得上的。" : S.objFilter === "gone" ? "还没有送走、丢掉、用完的。" : "家里现在没有了。") }));
+      card.appendChild(rows);
       return;
     }
     var groups = {}, order = [];
@@ -6332,7 +6780,7 @@
     });
     var multi = order.filter(function (k) { return groups[k].length > 1; }).sort();
     var single = order.filter(function (k) { return groups[k].length === 1; });
-    var rows = h("div", { class: "lrows" });
+    if (fut.length && !multi.length) { rows.appendChild(h("div", { class: "ogroup", text: "家里有的" })); }
     multi.forEach(function (k) {
       rows.appendChild(h("div", { class: "ogroup" }, h("span", { class: "tag warn", text: "长得像" }),
         h("span", { text: "「" + k + "」" + groups[k].length + " 件，认准编号" })));
@@ -6413,7 +6861,7 @@
     } else if (st.idx !== null && st.idx !== undefined) {
       acts.appendChild(h("button", { class: "btn quiet sm", type: "button", title: "改这一步", onclick: function () {
         thingOpenForm("oe:" + it.id + ":" + st.idx, { what: st.what, at: thingAt(st.at), place: st.place || "",
-          holder: st.holder || "", state: st.state || "", owner: st.owner || "", by: st.by || "", into: st.into ? st.into.id : "", note: st.note || "" });
+          holder: st.holder || "", state: st.state || "", owner: st.owner || "", by: byList(st.by), into: st.into ? st.into.id : "", note: st.note || "" });
       } }, icon("edit")));
       if (st.idx > 0) {
         var del = h("button", { class: "btn quiet sm danger", type: "button", title: "作废这一步（留着，不再算）" }, icon("trash"));
@@ -6457,7 +6905,7 @@
     if (!it.ended && !S.tEdit["os:" + it.id]) {
       foot.appendChild(h("button", { class: "btn sm", type: "button", onclick: function () {
         thingOpenForm("os:" + it.id, { what: S.things.item_steps.mid[0], at: thingAt(S.things.now), place: "", holder: "",
-          state: "", owner: "", by: "", into: "", note: "" });
+          state: "", owner: "", by: [], into: "", note: "" });
       } }, icon("plus"), "加一步"));
     }
     if (!S.tEdit["oi:" + it.id]) {
@@ -6481,7 +6929,7 @@
   }
 
   // 东西某一步要填的一格。c：{ first 第一步（怎么来的）, exceptId 它自己, af 光标先放第一格 }
-  var OBJ_FIELDS = { place: "搁在哪", holder: "在谁手上", state: "什么样", owner: "归谁", into: "做进了" };
+  var OBJ_FIELDS = { place: "搁在哪", holder: "在谁手上", state: "什么样", owner: "归谁" };
   function objFieldRow(p, f, k, c) {
     var af = function () { var on = !!c.af; c.af = false; return on; };
     if (k === "place") {
@@ -6493,8 +6941,6 @@
       edRow(p, "什么样", edInput(f.state, c.first ? "例如：起了个头、织好了" : "没变就空着", function (v) { f.state = v; }, { focus: af() }));
     } else if (k === "owner") {
       edRow(p, "归谁", edChips(edPeople("没换"), f.owner, function (v) { f.owner = v; }), "送给谁了才选");
-    } else if (k === "into") {
-      edRow(p, "做进了", edPicker(f, "into", function () { return objCands(c.exceptId); }, { add: "挑一件" }), "用掉、做成了别的东西时选");
     }
   }
   function objFieldSum(f, keys) {
@@ -6505,7 +6951,6 @@
       if (!v) { return ""; }
       if (k === "holder") { return "在" + (people[v] || v) + "手上"; }
       if (k === "owner") { return "归" + (people[v] || v); }
-      if (k === "into") { var it = objFind(v); return "做进了 " + v + (it ? " " + it.name : ""); }
       return v;
     }).filter(Boolean).join(" · ");
   }
@@ -6536,7 +6981,7 @@
         if (redo) { draw(); }
       }));
       edRow(q, "什么时候", edInput(f.at, "现在", function (v) { f.at = v; }, { cls: "ed-num", auto: true }), THING_AT_TIP);
-      edRow(q, "谁", edChips(edPeople("没说"), f.by, function (v) { f.by = v; }));
+      edRow(q, "谁", edMulti(edWho(), f.by, function (v) { f.by = v; }), "可以多选；都不选就是没说");
       if (OBJ_MADE[f.what] || f.from.length) {
         edRow(q, "材料", edPicker(f, "from", function () { return objCands(""); }, { add: "挑材料", live: true }), "用家里哪几件东西做的，例如红纸剪成窗花");
       }
@@ -6551,7 +6996,7 @@
       var at = fullTime(f.at, thingToday());
       if (at === null) { toast("时间写成 08:30、昨天 08:30 或 10-18 08:30", { err: true }); return null; }
       return thingPost({ action: "add", cat: "item", name: f.name, kind: f.kind, look: f.look, owner: f.owner, origin: f.origin, from: f.from,
-        stage: { what: f.what, at: at, place: f.place, holder: f.holder, state: f.state, by: f.by, note: f.note } },
+        stage: { what: f.what, at: at, place: f.place, holder: f.holder, state: f.state, by: (f.by || []).join(","), note: f.note } },
         "已添加", function () { delete S.tEdit[key]; });
     }, function () { return worldDirty(f); });
   }
@@ -6569,14 +7014,14 @@
     function draw() {
       dyn.textContent = "";
       var c = { first: first, exceptId: it.id, af: true };
-      var all = first ? ["place", "holder", "state"] : ["place", "holder", "state", "owner", "into"];
+      var all = first ? ["place", "holder", "state"] : ["place", "holder", "state", "owner"];
       var main = first ? all : OBJ_MAIN[f.what] || [];
       var steps = first ? edOpts(S.things.item_steps.start)
         : edOpts(S.things.item_steps.mid).concat(S.things.item_steps.end.map(function (x, i) { return { key: x, label: x, end: true, br: i === 0 }; }));
       var p = edProps();
       edRow(p, "这一步", edChips(steps, f.what, function (v) { if (v !== f.what) { f.what = v; draw(); } }));
       edRow(p, "什么时候", edInput(f.at, "现在", function (v) { f.at = v; }, { cls: "ed-num", auto: true }), THING_AT_TIP);
-      edRow(p, "谁", edChips(edPeople("没说"), f.by, function (v) { f.by = v; }));
+      edRow(p, "谁", edMulti(edWho(), f.by, function (v) { f.by = v; }), "可以多选；都不选就是没说");
       main.forEach(function (k) { objFieldRow(p, f, k, c); });
       edRow(p, "备注", edInput(f.note, "可空", function (v) { f.note = v; }));
       var sec = edSec(p);
@@ -6593,7 +7038,7 @@
       var at = fullTime(f.at, thingToday());
       if (at === null) { toast("时间写成 08:30、昨天 08:30 或 10-18 08:30", { err: true }); return null; }
       var stage = { what: f.what, at: at || (st ? String(st.at || "").slice(0, 16) : ""), place: f.place, holder: f.holder, state: f.state,
-        owner: f.owner, by: f.by, into: f.into, note: f.note };
+        owner: f.owner, by: (f.by || []).join(","), into: f.into, note: f.note };
       if (st) {
         return thingPost({ action: "update_stage", id: it.id, index: st.idx, guard: { at: st.at, what: st.what }, fields: stage },
           "已保存", function () { delete S.tEdit[key]; }, it.id);
