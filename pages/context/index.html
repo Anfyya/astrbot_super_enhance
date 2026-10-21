@@ -1818,15 +1818,17 @@
         if (S.thingsCat === "item") {
           var obj = objFind(focusId);
           if (obj && obj.ended && S.objFilter === "now") { S.objFilter = "all"; }
+          if (obj && S.objFilter === "future") { S.objFilter = obj.ended ? "all" : "now"; }
         } else {
           var hit = thingFind(focusId);
           if (hit && hit.ended && S.thingsFilter === "now") { S.thingsFilter = "all"; }
+          if (hit && S.thingsFilter === "future") { S.thingsFilter = hit.ended ? "all" : "now"; }
         }
       }
       if (focusId) {
-        // 跳过来找一件：搜索框清掉，未来里的那几件也得在「没了的」以外才看得到
-        if (S.thingsCat === "item") { S.objQ = ""; if (S.objFilter === "gone" && futureFind(focusId)) { S.objFilter = "now"; } }
-        else { S.thingsQ = ""; if (S.thingsFilter === "gone" && futureFind(focusId)) { S.thingsFilter = "now"; } }
+        // 跳过来找一件：搜索框清掉，未来里的那几件在「未来」里看
+        if (S.thingsCat === "item") { S.objQ = ""; if (futureFind(focusId)) { S.objFilter = "future"; } }
+        else { S.thingsQ = ""; if (futureFind(focusId)) { S.thingsFilter = "future"; } }
       }
       showView();
       loadThings();
@@ -6055,10 +6057,10 @@
     $("thingsSub").textContent = "此刻 " + String(d.now || "").slice(11, 16) + " 现算 · 记录员记的 + 世界线里做完的段标的";
     var items = d.items || [];
     var live = items.filter(function (x) { return !x.ended; });
-    var counts = { now: live.length, gone: items.length - live.length, all: items.length };
+    var counts = { future: futureList("food", "").length, now: live.length, gone: items.length - live.length, all: items.length };
     var bar = h("div", { class: "tbar" });
     var seg = h("div", { class: "seg" });
-    [["now", "现有的"], ["gone", "没了的"], ["all", "全部"]].forEach(function (x) {
+    [["future", "未来"], ["now", "现有的"], ["gone", "没了的"], ["all", "全部"]].forEach(function (x) {
       seg.appendChild(h("button", { type: "button", class: S.thingsFilter === x[0] ? "on" : "", onclick: function () {
         if (S.thingsFilter === x[0]) { return; }
         S.thingsFilter = x[0];
@@ -6125,6 +6127,7 @@
     clear(card);
     if (S.tEdit["new"]) { card.appendChild(thingNewForm(S.things)); }
     var q = String(S.thingsQ || "").trim().toLowerCase();
+    if (S.thingsFilter === "future") { card.appendChild(futureRows("food", q)); return; }
     var list = (S.things.items || []).filter(function (x) {
       if (S.thingsFilter === "now" && x.ended) { return false; }
       if (S.thingsFilter === "gone" && !x.ended) { return false; }
@@ -6138,13 +6141,7 @@
       var ba = a.fresh.bad_at || "9999", bb = b.fresh.bad_at || "9999";
       return ba === bb ? String(a.created).localeCompare(String(b.created)) : ba.localeCompare(bb);
     });
-    var fut = S.thingsFilter === "gone" ? [] : futureList("food", q);
     var rows = h("div", { class: "lrows" });
-    if (fut.length) {
-      rows.appendChild(futureHead());
-      fut.forEach(function (x) { rows.appendChild(futureRow(x)); });
-      rows.appendChild(h("div", { class: "ogroup", text: S.thingsFilter === "all" ? "家里有的和没了的" : "家里有的" }));
-    }
     if (!list.length) {
       var empty = !(S.things.items || []).length;
       rows.appendChild(h("div", { class: "muted", style: "font-size:13px;line-height:1.7", text: empty
@@ -6188,10 +6185,15 @@
     return h("button", { class: "tlink", type: "button", title: "到世界线看这一段", onclick: function () { openWorldEntry(m.date, m.entry, m.who); } },
       "世界线 " + String(m.date || "").slice(5) + " " + (m.who_label || "") + " " + rangeText(m.start, m.end, m.date));
   }
-  // 未来那一栏的头：两页共用
-  function futureHead() {
-    return h("div", { class: "ogroup" }, h("span", { class: "tag acc", text: "未来" }),
-      h("span", { text: "世界线里还没做完的段要添的，编号先发好了；那一段做完才算进家里" }));
+  // 「未来」那一页：两页共用（东西只给看，点世界线那一段过去改）
+  function futureRows(cat, q) {
+    var rows = h("div", { class: "lrows" });
+    var fut = futureList(cat, q);
+    rows.appendChild(h("div", { class: "muted", style: "font-size:13px;line-height:1.7", text: fut.length
+      ? "世界线里还没做完的段要添的，编号先发好了；那一段做完才算进「现有的」"
+      : (q ? "没有对得上的。" : "世界线里还没做完的段，眼下没有要添的" + (cat === "item" ? "东西。" : "吃的。")) }));
+    fut.forEach(function (x) { rows.appendChild(futureRow(x)); });
+    return rows;
   }
 
   function futureRow(x) {
@@ -6304,7 +6306,7 @@
       if (!thingGuard()) { return; }
       var toObj = S.thingsCat !== "item";
       S.thingsCat = "item";
-      if ((S.objFilter === "now" && obj.ended) || (S.objFilter === "gone" && !obj.ended)) { S.objFilter = "all"; }
+      if ((S.objFilter === "now" && obj.ended) || (S.objFilter === "gone" && !obj.ended) || S.objFilter === "future") { S.objFilter = "all"; }
       if (S.objQ) { S.objQ = ""; }
       S.thingsOpen[id] = true;
       S.thingsFocus = id;
@@ -6320,8 +6322,8 @@
       if (S.thingsCat !== cat && !thingGuard()) { return; }
       var moved = S.thingsCat !== cat;
       S.thingsCat = cat;
-      if (cat === "item") { if (S.objFilter === "gone") { S.objFilter = "now"; } S.objQ = ""; }
-      else { if (S.thingsFilter === "gone") { S.thingsFilter = "now"; } S.thingsQ = ""; }
+      if (cat === "item") { S.objFilter = "future"; S.objQ = ""; }
+      else { S.thingsFilter = "future"; S.thingsQ = ""; }
       S.thingsFocus = fu.id;
       renderSide();
       renderThings(moved ? { toTop: true } : {});
@@ -6333,7 +6335,7 @@
       S.thingsCat = "food";
       renderSide();
     }
-    if ((S.thingsFilter === "now" && it.ended) || (S.thingsFilter === "gone" && !it.ended)) { S.thingsFilter = "all"; }
+    if ((S.thingsFilter === "now" && it.ended) || (S.thingsFilter === "gone" && !it.ended) || S.thingsFilter === "future") { S.thingsFilter = "all"; }
     if (S.thingsQ) { S.thingsQ = ""; }
     S.thingsOpen[id] = true;
     S.thingsFocus = id;
@@ -6708,10 +6710,10 @@
     $("thingsSub").textContent = "此刻 " + String(d.now || "").slice(11, 16) + " 现算 · 吃的以外的东西，记录员记的 + 世界线里做完的段标的";
     var objs = d.objects || [];
     var live = objs.filter(function (x) { return !x.ended; });
-    var counts = { now: live.length, gone: objs.length - live.length, all: objs.length };
+    var counts = { future: futureList("item", "").length, now: live.length, gone: objs.length - live.length, all: objs.length };
     var bar = h("div", { class: "tbar" });
     var seg = h("div", { class: "seg" });
-    [["now", "现有的"], ["gone", "没了的"], ["all", "全部"]].forEach(function (x) {
+    [["future", "未来"], ["now", "现有的"], ["gone", "没了的"], ["all", "全部"]].forEach(function (x) {
       seg.appendChild(h("button", { type: "button", class: S.objFilter === x[0] ? "on" : "", onclick: function () {
         if (S.objFilter === x[0]) { return; }
         S.objFilter = x[0];
@@ -6750,22 +6752,16 @@
     clear(card);
     if (S.tEdit["onew"]) { card.appendChild(objNewForm(S.things)); }
     var q = String(S.objQ || "").trim().toLowerCase();
+    if (S.objFilter === "future") { card.appendChild(futureRows("item", q)); return; }
     var list = (S.things.objects || []).filter(function (x) {
       if (S.objFilter === "now" && x.ended) { return false; }
       if (S.objFilter === "gone" && !x.ended) { return false; }
       if (!q) { return true; }
       return [x.id, x.name, x.kind, x.look, x.origin, x.place, x.holder_label, x.state, x.owner_label].join(" ").toLowerCase().indexOf(q) >= 0;
     });
-    var fut = S.objFilter === "gone" ? [] : futureList("item", q);
     var rows = h("div", { class: "lrows" });
-    // 未来那一栏只给看（东西网页上不在这儿改），点世界线那一段过去改
-    if (fut.length) {
-      rows.appendChild(futureHead());
-      fut.forEach(function (x) { rows.appendChild(futureRow(x)); });
-    }
     if (!list.length) {
       var empty = !(S.things.objects || []).length;
-      if (fut.length) { rows.appendChild(h("div", { class: "ogroup", text: "家里有的" })); }
       rows.appendChild(h("div", { class: "muted", style: "font-size:13px;line-height:1.7", text: empty
         ? "家里还没记着别的东西。聊天里说买了、收到了、做好了、挪了、交给谁了，记录员会记下来；补写在世界线里排的做手工、收拾东西，那一段做完也会算进来。也可以点右上角「加一件」手动记。"
         : (q ? "没有对得上的。" : S.objFilter === "gone" ? "还没有送走、丢掉、用完的。" : "家里现在没有了。") }));
@@ -6780,7 +6776,6 @@
     });
     var multi = order.filter(function (k) { return groups[k].length > 1; }).sort();
     var single = order.filter(function (k) { return groups[k].length === 1; });
-    if (fut.length && !multi.length) { rows.appendChild(h("div", { class: "ogroup", text: "家里有的" })); }
     multi.forEach(function (k) {
       rows.appendChild(h("div", { class: "ogroup" }, h("span", { class: "tag warn", text: "长得像" }),
         h("span", { text: "「" + k + "」" + groups[k].length + " 件，认准编号" })));
