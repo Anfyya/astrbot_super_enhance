@@ -182,6 +182,17 @@ FRACTION_WORDS = (
     ("快满", 0.95), ("满", 1.0), ("没开封", 1.0), ("没拆", 1.0), ("整", 1.0),
 )
 _PACK_RE = re.compile(r"(\d+|[一二两三四五六七八九十])\s*(袋|罐|瓶|盒|包|坛|桶|箱|缸|壶|筐)")
+# 「十个」「两碗」「半锅」「一斤半」：数 + 量词（网页的余量条拿「剩两个」对着一开始的「十个」比）
+_COUNT_RE = re.compile(
+    r"(\d+(?:\.\d+)?|[零〇一二两俩三四五六七八九十百]+|半)\s*"
+    r"(个|只|颗|粒|根|块|片|条|把|捆|棵|袋|盒|瓶|罐|碗|盘|份|张|串|枚|尾|锅|盆|杯|壶|段|截|头|瓣|包|坛|桶|板|斤|两)(半)?"
+)
+# 只拿来画余量条的说法（不进按量记的扣法）
+SHARE_WORDS = (("一点", 0.1),)
+# 论个数的量词（一板、一盒里的一个个）
+PIECE_UNITS = ("个", "只", "颗", "粒", "根", "块", "片", "条", "枚", "尾", "头", "瓣", "段", "截", "张")
+# 不是按量记的：剩到一开始的这么几成以下，算余量不多（网页排到前面）
+LOW_LEFT_SHARE = 0.25
 
 
 # ---------- 吃的以外的东西 ----------
@@ -514,6 +525,66 @@ def is_ended(item: dict) -> dict | None:
     if info is not None and info["zero"] is not None:
         return dict(info["zero"], what="用完了", _auto=True)
     return None
+
+
+def _counts(text) -> list:
+    """「一盒（十个）」→ [(1, 盒), (10, 个)]；「小半锅」「大半碗」不算数（按说法折）。"""
+    raw = str(text or "")
+    out = []
+    for m in _COUNT_RE.finditer(raw):
+        number, unit, tail = m.groups()
+        if number == "半":
+            if m.start() > 0 and raw[m.start() - 1] in "小大多":
+                continue
+            count = 0.5
+        else:
+            count = cn_number(number)
+            if count is None:
+                continue
+            if tail:
+                count += 0.5
+        out.append((count, unit))
+    return out
+
+
+def share_left(item: dict) -> float | None:
+    """还剩一开始的几成（0–1），网页画余量条用。没了是 0；按量记的按克 / 毫升，对着一包（买来不止一包就对着买来的那么多）；
+    别的看最后说的剩多少：「剩两个」对着一开始的「十个」、「半斤」对着「一斤」，「一半」「小半锅」按说法折；
+    来了以后还没吃过、用过（挪地方、切开不算）是 1；吃过、用过但没说剩多少的 None。"""
+    if is_ended(item) is not None:
+        return 0.0
+    info = measure(item) if cat_of(item) == CAT_FOOD else None
+    if info is not None:
+        full = max([info["pack"]] + [left for stage, _used, left in info["rows"] if stage.get("what") in START_STEPS])
+        return round(max(0.0, min(1.0, info["left"] / full)), 3) if full > 0 else None
+    total, said, stale = "", None, False
+    for stage in item.get("stages") or []:
+        left = str(stage.get("left") or "").strip()
+        if stage.get("what") in START_STEPS:
+            total, said, stale = left or str(stage.get("amount") or ""), None, False
+        elif left:
+            said, stale = left, False
+        elif stage.get("what") in ("吃了一部分", "用掉一部分"):
+            stale = True  # 又吃了一回，没说剩多少：以前说的剩多少不作数了
+    if stale:
+        return None
+    if said is None:
+        return 1.0
+    base, mine = _counts(total), _counts(said)
+    for num, unit in mine:
+        whole = next((n for n, u in base if u == unit), None)
+        if whole:
+            return round(max(0.0, min(1.0, num / whole)), 3)
+    got, whole = parse_amount(said), parse_amount(total)
+    if got and whole and got[1] == whole[1] and whole[0] > 0:
+        return round(max(0.0, min(1.0, got[0] / whole[0])), 3)
+    if not mine:  # 「半碗」对着「一锅」：这个半说的是一碗，不是一锅的一半
+        for word, share in FRACTION_WORDS + SHARE_WORDS:
+            if word in said:
+                return share if share <= 1 else None
+    # 一开始是「一板」「一盒」这种、现在「剩一个」「还剩两个」：一个按一成、两个按两成算（只剩一两个了）
+    few = [num for num, unit in mine if unit in PIECE_UNITS and 0 < num <= 2]
+    return round(few[0] * 0.1, 3) if few else None
 
 
 def had_before(items, name) -> dict | None:

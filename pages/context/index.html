@@ -628,7 +628,7 @@
   .wday-b.f{opacity:.36}
   .wday-b.on{opacity:1;box-shadow:0 0 0 2px var(--ring)}
   .wc-d{background:var(--accent)}.wc-m{background:var(--ok)}.wc-o{background:var(--c2)}.wc-i{background:var(--c3)}.wc-s{background:var(--t4)}
-  .wday-now{position:absolute;top:0;bottom:0;width:2px;margin-left:-1px;background:var(--danger);pointer-events:none;z-index:2}
+  .wday-now{position:absolute;top:0;bottom:0;width:2px;margin-left:-1px;background:var(--accent);box-shadow:0 0 0 1.5px var(--bg);pointer-events:none;z-index:2}
   .wday-x{position:relative;height:14px;font-size:11px;line-height:14px;color:var(--t3);font-variant-numeric:tabular-nums}
   .wday-x span{position:absolute;top:0;transform:translateX(-50%)}
   .wday-x span:nth-child(1){left:0;transform:none}
@@ -639,24 +639,44 @@
   .wday-lg span{display:inline-flex;align-items:center;gap:6px}
   .wday-lg i{display:inline-block;width:8px;height:8px;border-radius:2px}
 
-  /* 时间线：左边一列时间，一根竖线串起每一段；未开始的是空心点，正在做的带一圈光 */
-  .wrow{display:grid;grid-template-columns:60px 24px minmax(0,1fr) auto;align-items:start;column-gap:0;border-top:0;padding:10px 0}
+  /* 时间线：从早到晚往下排，一根竖线串起每一段：走过的是实线，还没到的是虚线，线本身就是进度。
+     「现在」是线上的一个点：正在做的那段里，它跟着做到的那一步往下走，点上面那截是主色实线、下面是虚线；
+     这会儿没在做什么（上一段做完了、下一段还没开始），点停在上一段末尾 */
+  .lrows{--wpast:var(--accent-line)}
+  .wrow{position:relative;display:grid;grid-template-columns:60px 24px minmax(0,1fr) auto;align-items:start;column-gap:0;border-top:0;padding:10px 0}
   .lrows > .wrow:first-child{padding-top:0}
   .lrows > .wrow:last-child{padding-bottom:0}
   .wtime{grid-column:1;display:flex;flex-direction:column;align-items:flex-start;font-variant-numeric:tabular-nums;min-width:0}
   .wtime .w0{font-size:13px;line-height:22px;font-weight:600;color:var(--t1);white-space:nowrap}
   .wtime .w1{font-size:12px;line-height:16px;color:var(--t3);white-space:nowrap}
   .wtime .wd{font-size:11px;line-height:16px;color:var(--t3)}
-  .wnode{grid-column:2;align-self:stretch;position:relative;z-index:0}
-  .wnode::after{content:"";position:absolute;left:50%;top:-10px;bottom:-10px;width:1px;margin-left:-.5px;background:var(--line2);z-index:-1}
+  /* 点在这一格里 11px 处；线从这一行顶上画到底下，和上下两行接上（--wtop：线头到点的距离，第一行的线从点开始） */
+  .wnode{grid-column:2;align-self:stretch;position:relative;z-index:0;--wtop:21px}
+  .wnode::after{content:"";position:absolute;left:50%;top:-10px;bottom:-10px;width:2px;margin-left:-1px;background:var(--wpast);z-index:-1}
   .wnode::before{content:"";position:absolute;left:50%;top:6px;width:10px;height:10px;margin-left:-5px;border-radius:50%;background:var(--wc);box-shadow:0 0 0 3px var(--bg)}
+  .lrows > .wrow:first-child .wnode{--wtop:0px}
   .lrows > .wrow:first-child .wnode::after{top:11px}
-  .lrows > .wrow:last-child .wnode::after{bottom:auto;height:21px}
-  .lrows > .wrow:only-child .wnode::after{display:none}
+  .lrows > .wrow:last-child:not(.wnowin) .wnode::after{bottom:auto;height:21px}
+  .lrows > .wrow:last-child.wnowin .wnode::after{bottom:0}
+  .lrows > .wrow:only-child:not(.wnowin) .wnode::after{display:none}
   .wn-d{--wc:var(--accent)}.wn-m{--wc:var(--ok)}.wn-o{--wc:var(--c2)}.wn-i{--wc:var(--c3)}.wn-s{--wc:var(--t4)}
+  .wfuture .wnode::after,.wtail .wnode::after{background:repeating-linear-gradient(to bottom,var(--line2) 0 4px,transparent 4px 8px)}
   .wfuture .wnode::before{background:var(--bg);box-shadow:inset 0 0 0 2px var(--wc),0 0 0 3px var(--bg)}
   .wrow.going .wnode::before{box-shadow:0 0 0 3px var(--bg),0 0 0 6px var(--ring)}
   .wrow.wevent .wnode::before{width:8px;height:8px;margin-left:-4px;top:7px;border-radius:2px;transform:rotate(45deg)}
+  /* 「现在」在这一段里：线头到点照走过的画，点到「现在」实线（正在做的用主色），再往下虚线；--wf 由脚本每秒算 */
+  .wrow.wnowin{--wfill:var(--wpast)}
+  .wrow.wnowin.going{--wfill:var(--accent)}
+  .wrow.wnowin .wnode::after{background:
+    linear-gradient(var(--wpast),var(--wpast)) 0 0 / 100% var(--wtop) no-repeat,
+    linear-gradient(var(--wfill),var(--wfill)) 0 var(--wtop) / 100% var(--wf,0px) no-repeat,
+    repeating-linear-gradient(to bottom,var(--line2) 0 4px,transparent 4px 8px)}
+  .wnowdot{position:absolute;left:50%;top:calc(11px + var(--wf,0px));width:12px;height:12px;margin:-6px 0 0 -6px;border-radius:50%;
+    background:var(--accent);box-shadow:0 0 0 3px var(--bg);z-index:1;pointer-events:none}
+  .wnowdot::after{content:"";position:absolute;inset:0;border-radius:50%;animation:wpulse 2.4s ease-out infinite}
+  @keyframes wpulse{0%{box-shadow:0 0 0 0 var(--ring)}70%,100%{box-shadow:0 0 0 9px transparent}}
+  .wgap{margin-top:8px;font-size:12px;line-height:20px;color:var(--accent);font-weight:500}
+  .wnowt{position:absolute;left:0;margin-top:-9px;font-size:12px;line-height:18px;font-weight:600;color:var(--accent);white-space:nowrap;pointer-events:none}
   .wrow > .lt{grid-column:3}
   .wrow > .la{grid-column:4;margin-left:12px}
   .wrow-h{display:flex;align-items:center;flex-wrap:wrap;gap:4px 6px;min-height:22px}
@@ -665,21 +685,15 @@
   .wdo{white-space:pre-wrap;margin-top:2px}
   .wres{font-size:13px;line-height:20px;color:var(--t2);margin-top:4px}
   .lrow.wfuture .lt{color:var(--t2)}
-  .wnow{display:grid;grid-template-columns:60px 24px minmax(0,1fr);align-items:center;height:24px;margin:2px 0;color:var(--danger);font-size:12px;font-weight:600;
-    background:linear-gradient(var(--line2),var(--line2)) no-repeat 71.5px 0 / 1px 100%}
-  .wnow-t{grid-column:1;grid-row:1;font-variant-numeric:tabular-nums}
-  .wnow::before{content:"";grid-column:2;grid-row:1;justify-self:center;width:8px;height:8px;border-radius:50%;background:var(--danger);box-shadow:0 0 0 3px var(--bg)}
-  .wnow::after{content:"";grid-column:3;grid-row:1;height:1px;background:var(--danger);opacity:.35}
-  .wprog{display:flex;align-items:center;gap:10px;margin-top:8px;max-width:420px}
-  .wprog-track{flex:1;height:6px;border-radius:3px;background:var(--sunk);overflow:hidden}
-  .wprog-bar{height:100%;background:var(--accent);border-radius:3px;transition:width 1s linear}
-  .wprog-t{font-size:12px;color:var(--t3);white-space:nowrap;font-variant-numeric:tabular-nums}
   .wsteps{margin:6px 0 0;padding:0 0 0 20px;font-size:13px;line-height:20px;color:var(--t3)}
-  .wsteps li{margin:2px 0;padding-left:2px}
+  .wsteps li{margin:2px 0;padding-left:2px;transition:color .3s}
   .wsteps li::marker{font-variant-numeric:tabular-nums;color:var(--t4)}
-  .wsteps li.done{text-decoration:line-through;text-decoration-color:var(--t4)}
+  /* 正在做的那段：做完的几步淡一点，正在做的那步加粗，后面的照常 */
+  .going .wsteps li{color:var(--t2)}
+  .going .wsteps li.done{color:var(--t3)}
   .wsteps li.now{color:var(--t1);font-weight:600}
   .wsteps li.now::marker{color:var(--accent)}
+  @media (prefers-reduced-motion:reduce){.wnowdot::after{animation:none}}
   .wstep-ed{display:flex;flex-direction:column;gap:8px}
   .wstep-row{display:flex;align-items:center;gap:8px}
   .wstep-row .inp{flex:1;min-width:0}
@@ -719,12 +733,18 @@
   .tid{font-family:var(--mono);font-size:12px;color:var(--t3);min-width:20px}
   .tname{font-weight:600;font-size:15px;line-height:24px}
   .tmeta{font-size:13px;line-height:20px;color:var(--t2);margin-top:2px}
-  .tfresh{display:flex;align-items:flex-start;gap:10px;margin-top:6px;font-size:12.5px;line-height:18px;color:var(--t2)}
-  .tfresh.warn{color:var(--warn)}.tfresh.bad{color:var(--danger)}.tfresh.gone{color:var(--t3)}
-  .tlife{flex:0 0 120px;height:6px;margin-top:6px;border-radius:3px;background:var(--sunk);overflow:hidden}
-  .tlife.none{background:transparent}
-  .tlife i{display:block;height:100%;border-radius:3px;background:var(--ok)}
-  .tlife.acc i{background:var(--accent)}.tlife.warn i{background:var(--warn)}.tlife.bad i{background:var(--danger)}
+  .tfresh{margin-top:6px;font-size:12.5px;line-height:18px;color:var(--t2)}
+  .tfresh.gone{color:var(--t3)}
+  /* 两根条：保鲜（还能放多久）、余量（还剩几成）；左边名字、中间条、右边字，两行对齐 */
+  .tgauges{display:grid;grid-template-columns:auto 104px minmax(0,1fr);column-gap:10px;row-gap:6px;align-items:start;margin-top:8px;font-size:12.5px;line-height:18px}
+  .tgauge{display:contents;--tg:var(--accent)}
+  .tg-l{color:var(--t3);font-size:12px}
+  .tg-t{height:6px;margin-top:6px;border-radius:3px;background:var(--sunk);overflow:hidden}
+  .tg-t i{display:block;height:100%;min-width:3px;border-radius:3px;background:var(--tg)}
+  .tg-t.unk{background:repeating-linear-gradient(-45deg,var(--sunk) 0 3px,var(--line2) 3px 5px)}
+  .tg-x{color:var(--t2);min-width:0;word-break:break-word}
+  .tgauge.ok{--tg:var(--ok)}.tgauge.acc{--tg:var(--accent)}.tgauge.warn{--tg:var(--warn)}.tgauge.bad{--tg:var(--danger)}
+  .tgauge.warn .tg-x{color:var(--warn)}.tgauge.bad .tg-x{color:var(--danger)}
   .tfrom{font-size:12px;line-height:18px;color:var(--t3);margin-top:6px;display:flex;flex-wrap:wrap;gap:2px 10px;align-items:center}
   .tlink{border:0;background:transparent;padding:0;color:var(--accent);font-size:12px;cursor:pointer;text-align:left}
   .tlink:hover{text-decoration:underline;text-underline-offset:3px}
@@ -796,6 +816,21 @@
   .dlg h3{margin:0 0 8px;font-size:15px;font-weight:600;line-height:22px}
   .dlg p{margin:0;color:var(--t2);font-size:13.5px;line-height:1.7;white-space:pre-wrap}
   .dlg .btns{display:flex;justify-content:flex-end;gap:8px;margin-top:24px}
+  /* 家里的吃的 / 东西的编辑框：居中弹出来，框里太长就框里滚，保存 / 取消贴在框底 */
+  .fmodal{position:fixed;inset:0;z-index:80;display:flex;align-items:center;justify-content:center;padding:16px;background:var(--scrim);
+    animation:fadein .15s ease;overscroll-behavior:contain}
+  .fdlg{width:100%;max-width:640px;max-height:100%;min-height:0;display:flex;flex-direction:column;container:fdlg / inline-size;animation:dlgin .18s ease}
+  @keyframes dlgin{from{opacity:0;transform:translateY(8px) scale(.985)}to{opacity:1;transform:none}}
+  .fdlg > .wform{flex:0 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain;background:var(--bg);border-radius:14px;
+    box-shadow:var(--pop);padding:20px 20px 0;animation:none}
+  .fdlg > .wform > .wform-f{margin:0 -20px;padding:12px 20px;background:var(--bg);border-radius:0 0 14px 14px}
+  .fdlg > .wform > .wform-h{position:relative;padding-right:36px;font-size:14px;line-height:22px}
+  .fdlg .wform-x{position:absolute;top:-6px;right:-10px}
+  .fdlg > .wform.wflash{animation:wformflash 1.4s ease-out}
+  @container fdlg (max-width:560px){
+    .fdlg .wcols,.fdlg .wcols.c2,.fdlg .wcols.r1{grid-template-columns:minmax(0,1fr)}
+    .fdlg .wform-f .hint{display:none}
+  }
   .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:100;display:flex;align-items:center;gap:16px;max-width:calc(100vw - 32px);min-height:40px;
     background:var(--t1);color:var(--bg);border-radius:10px;padding:8px 16px;font-size:13px;line-height:1.5;box-shadow:var(--pop);animation:toastin .18s ease}
   @keyframes toastin{from{opacity:0;transform:translate(-50%,8px)}to{opacity:1;transform:translate(-50%,0)}}
@@ -831,7 +866,7 @@
     .pl-today-r{grid-template-columns:minmax(0,1fr);gap:4px}
     .pl-today-k{line-height:18px}
     .tstep{grid-template-columns:64px minmax(0,1fr) auto}
-    .tlife{flex-basis:80px}
+    .tgauges{grid-template-columns:auto 64px minmax(0,1fr)}
   }
   @container main (max-width:600px){
     .view{--gutter:16px}
@@ -851,9 +886,7 @@
     .wdate{flex:1 1 100%;min-width:0;order:3}
     .wdate select.inp{flex:1;min-width:0}
     .wrow{grid-template-columns:48px 20px minmax(0,1fr) auto}
-    .wnow{grid-template-columns:48px 20px minmax(0,1fr);background-position:57.5px 0}
     .wrow > .la{flex-direction:column;gap:2px;margin-left:4px}
-    .wprog{max-width:none}
     .tbar .seg{flex:1 1 100%}
     .tbar .seg button{flex:1;min-width:0}
     .tbar .search{flex:1 1 0;min-width:0}
@@ -1076,6 +1109,8 @@
     <div class="btns"><button class="btn" id="mCancel" type="button">取消</button><button class="btn pri" id="mOk" type="button">确定</button></div>
   </div>
 </div>
+<!-- 家里的吃的 / 东西的编辑框：居中弹出来 -->
+<div class="fmodal" id="tmodal" hidden><div class="fdlg" id="tmodalDlg" role="dialog" aria-modal="true"></div></div>
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
 <script>
@@ -1355,7 +1390,7 @@
     world: null, worldErr: "", worldLoading: false, worldDate: "", worldWho: "", worldBusy: "", worldShowLifted: false, worldShowStatus: false,
     wEdit: {}, cEdit: {}, iEdit: {}, rEdit: {}, nEdit: {},
     things: null, thingsErr: "", thingsLoading: false, thingsFilter: "now", thingsQ: "", thingsOpen: {}, thingsVoid: {}, tEdit: {}, thingsFocus: "",
-    thingsCat: "food", objFilter: "now", objQ: "",
+    thingsCat: "food", objFilter: "now", objQ: "", thingsModal: "",
     sch: null, schErr: "", schLoading: false, schBot: store.get("schBot", ""), schDate: ""
   };
 
@@ -1430,10 +1465,10 @@
       var live = (S.things.items || []).filter(function (x) { return !x.ended; });
       var nBad = live.filter(function (x) { return (x.fresh || {}).level === "坏了"; }).length;
       var nHurry = live.filter(function (x) { return (x.fresh || {}).level === "快不行了"; }).length;
-      var nLow = live.filter(function (x) { return x.measured && x.measured.low; }).length;
+      var nLow = live.filter(function (x) { return x.low; }).length;
       tbad = nBad + nHurry > 0;
       tsub = live.length ? live.length + " 件" + (nHurry ? " · " + nHurry + " 件快不行了" : "") + (nBad ? " · " + nBad + " 件坏了" : "")
-        + (nLow ? " · " + nLow + " 样快用完了" : "") : "还没有记着的";
+        + (nLow ? " · " + nLow + " 件余量不多" : "") : "还没有记着的";
     }
     world.appendChild(h("button", {
       class: "nav-item" + (S.view === "things" && S.thingsCat !== "item" ? " on" : ""), type: "button",
@@ -1626,6 +1661,11 @@
       if (!ok) { return; }
       setSideOpen(false);
       closeInsp(true);
+      // 从别处跳到某一段的（openWorldEntry）停在那一段；平常打开回到今天、停在「现在」（先前跳到别的日子的，读完今天的再画）
+      if (!S.worldFocus) {
+        S.worldToNow = true;
+        if (S.world && S.worldDate && S.worldDate !== S.world.today) { S.worldDate = S.world.today; S.world = null; }
+      }
       S.view = "world";
       showView();
       renderWorld();
@@ -1641,6 +1681,7 @@
       if (!ok) { return; }
       setSideOpen(false);
       closeInsp(true);
+      var was = S.view === "things" ? S.thingsCat : "", saved = S.view !== "things" ? S.thingsSaved : null;
       S.view = "things";
       S.thingsCat = cat || (focusId ? (/^p\d/i.test(focusId) ? "item" : "food") : S.thingsCat);
       if (focusId) {
@@ -1655,7 +1696,8 @@
         }
       }
       showView();
-      renderThings();
+      if (!focusId && saved && saved.cat === S.thingsCat) { renderThings({ anchor: saved.a }); }
+      else { renderThings(was !== S.thingsCat ? { toTop: true } : {}); }
       loadThings();
     });
   }
@@ -1670,6 +1712,8 @@
   }
 
   function showView() {
+    // 离开吃的 / 东西页时记下看到哪了（藏起来以后滚动位置会丢），回来时放回去
+    if (S.view !== "things" && !$("thingsView").hidden && S.things) { S.thingsSaved = { cat: S.thingsCat, a: thingsAnchor() }; }
     var isConv = S.view === "conv";
     $("convView").hidden = !isConv;
     // $("sceneView").hidden = S.view !== "scene";
@@ -4265,7 +4309,8 @@
   //   key    以这一项为锚（开 / 关编辑框时就是那一项）；不给就用视口里最上面看得见的那项，重画后放回原来的高度
   //   clamp  锚的高度夹到视口里（关编辑框时框顶可能已经翻到上面去了）
   //   flash  重画后闪一下锚那一项；reveal 让它整个露出来；focus 光标放进第一个输入框
-  //   toTop  回到最上面（换人、换日期、打开运行状态）
+  //   toTop  回到最上面（打开运行状态）
+  //   toNow  今天就停到「现在」那个点（打开世界线、换人、换日期；不是今天回到最上面）；数据还没读到就等读到了再停
   //   loaded 读完数据后的重画：顺带处理存完要停在哪（S.worldFocus）
   function renderWorld(opt) {
     opt = opt || {};
@@ -4276,10 +4321,15 @@
     }
     var toTop = !!(opt.toTop || S.worldToTop);
     S.worldToTop = false;
-    var anchor = S.world && !toTop ? worldAnchor(opt.key || (fx && fx.from) || "", !!(opt.clamp || fx)) : null;
+    if (opt.toNow) { S.worldToNow = true; }
+    var toNow = !!(S.world && S.worldToNow && !fx && !toTop);
+    if (S.world) { S.worldToNow = false; }
+    var anchor = S.world && !toTop && !toNow ? worldAnchor(opt.key || (fx && fx.from) || "", !!(opt.clamp || fx)) : null;
     worldDraw();
     if (!S.world) { return; }
     Array.prototype.forEach.call($("worldBody").querySelectorAll("textarea[data-fit]"), worldFit);
+    worldTick(worldNowMs());
+    if (toNow) { worldScrollToNow(); return; }
     if (toTop) { worldScroller().scrollTop = 0; return; }
     var toKey = fx ? (typeof fx.to === "function" ? fx.to(S.world) : fx.to) || "" : "";
     var el = worldPlace(anchor, toKey);
@@ -4349,7 +4399,7 @@
       var rules = w.key === "master" ? 0 : (d.constraints || []).filter(function (c) { return c.who === w.key && c.status === "active"; }).length;
       seg.appendChild(h("button", { type: "button", class: who === w.key ? "on" : "", onclick: function () {
         if (w.key === S.worldWho || !worldGuard()) { return; }
-        S.worldWho = w.key; renderWorld({ toTop: true });
+        S.worldWho = w.key; renderWorld({ toNow: true });
       } }, w.label, rules ? h("span", { class: "wcount", text: String(rules) }) : null));
     });
     bar.appendChild(seg);
@@ -4360,13 +4410,13 @@
     dates.forEach(function (x) { dsel.appendChild(h("option", { value: x, text: x + (x === d.today ? "（今天）" : ""), selected: x === d.date })); });
     dsel.addEventListener("change", function () {
       if (!worldGuard()) { dsel.value = d.date; return; }
-      S.worldDate = dsel.value; S.worldToTop = true; loadWorld();
+      S.worldDate = dsel.value; S.worldToNow = true; loadWorld();
     });
     var at = dates.indexOf(d.date);
     var older = at >= 0 && at < dates.length - 1 ? dates[at + 1] : "", newer = at > 0 ? dates[at - 1] : "";
     function goDay(x) {
       if (!x || !worldGuard()) { return; }
-      S.worldDate = x; S.worldToTop = true; loadWorld();
+      S.worldDate = x; S.worldToNow = true; loadWorld();
     }
     bar.appendChild(h("div", { class: "wdate" },
       h("button", { class: "btn ibtn sm", type: "button", title: older ? "前一天（" + older + "）" : "没有更早的了", disabled: !older, onclick: function () { goDay(older); } }, icon("left")),
@@ -4548,16 +4598,27 @@
       card.appendChild(h("div", { class: "muted", style: "font-size:13px", text: "这一天还没有记录。" }));
     } else {
       var rows = h("div", { class: "lrows" });
-      // 今天：接下来的（还没开始的）在上面，下面是正在做的和已经发生的，中间画一条「现在」
-      var sawFuture = false, placedNow = day.date !== d.today;
-      list.slice().reverse().forEach(function (e) {
-        var future = !(d.current && d.current[e.who] === e.id) && String(e.start || "").slice(0, 16) > String(d.now || "").slice(0, 16);
-        if (future) { sawFuture = true; }
-        else if (!placedNow) {
-          placedNow = true;
-          if (sawFuture) { rows.appendChild(h("div", { class: "wnow" }, h("span", { class: "wnow-t", text: "现在" }))); }
+      // 从早到晚往下排；今天的「现在」落在最后一段已经开始的里面（正在做的那段，或者刚做完、下一段还没开始的那段）。
+      // 顺带的事挂在它发生时正在做的那段下面（那段开始以后、结束以前），不另算一站：「现在」不落在它上面，
+      // 正在做的那段下面挂着的已经发生的顺带事，线照那段剩下的画成虚线（tail）
+      list = list.slice().sort(function (a, b) { return String(a.start || "").localeCompare(String(b.start || "")); });
+      var now = worldNowMs(), today = day.date === d.today, nowAt = -1, parent = -1, owner = [];
+      list.forEach(function (e, i) {
+        var a = worldMs(e.start);
+        owner[i] = -1;
+        if (e.kind === "event" && parent >= 0) {
+          var pa = worldMs(list[parent].start), pb = worldMs(list[parent].end);
+          if (a !== null && pa !== null && a >= pa && (pb === null || a < pb)) { owner[i] = parent; }
         }
-        rows.appendChild(S.wEdit[e.id] ? worldEntryForm(d, e) : worldEntryRow(d, e, day.date));
+        if (e.kind !== "event") { parent = i; }
+        if (today && a !== null && a <= now && owner[i] < 0) { nowAt = i; }
+      });
+      list.forEach(function (e, i) {
+        var where = "";
+        if (i === nowAt) { where = "now"; }
+        else if (today && i > nowAt) { where = owner[i] >= 0 && owner[i] <= nowAt && (worldMs(e.start) || 0) <= now ? "tail" : "future"; }
+        var next = i === nowAt ? list.slice(i + 1).filter(function (x) { return x.kind !== "event"; })[0] || null : null;
+        rows.appendChild(S.wEdit[e.id] ? worldEntryForm(d, e) : worldEntryRow(d, e, day.date, where, next));
       });
       card.appendChild(rows);
     }
@@ -4592,26 +4653,83 @@
     for (var i = 0; i < mins.length; i++) { left -= mins[i]; if (left < 0) { return i; } }
     return n - 1;
   }
-  // 进度条：有分步时走正在做的那一步（做到几成、几点做完），没分步走整段。
-  // 分步的起止按分钟比例（没分钟按步数平分）摊在整段上，和 worldStepIndex 同一个算法。
-  function worldProg(el, now) {
-    var a = +el.getAttribute("data-a"), b = +el.getAttribute("data-b");
-    if (!(b > a)) { return null; }
-    var pct = Math.max(0, Math.min(100, (now - a) / (b - a) * 100));
-    var n = +el.getAttribute("data-n") || 0, width = pct;
-    var text = Math.floor(pct) + "% · 预计 " + el.getAttribute("data-end") + " 做完";
-    if (n > 0) {
-      var dm = el.getAttribute("data-m"), mins = dm ? dm.split(",").map(Number) : null;
-      var at = worldStepIndex(n, pct, mins);
+  // 正在做的那段此刻做到哪：整段几成、正在做哪一步、这一步做到几成（分步的起止按分钟比例摊在整段上，没分钟按步数平分，
+  // 和 worldStepIndex 同一个算法）；顺带把分步标上做完 / 正在做，把「还剩几分钟」写进「进行中」那个标签。没写结束的 pct 是 null
+  function worldGoing(row, now) {
+    var a = +row.getAttribute("data-a"), b = +row.getAttribute("data-b");
+    var out = { pct: null, li: null, frac: 1 };
+    if (!(a > 0 && b > a)) { return out; }
+    out.pct = Math.max(0, Math.min(100, (now - a) / (b - a) * 100));
+    out.frac = out.pct / 100;
+    var list = row.querySelector(".wsteps");
+    if (list && list.children.length) {
+      var n = list.children.length, dm = list.getAttribute("data-m"), mins = dm ? dm.split(",").map(Number) : null;
+      var at = worldStepIndex(n, out.pct, mins);
+      Array.prototype.forEach.call(list.children, function (li, i) { li.className = i < at ? "done" : i === at ? "now" : ""; });
       var total = mins ? mins.reduce(function (x, y) { return x + y; }, 0) : n;
       var done = mins ? mins.slice(0, at).reduce(function (x, y) { return x + y; }, 0) : at;
       var s0 = a + (b - a) * done / total, s1 = a + (b - a) * (done + (mins ? mins[at] : 1)) / total;
-      width = s1 > s0 ? Math.max(0, Math.min(100, (now - s0) / (s1 - s0) * 100)) : 100;
-      text = Math.floor(width) + "% · 预计 " + new Date(s1).toISOString().slice(11, 16) + " 做完";
+      out.li = list.children[at];
+      out.frac = s1 > s0 ? Math.max(0, Math.min(1, (now - s0) / (s1 - s0))) : 1;
     }
-    el.querySelector(".wprog-bar").style.width = width.toFixed(2) + "%";
-    el.querySelector(".wprog-t").textContent = text;
-    return pct;
+    var tag = row.querySelector(".wleft");
+    if (tag) {
+      var m = Math.ceil((b - now) / 60000);
+      tag.textContent = "进行中 · " + (m <= 0 ? "到点了" : m < 60 ? "还剩 " + m + " 分钟"
+        : "还剩 " + Math.floor(m / 60) + " 小时" + (m % 60 ? " " + (m % 60) + " 分钟" : ""));
+    }
+    return out;
+  }
+
+  // 「现在」那个点放到这一段的哪儿：正在做的跟着正在做的那一步（这一步做到几成，就从它第一行往最后一行走几成）；
+  // 没分步就按整段的几成走过「在做什么」那几行；没写结束、或者这段已经做完了（这会儿没在做什么），停在这一段最后
+  function worldNowPlace(row, now) {
+    var node = row.querySelector(".wnode");
+    if (!node) { return; }
+    var g = row.classList.contains("going") ? worldGoing(row, now) : { pct: null, li: null, frac: 1 };
+    var target = g.li || (g.pct !== null ? row.querySelector(".wdo") || row.querySelector(".wrow-h") : row.querySelector(".lt"));
+    if (!target) { return; }
+    var nr = node.getBoundingClientRect(), tr = target.getBoundingClientRect(), half = 10;
+    var y0 = tr.top + half, y1 = Math.max(y0, tr.bottom - half);
+    var wf = Math.max(0, y0 + (y1 - y0) * g.frac - nr.top - 11);
+    node.style.setProperty("--wf", wf.toFixed(1) + "px");
+    // 左边那一列在点的高度写「现在」；跟这一段的起止时间挤在一起就不写
+    var label = row.querySelector(".wnowt"), time = row.querySelector(".wtime");
+    if (label) {
+      var rr = row.getBoundingClientRect(), y = nr.top - rr.top + 11 + wf;
+      label.style.top = y.toFixed(1) + "px";
+      label.style.visibility = time && y - 9 < time.getBoundingClientRect().bottom - rr.top + 4 ? "hidden" : "visible";
+    }
+  }
+
+  // 每秒走一次：正在做的那几段标分步、写还剩多少；「现在」的点挪到位；一天条带上的那根线也挪。返回正在做的有没有到点
+  function worldTick(now) {
+    var body = $("worldBody"), due = false;
+    Array.prototype.forEach.call(body.querySelectorAll(".wrow.going:not(.wnowin)"), function (row) {
+      var g = worldGoing(row, now);
+      if (g.pct !== null && g.pct >= 100) { due = true; }
+    });
+    Array.prototype.forEach.call(body.querySelectorAll(".wrow.wnowin"), function (row) {
+      worldNowPlace(row, now);
+      var b = +row.getAttribute("data-b");
+      if (row.classList.contains("going") && b > 0 && now >= b) { due = true; }
+    });
+    // 下一段已经到点开始了（这会儿没在做什么的时候没人会喊重读）
+    var next = body.querySelector(".wrow.wfuture");
+    if (next && +next.getAttribute("data-a") > 0 && now >= +next.getAttribute("data-a")) { due = true; }
+    Array.prototype.forEach.call(body.querySelectorAll(".wday-now"), function (el) {
+      var t0 = +el.getAttribute("data-t0");
+      if (t0) { el.style.left = Math.max(0, Math.min(100, (now - t0) / 864000)).toFixed(3) + "%"; }
+    });
+    return due;
+  }
+
+  // 今天：把「现在」那个点挪到视口偏上的地方（打开世界线、换人、换日期时）；没有这个点（不是今天）回到最上面
+  function worldScrollToNow() {
+    var sc = worldScroller();
+    var dot = $("worldBody").querySelector(".wrow.wnowin .wnowdot");
+    if (!dot) { sc.scrollTop = 0; return; }
+    sc.scrollTop = Math.max(0, sc.scrollTop + dot.getBoundingClientRect().top - sc.getBoundingClientRect().top - sc.clientHeight * 0.38);
   }
 
   // 停下（没做完）的段：显示口径和给模型的一致（接口给的 doing_shown 就是给模型看的那句）；
@@ -4640,27 +4758,23 @@
     return box;
   }
 
-  function worldProgBar(e) {
-    var mins = worldStepMins(e);
-    var el = h("div", { class: "wprog", "data-a": String(worldMs(e.start)), "data-b": String(worldMs(e.end)), "data-end": String(e.end).slice(11, 16),
-      "data-n": String((e.steps || []).length), "data-m": mins ? mins.join(",") : "" },
-      h("div", { class: "wprog-track" }, h("div", { class: "wprog-bar" })),
-      h("span", { class: "wprog-t" }));
-    worldProg(el, worldNowMs());
-    return el;
-  }
-
-  function worldEntryRow(d, e, date) {
+  // where：now = 「现在」落在这一段里（今天最后一段已经开始的），future = 还没开始，
+  //        tail = 挂在「现在」那段下面、已经发生的顺带事（线照那段剩下的画虚线），空 = 已经开始过了
+  // next：「现在」落在这一段、这段又已经做完了的时候，下一段（写一句这会儿空着）
+  function worldEntryRow(d, e, date, where, next) {
     var going = !!(d.current && d.current[e.who] === e.id);
-    var future = !going && String(e.start || "").slice(0, 16) > String(d.now || "").slice(0, 16);
+    var future = !going && where === "future";
     var isEvent = e.kind === "event";
-    var pct = going && !e.idle ? worldPct(e) : null;
+    var pct = going ? worldPct(e) : null;
     var cat = e.sleep ? "s" : e.idle ? "i" : e.meal ? "m" : e.at_home === false ? "o" : "d";
-    var row = h("div", { class: "lrow wrow" + (future ? " wfuture" : "") + (going ? " going" : "") + (isEvent ? " wevent" : ""), "data-wk": "e:" + e.id });
+    var row = h("div", { class: "lrow wrow" + (future ? " wfuture" : "") + (going ? " going" : "") + (isEvent ? " wevent" : "") +
+      (where === "now" ? " wnowin" : where === "tail" ? " wtail" : ""),
+      "data-wk": "e:" + e.id, "data-a": String(worldMs(e.start) || ""), "data-b": String(worldMs(e.end) || "") });
     var sp = worldSpanParts(e, date);
     row.appendChild(h("div", { class: "wtime", title: worldSpan(e, date) },
       h("span", { class: "w0", text: sp.t0 }), sp.t1 ? h("span", { class: "w1", text: sp.t1 }) : null, sp.d ? h("span", { class: "wd", text: sp.d }) : null));
-    row.appendChild(h("span", { class: "wnode wn-" + cat, "aria-hidden": "true" }));
+    row.appendChild(h("span", { class: "wnode wn-" + cat, "aria-hidden": "true" }, where === "now" ? h("i", { class: "wnowdot" }) : null));
+    if (where === "now") { row.appendChild(h("span", { class: "wnowt", "aria-hidden": "true", text: "现在" })); }
     var seen = (e.seen_by || []).filter(function (x) { return x !== e.who && (x === "master" || (d.bots || []).some(function (b) { return b.key === x; })); })
       .map(function (x) { return worldLabel(d, x); });
     var withs = (e["with"] || []).map(function (x) { return worldLabel(d, x); });
@@ -4668,7 +4782,7 @@
     row.appendChild(h("div", { class: "lt" },
       h("div", { class: "wrow-h" },
         e.place ? h("span", { class: "what", text: e.place }) : null,
-        going ? h("span", { class: "tag acc", text: "进行中" }) : null,
+        going ? h("span", { class: "tag acc" + (e.end && !e.idle ? " wleft" : ""), text: "进行中" }) : null,
         future ? h("span", { class: "tag", text: "接下来" }) : null,
         isEvent ? h("span", { class: "tag", text: "顺带" }) : null,
         e.idle ? h("span", { class: "tag", text: "闲着" }) : null,
@@ -4680,7 +4794,6 @@
       e.doing ? h("div", { class: "wdo", text: worldDoingText(e) }) : null,
       worldSteps(e, pct),
       (!(e.stop_shown !== undefined ? e.stop_shown : e.stopped) && e.result) ? h("div", { class: "wres", text: "结果：" + e.result }) : null,
-      pct !== null ? worldProgBar(e) : null,
       worldThings(d, e, null),
       h("div", { class: "lm" },
         h("span", { class: "tag" + (e.source === "manual" ? " acc" : ""), text: WORLD_SRC[e.source] || e.source || "" }),
@@ -4689,7 +4802,9 @@
         seen.length ? h("span", { text: "细节也给：" + seen.join("、") }) : null,
         /^#?\d+$/.test(String(e.training || "").trim()) ? h("span", { class: "tag", text: "在练 #" + String(e.training).trim().replace(/^#/, "") }) : null,
         worldOrigin(e),
-        e.src_quote ? h("span", { text: "原话：" + e.src_quote }) : null)));
+        e.src_quote ? h("span", { text: "原话：" + e.src_quote }) : null),
+      where === "now" && !going && e.end ? h("div", { class: "wgap",
+        text: next ? "这会儿空着，下一段 " + String(next.start || "").slice(11, 16) + " 开始" : "这段做完了，接下来的还没排" }) : null));
     var acts = h("div", { class: "la" });
     var edit = h("button", { class: "btn quiet sm", type: "button", title: "编辑" }, icon("edit"));
     edit.addEventListener("click", function () {
@@ -5074,26 +5189,12 @@
     return card;
   }
 
-  // 进度条在前端自己走（每秒算一次，不请求服务器）。只有两种时候重读一次：
-  // 正在做的那段到 100% 了（下一段该接上了），或者过了「下次补写」的时刻（新的段写好了）
+  // 「现在」的点和分步在前端自己走（每秒算一次，不请求服务器）。只有两种时候重读一次：
+  // 正在做的那段到点了（下一段该接上了），或者过了「下次补写」的时刻（新的段写好了）
   setInterval(function () {
     if (S.view !== "world" || document.hidden || !S.world) { return; }
-    var now = worldNowMs(), done = false;
-    Array.prototype.forEach.call(document.querySelectorAll("#worldBody .wprog"), function (el) {
-      var pct = worldProg(el, now);
-      if (pct === null) { return; }
-      var list = el.parentNode.querySelector(".wsteps");
-      if (list) {
-        var dm = list.getAttribute("data-m");
-        var at = worldStepIndex(list.children.length, pct, dm ? dm.split(",").map(Number) : null);
-        Array.prototype.forEach.call(list.children, function (li, i) { li.className = i < at ? "done" : i === at ? "now" : ""; });
-      }
-      if (pct >= 100) { done = true; }
-    });
-    Array.prototype.forEach.call(document.querySelectorAll("#worldBody .wday-now"), function (el) {
-      var t0 = +el.getAttribute("data-t0");
-      if (t0) { el.style.left = Math.max(0, Math.min(100, (now - t0) / 864000)).toFixed(3) + "%"; }
-    });
+    var now = worldNowMs();
+    var done = worldTick(now);
     var next = worldMs((S.world.status || {}).next_step);
     var stepDue = next !== null && now > next + 90000 && S.worldLoadedAt + (S.worldOffset || 0) < next + 90000;
     var quiet = Date.now() - (S.worldLoadedAt || 0) > 60000;
@@ -5119,10 +5220,40 @@
   var T_MAP = "tEdit";
 
   function thingTone(it) { return it.ended ? "gone" : (THING_TONE[(it.fresh || {}).level] || "ok"); }
+  // 排在前面的：坏了 > 快不行了、余量不多 > 还行 > 还新鲜 > 活养着；没了的最后
   function thingRank(it) {
     if (it.ended) { return 9; }
     var r = THING_RANK[(it.fresh || {}).level];
-    return r === undefined ? 3 : r;
+    if (r === undefined) { r = 3; }
+    return it.low ? Math.min(r, 1) : r;
+  }
+  // 左边那个点：新鲜度和余量里更要紧的那个
+  function thingDot(it) {
+    var tone = thingTone(it);
+    return it.low && (tone === "ok" || tone === "acc") ? "warn" : tone;
+  }
+  // 一根条：左边名字，中间条（share 是 0–1，null = 说不准，画成斜纹），右边字
+  function thingGauge(label, share, tone, text, title) {
+    var known = share !== null && share !== undefined;
+    return h("div", { class: "tgauge " + tone },
+      h("span", { class: "tg-l", text: label }),
+      h("span", { class: "tg-t" + (known ? "" : " unk"), title: title || null },
+        known ? h("i", { style: "width:" + (Math.max(0, Math.min(1, share)) * 100).toFixed(1) + "%" }) : null),
+      h("span", { class: "tg-x", text: text }));
+  }
+  // 两根条：保鲜（还能放多久，越放越短）和余量（还剩一开始的几成，越吃越短）
+  function thingGauges(it) {
+    var f = it.fresh || {}, live = f.level === "活养着";
+    var keep = live ? 1 : Math.max(0, 1 - (+f.x || 0));
+    var left = String(it.left || "").replace(/，快用完了$/, "");
+    var m = it.measured;
+    return h("div", { class: "tgauges" },
+      thingGauge("保鲜", keep, live ? "acc" : thingTone(it), f.text || "",
+        live ? "活养着，不算放了多久" : "已经放了相当于能放多久的 " + Math.round((+f.x || 0) * 100) + "%"),
+      thingGauge("余量", it.share, it.low ? "warn" : "acc", left,
+        it.share === null || it.share === undefined ? "吃过、用过，没说剩多少"
+          : (m ? "对着" + (m.pack ? "一包 " + m.pack + " " + m.unit + "（买来不止一包就对着买来的那么多）" : "买来的那么多") : "对着一开始的那么多")
+            + "还剩 " + Math.round(it.share * 100) + "%"));
   }
   function thingFind(id) {
     return ((S.things && S.things.items) || []).filter(function (x) { return x.id === id; })[0] || null;
@@ -5152,6 +5283,7 @@
     return post("ctx/things/edit", body).then(function (r) {
       if (r && r.ok === false) { toast("没改成：" + (r.why || "不知道为什么"), { err: true }); return; }
       if (done) { done(); }
+      if (S.thingsModal && !S.tEdit[S.thingsModal]) { thingHideForm(); }
       if (okMsg) { toast(okMsg); }
       var id = focusId || (r && r.id) || "";
       if (id) { S.thingsOpen[id] = true; S.thingsFocus = id; }
@@ -5161,26 +5293,105 @@
     });
   }
 
-  /* ---------- 编辑框：同一时间只开一个（改过没存的先提醒） ---------- */
+  /* ---------- 编辑框：居中弹出来，同一时间只开一个（改过没存的先提醒）；列表在后面不动 ---------- */
   function thingGuard(except) {
     var dirty = Object.keys(S.tEdit).filter(function (k) { return k !== except && worldDirty(S.tEdit[k]); })[0];
     if (dirty) {
       toast("先保存或取消正在改的那一项", { err: true });
-      var el = $("thingsBody").querySelector('[data-tf="' + dirty + '"]');
-      if (el) { el.scrollIntoView({ behavior: "smooth", block: "nearest" }); worldFlash(el); }
+      var el = $("tmodalDlg").querySelector(".wform");
+      if (el) { worldFlash(el); }
       return false;
     }
     Object.keys(S.tEdit).forEach(function (k) { if (k !== except) { delete S.tEdit[k]; } });
+    if (S.thingsModal && S.thingsModal !== except) { thingHideForm(); }
     return true;
   }
   function thingOpenForm(key, f) {
     if (!thingGuard(key)) { return; }
     S.tEdit[key] = worldDraft(f);
-    renderThings({ form: key });
+    thingShowForm(key);
   }
   function thingCloseForm(key) {
     delete S.tEdit[key];
-    renderThings();
+    thingHideForm();
+  }
+  // 编辑框的 key：new / onew 加一件，s: / os: 加一步，e: / oe: 改某一步（带第几步），i: / oi: 改名字（o 开头的是吃的以外的东西）
+  function thingFormFor(key) {
+    if (key === "new") { return thingNewForm(S.things); }
+    if (key === "onew") { return objNewForm(S.things); }
+    var p = key.split(":"), obj = p[0].charAt(0) === "o", it = obj ? objFind(p[1]) : thingFind(p[1]);
+    if (!it) { return null; }
+    var kind = obj ? p[0].slice(1) : p[0];
+    if (kind === "s") { return obj ? objStageForm(it, null) : thingStageForm(it, null); }
+    if (kind === "i") { return obj ? objItemForm(it) : thingItemForm(it); }
+    var st = it.stages.filter(function (x) { return String(x.idx) === p[2]; })[0];
+    if (kind === "e" && st) { return obj ? objStageForm(it, st) : thingStageForm(it, st); }
+    return null;
+  }
+  function thingShowForm(key) {
+    var box = thingFormFor(key);
+    if (!box) { delete S.tEdit[key]; toast("这一件找不到了，可能刚被改过", { err: true }); return; }
+    var head = box.querySelector(".wform-h");
+    if (head) { head.appendChild(h("button", { class: "btn quiet sm wform-x", type: "button", title: "关掉（Esc）", onclick: thingTryClose }, icon("x"))); }
+    var dlg = clear($("tmodalDlg"));
+    dlg.appendChild(box);
+    $("tmodal").hidden = false;
+    S.thingsModal = key;
+    Array.prototype.forEach.call(dlg.querySelectorAll("textarea[data-fit]"), worldFit);
+    var first = box.querySelector("input, textarea, select");
+    if (first && !window.matchMedia("(hover: none)").matches) { try { first.focus({ preventScroll: true }); } catch (e) { /* 忽略 */ } }
+  }
+  function thingHideForm() {
+    $("tmodal").hidden = true;
+    clear($("tmodalDlg"));
+    S.thingsModal = "";
+  }
+  // 点外面、Esc、右上角的叉：改过的先问一句
+  function thingTryClose() {
+    var key = S.thingsModal;
+    if (!key) { return; }
+    if (!worldDirty(S.tEdit[key])) { thingCloseForm(key); return; }
+    confirmDlg({ title: "放弃这次修改？", body: "改的内容还没保存。", ok: "放弃修改", danger: true }).then(function (ok) { if (ok) { thingCloseForm(key); } });
+  }
+  // 按下和松开都在外面的灰底上才算点了外面（从输入框里拖选文字拖到外面不算）
+  var tmodalDown = null;
+  $("tmodal").addEventListener("mousedown", function (ev) { tmodalDown = ev.target; });
+  $("tmodal").addEventListener("click", function (ev) {
+    if (ev.target === $("tmodal") && tmodalDown === $("tmodal")) { thingTryClose(); }
+    tmodalDown = null;
+  });
+
+  /* ---------- 重画时保住位置 ---------- */
+  function thingsScroller() { return $("thingsBody").parentNode; }
+  // 重画前记下视口里最上面那一件在哪，重画后放回原来的高度；列表变了找不到它，就停在原来的滚动位置；停在最顶上不记
+  function thingsAnchor() {
+    var sc = thingsScroller(), top0 = sc.getBoundingClientRect().top;
+    if (sc.scrollTop < 2) { return null; }
+    var rows = $("thingsBody").querySelectorAll("[data-tk]");
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i].getBoundingClientRect();
+      if (r.bottom > top0 + 4) { return { key: rows[i].getAttribute("data-tk"), top: r.top - top0, y: sc.scrollTop }; }
+    }
+    return { key: "", top: 0, y: sc.scrollTop };
+  }
+  function thingsPlace(a) {
+    if (!a) { return; }
+    var sc = thingsScroller();
+    var el = a.key ? $("thingsBody").querySelector('[data-tk="' + a.key + '"]') : null;
+    if (el) { sc.scrollTop += el.getBoundingClientRect().top - sc.getBoundingClientRect().top - a.top; }
+    else { sc.scrollTop = a.y; }
+  }
+  // 只换这一件那一行（展开 / 收起每一步、看作废的几步）：别的不动，页面不跳；收起后行头翻到上面去了就带回来
+  function thingRedraw(id) {
+    var obj = S.thingsCat === "item", it = obj ? objFind(id) : thingFind(id);
+    var old = it ? $("thingsBody").querySelector('[data-tk="t:' + it.id + '"]') : null;
+    if (!old) { renderThings(); return; }
+    var sc = thingsScroller(), y = sc.scrollTop;
+    var row = obj ? objRow(it) : thingRow(it);
+    old.parentNode.replaceChild(row, old);
+    if (Math.abs(sc.scrollTop - y) > 1) { sc.scrollTop = y; }
+    var top0 = sc.getBoundingClientRect().top, r = row.getBoundingClientRect();
+    if (r.top < top0) { sc.scrollTop += r.top - top0 - 8; }
   }
 
   /* ---------- 整页 ---------- */
@@ -5194,10 +5405,13 @@
     }
   }
 
+  // 整页重画。opt.toTop：回到最上面（换到吃的 / 东西时）；opt.anchor：放回离开前记下的位置；
+  // 都不给就停在原来的位置（按视口里最上面那一件对）
   function renderThings(opt) {
     if (S.thingsCat === "item") { return renderObjects(opt); }
     thingsHead("家里的吃的", "bowl");
     opt = opt || {};
+    var anchor = opt.toTop ? null : opt.anchor !== undefined ? opt.anchor : thingsAnchor();
     var box = clear($("thingsBody"));
     var d = S.things;
     if (!d) {
@@ -5237,34 +5451,32 @@
     var nHurry = live.filter(function (x) { return x.fresh.level === "快不行了"; }).length;
     var nBad = live.filter(function (x) { return x.fresh.level === "坏了"; }).length;
     var nVirt = live.filter(function (x) { return x.virtual; }).length;
-    var nLow = live.filter(function (x) { return x.measured && x.measured.low; }).length;
+    var nLow = live.filter(function (x) { return x.low; }).length;
     var sum = h("div", { class: "tsum" });
     if (nHurry) { sum.appendChild(h("span", { class: "tag warn", text: "快不行了 " + nHurry })); }
-    if (nLow) { sum.appendChild(h("span", { class: "tag warn", title: "米面油盐、调料这些按量记的，剩得不多了，该买了", text: "快用完了 " + nLow })); }
+    if (nLow) { sum.appendChild(h("span", { class: "tag warn", title: "米面油盐、调料快用完了的（该买了），和剩得不多的", text: "余量不多 " + nLow })); }
     if (nBad) { sum.appendChild(h("span", { class: "tag bad", title: "按时间算已经坏了，聊天里还没说扔", text: "按时间算坏了 " + nBad })); }
     if (nVirt) { sum.appendChild(h("span", { class: "tag acc", title: "世界线里做完的段标的，每次现算；聊天里说到或在这里改它时才存下来", text: "世界线现算 " + nVirt })); }
-    sum.appendChild(h("span", { text: "新鲜度按每一步的放法、切没切、当天天气和钟点现算；米面油盐、调料干货、腌菜按克 / 毫升记，用一次扣一次；世界线里做完满 " + d.settle_days + " 天的段会沉进存货" }));
+    sum.appendChild(h("span", { text: "保鲜：还能放多久，按每一步的放法、切没切、当天天气和钟点现算。余量：还剩一开始的几成，米面油盐、调料干货、腌菜按克 / 毫升记、用一次扣一次。快不行了、余量不多的排在前面；世界线里做完满 " + d.settle_days + " 天的段会沉进存货" }));
     box.appendChild(sum);
-    if (S.tEdit["new"]) {
-      box.appendChild(h("div", { class: "tlist", style: "margin-bottom:16px" }, thingNewForm(d)));
-    }
     box.appendChild(h("div", { class: "tlist" }, h("div", { class: "pc", id: "thingsList" })));
     drawThingList();
-    var focusEl = null;
+    thingsAfterDraw(anchor, opt);
+  }
+
+  // 画完以后：放回原来的位置；有要跳到的那一件就把它露出来、闪一下
+  function thingsAfterDraw(anchor, opt) {
+    if (opt.toTop) { thingsScroller().scrollTop = 0; } else { thingsPlace(anchor); }
     if (S.thingsFocus) {
-      focusEl = $("thingsBody").querySelector('[data-tk="t:' + S.thingsFocus + '"]');
+      var focusEl = $("thingsBody").querySelector('[data-tk="t:' + S.thingsFocus + '"]');
       S.thingsFocus = "";
-      if (focusEl) { focusEl.scrollIntoView({ block: "nearest" }); worldFlash(focusEl); }
-    }
-    if (opt.form) {
-      var fe = $("thingsBody").querySelector('[data-tf="' + opt.form + '"]');
-      if (fe) {
-        fe.scrollIntoView({ block: "nearest" });
-        var first = fe.querySelector("input, textarea, select");
-        if (first && !window.matchMedia("(hover: none)").matches) { try { first.focus({ preventScroll: true }); } catch (e) { /* 忽略 */ } }
+      if (focusEl) {
+        // 没整个露出来：把行头放到视口上面一点的地方
+        var sc = thingsScroller(), top0 = sc.getBoundingClientRect().top, r = focusEl.getBoundingClientRect();
+        if (r.top < top0 + 8 || r.bottom > top0 + sc.clientHeight - 8) { sc.scrollTop += r.top - top0 - Math.min(sc.clientHeight * 0.2, 120); }
+        worldFlash(focusEl);
       }
     }
-    Array.prototype.forEach.call($("thingsBody").querySelectorAll("textarea[data-fit]"), worldFit);
   }
 
   function drawThingList() {
@@ -5304,18 +5516,20 @@
     var obj = objFind(id);
     if (obj) {
       if (!thingGuard()) { return; }
+      var toObj = S.thingsCat !== "item";
       S.thingsCat = "item";
       if ((S.objFilter === "now" && obj.ended) || (S.objFilter === "gone" && !obj.ended)) { S.objFilter = "all"; }
       if (S.objQ) { S.objQ = ""; }
       S.thingsOpen[id] = true;
       S.thingsFocus = id;
       renderSide();
-      renderThings();
+      renderThings(toObj ? { toTop: true } : {});
       return;
     }
     var it = thingFind(id);
     if (!it) { toast("没有 " + id + " 这一件", { err: true }); return; }
-    if (S.thingsCat !== "food") {
+    var switched = S.thingsCat !== "food";
+    if (switched) {
       if (!thingGuard()) { return; }
       S.thingsCat = "food";
       renderSide();
@@ -5324,14 +5538,14 @@
     if (S.thingsQ) { S.thingsQ = ""; }
     S.thingsOpen[id] = true;
     S.thingsFocus = id;
-    renderThings();
+    renderThings(switched ? { toTop: true } : {});
   }
 
   function thingRow(it) {
     var open = !!S.thingsOpen[it.id];
     var tone = thingTone(it);
     var row = h("div", { class: "trow", "data-tk": "t:" + it.id });
-    row.appendChild(h("span", { class: "tdot " + tone, title: it.ended ? "没了" : it.fresh.level }));
+    row.appendChild(h("span", { class: "tdot " + thingDot(it), title: it.ended ? "没了" : it.fresh.level + (it.low ? "，余量不多" : "") }));
     var main = h("div", { class: "tmain" });
     main.appendChild(h("div", { class: "thead" },
       h("span", { class: "tid", text: it.id }),
@@ -5340,12 +5554,8 @@
       it.measured && it.measured.low && !it.ended ? h("span", { class: "tag warn", title: "剩得不多了，该买了", text: "快用完了" }) : null,
       it.virtual ? h("span", { class: "tag acc", title: "世界线里做完的段标的，每次现算；聊天里说到、或在这里改它时才存下来", text: "世界线现算" }) : null));
     var where = [it.place, it.keep, it.state && it.state !== "整的" ? it.state : ""].filter(Boolean).join("，");
-    if (!it.ended) { main.appendChild(h("div", { class: "tmeta", text: [it.left, where].filter(Boolean).join(" · ") })); }
-    var x = Math.max(0, Math.min(1, +it.fresh.x || 0));
-    main.appendChild(h("div", { class: "tfresh " + tone },
-      it.ended || it.fresh.level === "活养着" ? h("span", { class: "tlife none", "aria-hidden": "true" }) : h("span", { class: "tlife " + tone, title: "放了相当于能放多久的 " + Math.round((+it.fresh.x || 0) * 100) + "%" },
-        h("i", { style: "width:" + (x * 100).toFixed(1) + "%" })),
-      h("span", { text: it.fresh.text })));
+    if (!it.ended && where) { main.appendChild(h("div", { class: "tmeta", text: where })); }
+    main.appendChild(it.ended ? h("div", { class: "tfresh " + tone, text: it.fresh.text }) : thingGauges(it));
     var first = it.stages[0] || {};
     var line = h("div", { class: "tfrom" },
       h("span", { text: String(first.at || "").slice(5, 16) + " " + (first.by_label || "") + (first.what || "") + (it.origin ? "（" + it.origin + "）" : "") }));
@@ -5361,13 +5571,8 @@
     if (open) { main.appendChild(thingDetail(it)); }
     row.appendChild(main);
     row.appendChild(h("div", { class: "tacts" }, h("button", { class: "btn quiet sm", type: "button", onclick: function () {
-      if (S.thingsOpen[it.id]) {
-        var keys = Object.keys(S.tEdit).filter(function (k) { return k.split(":")[1] === it.id; });
-        if (keys.some(function (k) { return worldDirty(S.tEdit[k]); })) { toast("先保存或取消正在改的那一项", { err: true }); return; }
-        keys.forEach(function (k) { delete S.tEdit[k]; });
-        delete S.thingsOpen[it.id];
-      } else { S.thingsOpen[it.id] = true; }
-      renderThings();
+      if (S.thingsOpen[it.id]) { delete S.thingsOpen[it.id]; } else { S.thingsOpen[it.id] = true; }
+      thingRedraw(it.id);
     } }, open ? "收起" : "每一步")));
     return row;
   }
@@ -5438,16 +5643,12 @@
       box.appendChild(h("div", { class: "muted", style: "font-size:12.5px", text: "这件是世界线里做完的段标出来的，每次现算。在这里加一步、改名字会先把它存下来，之后的步照旧从世界线里算；世界线里那段被撤、停在半路或被改掉，它也跟着变。" }));
     }
     var list = h("ol", { class: "tsteps" });
-    it.stages.forEach(function (st) {
-      var key = "e:" + it.id + ":" + st.idx;
-      list.appendChild(st.idx !== null && st.idx !== undefined && S.tEdit[key]
-        ? h("li", null, thingStageForm(it, st)) : thingStageRow(it, st));
-    });
+    it.stages.forEach(function (st) { list.appendChild(thingStageRow(it, st)); });
     box.appendChild(list);
     if (it.voided.length) {
       var open = !!S.thingsVoid[it.id];
       box.appendChild(h("button", { class: "tlink", type: "button", style: "align-self:flex-start", onclick: function () {
-        S.thingsVoid[it.id] = !open; renderThings();
+        S.thingsVoid[it.id] = !open; thingRedraw(it.id);
       } }, open ? "收起作废的" : "作废的 " + it.voided.length + " 步"));
       if (open) {
         var vl = h("ol", { class: "tsteps" });
@@ -5455,21 +5656,17 @@
         box.appendChild(vl);
       }
     }
-    if (S.tEdit["s:" + it.id]) { box.appendChild(thingStageForm(it, null)); }
-    if (S.tEdit["i:" + it.id]) { box.appendChild(thingItemForm(it)); }
     var foot = h("div", { class: "tfoot" });
-    if (!it.ended && !S.tEdit["s:" + it.id]) {
+    if (!it.ended) {
       foot.appendChild(h("button", { class: "btn sm", type: "button", onclick: function () {
-        thingOpenForm("s:" + it.id, { what: it.measured ? "用掉一部分" : S.things.steps.mid[S.things.steps.mid.length - 1],
+        thingOpenForm("s:" + it.id, { what: it.measured ? "用掉一部分" : "吃了一部分",
           at: String(S.things.now || "").slice(0, 16), left: "", amount: "", used: "",
           place: "", keep: "", state: "", by: "", into: "", note: "" });
       } }, icon("plus"), "加一步"));
     }
-    if (!S.tEdit["i:" + it.id]) {
-      foot.appendChild(h("button", { class: "btn sm", type: "button", onclick: function () {
-        thingOpenForm("i:" + it.id, { name: it.name, kind: it.kind, origin: it.origin || "", from: it.from.map(function (y) { return y.id; }) });
-      } }, icon("edit"), "改名字和来历"));
-    }
+    foot.appendChild(h("button", { class: "btn sm", type: "button", onclick: function () {
+      thingOpenForm("i:" + it.id, { name: it.name, kind: it.kind, origin: it.origin || "", from: it.from.map(function (y) { return y.id; }) });
+    } }, icon("edit"), "改名字和来历"));
     if (it.virtual) {
       foot.appendChild(h("button", { class: "btn sm", type: "button", title: "存进 things.json，从此算确定有的（之后的步照旧从世界线里算）", onclick: function () {
         thingPost({ action: "keep", id: it.id }, "已存下来", null, it.id);
@@ -5638,6 +5835,7 @@
   function renderObjects(opt) {
     thingsHead("家里的东西", "box");
     opt = opt || {};
+    var anchor = opt.toTop ? null : opt.anchor !== undefined ? opt.anchor : thingsAnchor();
     var box = clear($("thingsBody"));
     var d = S.things;
     if (!d) {
@@ -5682,25 +5880,9 @@
     if (nVirt) { sum.appendChild(h("span", { class: "tag acc", title: "世界线里做完的段标的，每次现算；聊天里说到或在这里改它时才存下来", text: "世界线现算 " + nVirt })); }
     sum.appendChild(h("span", { text: "每件一个编号，记哪来的、经过谁手、搁在哪、变成什么样；同一种东西排在一起，模型查的也是这一份" }));
     box.appendChild(sum);
-    if (S.tEdit["onew"]) {
-      box.appendChild(h("div", { class: "tlist", style: "margin-bottom:16px" }, objNewForm(d)));
-    }
     box.appendChild(h("div", { class: "tlist" }, h("div", { class: "pc", id: "objList" })));
     drawObjList();
-    if (S.thingsFocus) {
-      var focusEl = $("thingsBody").querySelector('[data-tk="t:' + S.thingsFocus + '"]');
-      S.thingsFocus = "";
-      if (focusEl) { focusEl.scrollIntoView({ block: "nearest" }); worldFlash(focusEl); }
-    }
-    if (opt.form) {
-      var fe = $("thingsBody").querySelector('[data-tf="' + opt.form + '"]');
-      if (fe) {
-        fe.scrollIntoView({ block: "nearest" });
-        var first = fe.querySelector("input, textarea, select");
-        if (first && !window.matchMedia("(hover: none)").matches) { try { first.focus({ preventScroll: true }); } catch (e) { /* 忽略 */ } }
-      }
-    }
-    Array.prototype.forEach.call($("thingsBody").querySelectorAll("textarea[data-fit]"), worldFit);
+    thingsAfterDraw(anchor, opt);
   }
 
   // 同一种东西（kind 一样）有好几件的先列，组头提醒认准编号；只有一件的列在后面
@@ -5774,13 +5956,8 @@
     if (open) { main.appendChild(objDetail(it)); }
     row.appendChild(main);
     row.appendChild(h("div", { class: "tacts" }, h("button", { class: "btn quiet sm", type: "button", onclick: function () {
-      if (S.thingsOpen[it.id]) {
-        var keys = Object.keys(S.tEdit).filter(function (k) { return k.split(":")[1] === it.id; });
-        if (keys.some(function (k) { return worldDirty(S.tEdit[k]); })) { toast("先保存或取消正在改的那一项", { err: true }); return; }
-        keys.forEach(function (k) { delete S.tEdit[k]; });
-        delete S.thingsOpen[it.id];
-      } else { S.thingsOpen[it.id] = true; }
-      renderThings();
+      if (S.thingsOpen[it.id]) { delete S.thingsOpen[it.id]; } else { S.thingsOpen[it.id] = true; }
+      thingRedraw(it.id);
     } }, open ? "收起" : "每一步")));
     return row;
   }
@@ -5832,16 +6009,12 @@
     }
     if (it.note) { box.appendChild(h("div", { class: "muted", style: "font-size:12.5px", text: it.note })); }
     var list = h("ol", { class: "tsteps" });
-    it.stages.forEach(function (st, i) {
-      var key = "oe:" + it.id + ":" + st.idx;
-      list.appendChild(st.idx !== null && st.idx !== undefined && S.tEdit[key]
-        ? h("li", null, objStageForm(it, st)) : objStageRow(it, st, undefined, i === 0));
-    });
+    it.stages.forEach(function (st, i) { list.appendChild(objStageRow(it, st, undefined, i === 0)); });
     box.appendChild(list);
     if (it.voided.length) {
       var open = !!S.thingsVoid[it.id];
       box.appendChild(h("button", { class: "tlink", type: "button", style: "align-self:flex-start", onclick: function () {
-        S.thingsVoid[it.id] = !open; renderThings();
+        S.thingsVoid[it.id] = !open; thingRedraw(it.id);
       } }, open ? "收起作废的" : "作废的 " + it.voided.length + " 步"));
       if (open) {
         var vl = h("ol", { class: "tsteps" });
@@ -5849,21 +6022,17 @@
         box.appendChild(vl);
       }
     }
-    if (S.tEdit["os:" + it.id]) { box.appendChild(objStageForm(it, null)); }
-    if (S.tEdit["oi:" + it.id]) { box.appendChild(objItemForm(it)); }
     var foot = h("div", { class: "tfoot" });
-    if (!it.ended && !S.tEdit["os:" + it.id]) {
+    if (!it.ended) {
       foot.appendChild(h("button", { class: "btn sm", type: "button", onclick: function () {
         thingOpenForm("os:" + it.id, { what: S.things.item_steps.mid[0], at: String(S.things.now || "").slice(0, 16), place: "", holder: "",
           state: "", owner: "", by: "", into: "", note: "" });
       } }, icon("plus"), "加一步"));
     }
-    if (!S.tEdit["oi:" + it.id]) {
-      foot.appendChild(h("button", { class: "btn sm", type: "button", onclick: function () {
-        thingOpenForm("oi:" + it.id, { name: it.name, kind: it.kind, look: it.look || "", owner: it.owner || "", origin: it.origin || "",
-          from: it.from.map(function (y) { return y.id; }) });
-      } }, icon("edit"), "改名字和样子"));
-    }
+    foot.appendChild(h("button", { class: "btn sm", type: "button", onclick: function () {
+      thingOpenForm("oi:" + it.id, { name: it.name, kind: it.kind, look: it.look || "", owner: it.owner || "", origin: it.origin || "",
+        from: it.from.map(function (y) { return y.id; }) });
+    } }, icon("edit"), "改名字和样子"));
     if (it.virtual) {
       foot.appendChild(h("button", { class: "btn sm", type: "button", title: "存进 things.json，从此算确定有的（之后的步照旧从世界线里算）", onclick: function () {
         thingPost({ action: "keep", id: it.id }, "已存下来", null, it.id);
@@ -6552,6 +6721,7 @@
       return;
     }
     if (ev.key === "Escape") {
+      if (S.thingsModal) { thingTryClose(); return; }
       if (S.drawer) { closeDrawer(); return; }
       if (S.insp) { closeInsp(); return; }
       if (S.multi) { setMulti(false); return; }

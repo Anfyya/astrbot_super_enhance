@@ -677,6 +677,7 @@ class ContextPageApi:
                 stages = item.get("stages") or []
                 last = stages[-1] if stages else {}
                 end = things_mod.is_ended(item)
+                share = things_mod.share_left(item)  # 还剩一开始的几成（余量条）；说不准是 None
                 items.append({
                     "id": item.get("id"),
                     "name": item.get("name"),
@@ -691,6 +692,9 @@ class ContextPageApi:
                     "voided": [dict(stage_row(x), vidx=i) for i, x in enumerate((stored or {}).get("voided") or [])],
                     "ended": stage_row(end) if end else None,
                     "left": things_mod.ThingStore.left_text(item),
+                    "share": share,
+                    # 余量不多（排到前面）：按量记的看快用完了，别的看剩到一开始的几成以下
+                    "low": bool(info["low"]) if info else (share is not None and 0 < share <= things_mod.LOW_LEFT_SHARE),
                     "place": last.get("place") or "",
                     "keep": last.get("keep") or "",
                     "state": last.get("state") or "",
