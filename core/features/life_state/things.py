@@ -753,6 +753,33 @@ class ThingStore:
         key = str(thing_id or "").strip().lower()
         return next((x for x in self._load().get("items") or [] if str(x.get("id")).lower() == key), None)
 
+    @staticmethod
+    def is_secret(item: dict) -> bool:
+        """私人物品：记录员、世界线和补写不能替它添内容。"""
+        return bool((item or {}).get("secret"))
+
+    @staticmethod
+    def _manual_stage(stage: dict) -> bool:
+        src = (stage or {}).get("src")
+        return isinstance(src, dict) and bool(src.get("manual"))
+
+    @staticmethod
+    def _name_key(value) -> str:
+        return re.sub(r"\s+", "", str(value or ""))
+
+    def _secret_named(self, name: str) -> dict | None:
+        """按名称或显式别名找私人物品，挡住自动记录另建一件同名副本。"""
+        key = self._name_key(name)
+        if not key:
+            return None
+        for item in self._load().get("items") or []:
+            if not self.is_secret(item):
+                continue
+            names = [item.get("name")] + list(item.get("secret_aliases") or [])
+            if any(self._name_key(x) == key for x in names):
+                return item
+        return None
+
     def reserve_id(self, cat: str = CAT_FOOD) -> str:
         """发一个新编号：只增不减（吃的存 seq、别的东西存 seq_item），用过的、发了没用上的都不再发。"""
         data = self._load()
@@ -779,6 +806,9 @@ class ThingStore:
         first = clean_stage(stage, cat)
         if not name:
             return None, "没写是什么"
+        secret = self._secret_named(name)
+        if secret is not None and not self._manual_stage(stage):
+            return None, "这是私人物品（%s），自动记录不能另建或补内容" % secret.get("id")
         if first["what"] not in starts:
             return None, "第一步是「%s」，不知道它是哪来的" % (first["what"] or stage.get("what"))
         if parse_time(first["at"]) is None:
@@ -819,6 +849,8 @@ class ThingStore:
         item = self.get(thing_id)
         if item is None:
             return "没有 %s 这一件" % thing_id
+        if self.is_secret(item) and not self._manual_stage(stage):
+            return "%s 是私人物品，记录员 / 世界线 / 补写不能修改" % thing_id
         why = insert_stage(item, clean_stage(stage, cat_of(item)))
         if not why:
             self._save()
@@ -1040,6 +1072,13 @@ class ThingStore:
             name = clean_text(step.get("name"), MAX_NAME)
             if what not in steps_of(cat)[0] or not name:
                 continue
+            key = self._name_key(name)
+            secret = next((x for x in items.values() if self.is_secret(x) and any(
+                self._name_key(y) == key for y in [x.get("name")] + list(x.get("secret_aliases") or [])
+            )), None)
+            if secret is not None:
+                alias[tid] = str(secret.get("id"))
+                continue
             if cat == CAT_FOOD and what == "原来就有" and (
                     norm_kind(step.get("kind")) not in MEASURED_KINDS or had_before(items.values(), name) is not None):
                 continue  # 只有从没记过的常备调料能「原来就有」；用完了的得买
@@ -1080,10 +1119,12 @@ class ThingStore:
             tid = resolve(step.get("id"))
             if not tid:
                 continue
+            if self.is_secret(items[tid]):
+                continue
             cat = cat_of(items[tid])
             stage = stage_of(step, cat, step.get("what"))
             into = resolve(step.get("into"))
-            if into and into != tid:
+            if into and into != tid and not self.is_secret(items.get(into) or {}):
                 stage["into"] = into
             if insert_stage(items[tid], stage):
                 continue
@@ -1354,6 +1395,12 @@ class ThingStore:
         stages = item.get("stages") or [{}]
         first, last = stages[0], stages[-1]
         tags = [str(item.get("kind") or "东西")]
+        if self.is_secret(item):
+            owner = self.owner_of(item)
+            parts = [x for x in (str(item.get("look") or ""), self._where(last, label_fn),
+                                 "归%s" % self._who(owner, label_fn) if owner else "") if x]
+            parts.append("私人物品，内容不可见")
+            return "%s %s〔%s〕：%s" % (item.get("id"), item.get("name"), "；".join(tags), "｜".join(parts))
         if item.get("from"):
             tags.append("用 %s 做的" % "、".join(self._name_of(view, x) for x in item["from"]))
         came = item.get("origin") or "%s %s%s" % (str(first.get("at"))[5:16], self._who(first.get("by"), label_fn), first.get("what"))
@@ -1366,6 +1413,17 @@ class ThingStore:
     def item_history(self, item: dict, view: View, label_fn=None) -> str:
         """一件东西的来龙去脉：哪来的、样子、每一步（在哪、谁手上、什么样）、用它做了什么、现在怎么样。"""
         head = "%s %s〔%s〕" % (item.get("id"), item.get("name"), item.get("kind") or "东西")
+        if self.is_secret(item):
+            lines = [head]
+            if item.get("look"):
+                lines.append("样子：%s" % item["look"])
+            last = (item.get("stages") or [{}])[-1]
+            owner = self.owner_of(item)
+            now_bits = [x for x in (self._where(last, label_fn),
+                                    "归%s" % self._who(owner, label_fn) if owner else "") if x]
+            lines.append("现在：%s" % ("｜".join(now_bits) or "在家里，在哪没说"))
+            lines.append("这是%s私人物品，内容不可见。" % (("%s的" % self._who(owner, label_fn)) if owner else ""))
+            return "\n".join(lines)
         if item.get("origin"):
             head += "：%s" % item["origin"]
         lines = [head]
