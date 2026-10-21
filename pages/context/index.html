@@ -639,9 +639,9 @@
   .wday-lg span{display:inline-flex;align-items:center;gap:6px}
   .wday-lg i{display:inline-block;width:8px;height:8px;border-radius:2px}
 
-  /* 时间线：从早到晚往下排，一根竖线串起每一段：走过的是实线，还没到的是虚线，线本身就是进度。
-     「现在」是线上的一个点：正在做的那段里，它跟着做到的那一步往下走，点上面那截是主色实线、下面是虚线；
-     这会儿没在做什么（上一段做完了、下一段还没开始），点停在上一段末尾 */
+  /* 时间线：接下来的在上面，往下是正在做的和已经发生的，一根竖线串起每一段：还没到的是虚线，过去的是实线，
+     正在做的那段（连同它里面已经发生的顺带事）是主色实线。「现在」是那段里的一个点，跟着正在做的那一步走；
+     这会儿没在做什么（上一段做完了、下一段还没开始），两段中间单起一小行「现在」 */
   .lrows{--wpast:var(--accent-line)}
   .wrow{position:relative;display:grid;grid-template-columns:60px 24px minmax(0,1fr) auto;align-items:start;column-gap:0;border-top:0;padding:10px 0}
   .lrows > .wrow:first-child{padding-top:0}
@@ -660,22 +660,25 @@
   .lrows > .wrow:last-child.wnowin .wnode::after{bottom:0}
   .lrows > .wrow:only-child:not(.wnowin) .wnode::after{display:none}
   .wn-d{--wc:var(--accent)}.wn-m{--wc:var(--ok)}.wn-o{--wc:var(--c2)}.wn-i{--wc:var(--c3)}.wn-s{--wc:var(--t4)}
-  .wfuture .wnode::after,.wtail .wnode::after{background:repeating-linear-gradient(to bottom,var(--line2) 0 4px,transparent 4px 8px)}
+  .wfuture .wnode::after{background:repeating-linear-gradient(to bottom,var(--line2) 0 4px,transparent 4px 8px)}
   .wfuture .wnode::before{background:var(--bg);box-shadow:inset 0 0 0 2px var(--wc),0 0 0 3px var(--bg)}
   .wrow.going .wnode::before{box-shadow:0 0 0 3px var(--bg),0 0 0 6px var(--ring)}
   .wrow.wevent .wnode::before{width:8px;height:8px;margin-left:-4px;top:7px;border-radius:2px;transform:rotate(45deg)}
-  /* 「现在」在这一段里：线头到点照走过的画，点到「现在」实线（正在做的用主色），再往下虚线；--wf 由脚本每秒算 */
-  .wrow.wnowin{--wfill:var(--wpast)}
-  .wrow.wnowin.going{--wfill:var(--accent)}
-  .wrow.wnowin .wnode::after{background:
-    linear-gradient(var(--wpast),var(--wpast)) 0 0 / 100% var(--wtop) no-repeat,
-    linear-gradient(var(--wfill),var(--wfill)) 0 var(--wtop) / 100% var(--wf,0px) no-repeat,
+  /* 正在做的那段、它里面的顺带事、「现在」那一小行：线头到点接上面的虚线，点往下是这一段自己的线（正在做的主色，空档那行照过去的） */
+  .wrow.wnowin,.wrow.wtail{--wfill:var(--accent)}
+  .wrow.wgaprow,.wrow.wnowin:not(.going){--wfill:var(--wpast)}
+  .wrow.wnowin .wnode::after,.wrow.wtail .wnode::after,.wrow.wgaprow .wnode::after{background:
+    linear-gradient(var(--wfill),var(--wfill)) 0 var(--wtop) / 100% 100% no-repeat,
     repeating-linear-gradient(to bottom,var(--line2) 0 4px,transparent 4px 8px)}
+  .wrow.wtail + .wrow.wnowin .wnode::after,.wrow.wtail + .wrow.wtail .wnode::after{background:var(--wfill)}
+  .wgaprow{padding:6px 0}
+  .lrows > .wgaprow:first-child{padding-top:0}
+  .wnowc{color:var(--accent) !important}
   .wnowdot{position:absolute;left:50%;top:calc(11px + var(--wf,0px));width:12px;height:12px;margin:-6px 0 0 -6px;border-radius:50%;
     background:var(--accent);box-shadow:0 0 0 3px var(--bg);z-index:1;pointer-events:none}
   .wnowdot::after{content:"";position:absolute;inset:0;border-radius:50%;animation:wpulse 2.4s ease-out infinite}
   @keyframes wpulse{0%{box-shadow:0 0 0 0 var(--ring)}70%,100%{box-shadow:0 0 0 9px transparent}}
-  .wgap{margin-top:8px;font-size:12px;line-height:20px;color:var(--accent);font-weight:500}
+  .wgap{font-size:13px;line-height:22px;color:var(--accent);font-weight:500}
   .wnowt{position:absolute;left:0;margin-top:-9px;font-size:12px;line-height:18px;font-weight:600;color:var(--accent);white-space:nowrap;pointer-events:none}
   .wrow > .lt{grid-column:3}
   .wrow > .la{grid-column:4;margin-left:12px}
@@ -718,7 +721,9 @@
   .tlist .trow > .tacts{grid-column:3;grid-row:1}
   .tlist .trow > .tmain{display:contents}
   .tlist .tmain > *{grid-column:2;min-width:0}
-  .tlist .tmain > .tdetail{grid-column:2 / 4}
+  .tlist .tmain > .tdetail{grid-column:1 / -1}
+  .tsteps > li > .wform,.tdetail > .wform{margin:4px 0}
+  .tlist .pc > .wform{margin-bottom:4px}
   .tlist .trow:first-child{border-top:0;padding-top:0}
   .tlist .trow:last-child{padding-bottom:0}
   .trow.wflash{animation:wflash 1.8s ease-out;border-radius:8px}
@@ -816,21 +821,6 @@
   .dlg h3{margin:0 0 8px;font-size:15px;font-weight:600;line-height:22px}
   .dlg p{margin:0;color:var(--t2);font-size:13.5px;line-height:1.7;white-space:pre-wrap}
   .dlg .btns{display:flex;justify-content:flex-end;gap:8px;margin-top:24px}
-  /* 家里的吃的 / 东西的编辑框：居中弹出来，框里太长就框里滚，保存 / 取消贴在框底 */
-  .fmodal{position:fixed;inset:0;z-index:80;display:flex;align-items:center;justify-content:center;padding:16px;background:var(--scrim);
-    animation:fadein .15s ease;overscroll-behavior:contain}
-  .fdlg{width:100%;max-width:640px;max-height:100%;min-height:0;display:flex;flex-direction:column;container:fdlg / inline-size;animation:dlgin .18s ease}
-  @keyframes dlgin{from{opacity:0;transform:translateY(8px) scale(.985)}to{opacity:1;transform:none}}
-  .fdlg > .wform{flex:0 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain;background:var(--bg);border-radius:14px;
-    box-shadow:var(--pop);padding:20px 20px 0;animation:none}
-  .fdlg > .wform > .wform-f{margin:0 -20px;padding:12px 20px;background:var(--bg);border-radius:0 0 14px 14px}
-  .fdlg > .wform > .wform-h{position:relative;padding-right:36px;font-size:14px;line-height:22px}
-  .fdlg .wform-x{position:absolute;top:-6px;right:-10px}
-  .fdlg > .wform.wflash{animation:wformflash 1.4s ease-out}
-  @container fdlg (max-width:560px){
-    .fdlg .wcols,.fdlg .wcols.c2,.fdlg .wcols.r1{grid-template-columns:minmax(0,1fr)}
-    .fdlg .wform-f .hint{display:none}
-  }
   .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:100;display:flex;align-items:center;gap:16px;max-width:calc(100vw - 32px);min-height:40px;
     background:var(--t1);color:var(--bg);border-radius:10px;padding:8px 16px;font-size:13px;line-height:1.5;box-shadow:var(--pop);animation:toastin .18s ease}
   @keyframes toastin{from{opacity:0;transform:translate(-50%,8px)}to{opacity:1;transform:translate(-50%,0)}}
@@ -1109,8 +1099,6 @@
     <div class="btns"><button class="btn" id="mCancel" type="button">取消</button><button class="btn pri" id="mOk" type="button">确定</button></div>
   </div>
 </div>
-<!-- 家里的吃的 / 东西的编辑框：居中弹出来 -->
-<div class="fmodal" id="tmodal" hidden><div class="fdlg" id="tmodalDlg" role="dialog" aria-modal="true"></div></div>
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
 <script>
@@ -1390,7 +1378,7 @@
     world: null, worldErr: "", worldLoading: false, worldDate: "", worldWho: "", worldBusy: "", worldShowLifted: false, worldShowStatus: false,
     wEdit: {}, cEdit: {}, iEdit: {}, rEdit: {}, nEdit: {},
     things: null, thingsErr: "", thingsLoading: false, thingsFilter: "now", thingsQ: "", thingsOpen: {}, thingsVoid: {}, tEdit: {}, thingsFocus: "",
-    thingsCat: "food", objFilter: "now", objQ: "", thingsModal: "",
+    thingsCat: "food", objFilter: "now", objQ: "",
     sch: null, schErr: "", schLoading: false, schBot: store.get("schBot", ""), schDate: ""
   };
 
@@ -4598,9 +4586,10 @@
       card.appendChild(h("div", { class: "muted", style: "font-size:13px", text: "这一天还没有记录。" }));
     } else {
       var rows = h("div", { class: "lrows" });
-      // 从早到晚往下排；今天的「现在」落在最后一段已经开始的里面（正在做的那段，或者刚做完、下一段还没开始的那段）。
-      // 顺带的事挂在它发生时正在做的那段下面（那段开始以后、结束以前），不另算一站：「现在」不落在它上面，
-      // 正在做的那段下面挂着的已经发生的顺带事，线照那段剩下的画成虚线（tail）
+      // 接下来的在上面，往下是正在做的和已经发生的。「现在」落在今天最后一段已经开始的里面（正在做的那段）；
+      // 那段已经做完、下一段还没开始，就在它上面单起一小行「现在：这会儿空着」。
+      // 顺带的事挂在它发生时正在做的那段上（那段开始以后、结束以前），不另算一站：「现在」不落在它上面，
+      // 正在做的那段里已经发生的顺带事（tail）排在那段上面，线和那段一样画成正在做的
       list = list.slice().sort(function (a, b) { return String(a.start || "").localeCompare(String(b.start || "")); });
       var now = worldNowMs(), today = day.date === d.today, nowAt = -1, parent = -1, owner = [];
       list.forEach(function (e, i) {
@@ -4613,13 +4602,21 @@
         if (e.kind !== "event") { parent = i; }
         if (today && a !== null && a <= now && owner[i] < 0) { nowAt = i; }
       });
-      list.forEach(function (e, i) {
-        var where = "";
-        if (i === nowAt) { where = "now"; }
-        else if (today && i > nowAt) { where = owner[i] >= 0 && owner[i] <= nowAt && (worldMs(e.start) || 0) <= now ? "tail" : "future"; }
-        var next = i === nowAt ? list.slice(i + 1).filter(function (x) { return x.kind !== "event"; })[0] || null : null;
-        rows.appendChild(S.wEdit[e.id] ? worldEntryForm(d, e) : worldEntryRow(d, e, day.date, where, next));
-      });
+      var gap = null;
+      if (nowAt >= 0) {
+        var cur = list[nowAt], end = worldMs(cur.end);
+        if (!(d.current && d.current[cur.who] === cur.id) && end !== null && end <= now) {
+          gap = list.slice(nowAt + 1).filter(function (x) { return x.kind !== "event"; })[0] || null;
+          gap = { next: gap };
+        }
+      }
+      for (var i = list.length - 1; i >= 0; i--) {
+        var e = list[i], where = "";
+        if (i === nowAt) { where = gap ? "" : "now"; }
+        else if (today && i > nowAt) { where = owner[i] >= 0 && owner[i] <= nowAt && !gap && (worldMs(e.start) || 0) <= now ? "tail" : "future"; }
+        if (i === nowAt && gap) { rows.appendChild(worldGapRow(gap.next)); }
+        rows.appendChild(S.wEdit[e.id] ? worldEntryForm(d, e) : worldEntryRow(d, e, day.date, where));
+      }
       card.appendChild(rows);
     }
     sec.appendChild(card);
@@ -4714,8 +4711,8 @@
       var b = +row.getAttribute("data-b");
       if (row.classList.contains("going") && b > 0 && now >= b) { due = true; }
     });
-    // 下一段已经到点开始了（这会儿没在做什么的时候没人会喊重读）
-    var next = body.querySelector(".wrow.wfuture");
+    // 下一段已经到点开始了（这会儿没在做什么的时候没人会喊重读）；接下来的排在上面，最近的一段是最后一个
+    var fut = body.querySelectorAll(".wrow.wfuture"), next = fut.length ? fut[fut.length - 1] : null;
     if (next && +next.getAttribute("data-a") > 0 && now >= +next.getAttribute("data-a")) { due = true; }
     Array.prototype.forEach.call(body.querySelectorAll(".wday-now"), function (el) {
       var t0 = +el.getAttribute("data-t0");
@@ -4724,12 +4721,14 @@
     return due;
   }
 
-  // 今天：把「现在」那个点挪到视口偏上的地方（打开世界线、换人、换日期时）；没有这个点（不是今天）回到最上面
+  // 打开世界线、换人、换日期：回到最上面；今天「现在」那个点在一屏里看不到（接下来的排得多），就把它挪到视口偏上的地方
   function worldScrollToNow() {
     var sc = worldScroller();
-    var dot = $("worldBody").querySelector(".wrow.wnowin .wnowdot");
-    if (!dot) { sc.scrollTop = 0; return; }
-    sc.scrollTop = Math.max(0, sc.scrollTop + dot.getBoundingClientRect().top - sc.getBoundingClientRect().top - sc.clientHeight * 0.38);
+    sc.scrollTop = 0;
+    var dot = $("worldBody").querySelector(".wnowdot");
+    if (!dot) { return; }
+    var y = dot.getBoundingClientRect().top - sc.getBoundingClientRect().top;
+    if (y > sc.clientHeight * 0.75) { sc.scrollTop = Math.max(0, y - sc.clientHeight * 0.38); }
   }
 
   // 停下（没做完）的段：显示口径和给模型的一致（接口给的 doing_shown 就是给模型看的那句）；
@@ -4758,10 +4757,18 @@
     return box;
   }
 
-  // where：now = 「现在」落在这一段里（今天最后一段已经开始的），future = 还没开始，
-  //        tail = 挂在「现在」那段下面、已经发生的顺带事（线照那段剩下的画虚线），空 = 已经开始过了
-  // next：「现在」落在这一段、这段又已经做完了的时候，下一段（写一句这会儿空着）
-  function worldEntryRow(d, e, date, where, next) {
+  // 「现在」这会儿没在做什么：上一段做完了、下一段还没开始，在两段中间单起一小行写明
+  function worldGapRow(next) {
+    return h("div", { class: "lrow wrow wgaprow" },
+      h("div", { class: "wtime" }, h("span", { class: "w0 wnowc", text: "现在" })),
+      h("span", { class: "wnode", "aria-hidden": "true" }, h("i", { class: "wnowdot" })),
+      h("div", { class: "lt" }, h("div", { class: "wgap",
+        text: next ? "这会儿空着，下一段 " + String(next.start || "").slice(11, 16) + " 开始" : "上一段做完了，接下来的还没排" })));
+  }
+
+  // where：now = 「现在」落在这一段里（今天正在做的那段），future = 还没开始，
+  //        tail = 正在做的那段里已经发生的顺带事（排在那段上面，线和那段一样），空 = 已经过去了
+  function worldEntryRow(d, e, date, where) {
     var going = !!(d.current && d.current[e.who] === e.id);
     var future = !going && where === "future";
     var isEvent = e.kind === "event";
@@ -4802,9 +4809,7 @@
         seen.length ? h("span", { text: "细节也给：" + seen.join("、") }) : null,
         /^#?\d+$/.test(String(e.training || "").trim()) ? h("span", { class: "tag", text: "在练 #" + String(e.training).trim().replace(/^#/, "") }) : null,
         worldOrigin(e),
-        e.src_quote ? h("span", { text: "原话：" + e.src_quote }) : null),
-      where === "now" && !going && e.end ? h("div", { class: "wgap",
-        text: next ? "这会儿空着，下一段 " + String(next.start || "").slice(11, 16) + " 开始" : "这段做完了，接下来的还没排" }) : null));
+        e.src_quote ? h("span", { text: "原话：" + e.src_quote }) : null)));
     var acts = h("div", { class: "la" });
     var edit = h("button", { class: "btn quiet sm", type: "button", title: "编辑" }, icon("edit"));
     edit.addEventListener("click", function () {
@@ -5283,7 +5288,6 @@
     return post("ctx/things/edit", body).then(function (r) {
       if (r && r.ok === false) { toast("没改成：" + (r.why || "不知道为什么"), { err: true }); return; }
       if (done) { done(); }
-      if (S.thingsModal && !S.tEdit[S.thingsModal]) { thingHideForm(); }
       if (okMsg) { toast(okMsg); }
       var id = focusId || (r && r.id) || "";
       if (id) { S.thingsOpen[id] = true; S.thingsFocus = id; }
@@ -5293,73 +5297,36 @@
     });
   }
 
-  /* ---------- 编辑框：居中弹出来，同一时间只开一个（改过没存的先提醒）；列表在后面不动 ---------- */
+  /* ---------- 编辑框：和世界线一样就地展开、整行宽，同一时间只开一个（改过没存的先提醒） ---------- */
   function thingGuard(except) {
     var dirty = Object.keys(S.tEdit).filter(function (k) { return k !== except && worldDirty(S.tEdit[k]); })[0];
     if (dirty) {
       toast("先保存或取消正在改的那一项", { err: true });
-      var el = $("tmodalDlg").querySelector(".wform");
-      if (el) { worldFlash(el); }
+      var el = $("thingsBody").querySelector('[data-tf="' + dirty + '"]');
+      if (el) { thingsReveal(el); worldFlash(el); }
       return false;
     }
     Object.keys(S.tEdit).forEach(function (k) { if (k !== except) { delete S.tEdit[k]; } });
-    if (S.thingsModal && S.thingsModal !== except) { thingHideForm(); }
     return true;
   }
+  // 打开：原地展开，上面的东西不动；框放不下就平滑地往下带一点，让整个框露出来
   function thingOpenForm(key, f) {
     if (!thingGuard(key)) { return; }
     S.tEdit[key] = worldDraft(f);
-    thingShowForm(key);
+    renderThings({ form: key });
   }
+  // 取消：收回去，页面停在原来的位置
   function thingCloseForm(key) {
     delete S.tEdit[key];
-    thingHideForm();
+    renderThings();
   }
-  // 编辑框的 key：new / onew 加一件，s: / os: 加一步，e: / oe: 改某一步（带第几步），i: / oi: 改名字（o 开头的是吃的以外的东西）
-  function thingFormFor(key) {
-    if (key === "new") { return thingNewForm(S.things); }
-    if (key === "onew") { return objNewForm(S.things); }
-    var p = key.split(":"), obj = p[0].charAt(0) === "o", it = obj ? objFind(p[1]) : thingFind(p[1]);
-    if (!it) { return null; }
-    var kind = obj ? p[0].slice(1) : p[0];
-    if (kind === "s") { return obj ? objStageForm(it, null) : thingStageForm(it, null); }
-    if (kind === "i") { return obj ? objItemForm(it) : thingItemForm(it); }
-    var st = it.stages.filter(function (x) { return String(x.idx) === p[2]; })[0];
-    if (kind === "e" && st) { return obj ? objStageForm(it, st) : thingStageForm(it, st); }
-    return null;
+  function thingsReveal(el) {
+    var sc = thingsScroller(), top0 = sc.getBoundingClientRect().top, r = el.getBoundingClientRect(), pad = 12, by = 0;
+    var top = r.top - top0, bottom = r.bottom - top0;
+    if (top < pad) { by = top - pad; }
+    else if (bottom > sc.clientHeight - pad) { by = Math.min(bottom - (sc.clientHeight - pad), top - pad); }
+    if (Math.abs(by) > 1) { sc.scrollTo({ top: sc.scrollTop + by, behavior: "smooth" }); }
   }
-  function thingShowForm(key) {
-    var box = thingFormFor(key);
-    if (!box) { delete S.tEdit[key]; toast("这一件找不到了，可能刚被改过", { err: true }); return; }
-    var head = box.querySelector(".wform-h");
-    if (head) { head.appendChild(h("button", { class: "btn quiet sm wform-x", type: "button", title: "关掉（Esc）", onclick: thingTryClose }, icon("x"))); }
-    var dlg = clear($("tmodalDlg"));
-    dlg.appendChild(box);
-    $("tmodal").hidden = false;
-    S.thingsModal = key;
-    Array.prototype.forEach.call(dlg.querySelectorAll("textarea[data-fit]"), worldFit);
-    var first = box.querySelector("input, textarea, select");
-    if (first && !window.matchMedia("(hover: none)").matches) { try { first.focus({ preventScroll: true }); } catch (e) { /* 忽略 */ } }
-  }
-  function thingHideForm() {
-    $("tmodal").hidden = true;
-    clear($("tmodalDlg"));
-    S.thingsModal = "";
-  }
-  // 点外面、Esc、右上角的叉：改过的先问一句
-  function thingTryClose() {
-    var key = S.thingsModal;
-    if (!key) { return; }
-    if (!worldDirty(S.tEdit[key])) { thingCloseForm(key); return; }
-    confirmDlg({ title: "放弃这次修改？", body: "改的内容还没保存。", ok: "放弃修改", danger: true }).then(function (ok) { if (ok) { thingCloseForm(key); } });
-  }
-  // 按下和松开都在外面的灰底上才算点了外面（从输入框里拖选文字拖到外面不算）
-  var tmodalDown = null;
-  $("tmodal").addEventListener("mousedown", function (ev) { tmodalDown = ev.target; });
-  $("tmodal").addEventListener("click", function (ev) {
-    if (ev.target === $("tmodal") && tmodalDown === $("tmodal")) { thingTryClose(); }
-    tmodalDown = null;
-  });
 
   /* ---------- 重画时保住位置 ---------- */
   function thingsScroller() { return $("thingsBody").parentNode; }
@@ -5467,6 +5434,15 @@
   // 画完以后：放回原来的位置；有要跳到的那一件就把它露出来、闪一下
   function thingsAfterDraw(anchor, opt) {
     if (opt.toTop) { thingsScroller().scrollTop = 0; } else { thingsPlace(anchor); }
+    Array.prototype.forEach.call($("thingsBody").querySelectorAll("textarea[data-fit]"), worldFit);
+    if (opt.form) {
+      var fe = $("thingsBody").querySelector('[data-tf="' + opt.form + '"]');
+      if (fe) {
+        thingsReveal(fe);
+        var first = fe.querySelector("input, textarea, select");
+        if (first && !window.matchMedia("(hover: none)").matches) { try { first.focus({ preventScroll: true }); } catch (e) { /* 忽略 */ } }
+      }
+    }
     if (S.thingsFocus) {
       var focusEl = $("thingsBody").querySelector('[data-tk="t:' + S.thingsFocus + '"]');
       S.thingsFocus = "";
@@ -5483,6 +5459,7 @@
     var card = $("thingsList");
     if (!card || !S.things) { return; }
     clear(card);
+    if (S.tEdit["new"]) { card.appendChild(thingNewForm(S.things)); }
     var q = String(S.thingsQ || "").trim().toLowerCase();
     var list = (S.things.items || []).filter(function (x) {
       if (S.thingsFilter === "now" && x.ended) { return false; }
@@ -5571,7 +5548,12 @@
     if (open) { main.appendChild(thingDetail(it)); }
     row.appendChild(main);
     row.appendChild(h("div", { class: "tacts" }, h("button", { class: "btn quiet sm", type: "button", onclick: function () {
-      if (S.thingsOpen[it.id]) { delete S.thingsOpen[it.id]; } else { S.thingsOpen[it.id] = true; }
+      if (S.thingsOpen[it.id]) {
+        var keys = Object.keys(S.tEdit).filter(function (k) { return k.split(":")[1] === it.id; });
+        if (keys.some(function (k) { return worldDirty(S.tEdit[k]); })) { toast("先保存或取消正在改的那一项", { err: true }); return; }
+        keys.forEach(function (k) { delete S.tEdit[k]; });
+        delete S.thingsOpen[it.id];
+      } else { S.thingsOpen[it.id] = true; }
       thingRedraw(it.id);
     } }, open ? "收起" : "每一步")));
     return row;
@@ -5643,7 +5625,11 @@
       box.appendChild(h("div", { class: "muted", style: "font-size:12.5px", text: "这件是世界线里做完的段标出来的，每次现算。在这里加一步、改名字会先把它存下来，之后的步照旧从世界线里算；世界线里那段被撤、停在半路或被改掉，它也跟着变。" }));
     }
     var list = h("ol", { class: "tsteps" });
-    it.stages.forEach(function (st) { list.appendChild(thingStageRow(it, st)); });
+    it.stages.forEach(function (st) {
+      var key = "e:" + it.id + ":" + st.idx;
+      list.appendChild(st.idx !== null && st.idx !== undefined && S.tEdit[key]
+        ? h("li", null, thingStageForm(it, st)) : thingStageRow(it, st));
+    });
     box.appendChild(list);
     if (it.voided.length) {
       var open = !!S.thingsVoid[it.id];
@@ -5656,17 +5642,21 @@
         box.appendChild(vl);
       }
     }
+    if (S.tEdit["s:" + it.id]) { box.appendChild(thingStageForm(it, null)); }
+    if (S.tEdit["i:" + it.id]) { box.appendChild(thingItemForm(it)); }
     var foot = h("div", { class: "tfoot" });
-    if (!it.ended) {
+    if (!it.ended && !S.tEdit["s:" + it.id]) {
       foot.appendChild(h("button", { class: "btn sm", type: "button", onclick: function () {
         thingOpenForm("s:" + it.id, { what: it.measured ? "用掉一部分" : "吃了一部分",
           at: String(S.things.now || "").slice(0, 16), left: "", amount: "", used: "",
           place: "", keep: "", state: "", by: "", into: "", note: "" });
       } }, icon("plus"), "加一步"));
     }
-    foot.appendChild(h("button", { class: "btn sm", type: "button", onclick: function () {
-      thingOpenForm("i:" + it.id, { name: it.name, kind: it.kind, origin: it.origin || "", from: it.from.map(function (y) { return y.id; }) });
-    } }, icon("edit"), "改名字和来历"));
+    if (!S.tEdit["i:" + it.id]) {
+      foot.appendChild(h("button", { class: "btn sm", type: "button", onclick: function () {
+        thingOpenForm("i:" + it.id, { name: it.name, kind: it.kind, origin: it.origin || "", from: it.from.map(function (y) { return y.id; }) });
+      } }, icon("edit"), "改名字和来历"));
+    }
     if (it.virtual) {
       foot.appendChild(h("button", { class: "btn sm", type: "button", title: "存进 things.json，从此算确定有的（之后的步照旧从世界线里算）", onclick: function () {
         thingPost({ action: "keep", id: it.id }, "已存下来", null, it.id);
@@ -5890,6 +5880,7 @@
     var card = $("objList");
     if (!card || !S.things) { return; }
     clear(card);
+    if (S.tEdit["onew"]) { card.appendChild(objNewForm(S.things)); }
     var q = String(S.objQ || "").trim().toLowerCase();
     var list = (S.things.objects || []).filter(function (x) {
       if (S.objFilter === "now" && x.ended) { return false; }
@@ -5956,7 +5947,12 @@
     if (open) { main.appendChild(objDetail(it)); }
     row.appendChild(main);
     row.appendChild(h("div", { class: "tacts" }, h("button", { class: "btn quiet sm", type: "button", onclick: function () {
-      if (S.thingsOpen[it.id]) { delete S.thingsOpen[it.id]; } else { S.thingsOpen[it.id] = true; }
+      if (S.thingsOpen[it.id]) {
+        var keys = Object.keys(S.tEdit).filter(function (k) { return k.split(":")[1] === it.id; });
+        if (keys.some(function (k) { return worldDirty(S.tEdit[k]); })) { toast("先保存或取消正在改的那一项", { err: true }); return; }
+        keys.forEach(function (k) { delete S.tEdit[k]; });
+        delete S.thingsOpen[it.id];
+      } else { S.thingsOpen[it.id] = true; }
       thingRedraw(it.id);
     } }, open ? "收起" : "每一步")));
     return row;
@@ -6009,7 +6005,11 @@
     }
     if (it.note) { box.appendChild(h("div", { class: "muted", style: "font-size:12.5px", text: it.note })); }
     var list = h("ol", { class: "tsteps" });
-    it.stages.forEach(function (st, i) { list.appendChild(objStageRow(it, st, undefined, i === 0)); });
+    it.stages.forEach(function (st, i) {
+      var key = "oe:" + it.id + ":" + st.idx;
+      list.appendChild(st.idx !== null && st.idx !== undefined && S.tEdit[key]
+        ? h("li", null, objStageForm(it, st)) : objStageRow(it, st, undefined, i === 0));
+    });
     box.appendChild(list);
     if (it.voided.length) {
       var open = !!S.thingsVoid[it.id];
@@ -6022,17 +6022,21 @@
         box.appendChild(vl);
       }
     }
+    if (S.tEdit["os:" + it.id]) { box.appendChild(objStageForm(it, null)); }
+    if (S.tEdit["oi:" + it.id]) { box.appendChild(objItemForm(it)); }
     var foot = h("div", { class: "tfoot" });
-    if (!it.ended) {
+    if (!it.ended && !S.tEdit["os:" + it.id]) {
       foot.appendChild(h("button", { class: "btn sm", type: "button", onclick: function () {
         thingOpenForm("os:" + it.id, { what: S.things.item_steps.mid[0], at: String(S.things.now || "").slice(0, 16), place: "", holder: "",
           state: "", owner: "", by: "", into: "", note: "" });
       } }, icon("plus"), "加一步"));
     }
-    foot.appendChild(h("button", { class: "btn sm", type: "button", onclick: function () {
-      thingOpenForm("oi:" + it.id, { name: it.name, kind: it.kind, look: it.look || "", owner: it.owner || "", origin: it.origin || "",
-        from: it.from.map(function (y) { return y.id; }) });
-    } }, icon("edit"), "改名字和样子"));
+    if (!S.tEdit["oi:" + it.id]) {
+      foot.appendChild(h("button", { class: "btn sm", type: "button", onclick: function () {
+        thingOpenForm("oi:" + it.id, { name: it.name, kind: it.kind, look: it.look || "", owner: it.owner || "", origin: it.origin || "",
+          from: it.from.map(function (y) { return y.id; }) });
+      } }, icon("edit"), "改名字和样子"));
+    }
     if (it.virtual) {
       foot.appendChild(h("button", { class: "btn sm", type: "button", title: "存进 things.json，从此算确定有的（之后的步照旧从世界线里算）", onclick: function () {
         thingPost({ action: "keep", id: it.id }, "已存下来", null, it.id);
@@ -6721,7 +6725,6 @@
       return;
     }
     if (ev.key === "Escape") {
-      if (S.thingsModal) { thingTryClose(); return; }
       if (S.drawer) { closeDrawer(); return; }
       if (S.insp) { closeInsp(); return; }
       if (S.multi) { setMulti(false); return; }
