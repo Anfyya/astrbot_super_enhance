@@ -528,6 +528,127 @@
   @keyframes wring{0%,35%{box-shadow:0 0 0 3px var(--ring)}100%{box-shadow:0 0 0 3px transparent}}
   .tform{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:end}
   .tform > .wfld.wide,.tform > .wform-h,.tform > .wform-f{grid-column:1 / -1}
+  .wform-f kbd{display:inline-block;min-width:18px;height:18px;padding:0 5px;margin-right:4px;border:1px solid var(--line2);border-bottom-width:2px;border-radius:5px;
+    background:var(--bg);color:var(--t3);font:500 10.5px/14px var(--mono);text-align:center;vertical-align:1px}
+  .wform-f kbd + span{margin-right:12px}
+
+  /* ============ 编辑框（世界线、家里的吃的和东西）：.wform.ed ============ */
+  /* 一张白卡：头一行写在改哪一项；上面是主内容（字大一号，和显示时一样排），下面是一张左右对齐的属性表——
+     标签一样宽，值都从同一条线开始。输入框平时就是字，悬停浅底、点进去才出框；选项是一排胶囊；
+     从家里挑东西是一排标签加一个能搜的下拉；用得少的收在「更多」里，收着时也写着里面填了什么 */
+  .wform.ed{gap:0;padding:0;background:var(--bg);border-radius:12px;box-shadow:0 0 0 1.5px var(--accent),0 16px 36px -18px rgba(30,30,70,.3)}
+  .wform.ed.wflash{animation:edflash 1.4s ease-out}
+  @keyframes edflash{0%,35%{box-shadow:0 0 0 1.5px var(--accent),0 0 0 7px var(--ring)}100%{box-shadow:0 0 0 1.5px var(--accent),0 0 0 7px transparent}}
+  .ed-h{display:flex;align-items:baseline;gap:8px;min-width:0;padding:14px 20px 0;font-size:12px;line-height:18px;color:var(--t3)}
+  .ed-h .t{flex:none;font-size:13px;font-weight:600;color:var(--accent)}
+  .ed-h .m{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .ed-h .r{flex:none;margin-left:auto;padding-left:8px}
+  .ed-sec{display:flex;flex-direction:column;min-width:0;padding:12px 20px 14px;border-top:1px solid var(--line)}
+  .ed-h + .ed-sec,.ed-h + .ed-dyn > .ed-sec:first-child{border-top:0;padding-top:8px}
+  .ed-cap{display:flex;align-items:baseline;flex-wrap:wrap;gap:2px 10px;margin:0 0 4px;font-size:12px;line-height:20px;color:var(--t3)}
+  .ed-cap .l{font-size:12.5px;font-weight:500;color:var(--t2)}
+  .ed-cap .fix{border:0;background:transparent;padding:0;color:var(--accent);font-size:12px;cursor:pointer}
+  .ed-cap .fix:hover{text-decoration:underline;text-underline-offset:3px}
+  [title].ed-k,.ed-cap .l[title]{text-decoration:underline dotted var(--line2);text-underline-offset:5px;cursor:help}
+
+  /* 输入框：左右各伸出 9px（内边距 + 边框），字正好落在值那一列的线上 */
+  .ed .gi{display:block;width:calc(100% + 18px);min-width:0;height:32px;margin:0 -9px;padding:0 8px;border:1px solid transparent;border-radius:7px;
+    background:transparent;color:var(--t1);font:inherit;font-size:13.5px;line-height:20px;outline:none;transition:background-color .12s,border-color .12s,box-shadow .12s}
+  .ed .gi:hover{background:var(--hover)}
+  .ed .gi:focus{background:var(--bg);border-color:var(--accent);box-shadow:0 0 0 3px var(--ring)}
+  .ed textarea.gi{height:auto;min-height:32px;padding:5px 8px;resize:none;overflow:hidden}
+  /* 宽度跟着字走（时间、编号这种短的）：后面藏一份同样字号的字撑开格子，输入框自己不占宽度、铺满格子 */
+  .ed-auto{display:inline-grid;flex:none;max-width:calc(100% + 9px);min-width:0;margin-left:-9px;vertical-align:top}
+  .ed-auto > *{grid-area:1 / 1}
+  .ed-auto > .mir{visibility:hidden;height:0;overflow:hidden;padding:0 9px;white-space:pre;font-size:13.5px;line-height:20px}
+  .ed .ed-auto > .gi{width:0;min-width:100%;margin:0}
+  .ed .ed-title{font-size:16px;font-weight:600;line-height:24px}
+  .ed .gi.ed-title{height:38px}
+  .ed .gi.ed-body{font-size:14px;line-height:22px;padding:5px 8px}
+  .ed .ed-range{font-size:14px;font-weight:600;font-variant-numeric:tabular-nums}
+  .ed .ed-num{font-variant-numeric:tabular-nums}
+  .ed select.gi{width:auto;max-width:calc(100% + 18px);padding-right:28px;cursor:pointer;appearance:none;-webkit-appearance:none;text-overflow:ellipsis;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23888880' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 10 5 5 5-5'/%3E%3C/svg%3E");
+    background-repeat:no-repeat;background-position:right 8px center;background-size:13px 13px}
+  .ed select.gi.empty{color:var(--t4)}
+  .ed select.gi option{color:var(--t1)}
+  .ed-when{display:flex;align-items:center;flex-wrap:wrap;gap:0 12px;min-height:32px}
+  .ed-when > .ed-auto + .ed-n,.ed-v > .ed-auto + .ed-n{margin-left:-9px}
+
+  /* 属性表 */
+  .ed-props{display:grid;grid-template-columns:60px minmax(0,1fr);column-gap:12px;row-gap:4px;align-items:start}
+  .ed-k{padding:6px 0;font-size:12.5px;line-height:20px;color:var(--t3);white-space:nowrap}
+  .ed-v{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;min-width:0;min-height:32px}
+  .ed-v > .gi{flex:1 1 100%}
+  .ed-v > select.gi{flex:0 1 auto}
+  .ed-n{font-size:12px;line-height:18px;color:var(--t3);min-width:0}
+  .ed-n.warn{color:var(--warn)}
+  .ed-n.ok{color:var(--ok)}
+
+  /* 胶囊（单选） */
+  .ed-chips{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:2px 0}
+  .ed-chips .br{flex-basis:100%;height:0}
+  .ed-chip{height:28px;padding:0 11px;border:1px solid var(--line2);border-radius:999px;background:var(--bg);color:var(--t2);font-size:12.5px;line-height:26px;white-space:nowrap;
+    transition:background-color .12s,border-color .12s,color .12s}
+  .ed-chip:hover{border-color:var(--t4);color:var(--t1)}
+  .ed-chip.end:not(.on){color:var(--t3)}
+  .ed-chip.on{background:var(--accent-soft);border-color:var(--accent-soft);color:var(--accent);font-weight:500}
+  .ed-chip.none.on{background:var(--sunk);border-color:var(--sunk);color:var(--t2);font-weight:400}
+
+  /* 从家里挑：标签 + 「+」，点开是能搜的下拉 */
+  .ed-pick{position:relative;flex:1 1 100%;min-width:0}
+  .ed-tags{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:2px 0}
+  .ed-tag{display:inline-flex;align-items:center;gap:6px;height:28px;max-width:100%;padding:0 2px 0 10px;border-radius:999px;background:var(--sunk);color:var(--t1);font-size:12.5px;white-space:nowrap}
+  .ed-tag .id{flex:none;font:11.5px/1 var(--mono);color:var(--t3)}
+  .ed-tag .nm{min-width:0;overflow:hidden;text-overflow:ellipsis}
+  .ed-tag.gone .nm{color:var(--t3)}
+  .ed-tag .x,.ed-x{display:inline-grid;place-items:center;flex:none;width:24px;height:24px;padding:0;border:0;border-radius:50%;background:transparent;color:var(--t3);cursor:pointer;
+    transition:background-color .12s,color .12s,opacity .12s}
+  .ed-tag .x:hover,.ed-x:hover{background:var(--danger-soft);color:var(--danger)}
+  .ed-tag .x svg.i,.ed-x svg.i{width:12px;height:12px}
+  .ed-add{display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 11px 0 8px;border:1px dashed var(--line2);border-radius:999px;background:transparent;color:var(--t3);
+    font-size:12.5px;white-space:nowrap;transition:color .12s,border-color .12s}
+  .ed-add:hover,.ed-add.on{color:var(--accent);border-color:var(--accent)}
+  .ed-add svg.i{width:13px;height:13px}
+  .ed-pop{position:absolute;left:0;top:calc(100% + 6px);z-index:10;width:min(380px,100%);padding:6px;border:1px solid var(--line);border-radius:10px;background:var(--bg);
+    box-shadow:var(--pop);animation:wfin .12s ease-out}
+  .ed-pop .inp{width:100%;height:30px;margin-bottom:4px}
+  .ed-pop-l{display:flex;flex-direction:column;gap:1px;max-height:248px;overflow:auto;overscroll-behavior:contain}
+  .ed-pop-i{display:flex;align-items:center;gap:8px;width:100%;min-height:32px;padding:5px 8px;border:0;border-radius:6px;background:transparent;color:var(--t1);font-size:13px;text-align:left;cursor:pointer}
+  .ed-pop-i:hover{background:var(--hover)}
+  .ed-pop-i.hi{background:var(--accent-soft)}
+  .ed-pop-i .id{flex:none;min-width:30px;font:11.5px/1 var(--mono);color:var(--t3)}
+  .ed-pop-i .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ed-pop-i .k{flex:0 1 auto;max-width:55%;margin-left:auto;padding-left:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px;color:var(--t3)}
+  .ed-pop-e{padding:10px 8px;font-size:12.5px;color:var(--t3)}
+
+  /* 收起来的一组（更多） */
+  .ed-fold{display:flex;align-items:center;gap:6px;align-self:flex-start;max-width:calc(100% + 12px);margin:8px -6px 0;padding:4px 10px 4px 4px;border:0;border-radius:6px;background:transparent;
+    color:var(--t3);font-size:12.5px;line-height:20px;text-align:left;cursor:pointer}
+  .ed-fold:hover{background:var(--hover);color:var(--t1)}
+  .ed-fold svg.i{width:14px;height:14px;flex:none;transition:transform .15s}
+  .ed-fold.open svg.i{transform:rotate(90deg)}
+  .ed-fold .sum{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--t3)}
+  .ed-fold .sum.has{color:var(--t2)}
+  .ed-foldw{display:flex;flex-direction:column;min-width:0}
+  .ed-foldw > .ed-props{margin-top:6px}
+
+  /* 分步：一行一步，回车加下一步 */
+  .ed-steps{display:flex;flex-direction:column}
+  .ed-step{display:grid;grid-template-columns:22px minmax(0,1fr) auto 26px;column-gap:4px;align-items:start}
+  .ed-step .no{padding:6px 6px 6px 0;font-size:12px;line-height:20px;color:var(--t4);text-align:right;font-variant-numeric:tabular-nums}
+  .ed-step textarea.gi{width:100%;margin:0}
+  .ed-mins{display:flex;align-items:center;gap:2px;height:32px;font-size:12.5px;color:var(--t3)}
+  .ed .gi.ed-min{width:44px;margin:0;padding:0 6px;text-align:right;font-variant-numeric:tabular-nums}
+  .ed-step .ed-x{margin-top:4px;opacity:0}
+  .ed-step:hover .ed-x,.ed-step:focus-within .ed-x{opacity:1}
+  @media (hover:none){.ed-step .ed-x{opacity:1}}
+  .ed-addrow{display:inline-flex;align-items:center;gap:6px;align-self:flex-start;height:30px;margin:2px 0 0 16px;padding:0 10px 0 6px;border:0;border-radius:7px;background:transparent;
+    color:var(--t3);font-size:12.5px;cursor:pointer;transition:background-color .12s,color .12s}
+  .ed-addrow:hover{background:var(--hover);color:var(--accent)}
+  .ed-addrow svg.i{width:14px;height:14px}
+
+  .ed .wform-f{margin:0;padding:10px 20px;background:var(--bg);border-radius:0 0 12px 12px}
 
   /* ============ 插曲与消遣 ============ */
   /* 一次看一个人、一个池子；每条一根长条（灰的是初始权重，彩色是乘了冷却的现在权重） */
@@ -876,6 +997,13 @@
     .selbar{left:var(--gutter);right:var(--gutter);transform:none;bottom:16px;padding-left:14px}
     .selbar > span:first-child{flex:1}
     .newpill{bottom:16px}
+    .ed-h,.ed-sec,.ed .wform-f{padding-left:16px;padding-right:16px}
+    .ed-props{grid-template-columns:56px minmax(0,1fr);column-gap:10px}
+    .ed-chips{gap:5px}
+    .ed-chip{padding:0 9px}
+    .ed-h{flex-wrap:wrap}
+    .ed-h .m{flex:1 1 0;white-space:normal}
+    .ed-h .r{flex-basis:100%;margin-left:0;padding-left:0}
   }
 
   /* 整屏断点（和脚本里 insOverlay / isNarrow 一致，不要改数字） */
@@ -3957,6 +4085,266 @@
 
   $("ledgerRefresh").addEventListener("click", function () { loadLedger().then(function () { if (!S.ledgerErr) { toast("已刷新"); } }); });
 
+  /* ================= 编辑框的零件（世界线、家里的吃的和东西共用） ================= */
+  // 一张白卡：头一行写在改哪一项；上面主内容（字大一号），下面左右对齐的属性表；输入框平时就是字，悬停浅底、点进去才出框
+
+  // 外壳：title 主色，meta 灰字（放不下就省略），right 靠右的小字
+  function edBox(wk, title, meta, right) {
+    return h("div", { class: "wform ed", "data-wk": wk || null },
+      h("div", { class: "ed-h" },
+        h("span", { class: "t", text: title }),
+        meta ? h("span", { class: "m", text: meta, title: meta }) : null,
+        right ? h("span", { class: "r", text: right }) : null));
+  }
+  function edSec(kids) { return h("div", { class: "ed-sec" }, kids); }
+  function edProps() { return h("div", { class: "ed-props" }); }
+
+  // 属性表的一行：左边标签（tip 是悬停时的说明，标签下面画一道虚线提示能悬停），右边值（一个或几个元素）
+  function edRow(grid, label, value, tip) {
+    grid.appendChild(h("div", { class: "ed-k", title: tip || null, text: label }));
+    grid.appendChild(h("div", { class: "ed-v" }, value));
+    return grid;
+  }
+
+  // 输入框。opt.area 多行（按内容撑高）；opt.cls 字号之类；opt.auto 宽度跟着字走（时间、编号这种短的）；opt.focus 打开时光标先放这儿
+  function edInput(val, ph, onInput, opt) {
+    opt = opt || {};
+    var cls = "gi" + (opt.cls ? " " + opt.cls : "");
+    var inp = opt.area
+      ? h("textarea", { class: cls, rows: 1, placeholder: ph || "", "data-fit": String(opt.max || 260), "data-autofocus": opt.focus ? "1" : null })
+      : h("input", { class: cls, type: "text", placeholder: ph || "", "data-autofocus": opt.focus ? "1" : null });
+    inp.value = val === undefined || val === null ? "" : String(val);
+    if (!opt.auto) {
+      inp.addEventListener("input", function () { onInput(inp.value); if (opt.area) { worldFit(inp); } });
+      return inp;
+    }
+    var mir = h("span", { class: "mir" + (opt.cls ? " " + opt.cls : ""), "aria-hidden": "true" });
+    var sync = function () { mir.textContent = inp.value || inp.placeholder || " "; };
+    sync();
+    inp.addEventListener("input", function () { sync(); onInput(inp.value); });
+    return h("span", { class: "ed-auto" }, mir, inp);
+  }
+
+  // 一排胶囊（单选）。opts：[{ key, label, none：「没说 / 照上一步」这类（选中是灰的），end：收尾的几种（字淡一点），br：从这一个起另起一行 }]
+  function edChips(opts, val, onPick) {
+    var wrap = h("div", { class: "ed-chips", role: "radiogroup" });
+    var all = [];
+    opts.forEach(function (o) {
+      if (o.br) { wrap.appendChild(h("span", { class: "br", "aria-hidden": "true" })); }
+      var on = o.key === val;
+      var b = h("button", { type: "button", role: "radio", "aria-checked": on ? "true" : "false", title: o.tip || null, text: o.label,
+        class: "ed-chip" + (o.none ? " none" : "") + (o.end ? " end" : "") + (on ? " on" : "") });
+      b.addEventListener("click", function () {
+        all.forEach(function (x) { x.classList.toggle("on", x === b); x.setAttribute("aria-checked", x === b ? "true" : "false"); });
+        onPick(o.key);
+      });
+      all.push(b);
+      wrap.appendChild(b);
+    });
+    return wrap;
+  }
+  // ["a", "b"] → 胶囊的 opts；none 给了就在最前面加一个「没选」
+  function edOpts(list, none) {
+    return (none ? [{ key: "", label: none, none: true }] : []).concat((list || []).map(function (x) { return { key: x, label: x }; }));
+  }
+  // 谁：没说 + 丛雨、亚托莉、主人
+  function edPeople(none) {
+    return [{ key: "", label: none, none: true }].concat(((S.things && S.things.people) || []).map(function (p) { return { key: p.key, label: p.label }; }));
+  }
+
+  // 下拉（选项多的，比如哪一类）
+  function edSelect(opts, val, onchange) {
+    var sel = h("select", { class: "gi" + (val ? "" : " empty") });
+    opts.forEach(function (o) { sel.appendChild(h("option", { value: o.key, text: o.label, selected: o.key === val })); });
+    sel.addEventListener("change", function () { sel.classList.toggle("empty", !sel.value); onchange(sel.value); });
+    return sel;
+  }
+
+  // 从家里挑：多选（f[field] 是编号数组）或单选（f[field] 是编号或空）。挑好的是一排带 × 的标签，后面一个「+」点开能搜的列表；
+  // cands() 给候选 [{ id, name, sub, ended }]；opt.live：没了的不列（已经挑上的照样显示）
+  function edPicker(f, field, cands, opt) {
+    opt = opt || {};
+    var multi = Array.isArray(f[field]);
+    var wrap = h("div", { class: "ed-pick" });
+    var tags = h("div", { class: "ed-tags" });
+    wrap.appendChild(tags);
+    var pop = null, off = null, relist = null;
+    function picked() { return multi ? f[field] : (f[field] ? [f[field]] : []); }
+    function find(id) { return cands().filter(function (c) { return c.id === id; })[0] || { id: id, name: "", ended: false }; }
+    function set(id, on) {
+      if (multi) {
+        var i = f[field].indexOf(id);
+        if (on && i < 0) { f[field].push(id); }
+        if (!on && i >= 0) { f[field].splice(i, 1); }
+      } else { f[field] = on ? id : ""; }
+    }
+    function draw() {
+      tags.textContent = "";
+      picked().forEach(function (id) {
+        var c = find(id);
+        tags.appendChild(h("span", { class: "ed-tag" + (c.ended ? " gone" : ""), title: c.sub || null },
+          h("span", { class: "id", text: id }), c.name ? h("span", { class: "nm", text: c.name }) : null,
+          h("button", { class: "x", type: "button", title: "去掉", "aria-label": "去掉 " + id, onclick: function () {
+            set(id, false);
+            draw();
+            if (relist) { relist(); }
+          } }, icon("x"))));
+      });
+      if (multi || !picked().length) {
+        tags.appendChild(h("button", { class: "ed-add" + (pop ? " on" : ""), type: "button", "aria-expanded": pop ? "true" : "false",
+          onclick: function () { if (pop) { close(); } else { open(); } } }, icon("plus"), opt.add || "挑一件"));
+      }
+    }
+    function close() {
+      if (!pop) { return; }
+      pop.remove();
+      pop = null;
+      relist = null;
+      document.removeEventListener("mousedown", off, true);
+      draw();
+    }
+    function open() {
+      var q = h("input", { class: "inp", type: "text", placeholder: opt.ph || "搜编号、名字" });
+      var list = h("div", { class: "ed-pop-l", role: "listbox" });
+      var rows = [], hi = 0;
+      pop = h("div", { class: "ed-pop" }, q, list);
+      wrap.appendChild(pop);
+      function mark() {
+        Array.prototype.forEach.call(list.children, function (el, i) { el.classList.toggle("hi", i === hi); });
+        var el = list.children[hi];
+        if (el && el.scrollIntoView) { el.scrollIntoView({ block: "nearest" }); }
+      }
+      function pick(id) {
+        set(id, true);
+        if (multi) { q.value = ""; hi = 0; draw(); relist(); q.focus(); } else { close(); }
+      }
+      relist = function () {
+        var s = q.value.trim().toLowerCase(), have = picked();
+        rows = cands().filter(function (c) {
+          return have.indexOf(c.id) < 0 && !(opt.live && c.ended) && (!s || (c.id + " " + c.name + " " + (c.sub || "")).toLowerCase().indexOf(s) >= 0);
+        }).slice(0, 100);
+        list.textContent = "";
+        if (!rows.length) { list.appendChild(h("div", { class: "ed-pop-e", text: s ? "没有对得上的" : "没有可挑的了" })); }
+        hi = Math.max(0, Math.min(hi, rows.length - 1));
+        rows.forEach(function (c, i) {
+          var b = h("button", { type: "button", role: "option", class: "ed-pop-i" + (i === hi ? " hi" : "") },
+            h("span", { class: "id", text: c.id }), h("span", { class: "nm", text: c.name }), c.sub ? h("span", { class: "k", text: c.sub }) : null);
+          // 按下时不抢走搜索框的焦点
+          b.addEventListener("mousedown", function (ev) { ev.preventDefault(); });
+          b.addEventListener("click", function () { pick(c.id); });
+          list.appendChild(b);
+        });
+      };
+      q.addEventListener("input", function () { hi = 0; relist(); });
+      q.addEventListener("keydown", function (ev) {
+        if (ev.isComposing || ev.keyCode === 229) { return; }
+        if (ev.key === "Escape") {
+          // 只收起下拉，不往上冒（不然整个编辑框跟着取消了）
+          ev.preventDefault();
+          ev.stopPropagation();
+          close();
+          var add = tags.querySelector(".ed-add");
+          if (add) { add.focus(); }
+        }
+        else if (ev.key === "ArrowDown") { ev.preventDefault(); hi = Math.min(rows.length - 1, hi + 1); mark(); }
+        else if (ev.key === "ArrowUp") { ev.preventDefault(); hi = Math.max(0, hi - 1); mark(); }
+        else if (ev.key === "Enter" && !ev.metaKey && !ev.ctrlKey) { ev.preventDefault(); if (rows[hi]) { pick(rows[hi].id); } }
+      });
+      off = function (ev) { if (!wrap.contains(ev.target)) { close(); } };
+      document.addEventListener("mousedown", off, true);
+      relist();
+      draw();
+      try { q.focus({ preventScroll: true }); } catch (e) { q.focus(); }
+    }
+    draw();
+    return wrap;
+  }
+
+  // 收起来的一组：收着时后面写着里面现在填了什么（都没填就写有哪几项）；ui[k] 记着开没开（不算改动）
+  function edFold(ui, k, label, names, summary, build) {
+    var wrap = h("div", { class: "ed-foldw" });
+    function draw() {
+      wrap.textContent = "";
+      var open = !!ui[k], sum = open ? "" : summary();
+      wrap.appendChild(h("button", { class: "ed-fold" + (open ? " open" : ""), type: "button", "aria-expanded": open ? "true" : "false",
+        onclick: function () { ui[k] = !open; draw(); } },
+        icon("chev"), h("span", { text: label }), open ? null : h("span", { class: "sum" + (sum ? " has" : ""), text: sum || names })));
+      if (open) {
+        wrap.appendChild(build());
+        edFitIn(wrap);
+      }
+    }
+    draw();
+    return wrap;
+  }
+  // 编辑框自己的小状态（「更多」开没开）：不可枚举，不算进「改没改过」
+  function edState(f) {
+    if (!f._ui) { Object.defineProperty(f, "_ui", { value: {}, enumerable: false, configurable: true, writable: true }); }
+    return f._ui;
+  }
+  // 已经在页面上的话，里面的多行输入框按内容撑高
+  function edFitIn(el) {
+    if (el && el.isConnected) { Array.prototype.forEach.call(el.querySelectorAll("textarea[data-fit]"), worldFit); }
+  }
+
+  /* ---------- 时间：输入框里写短的（同一天只写钟点），存的时候补全 ---------- */
+  function pad2(n) { return (+n < 10 ? "0" : "") + (+n); }
+  function dayShift(date, n) {
+    var ms = worldMs(String(date).slice(0, 10) + " 00:00");
+    return ms === null ? String(date).slice(0, 10) : new Date(ms + n * 86400000).toISOString().slice(0, 10);
+  }
+  var DAY_WORDS = { "前天": -2, "昨天": -1, "今天": 0, "明天": 1, "次日": 1, "第二天": 1 };
+  // 「14:40」「9:05」「0905」「10-22 8:00」「2026-10-22 08:00」「昨天 / 次日 08:00」→「2026-10-22 08:00」；空 → ""；认不出 → null。
+  // base：只写钟点时算哪一天；after（结束时间用）：只写钟点、又早于开始的，算第二天
+  function fullTime(text, base, after) {
+    var s = String(text || "").trim().replace(/：/g, ":").replace("T", " ").replace(/\s+/g, " ");
+    if (!s) { return ""; }
+    var shift = null, w = /^(前天|昨天|今天|明天|次日|第二天)\s*/.exec(s);
+    if (w) { shift = DAY_WORDS[w[1]]; s = s.slice(w[0].length); }
+    var m = /^(?:(\d{4})[-/.])?(?:(\d{1,2})[-/.](\d{1,2})\s*)?(\d{1,2}):?(\d{2})$/.exec(s);
+    if (!m || +m[4] > 23 || +m[5] > 59) { return null; }
+    if (m[2] && (+m[2] < 1 || +m[2] > 12 || +m[3] < 1 || +m[3] > 31)) { return null; }
+    var clock = pad2(m[4]) + ":" + m[5];
+    var date = m[2] ? (m[1] || String(base).slice(0, 4)) + "-" + pad2(m[2]) + "-" + pad2(m[3]) : dayShift(base, shift || 0);
+    var out = date + " " + clock;
+    if (after && !m[2] && shift === null && out < String(after).slice(0, 16)) { out = dayShift(date, 1) + " " + clock; }
+    return out;
+  }
+  // 显示用：base 那天只写钟点；after 给了（结束时间）：开始的第二天、钟点又早于开始的也只写钟点，别的第二天写「次日」；
+  // rel：昨天、前天写成字
+  function shortTime(full, base, after, rel) {
+    var s = String(full || "").slice(0, 16);
+    if (s.length < 16) { return s; }
+    var d = s.slice(0, 10), t = s.slice(11, 16);
+    if (d === base) { return t; }
+    if (after) {
+      var next = dayShift(after, 1) === d;
+      if (next && t < String(after).slice(11, 16)) { return t; }
+      if (next) { return "次日 " + t; }
+    }
+    if (rel && d === dayShift(base, -1)) { return "昨天 " + t; }
+    if (rel && d === dayShift(base, -2)) { return "前天 " + t; }
+    return d.slice(0, 4) === String(base).slice(0, 4) ? d.slice(5) + " " + t : s;
+  }
+  // 世界线一段的起止写成一格：「14:40 – 20:00」
+  function rangeText(start, end, base) {
+    var a = shortTime(start, base);
+    return end ? a + " – " + shortTime(end, String(start || "").slice(0, 10), start) : a;
+  }
+  // 「14:40 – 20:00」「1440-2000」「14:40 到 次日 08:00」「10-21 23:00 ~ 10-22 07:00」「14:40」→ { start, end }；认不出的那半是 null
+  function parseRange(text, base) {
+    var s = String(text || "").trim().replace(/：/g, ":");
+    var m = /^(.*?\d{1,2}:?\d{2})\s*(?:–|—|~|～|→|->|到|至|-)\s*(\S.*)$/.exec(s);
+    var a = fullTime(m ? m[1] : s, base);
+    return { start: a, end: !m ? "" : a ? fullTime(m[2], a.slice(0, 10), a) : null };
+  }
+  // 两个时刻之间多久：「5 小时 20 分钟」；不对（结束不晚于开始）给 ""
+  function spanText(a, b) {
+    var m = Math.round(((worldMs(b) || 0) - (worldMs(a) || 0)) / 60000);
+    if (!(m > 0)) { return ""; }
+    return m < 60 ? m + " 分钟" : Math.floor(m / 60) + " 小时" + (m % 60 ? " " + (m % 60) + " 分钟" : "");
+  }
+
   /* ================= 世界线 ================= */
   // 溯源：补写排的这段是照什么写的（抽到的哪一条 / 打算 / 作息 / 接着前面 / 自己想的）
   var ORIGIN_LABELS = {
@@ -4199,44 +4587,6 @@
     return out;
   }
 
-  function worldSelect(opts, val, onchange) {
-    var sel = h("select", { class: "inp" });
-    opts.forEach(function (o) { sel.appendChild(h("option", { value: o.key, text: o.label, selected: o.key === val })); });
-    sel.addEventListener("change", function () { onchange(sel.value); });
-    return sel;
-  }
-
-  // 一个输入项：上面一行是名字 + 灰色小字说明，下面是输入框
-  function worldLabelLine(label, hint) {
-    return h("span", { class: "wfld-l" }, label, hint ? h("span", { class: "n", text: hint }) : null);
-  }
-
-  function worldField(label, val, ph, onInput, opt) {
-    opt = opt || {};
-    var inp = opt.area
-      ? h("textarea", { class: "ta", rows: opt.rows || 2, placeholder: ph || "", "data-fit": String(opt.max || 260) })
-      : h("input", { class: "inp", type: "text", placeholder: ph || "" });
-    inp.value = val === undefined || val === null ? "" : String(val);
-    inp.addEventListener("input", function () {
-      onInput(inp.value);
-      if (opt.area) { worldFit(inp); }
-    });
-    return h("label", { class: "wfld" }, worldLabelLine(label, opt.hint), inp);
-  }
-
-  function worldPick(label, opts, val, onchange, hint) {
-    return h("label", { class: "wfld" }, worldLabelLine(label, hint), worldSelect(opts, val, onchange));
-  }
-
-  // 编辑框外壳：头一行写清楚在改哪一项
-  function worldFormBox(wk, title, what, meta) {
-    return h("div", { class: "wform", "data-wk": wk || null },
-      h("div", { class: "wform-h" },
-        h("span", { class: "t", text: title }),
-        what ? h("span", { class: "w", text: what }) : null,
-        meta ? h("span", { class: "m", text: meta }) : null));
-  }
-
   // 编辑框底栏：取消 / 保存贴在视口底部；Esc 取消（改过的先问一句），⌘/Ctrl + Enter 保存（输入法选字时不算）
   function worldFormFoot(box, onCancel, saveText, onSave, isDirty) {
     var cancel = h("button", { class: "btn sm", type: "button", text: "取消" });
@@ -4267,7 +4617,8 @@
       else if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) { ev.preventDefault(); ev.stopPropagation(); doSave(); }
     });
     box.appendChild(h("div", { class: "wform-f" },
-      h("span", { class: "hint", text: "Esc 取消 · " + (W_MAC ? "⌘" : "Ctrl") + " + Enter " + saveText }), cancel, save));
+      h("span", { class: "hint" }, h("kbd", { text: "Esc" }), h("span", { text: "取消" }), h("kbd", { text: (W_MAC ? "⌘" : "Ctrl") + " Enter" }), saveText),
+      cancel, save));
     return box;
   }
 
@@ -4312,7 +4663,7 @@
     if (opt.flash || (fx && !el.classList.contains("wform"))) { worldFlash(el); }
     if (opt.focus && !window.matchMedia("(hover: none)").matches) {
       // el 可能就是编辑框，也可能是包着编辑框的卡片（作息）
-      var first = el.querySelector(".wform input, .wform textarea, .wform select");
+      var first = el.querySelector(".wform [data-autofocus]") || el.querySelector(".wform input, .wform textarea, .wform select");
       if (first) {
         try {
           first.focus({ preventScroll: true });
@@ -4533,7 +4884,7 @@
       card.appendChild(worldEntryForm(d, null));
     } else {
       card.appendChild(h("button", { class: "addlink", type: "button", "data-wk": "e:new", onclick: function () {
-        worldOpen("e", "new", { who: who, start: d.date + " ", end: "", place: "", doing: "", steps: [], result: "", importance: "", "public": "", training: "" });
+        worldOpen("e", "new", { who: who, when: "", place: "", doing: "", steps: [], result: "", importance: "", "public": "", training: "" });
       } }, icon("plus"), "手动加一条"));
     }
     if (!list.length) {
@@ -4746,7 +5097,7 @@
     var acts = h("div", { class: "la" });
     var edit = h("button", { class: "btn quiet sm", type: "button", title: "编辑" }, icon("edit"));
     edit.addEventListener("click", function () {
-      worldOpen("e", e.id, { start: e.start || "", end: e.end || "", place: e.place || "", doing: e.doing || "", steps: (e.steps || []).map(function (t, i) { var m = worldStepMins(e); return { text: t, minutes: m ? String(m[i]) : "" }; }),
+      worldOpen("e", e.id, { when: rangeText(e.start, e.end, date), place: e.place || "", doing: e.doing || "", steps: (e.steps || []).map(function (t, i) { var m = worldStepMins(e); return { text: t, minutes: m ? String(m[i]) : "" }; }),
         importance: +e.importance > 0 ? String(e.importance) : "",
         result: e.result || "", "public": e["public"] || "",
         training: /^#?\d+$/.test(String(e.training || "").trim()) ? String(e.training).trim().replace(/^#/, "") : "",
@@ -4760,97 +5111,185 @@
     return row;
   }
 
-  // 分步：一步一行，做什么和几分钟分开填；可以加一步、删一步
-  function worldStepsEditor(f) {
+  // 分步：一行一步，做什么和几分钟分开填；回车加下一步，空的那步按退格删掉。上面一行现算一共几分钟、和这段对不对得上
+  function worldStepsEditor(f, spanMin) {
     if (!Array.isArray(f.steps)) { f.steps = []; }
-    var list = h("div", { class: "wstep-ed" });
-    function draw(focusAt) {
+    var note = h("span", { class: "ed-n" });
+    var fix = h("button", { class: "fix", type: "button", hidden: true });
+    var list = h("div", { class: "ed-steps" });
+    var sec = edSec([h("div", { class: "ed-cap" },
+      h("span", { class: "l", title: "按进度只给她看到正在做的那一步，后面的不给；没有分步就把整段给她", text: "分步" }), note, fix), list]);
+    function refresh() {
+      var rows = f.steps.filter(function (x) { return String(x.text || "").trim(); });
+      var mins = rows.map(function (x) { return +x.minutes || 0; });
+      var have = mins.filter(function (m) { return m > 0; }).length;
+      var span = spanMin();
+      fix.hidden = true;
+      note.className = "ed-n";
+      if (!rows.length) { note.textContent = "没有分步，就把整段给她看"; return; }
+      if (!have) { note.textContent = rows.length + " 步 · 没填分钟，按步数平分"; return; }
+      if (have < rows.length) { note.textContent = "有 " + (rows.length - have) + " 步没填分钟：要么都填，要么都不填"; note.classList.add("warn"); return; }
+      var total = mins.reduce(function (a, b) { return a + b; }, 0);
+      if (!span || span === total) {
+        note.textContent = rows.length + " 步 · 共 " + total + " 分钟" + (span ? "，和这段一样长" : "");
+        if (span) { note.classList.add("ok"); }
+        return;
+      }
+      note.textContent = rows.length + " 步 · 共 " + total + " 分钟，这段 " + span + " 分钟（按比例摊开）";
+      var last = rows[rows.length - 1], rest = span - (total - (+last.minutes || 0));
+      if (rest > 0) {
+        fix.hidden = false;
+        fix.textContent = "最后一步改成 " + rest + " 分钟";
+        fix.onclick = function () { last.minutes = String(rest); draw(-1); };
+      }
+    }
+    function draw(focusAt, toEnd) {
       list.textContent = "";
       f.steps.forEach(function (st, i) {
-        var t = h("input", { class: "inp", type: "text", placeholder: "第 " + (i + 1) + " 步做什么" });
+        var t = h("textarea", { class: "gi", rows: 1, placeholder: i ? "接着做什么" : "第一步做什么", "data-fit": "200" });
         t.value = st.text || "";
-        t.addEventListener("input", function () { st.text = t.value; });
-        var m = h("input", { class: "inp wstep-m", type: "text", inputmode: "numeric", placeholder: "—", title: "这步几分钟" });
+        t.addEventListener("input", function () { st.text = t.value; worldFit(t); refresh(); });
+        t.addEventListener("keydown", function (ev) {
+          if (ev.isComposing || ev.keyCode === 229 || ev.metaKey || ev.ctrlKey || ev.altKey) { return; }
+          if (ev.key === "Enter" && !ev.shiftKey) {
+            ev.preventDefault();
+            f.steps.splice(i + 1, 0, { text: "", minutes: "" });
+            draw(i + 1);
+          } else if (ev.key === "Backspace" && !t.value) {
+            ev.preventDefault();
+            f.steps.splice(i, 1);
+            draw(i > 0 ? i - 1 : (f.steps.length ? 0 : -1), true);
+          }
+        });
+        var m = h("input", { class: "gi ed-min", type: "text", inputmode: "numeric", placeholder: "—", title: "这一步几分钟", "aria-label": "第 " + (i + 1) + " 步几分钟" });
         m.value = st.minutes || "";
-        m.addEventListener("input", function () { st.minutes = m.value.replace(/[^\d]/g, ""); if (m.value !== st.minutes) { m.value = st.minutes; } });
-        var del = h("button", { class: "btn quiet sm danger", type: "button", title: "删掉这步" }, icon("trash"));
+        m.addEventListener("input", function () {
+          var v = m.value.replace(/[^\d]/g, "").slice(0, 4);
+          if (m.value !== v) { m.value = v; }
+          st.minutes = v;
+          refresh();
+        });
+        var del = h("button", { class: "ed-x", type: "button", title: "删掉这一步", "aria-label": "删掉第 " + (i + 1) + " 步" }, icon("x"));
         del.addEventListener("click", function () { f.steps.splice(i, 1); draw(Math.min(i, f.steps.length - 1)); });
-        list.appendChild(h("div", { class: "wstep-row" },
-          h("span", { class: "wstep-n", text: (i + 1) + "." }), t, m, h("span", { class: "wstep-u", text: "分钟" }), del));
-        if (i === focusAt) { setTimeout(function () { t.focus(); }, 0); }
+        list.appendChild(h("div", { class: "ed-step" }, h("span", { class: "no", text: String(i + 1) }), t,
+          h("span", { class: "ed-mins" }, m, h("span", { text: "分" })), del));
       });
-      var add = h("button", { class: "addlink", type: "button" }, icon("plus"), "加一步");
-      add.addEventListener("click", function () { f.steps.push({ text: "", minutes: "" }); draw(f.steps.length - 1); });
-      list.appendChild(add);
+      list.appendChild(h("button", { class: "ed-addrow", type: "button", onclick: function () { f.steps.push({ text: "", minutes: "" }); draw(f.steps.length - 1); } },
+        icon("plus"), f.steps.length ? "加一步" : "加分步"));
+      edFitIn(list);
+      if (focusAt >= 0) {
+        var ta = list.querySelectorAll("textarea")[focusAt];
+        if (ta) {
+          ta.focus();
+          if (toEnd) { ta.setSelectionRange(ta.value.length, ta.value.length); }
+        }
+      }
+      refresh();
     }
     draw(-1);
-    return h("div", { class: "wfld" },
-      worldLabelLine("分步", "按进度只给她看到正在做的那步，后面的不给；没有分步就把上面整段给她。分钟每步都填才按分钟算，都不填按步数平分"), list);
+    return { el: sec, refresh: refresh };
   }
 
+  // 改 / 手动加一段：上面和显示时一样排（起止、地点、在做什么，字大一号），中间分步，下面一张属性表
   function worldEntryForm(d, e) {
     var key = e ? e.id : "new";
     var wk = "e:" + key;
     var f = S.wEdit[key];
     var fileDate = e ? String(e.start || "").slice(0, 10) : d.date;
     var doneMin = S.world.done_min || 4;
+    var isEvent = !!e && e.kind === "event";
+    var who = e ? (e.who_label || worldLabel(d, e.who)) : (f.who ? worldLabel(d, f.who) : "");
     var box = e
-      ? worldFormBox(wk, "正在改", worldSpan(e, fileDate) + (e.place ? " " + e.place : ""),
-        (e.who_label || worldLabel(d, e.who)) + " · " + (WORLD_SRC[e.source] || e.source || "") + " · " + e.id)
-      : worldFormBox(wk, "手动加一条", "", worldLabel(d, f.who) + " · 存成「手动」");
-    if (!e && !f.who) {
-      box.appendChild(worldPick("谁", worldWhoList(d), f.who, function (v) { f.who = v; }));
+      ? edBox(wk, "编辑这一段", [who, e.id].filter(Boolean).join(" · "),
+        e.source === "manual" ? "手动写的" : (WORLD_SRC[e.source] || e.source || "") + "写的 · 存了就算手动")
+      : edBox(wk, "手动加一段", who, "存成手动，补写和记录员改不动");
+
+    var note = h("span", { class: "ed-n" });
+    var steps = null;
+    function span() {
+      var r = parseRange(f.when, d.date);
+      return r.start && r.end ? Math.round((worldMs(r.end) - worldMs(r.start)) / 60000) : null;
     }
-    box.appendChild(h("div", { class: "wcols" },
-      worldField("开始", f.start, fileDate + " 09:00", function (v) { f.start = v; }),
-      worldField("结束", f.end, fileDate + " 10:30", function (v) { f.end = v; }, { hint: "空着 = 还在进行" }),
-      worldField("地点", f.place, "例如：建实神社 社务所", function (v) { f.place = v; })));
-    box.appendChild(worldField("在做什么", f.doing, "", function (v) { f.doing = v; }, { area: true, rows: 2, hint: "细节：本人、在场的人看得到" }));
-    box.appendChild(worldStepsEditor(f));
-    var imp = [{ key: "", label: "不打分" }, { key: "1", label: "1" }, { key: "2", label: "2" }, { key: "3", label: "3" }, { key: "4", label: "4" }, { key: "5", label: "5" }];
-    box.appendChild(h("div", { class: "wcols r1" },
-      worldField("结果", f.result, "例如：秒针重新走起来，修好了", function (v) { f.result = v; }, { hint: "这件事最后怎样了；她做完才看得到" }),
-      worldPick("重要程度", imp, String(f.importance || ""), function (v) { f.importance = v; }, "够 " + doneMin + " 分做完才叫她主动说"),
-      worldField("在练的事编号", f.training, "没有就空着", function (v) { f.training = v; })));
-    box.appendChild(worldField("别人看到的", f["public"], "例如：在藏经阁闭关练功", function (v) { f["public"] = v; }, { hint: "粗略；空着就只看到地点" }));
+    // 起止后面现算多久；写得不对就直接说哪儿不对
+    function whenNote() {
+      var r = parseRange(f.when, d.date), t = "", warn = false;
+      if (!r.start) { t = r.start === "" ? "写成 14:40 – 20:00" : "认不出，写成 14:40 – 20:00"; warn = r.start === null; }
+      else if (r.end === null) { t = "结束认不出：写 20:00、次日 08:00 或 10-22 08:00"; warn = true; }
+      else if (!r.end) { t = isEvent ? "顺带的事，只记一个时刻" : "没写结束 = 还在做"; }
+      else if (!spanText(r.start, r.end)) { t = "结束得晚于开始"; warn = true; }
+      else {
+        t = spanText(r.start, r.end);
+        if (r.end.slice(0, 10) !== r.start.slice(0, 10)) {
+          t += "，" + (r.end.slice(0, 10) === dayShift(r.start, 1) ? "第二天 " : r.end.slice(5, 10) + " ") + r.end.slice(11, 16) + " 结束";
+        }
+      }
+      if (r.start && r.start.slice(0, 10) !== d.date) { t = r.start.slice(5, 10) + " 开始 · " + t; }
+      note.textContent = t;
+      note.classList.toggle("warn", warn);
+      if (steps) { steps.refresh(); }
+    }
+    whenNote();
+    box.appendChild(edSec([
+      h("div", { class: "ed-when" },
+        edInput(f.when, isEvent ? "14:40" : "14:40 – 20:00", function (v) { f.when = v; whenNote(); }, { cls: "ed-range", auto: true, focus: !e }),
+        note),
+      edInput(f.place, "在哪", function (v) { f.place = v; }, { cls: "ed-title" }),
+      edInput(f.doing, "在做什么：她自己和在场的人看得到的细节", function (v) { f.doing = v; }, { area: true, cls: "ed-body", max: 360, focus: !!e })
+    ]));
+
+    steps = worldStepsEditor(f, span);
+    box.appendChild(steps.el);
+
+    var p = edProps();
+    if (!e && !f.who) {
+      edRow(p, "谁", edChips(worldWhoList(d).map(function (w) { return { key: w.key, label: w.label }; }), f.who, function (v) { f.who = v; }));
+    }
+    edRow(p, "结果", edInput(f.result, "这件事最后怎样了，做完才给她看", function (v) { f.result = v; }, { area: true }));
+    edRow(p, "别人看到", edInput(f["public"], "空着就只看到地点", function (v) { f["public"] = v; }),
+      "别人只看到这一句粗略的说法；细节只有她自己和在场的人知道");
+    edRow(p, "重要程度", [
+      edChips([{ key: "", label: "不打分", none: true }].concat(["1", "2", "3", "4", "5"].map(function (x) { return { key: x, label: x }; })),
+        String(f.importance || ""), function (v) { f.importance = v; }),
+      h("span", { class: "ed-n", text: "够 " + doneMin + " 分，做完会叫她说一声" })]);
+    edRow(p, "在练的事", edInput(f.training, "编号，没有就空着", function (v) { f.training = v; }, { cls: "ed-num", auto: true }));
     if (e && (e.things || []).length) {
-      var tagBox = h("div", { class: "wthings", style: "margin-top:0" });
+      var tagBox = h("div", { class: "ed-tags" });
       var drawTags = function () {
         tagBox.textContent = "";
-        if (!f.things.length) { tagBox.appendChild(h("span", { class: "muted", text: "都删掉了：这段不再算动了家里的吃的" })); }
+        if (!f.things.length) { tagBox.appendChild(h("span", { class: "ed-n", text: "都删掉了：这段不再算动了家里的东西" })); }
         f.things.forEach(function (t, i) {
-          tagBox.appendChild(h("span", { class: "tchip", style: "cursor:default" }, worldThingText(d, t),
-            h("button", { class: "x", type: "button", title: "删掉这条（标错了）", text: "×", onclick: function () { f.things.splice(i, 1); drawTags(); } })));
+          tagBox.appendChild(h("span", { class: "ed-tag" }, h("span", { class: "nm", text: worldThingText(d, t) }),
+            h("button", { class: "x", type: "button", title: "删掉这条（标错了）", "aria-label": "删掉这条", onclick: function () { f.things.splice(i, 1); drawTags(); } }, icon("x"))));
         });
       };
       drawTags();
-      box.appendChild(h("div", { class: "wfld" },
-        worldLabelLine("这段标的吃的", "补写标的；这段做完才算进家里的吃的。只能删掉标错的；改了在做什么，原来标的多半也对不上了，看一眼"), tagBox));
+      edRow(p, "家里的", tagBox, "补写在这段标的吃的和东西，这段做完才算进去。只能删掉标错的；改了在做什么，原来标的多半也对不上了，看一眼");
     }
+    box.appendChild(edSec(p));
+
     return worldFormFoot(box, function () { worldClose("e", key); }, e ? "保存" : "添加", function () {
-      var start = String(f.start || "").trim();
-      if (!/\d{1,2}[:：]\d{2}$/.test(start)) { toast("开始时间写成 2026-10-12 09:00 或 09:00", { err: true }); return null; }
+      var r = parseRange(f.when, d.date);
+      if (!r.start) { toast(r.start === "" ? "写一下什么时候，例如 14:40 – 20:00" : "时间写成 14:40 – 20:00（第二天写「次日 08:00」）", { err: true }); return null; }
+      if (r.end === null) { toast("结束时间写成 20:00、次日 08:00 或 10-22 08:00", { err: true }); return null; }
+      if (r.end && r.end <= r.start) { toast("结束得晚于开始", { err: true }); return null; }
       if (!String(f.doing || "").trim() && !String(f.place || "").trim()) { toast("地点和在做什么至少写一个", { err: true }); return null; }
-      var steps = (f.steps || []).filter(function (x) { return String(x.text || "").trim(); }).map(function (x) {
+      var stepList = (f.steps || []).filter(function (x) { return String(x.text || "").trim(); }).map(function (x) {
         var m = Math.round(+String(x.minutes || "").trim());
         return { text: String(x.text).trim(), minutes: m > 0 ? m : 0 };
       });
-      var withMin = steps.filter(function (x) { return x.minutes > 0; }).length;
-      if (withMin && withMin < steps.length) { toast("分钟要么每步都填，要么都不填", { err: true }); return null; }
-      var date = /^\d{4}-\d{2}-\d{2}/.test(start) ? start.slice(0, 10) : fileDate;
+      var withMin = stepList.filter(function (x) { return x.minutes > 0; }).length;
+      if (withMin && withMin < stepList.length) { toast("分钟要么每步都填，要么都不填", { err: true }); return null; }
       // 新加的那条存完才有编号：按「谁 + 开始时间 + 手动」在重读的数据里找它
-      var at = (/^\d{4}-\d{2}-\d{2}/.test(start) ? "" : date + " ") +
-        start.replace("：", ":").replace(/(^|\s)(\d):/, function (m, sp, hh) { return sp + "0" + hh + ":"; });
       var findNew = function (w) {
         var hit = null;
         ((w.days || [])[0] || { entries: [] }).entries.forEach(function (x) {
-          if (x.who === f.who && x.source === "manual" && String(x.start || "").slice(0, 16) === at.slice(0, 16)) { hit = x; }
+          if (x.who === f.who && x.source === "manual" && String(x.start || "").slice(0, 16) === r.start) { hit = x; }
         });
         return hit ? "e:" + hit.id : "";
       };
       return worldPost({
-        kind: "entry", action: e ? "update" : "add", date: e ? fileDate : date, id: e ? e.id : "", who: f.who,
-        start: start, end: String(f.end || "").trim(), place: f.place, doing: f.doing, steps: steps, "public": f["public"],
+        kind: "entry", action: e ? "update" : "add", date: e ? fileDate : r.start.slice(0, 10), id: e ? e.id : "", who: f.who,
+        start: r.start, end: r.end, place: f.place, doing: f.doing, steps: stepList, "public": f["public"],
         importance: String(f.importance || "").trim() === "" ? 0 : +String(f.importance).trim(),
         result: String(f.result || ""),
         training: String(f.training || "").replace(/^#/, "").trim(),
@@ -4913,7 +5352,7 @@
     if (isActive) {
       var edit = h("button", { class: "btn quiet sm", type: "button", title: "编辑" }, icon("edit"));
       edit.addEventListener("click", function () {
-        worldOpen("c", c.id, { text: c.text || "", "public": c["public"] || "", until: c.until || "", until_time: c.until_time || "" });
+        worldOpen("c", c.id, { text: c.text || "", "public": c["public"] || "", until: c.until || "", until_time: shortTime(c.until_time, d.today) });
       });
       var lift = h("button", { class: "btn quiet sm", type: "button", title: "解除这条规矩" }, "解除");
       armed(lift, "确认解除", function () { worldPost({ kind: "constraint", action: "delete", id: c.id }, "已解除"); });
@@ -4933,19 +5372,22 @@
     var wk = "c:" + key;
     var f = S.cEdit[key];
     var box = c
-      ? worldFormBox(wk, "正在改规矩", "", (c.who_label || worldLabel(d, c.who)) + " · #" + c.id)
-      : worldFormBox(wk, "加一条规矩", "", f.who ? worldLabel(d, f.who) : "");
+      ? edBox(wk, "改规矩", (c.who_label || worldLabel(d, c.who)) + " · #" + c.id)
+      : edBox(wk, "加一条规矩", f.who ? worldLabel(d, f.who) : "", "主人定的规矩");
+    box.appendChild(edSec(edInput(f.text, "规矩，例如：练成收放之前不许出藏经阁", function (v) { f.text = v; }, { area: true, cls: "ed-body", focus: true })));
+    var p = edProps();
     if (!c && !f.who) {
-      box.appendChild(worldPick("管谁", (d.bots || []).map(function (b) { return { key: b.key, label: b.label }; }), f.who, function (v) { f.who = v; }));
+      edRow(p, "管谁", edChips((d.bots || []).map(function (b) { return { key: b.key, label: b.label }; }), f.who, function (v) { f.who = v; }));
     }
-    box.appendChild(worldField("规矩", f.text, "例如：练成收放之前不许出藏经阁", function (v) { f.text = v; }, { area: true, rows: 2 }));
-    box.appendChild(worldField("别人知道的", f["public"], "例如：在藏经阁闭关练功", function (v) { f["public"] = v; }, { hint: "粗略；空着 = 别人不知道" }));
-    box.appendChild(h("div", { class: "wcols c2" },
-      worldField("到什么时候为止", f.until, "例如：在练的事 #3 练成", function (v) { f.until = v; }, { hint: "条件，可空" }),
-      worldField("到点自动解除", f.until_time, "例如：2026-10-14 23:59", function (v) { f.until_time = v; }, { hint: "可空" })));
+    edRow(p, "别人知道", edInput(f["public"], "空着就是别人不知道", function (v) { f["public"] = v; }), "别人知道的粗略说法，例如：在藏经阁闭关练功");
+    edRow(p, "解除条件", edInput(f.until, "可空，例如：在练的事 #3 练成", function (v) { f.until = v; }), "到什么时候为止：一句条件，记录员看到条件成了就撤");
+    edRow(p, "到点解除", edInput(f.until_time, "可空，例如 10-25 23:59", function (v) { f.until_time = v; }, { cls: "ed-num", auto: true }), "到这个时刻自动解除");
+    box.appendChild(edSec(p));
     return worldFormFoot(box, function () { worldClose("c", key); }, c ? "保存" : "添加", function () {
       if (!String(f.text || "").trim()) { toast("规矩不能空", { err: true }); return null; }
       if (!c && !f.who) { toast("选一下管谁", { err: true }); return null; }
+      var until = fullTime(f.until_time, d.today);
+      if (until === null) { toast("到点解除写成 23:59 或 10-25 23:59", { err: true }); return null; }
       var text = String(f.text || "").trim();
       var findNew = function (w) {
         var hit = null;
@@ -4953,7 +5395,7 @@
         return hit ? "c:" + hit.id : "";
       };
       return worldPost({ kind: "constraint", action: c ? "update" : "add", id: c ? c.id : "", who: f.who,
-        text: f.text, "public": f["public"], until: f.until, until_time: String(f.until_time || "").trim() },
+        text: f.text, "public": f["public"], until: f.until, until_time: until },
         c ? "已保存" : "已添加", function () { delete S.cEdit[key]; }, { from: wk, to: c ? wk : findNew });
     }, function () { return worldDirty(f); });
   }
@@ -5005,12 +5447,14 @@
     var key = who || (it ? it.who : "new");
     var wk = "i:" + key;
     var f = S.iEdit[key];
-    var box = worldFormBox(wk, it ? "正在改打算" : "替她写一条打算", "", worldLabel(d, f.who || key));
+    var box = edBox(wk, it ? "改打算" : "替她写一条打算", worldLabel(d, f.who || key), "补写会照着排");
+    box.appendChild(edSec(edInput(f.text, "打算，例如：下午想去温泉街挑布", function (v) { f.text = v; }, { area: true, cls: "ed-body", focus: true })));
+    var p = edProps();
     if (!it && !who) {
-      box.appendChild(worldPick("谁的打算", (d.bots || []).map(function (b) { return { key: b.key, label: b.label }; }), f.who, function (v) { f.who = v; }));
+      edRow(p, "谁的", edChips((d.bots || []).map(function (b) { return { key: b.key, label: b.label }; }), f.who, function (v) { f.who = v; }));
     }
-    box.appendChild(worldField("打算", f.text, "例如：下午想去温泉街挑布", function (v) { f.text = v; }, { area: true, rows: 2 }));
-    box.appendChild(worldField("大概什么时候", f.window, "例如：13:00~16:00", function (v) { f.window = v; }, { hint: "可空" }));
+    edRow(p, "什么时候", edInput(f.window, "可空，例如 13:00~16:00", function (v) { f.window = v; }), "大概什么时候去做；写了时间段，补写会把那段时间腾出来");
+    box.appendChild(edSec(p));
     return worldFormFoot(box, function () { worldClose("i", key); }, "保存", function () {
       if (!String(f.text || "").trim()) { toast("打算不能空", { err: true }); return null; }
       return worldPost({ kind: "intention", action: "set", id: f.id || "", who: f.who, text: f.text, window: f.window },
@@ -5037,8 +5481,8 @@
       edit.addEventListener("click", function () { worldOpen("n", "step", { text: value }); });
       card.appendChild(h("div", { class: "pc-f" }, edit));
     } else {
-      var box = worldFormBox(null, "正在改补写注意事项", "", "");
-      box.appendChild(worldField("注意事项", f.text, "一行一条，例如：不要总写走神；晚上不要写充电", function (v) { f.text = v; }, { area: true, rows: 5 }));
+      var box = edBox(null, "改补写注意事项", "只给补写看", "下一次补写起生效");
+      box.appendChild(edSec(edInput(f.text, "一行一条，例如：不要总写走神；晚上不要写充电", function (v) { f.text = v; }, { area: true, cls: "ed-body", max: 420, focus: true })));
       worldFormFoot(box, function () { worldClose("n", "step"); }, "保存", function () {
         return worldPost({ kind: "step_notes", text: String(f.text || "") }, "已保存（下一次补写起生效）", function () { delete S.nEdit["step"]; },
           { from: "n:step", to: "n:step" });
@@ -5101,15 +5545,18 @@
       card.appendChild(h("div", { class: "pc-f" }, edit));
       return card;
     }
-    var box = worldFormBox(null, "正在改作息骨架", "", b.label || worldLabel(d, b.key));
-    box.appendChild(h("div", { class: "wcols c2" },
-      worldField("起床", f.wake, "06:30", function (v) { f.wake = v; }),
-      worldField("起床前后浮动", f.wake_jitter_min, "25", function (v) { f.wake_jitter_min = v; }, { hint: "分钟" })));
-    box.appendChild(h("div", { class: "wcols c2" },
-      worldField("入睡", f.sleep, "23:00", function (v) { f.sleep = v; }),
-      worldField("入睡前后浮动", f.sleep_jitter_min, "30", function (v) { f.sleep_jitter_min = v; }, { hint: "分钟" })));
-    box.appendChild(worldField("三餐", f.meals, "06:50–07:40、11:30–12:40、17:30–19:00", function (v) { f.meals = v; }, { hint: "每顿写一个时间段（在这段里吃就行），几顿用顿号或逗号隔开" }));
-    box.appendChild(worldField("备注", f.notes, "例如：不必每天睡觉，但要有必要的休息", function (v) { f.notes = v; }));
+    var box = edBox(null, "改作息骨架", b.label || worldLabel(d, b.key), "今天的已经定了，明天起按新的");
+    var p = edProps();
+    edRow(p, "起床", [edInput(f.wake, "06:30", function (v) { f.wake = v; }, { cls: "ed-num", auto: true, focus: true }),
+      h("span", { class: "ed-n", text: "前后浮动" }), edInput(f.wake_jitter_min, "0", function (v) { f.wake_jitter_min = v; }, { cls: "ed-num", auto: true }),
+      h("span", { class: "ed-n", text: "分钟" })]);
+    edRow(p, "入睡", [edInput(f.sleep, "23:00", function (v) { f.sleep = v; }, { cls: "ed-num", auto: true }),
+      h("span", { class: "ed-n", text: "前后浮动" }), edInput(f.sleep_jitter_min, "0", function (v) { f.sleep_jitter_min = v; }, { cls: "ed-num", auto: true }),
+      h("span", { class: "ed-n", text: "分钟" })]);
+    edRow(p, "三餐", edInput(f.meals, "07:00–08:00、11:30–13:00、17:30–19:00", function (v) { f.meals = v; }, { area: true }),
+      "每顿写一个时间段（在这段里吃就行），几顿用顿号或逗号隔开");
+    edRow(p, "备注", edInput(f.notes, "例如：不必每天睡觉，但要有必要的休息", function (v) { f.notes = v; }, { area: true }));
+    box.appendChild(edSec(p));
     worldFormFoot(box, function () { worldClose("r", b.key); }, "保存", function () {
       var clock = /^\d{1,2}[:：]\d{2}$/;
       var wake = String(f.wake || "").trim().replace("：", ":"), sleep = String(f.sleep || "").trim().replace("：", ":");
@@ -5289,6 +5736,7 @@
     var sc = thingsScroller(), y = sc.scrollTop;
     var row = obj ? objRow(it) : thingRow(it);
     old.parentNode.replaceChild(row, old);
+    Array.prototype.forEach.call(row.querySelectorAll("textarea[data-fit]"), worldFit);
     if (Math.abs(sc.scrollTop - y) > 1) { sc.scrollTop = y; }
     var top0 = sc.getBoundingClientRect().top, r = row.getBoundingClientRect();
     if (r.top < top0) { sc.scrollTop += r.top - top0 - 8; }
@@ -5343,7 +5791,7 @@
       (function () { var w = document.createElement("span"); w.innerHTML = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg>'; return w.firstChild; })(), q));
     bar.appendChild(h("div", { class: "grow" }));
     bar.appendChild(h("button", { class: "btn sm", type: "button", onclick: function () {
-      thingOpenForm("new", { name: "", kind: "", origin: "", from: [], what: d.steps.start[0], at: String(d.now || "").slice(0, 16), left: "",
+      thingOpenForm("new", { name: "", kind: "", origin: "", from: [], what: d.steps.start[0], at: thingAt(d.now), left: "",
         amount: "", place: "", keep: d.keeps[0], state: d.states[0], by: "", note: "" });
     } }, icon("plus"), "加一件"));
     box.appendChild(bar);
@@ -5372,7 +5820,7 @@
       var fe = $("thingsBody").querySelector('[data-tf="' + opt.form + '"]');
       if (fe) {
         thingsReveal(fe);
-        var first = fe.querySelector("input, textarea, select");
+        var first = fe.querySelector("[data-autofocus]") || fe.querySelector("input, textarea, select");
         if (first && !window.matchMedia("(hover: none)").matches) { try { first.focus({ preventScroll: true }); } catch (e) { /* 忽略 */ } }
       }
     }
@@ -5536,7 +5984,7 @@
       } }, icon("undo")));
     } else if (st.idx !== null && st.idx !== undefined) {
       acts.appendChild(h("button", { class: "btn quiet sm", type: "button", title: "改这一步", onclick: function () {
-        thingOpenForm("e:" + it.id + ":" + st.idx, { what: st.what, at: String(st.at || "").slice(0, 16), left: st.left || "",
+        thingOpenForm("e:" + it.id + ":" + st.idx, { what: st.what, at: thingAt(st.at), left: st.left || "",
           amount: st.amount || "", used: st.used || "", place: st.place || "",
           keep: st.keep || "", state: st.state || "", by: st.by || "", into: st.into ? st.into.id : "", note: st.note || "" });
       } }, icon("edit")));
@@ -5581,7 +6029,7 @@
     if (!it.ended && !S.tEdit["s:" + it.id]) {
       foot.appendChild(h("button", { class: "btn sm", type: "button", onclick: function () {
         thingOpenForm("s:" + it.id, { what: it.measured ? "用掉一部分" : "吃了一部分",
-          at: String(S.things.now || "").slice(0, 16), left: "", amount: "", used: "",
+          at: thingAt(S.things.now), left: "", amount: "", used: "",
           place: "", keep: "", state: "", by: "", into: "", note: "" });
       } }, icon("plus"), "加一步"));
     }
@@ -5605,87 +6053,101 @@
   }
 
   /* ---------- 表单 ---------- */
-  function thingPeople(withNone) {
-    var list = (S.things.people || []).map(function (p) { return { key: p.key, label: p.label }; });
-    return withNone ? [{ key: "", label: "没说" }].concat(list) : list;
-  }
-  function thingOpts(list, none) {
-    var out = none ? [{ key: "", label: none }] : [];
-    return out.concat((list || []).map(function (x) { return { key: x, label: x }; }));
-  }
-  // 选用料 / 做进了哪件：除了它自己的每一件
-  function thingChoices(exceptId) {
-    return (S.things.items || []).filter(function (x) { return x.id !== exceptId; }).map(function (x) {
-      return { key: x.id, label: x.id + " " + x.name + (x.ended ? "（没了）" : "") };
+  // 时间：今天的只写钟点，昨天、前天写成字，别的写「10-18 08:30」；存的时候补全
+  function thingToday() { return String((S.things && S.things.now) || "").slice(0, 10); }
+  function thingAt(at) { return shortTime(at, thingToday(), null, true); }
+  var THING_AT_TIP = "写 08:30、昨天 08:30 或 10-18 08:30；空着就是现在";
+  function thingMeasuredKind(kind) { return ((S.things && S.things.measured_kinds) || []).indexOf(kind) >= 0; }
+  // 挑用料 / 做进了哪件时的候选：编号、名字，后面一句哪一类、还剩多少
+  function thingCands(exceptId) {
+    return ((S.things && S.things.items) || []).filter(function (x) { return x.id !== exceptId; }).map(function (x) {
+      return { id: x.id, name: x.name, ended: !!x.ended,
+        sub: x.ended ? "没了" : [x.kind, String(x.left || "").replace(/，快用完了$/, "")].filter(Boolean).join(" · ") };
     });
   }
-  function thingSourcePicker(f, exceptId) {
-    var wrap = h("div", { class: "tpick" });
-    function draw() {
-      wrap.textContent = "";
-      var choices = thingChoices(exceptId).filter(function (c) {
-        var it = thingFind(c.key);
-        return f.from.indexOf(c.key) >= 0 || (it && !it.ended);
-      });
-      if (!choices.length) { wrap.appendChild(h("span", { class: "muted", style: "font-size:12.5px", text: "家里没有别的吃的可选" })); }
-      choices.forEach(function (c) {
-        var on = f.from.indexOf(c.key) >= 0;
-        wrap.appendChild(h("button", { class: "chip-t" + (on ? " on" : ""), type: "button", onclick: function () {
-          if (on) { f.from.splice(f.from.indexOf(c.key), 1); } else { f.from.push(c.key); }
-          draw();
-        } }, c.label));
-      });
-    }
-    draw();
-    return h("div", { class: "wfld" }, worldLabelLine("用料", "做出来的菜用了哪几件；买来的、别人送的不用选"), wrap);
-  }
 
-  // measured：这件是按量记的（米面油盐、调料干货、腌菜）——写用了多少 / 一共多少，不写「剩大半」；
-  // 不知道（新加一件时还没选好哪一类）就两样都给
-  function thingStageFields(box, f, isFirst, exceptId, measured) {
-    var steps = isFirst ? S.things.steps.start : S.things.steps.mid.concat(S.things.steps.end);
-    var amountHint = isFirst ? "按量记的写一共多少" : "清点时写清点出的数";
-    box.appendChild(h("div", { class: "wcols" },
-      worldPick("这一步", thingOpts(steps), f.what, function (v) { f.what = v; }),
-      worldField("什么时候", f.at, String(S.things.now || "").slice(0, 16), function (v) { f.at = v; }, { hint: "08:30 或 2026-10-18 08:30" }),
-      measured === true
-        ? (isFirst ? worldField("一共多少", f.amount, "例如：5 斤、500 毫升", function (v) { f.amount = v; }, { hint: "按克、毫升、斤写" })
-          : worldField("这次用了多少", f.used, "例如：3 克、15 毫升", function (v) { f.used = v; }, { hint: "空着按平常一次的量扣" }))
-        : worldField("之后剩多少", f.left, "例如：两块、小半锅", function (v) { f.left = v; }, { hint: "用完、吃完空着" })));
-    if (measured !== false && (measured === undefined || !isFirst)) {
-      box.appendChild(h("div", { class: "wcols c2" },
-        worldField(isFirst ? "一共多少（米面油盐、调料干货、腌菜）" : "一共 / 清点出有多少", f.amount, "例如：5 斤、500 毫升、300 克",
-          function (v) { f.amount = v; }, { hint: amountHint }),
-        h("div")));
+  // 吃的某一步要填的一格。c：{ first 第一步（怎么来的）, measured 按克 / 毫升记的, perUse 平常一次用多少, exceptId 它自己, af 光标先放第一格 }
+  var THING_FIELDS = { left: "还剩多少", amount: "清点出", used: "用了多少", place: "放在哪", keep: "放法", state: "切开没", into: "做进了" };
+  function thingFieldRow(p, f, k, c) {
+    var af = function () { var on = !!c.af; c.af = false; return on; };
+    if (k === "left") {
+      edRow(p, c.first ? "有多少" : "还剩多少", edInput(f.left, c.first ? "例如：两块、一锅、一袋" : "例如：两个、小半锅", function (v) { f.left = v; }, { focus: af() }));
+    } else if (k === "amount") {
+      edRow(p, c.first ? "一共多少" : "清点出", edInput(f.amount, c.first ? "例如：5 斤、500 毫升、300 克" : "例如：300 克、半瓶", function (v) { f.amount = v; }, { focus: af() }),
+        c.first ? "米面油盐、调料干货、腌菜按克、毫升、斤记，之后用一次扣一次" : "清点出这会儿一共还有多少");
+    } else if (k === "used") {
+      edRow(p, "用了多少", edInput(f.used, "空着按平常一次" + (c.perUse ? "的 " + c.perUse : "的量") + "扣", function (v) { f.used = v; }, { focus: af() }),
+        "写这次用了多少，例如 3 克、15 毫升");
+    } else if (k === "place") {
+      edRow(p, "放在哪", edInput(f.place, c.first ? "例如：灶房·水盆里" : "没挪就空着", function (v) { f.place = v; }, { focus: af() }));
+    } else if (k === "keep") {
+      edRow(p, "放法", edChips(edOpts(S.things.keeps, c.first ? null : "照上一步"), f.keep, function (v) { f.keep = v; }));
+    } else if (k === "state") {
+      edRow(p, "切开没", edChips(edOpts(S.things.states, c.first ? null : "照上一步"), f.state, function (v) { f.state = v; }));
+    } else if (k === "into") {
+      edRow(p, "做进了", edPicker(f, "into", function () { return thingCands(c.exceptId); }, { add: "挑一件" }), "用掉、做成了别的菜时选");
     }
-    box.appendChild(h("div", { class: "wcols" },
-      worldField("放在哪", f.place, isFirst ? "例如：灶房·水盆里" : "没挪就空着", function (v) { f.place = v; }),
-      worldPick("放法", thingOpts(S.things.keeps, isFirst ? null : "照上一步"), f.keep, function (v) { f.keep = v; }),
-      worldPick("整的还是切开", thingOpts(S.things.states, isFirst ? null : "照上一步"), f.state, function (v) { f.state = v; })));
-    var cols = [worldPick("谁", thingPeople(true), f.by, function (v) { f.by = v; })];
-    if (!isFirst) {
-      cols.push(worldPick("做进了哪件", [{ key: "", label: "没有" }].concat(thingChoices(exceptId)), f.into, function (v) { f.into = v; }, "用掉做成了别的菜时选"));
-    }
-    cols.push(worldField("备注", f.note, "可空", function (v) { f.note = v; }));
-    box.appendChild(h("div", { class: isFirst ? "wcols c2" : "wcols" }, cols));
   }
+  // 收在「更多」里的几格：收着时写出填了的值
+  function thingFieldSum(f, keys) {
+    return keys.map(function (k) {
+      var v = String(f[k] || "").trim();
+      if (!v) { return ""; }
+      if (k === "into") { var it = thingFind(v); return "做进了 " + v + (it ? " " + it.name : ""); }
+      return k === "left" ? "剩" + v.replace(/^还?剩/, "") : k === "used" ? "用了 " + v : k === "amount" ? "清点出 " + v : v;
+    }).filter(Boolean).join(" · ");
+  }
+  // 选了哪一步，先露这一步要填的；别的收在「更多」里（存的时候照样带上）
+  var THING_MAIN = { "挪地方": ["place", "keep"], "切开了": ["state", "keep"], "用掉一部分": ["qty", "into"], "吃了一部分": ["qty"], "清点": ["qty"], "用完了": ["into"] };
 
   function thingNewForm(d) {
     var key = "new";
     var f = S.tEdit[key];
-    var box = worldFormBox(null, "加一件", "", "存成「网页手动」，编号由程序发");
+    var box = edBox(null, "加一件吃的", "编号由程序发", "存成网页手动");
     box.setAttribute("data-tf", key);
-    box.appendChild(h("div", { class: "wcols" },
-      worldField("是什么", f.name, "例如：嫩豆腐", function (v) { f.name = v; }),
-      worldPick("哪一类", thingOpts(d.kinds.map(function (k) { return k.key; }), "选一类"), f.kind, function (v) { f.kind = v; }, "决定能放多久"),
-      worldField("哪来的", f.origin, "例如：主人在商店街豆腐店买的", function (v) { f.origin = v; })));
-    box.appendChild(thingSourcePicker(f, ""));
-    thingStageFields(box, f, true, "");
+    box.appendChild(edSec(edInput(f.name, "是什么，例如：嫩豆腐", function (v) { f.name = v; }, { cls: "ed-title", focus: true })));
+    var dyn = h("div", { class: "ed-dyn" });
+    box.appendChild(dyn);
+    function draw() {
+      dyn.textContent = "";
+      var measured = thingMeasuredKind(f.kind);
+      var c = { first: true, measured: measured, exceptId: "" };
+      var p = edProps();
+      edRow(p, "哪一类", [edSelect([{ key: "", label: "选一类…" }].concat(d.kinds.map(function (k) { return { key: k.key, label: k.key }; })), f.kind, function (v) {
+        var was = thingMeasuredKind(f.kind);
+        f.kind = v;
+        if (was === thingMeasuredKind(v)) { return; }
+        // 按量记的写「一共多少」，别的写「有多少」：已经填了的挪过去
+        if (!was && !f.amount && f.left) { f.amount = f.left; f.left = ""; }
+        if (was && !f.left && f.amount) { f.left = f.amount; f.amount = ""; }
+        draw();
+      }), h("span", { class: "ed-n", text: "决定能放多久" })]);
+      edRow(p, "怎么来的", edChips(edOpts(d.steps.start), f.what, function (v) {
+        var redo = (v === "做好了") !== (f.what === "做好了");
+        f.what = v;
+        if (redo) { draw(); }
+      }));
+      edRow(p, "什么时候", edInput(f.at, "现在", function (v) { f.at = v; }, { cls: "ed-num", auto: true }), THING_AT_TIP);
+      edRow(p, "谁", edChips(edPeople("没说"), f.by, function (v) { f.by = v; }));
+      edRow(p, "哪来的", edInput(f.origin, "例如：主人在商店街豆腐店买的", function (v) { f.origin = v; }));
+      if (f.what === "做好了" || f.from.length) {
+        edRow(p, "用料", edPicker(f, "from", function () { return thingCands(""); }, { add: "挑用料", live: true }),
+          "做这道菜用了家里哪几件；存的时候每件补一步「用掉一部分」");
+      }
+      var q = edProps();
+      [measured ? "amount" : "left", "place", "keep", "state"].forEach(function (k) { thingFieldRow(q, f, k, c); });
+      edRow(q, "备注", edInput(f.note, "可空", function (v) { f.note = v; }));
+      dyn.appendChild(edSec(p));
+      dyn.appendChild(edSec(q));
+    }
+    draw();
     return worldFormFoot(box, function () { thingCloseForm(key); }, "添加", function () {
       if (!String(f.name || "").trim()) { toast("写一下是什么", { err: true }); return null; }
       if (!f.kind) { toast("选一下哪一类（决定能放多久）", { err: true }); return null; }
+      var at = fullTime(f.at, thingToday());
+      if (at === null) { toast("时间写成 08:30、昨天 08:30 或 10-18 08:30", { err: true }); return null; }
       return thingPost({ action: "add", name: f.name, kind: f.kind, origin: f.origin, from: f.from,
-        stage: { what: f.what, at: f.at, left: f.left, amount: f.amount, place: f.place, keep: f.keep, state: f.state, by: f.by, note: f.note } },
+        stage: { what: f.what, at: at, left: f.left, amount: f.amount, place: f.place, keep: f.keep, state: f.state, by: f.by, note: f.note } },
         "已添加", function () { delete S.tEdit[key]; });
     }, function () { return worldDirty(f); });
   }
@@ -5693,13 +6155,44 @@
   function thingStageForm(it, st) {
     var key = st ? "e:" + it.id + ":" + st.idx : "s:" + it.id;
     var f = S.tEdit[key];
-    var box = worldFormBox(null, st ? "正在改这一步" : "加一步", it.id + " " + it.name,
-      st ? String(st.at || "").slice(5, 16) + " " + st.what : (it.virtual ? "会先把它存下来" : "存成「网页手动」"));
+    var first = !!st && st.idx === 0;
+    var measured = !!it.measured;
+    var box = edBox(null, st ? "改这一步" : "加一步", it.id + " " + it.name + (st ? " · " + thingAt(st.at) + " " + st.what : ""),
+      it.virtual ? "会先把它存下来" : "存成网页手动");
     box.setAttribute("data-tf", key);
-    thingStageFields(box, f, !!st && st.idx === 0, it.id, !!it.measured);
+    var dyn = h("div", { class: "ed-dyn" });
+    box.appendChild(dyn);
+    var ui = edState(f);
+    function draw() {
+      dyn.textContent = "";
+      var c = { first: first, measured: measured, perUse: measured ? it.measured.per_use_text : "", exceptId: it.id, af: true };
+      var qty = first || f.what === "清点" ? (measured ? "amount" : "left") : (measured ? "used" : "left");
+      var all = first ? [qty, "place", "keep", "state"] : (measured ? ["used", "amount"] : ["left"]).concat(["place", "keep", "state", "into"]);
+      var main = (first ? ["qty", "place", "keep", "state"] : THING_MAIN[f.what] || []).map(function (k) { return k === "qty" ? qty : k; });
+      var steps = first ? edOpts(S.things.steps.start)
+        : edOpts(S.things.steps.mid).concat(S.things.steps.end.map(function (x, i) { return { key: x, label: x, end: true, br: i === 0 }; }));
+      var p = edProps();
+      edRow(p, "这一步", edChips(steps, f.what, function (v) { if (v !== f.what) { f.what = v; draw(); } }));
+      edRow(p, "什么时候", edInput(f.at, "现在", function (v) { f.at = v; }, { cls: "ed-num", auto: true }), THING_AT_TIP);
+      edRow(p, "谁", edChips(edPeople("没说"), f.by, function (v) { f.by = v; }));
+      main.forEach(function (k) { thingFieldRow(p, f, k, c); });
+      edRow(p, "备注", edInput(f.note, "可空", function (v) { f.note = v; }));
+      var sec = edSec(p);
+      var rest = all.filter(function (k) { return main.indexOf(k) < 0; });
+      if (rest.length) {
+        var c2 = { first: first, measured: measured, perUse: c.perUse, exceptId: it.id };
+        sec.appendChild(edFold(ui, "more", "更多", rest.map(function (k) { return THING_FIELDS[k]; }).join("、"),
+          function () { return thingFieldSum(f, rest); },
+          function () { var q = edProps(); rest.forEach(function (k) { thingFieldRow(q, f, k, c2); }); return q; }));
+      }
+      dyn.appendChild(sec);
+    }
+    draw();
     return worldFormFoot(box, function () { thingCloseForm(key); }, st ? "保存" : "添加", function () {
-      var stage = { what: f.what, at: f.at, left: f.left, amount: f.amount, used: f.used, place: f.place, keep: f.keep, state: f.state,
-        by: f.by, into: f.into, note: f.note };
+      var at = fullTime(f.at, thingToday());
+      if (at === null) { toast("时间写成 08:30、昨天 08:30 或 10-18 08:30", { err: true }); return null; }
+      var stage = { what: f.what, at: at || (st ? String(st.at || "").slice(0, 16) : ""), left: f.left, amount: f.amount, used: f.used,
+        place: f.place, keep: f.keep, state: f.state, by: f.by, into: f.into, note: f.note };
       if (st) {
         return thingPost({ action: "update_stage", id: it.id, index: st.idx, guard: { at: st.at, what: st.what }, fields: stage },
           "已保存", function () { delete S.tEdit[key]; }, it.id);
@@ -5711,13 +6204,15 @@
   function thingItemForm(it) {
     var key = "i:" + it.id;
     var f = S.tEdit[key];
-    var box = worldFormBox(null, "正在改", it.id + " " + it.name, "编号改不了" + (it.virtual ? " · 会先把它存下来" : ""));
+    var box = edBox(null, "改名字和来历", it.id + " · 编号改不了", it.virtual ? "会先把它存下来" : "");
     box.setAttribute("data-tf", key);
-    box.appendChild(h("div", { class: "wcols" },
-      worldField("是什么", f.name, "", function (v) { f.name = v; }),
-      worldPick("哪一类", thingOpts(S.things.kinds.map(function (k) { return k.key; })), f.kind, function (v) { f.kind = v; }, "决定能放多久"),
-      worldField("哪来的", f.origin, "可空", function (v) { f.origin = v; })));
-    box.appendChild(thingSourcePicker(f, it.id));
+    box.appendChild(edSec(edInput(f.name, "名字", function (v) { f.name = v; }, { cls: "ed-title", focus: true })));
+    var p = edProps();
+    edRow(p, "哪一类", [edSelect(S.things.kinds.map(function (k) { return { key: k.key, label: k.key }; }), f.kind, function (v) { f.kind = v; }),
+      h("span", { class: "ed-n", text: "决定能放多久" })]);
+    edRow(p, "哪来的", edInput(f.origin, "可空", function (v) { f.origin = v; }));
+    edRow(p, "用料", edPicker(f, "from", function () { return thingCands(it.id); }, { add: "挑用料", live: true }), "做这道菜用了家里哪几件；买来的、别人送的不用挑");
+    box.appendChild(edSec(p));
     return worldFormFoot(box, function () { thingCloseForm(key); }, "保存", function () {
       if (!String(f.name || "").trim()) { toast("名字不能空", { err: true }); return null; }
       return thingPost({ action: "update_item", id: it.id, name: f.name, kind: f.kind, origin: f.origin, from: f.from },
@@ -5744,9 +6239,10 @@
     return h("button", { class: "tlink", type: "button", title: "照世界线这一段补登的",
       onclick: function () { if (m) { openWorldEntry(m[1], m[2], st.by); } } }, "世界线 " + (m ? m[1].slice(5) + " " + m[2] : st.src.entry));
   }
-  function objChoices(exceptId) {
+  // 挑材料 / 做进了哪件时的候选：编号、名字，后面一句是什么、在哪
+  function objCands(exceptId) {
     return ((S.things && S.things.objects) || []).filter(function (x) { return x.id !== exceptId; }).map(function (x) {
-      return { key: x.id, label: x.id + " " + x.name + (x.ended ? "（没了）" : "") };
+      return { id: x.id, name: x.name, ended: !!x.ended, sub: x.ended ? "没了" : [x.kind, objWhere(x)].filter(Boolean).join(" · ") };
     });
   }
   function thingSearchIcon() {
@@ -5790,7 +6286,7 @@
     bar.appendChild(h("div", { class: "grow" }));
     bar.appendChild(h("button", { class: "btn sm", type: "button", onclick: function () {
       thingOpenForm("onew", { name: "", kind: "", look: "", owner: "", origin: "", from: [], what: d.item_steps.start[0],
-        at: String(d.now || "").slice(0, 16), place: "", holder: "", state: "", by: "", note: "" });
+        at: thingAt(d.now), place: "", holder: "", state: "", by: "", note: "" });
     } }, icon("plus"), "加一件"));
     box.appendChild(bar);
 
@@ -5916,7 +6412,7 @@
       } }, icon("undo")));
     } else if (st.idx !== null && st.idx !== undefined) {
       acts.appendChild(h("button", { class: "btn quiet sm", type: "button", title: "改这一步", onclick: function () {
-        thingOpenForm("oe:" + it.id + ":" + st.idx, { what: st.what, at: String(st.at || "").slice(0, 16), place: st.place || "",
+        thingOpenForm("oe:" + it.id + ":" + st.idx, { what: st.what, at: thingAt(st.at), place: st.place || "",
           holder: st.holder || "", state: st.state || "", owner: st.owner || "", by: st.by || "", into: st.into ? st.into.id : "", note: st.note || "" });
       } }, icon("edit")));
       if (st.idx > 0) {
@@ -5960,7 +6456,7 @@
     var foot = h("div", { class: "tfoot" });
     if (!it.ended && !S.tEdit["os:" + it.id]) {
       foot.appendChild(h("button", { class: "btn sm", type: "button", onclick: function () {
-        thingOpenForm("os:" + it.id, { what: S.things.item_steps.mid[0], at: String(S.things.now || "").slice(0, 16), place: "", holder: "",
+        thingOpenForm("os:" + it.id, { what: S.things.item_steps.mid[0], at: thingAt(S.things.now), place: "", holder: "",
           state: "", owner: "", by: "", into: "", note: "" });
       } }, icon("plus"), "加一步"));
     }
@@ -5984,66 +6480,78 @@
     return box;
   }
 
-  function objSourcePicker(f, exceptId) {
-    var wrap = h("div", { class: "tpick" });
-    function draw() {
-      wrap.textContent = "";
-      var choices = objChoices(exceptId).filter(function (c) {
-        var it = objFind(c.key);
-        return f.from.indexOf(c.key) >= 0 || (it && !it.ended);
-      });
-      if (!choices.length) { wrap.appendChild(h("span", { class: "muted", style: "font-size:12.5px", text: "家里没有别的东西可选" })); }
-      choices.forEach(function (c) {
-        var on = f.from.indexOf(c.key) >= 0;
-        wrap.appendChild(h("button", { class: "chip-t" + (on ? " on" : ""), type: "button", onclick: function () {
-          if (on) { f.from.splice(f.from.indexOf(c.key), 1); } else { f.from.push(c.key); }
-          draw();
-        } }, c.label));
-      });
+  // 东西某一步要填的一格。c：{ first 第一步（怎么来的）, exceptId 它自己, af 光标先放第一格 }
+  var OBJ_FIELDS = { place: "搁在哪", holder: "在谁手上", state: "什么样", owner: "归谁", into: "做进了" };
+  function objFieldRow(p, f, k, c) {
+    var af = function () { var on = !!c.af; c.af = false; return on; };
+    if (k === "place") {
+      edRow(p, "搁在哪", edInput(f.place, c.first ? "例如：堂屋·柜里" : "没挪就空着", function (v) { f.place = v; }, { focus: af() }),
+        c.first ? null : "写了搁在哪、没选谁拿着，就算放下了");
+    } else if (k === "holder") {
+      edRow(p, "在谁手上", edChips(edPeople(c.first ? "没人拿着" : "照上一步"), f.holder, function (v) { f.holder = v; }));
+    } else if (k === "state") {
+      edRow(p, "什么样", edInput(f.state, c.first ? "例如：起了个头、织好了" : "没变就空着", function (v) { f.state = v; }, { focus: af() }));
+    } else if (k === "owner") {
+      edRow(p, "归谁", edChips(edPeople("没换"), f.owner, function (v) { f.owner = v; }), "送给谁了才选");
+    } else if (k === "into") {
+      edRow(p, "做进了", edPicker(f, "into", function () { return objCands(c.exceptId); }, { add: "挑一件" }), "用掉、做成了别的东西时选");
     }
-    draw();
-    return h("div", { class: "wfld" }, worldLabelLine("用什么做的", "用家里哪几件东西做的（例如红纸剪成窗花）；买来的、别人送的不用选"), wrap);
   }
-
-  // 一步：搁在哪、在谁手上、之后什么样。写了搁在哪、没选谁拿着就是放下了；都空着照上一步
-  function objStageFields(box, f, isFirst, exceptId) {
-    var steps = isFirst ? S.things.item_steps.start : S.things.item_steps.mid.concat(S.things.item_steps.end);
-    box.appendChild(h("div", { class: "wcols" },
-      worldPick("这一步", thingOpts(steps), f.what, function (v) { f.what = v; }),
-      worldField("什么时候", f.at, String(S.things.now || "").slice(0, 16), function (v) { f.at = v; }, { hint: "08:30 或 2026-10-18 08:30" }),
-      worldField("之后什么样", f.state, isFirst ? "例如：起了个头、织好了" : "没变就空着", function (v) { f.state = v; })));
-    box.appendChild(h("div", { class: "wcols" },
-      worldField("搁在哪", f.place, isFirst ? "例如：堂屋·柜里" : "没挪就空着", function (v) { f.place = v; }),
-      worldPick("在谁手上", [{ key: "", label: isFirst ? "没人拿着" : "没人拿着 / 照上一步" }].concat(thingPeople(false)), f.holder,
-        function (v) { f.holder = v; }, isFirst ? "" : "写了搁在哪就算放下了"),
-      worldPick("谁弄的", thingPeople(true), f.by, function (v) { f.by = v; })));
-    var cols = [];
-    if (!isFirst) {
-      cols.push(worldPick("归属换给", [{ key: "", label: "没换" }].concat(thingPeople(false)), f.owner, function (v) { f.owner = v; }, "送给谁了才选"));
-      cols.push(worldPick("做进了哪件", [{ key: "", label: "没有" }].concat(objChoices(exceptId)), f.into, function (v) { f.into = v; }));
-    }
-    cols.push(worldField("备注", f.note, "可空", function (v) { f.note = v; }));
-    box.appendChild(h("div", { class: isFirst ? "wcols c2" : "wcols" }, cols));
+  function objFieldSum(f, keys) {
+    var people = {};
+    ((S.things && S.things.people) || []).forEach(function (x) { people[x.key] = x.label; });
+    return keys.map(function (k) {
+      var v = String(f[k] || "").trim();
+      if (!v) { return ""; }
+      if (k === "holder") { return "在" + (people[v] || v) + "手上"; }
+      if (k === "owner") { return "归" + (people[v] || v); }
+      if (k === "into") { var it = objFind(v); return "做进了 " + v + (it ? " " + it.name : ""); }
+      return v;
+    }).filter(Boolean).join(" · ");
   }
+  var OBJ_MAIN = { "挪地方": ["place", "holder"], "交给": ["holder", "place"], "做了一截": ["state"], "做好了": ["state", "place"], "变了样": ["state"], "用了": ["state"], "送人了": ["owner"] };
+  var OBJ_MADE = { "开始做": 1, "做好了": 1 };
 
   function objNewForm(d) {
     var key = "onew";
     var f = S.tEdit[key];
-    var box = worldFormBox(null, "加一件东西", "", "存成「网页手动」，编号由程序发（p 开头）");
+    var box = edBox(null, "加一件东西", "编号由程序发（p 开头）", "存成网页手动");
     box.setAttribute("data-tf", key);
-    box.appendChild(h("div", { class: "wcols" },
-      worldField("叫什么", f.name, "叫得出区别的，例如：深青围巾", function (v) { f.name = v; }),
-      worldField("是什么", f.kind, "一个词：围巾、窗花、纸条、书……", function (v) { f.kind = v; }, { hint: "同一种排在一起" }),
-      worldPick("归谁", [{ key: "", label: "大家一起用" }].concat(thingPeople(false)), f.owner, function (v) { f.owner = v; })));
-    box.appendChild(h("div", { class: "wcols c2" },
-      worldField("样子", f.look, "颜色、材料、大小、上面有什么，能和同一种的别的那件分清", function (v) { f.look = v; }),
-      worldField("哪来的", f.origin, "例如：丛雨给主人织的", function (v) { f.origin = v; })));
-    box.appendChild(objSourcePicker(f, ""));
-    objStageFields(box, f, true, "");
+    box.appendChild(edSec(edInput(f.name, "叫什么，叫得出区别的，例如：深青围巾", function (v) { f.name = v; }, { cls: "ed-title", focus: true })));
+    var p = edProps();
+    edRow(p, "是什么", edInput(f.kind, "一个词：围巾、窗花、纸条、书……", function (v) { f.kind = v; }), "同一种的排在一起，提醒认准编号");
+    edRow(p, "样子", edInput(f.look, "颜色、材料、大小、上面有什么，能和同一种的别的那件分清", function (v) { f.look = v; }, { area: true }));
+    edRow(p, "归谁", edChips(edPeople("大家一起用"), f.owner, function (v) { f.owner = v; }));
+    edRow(p, "哪来的", edInput(f.origin, "例如：丛雨给主人织的", function (v) { f.origin = v; }));
+    box.appendChild(edSec(p));
+    var dyn = h("div", { class: "ed-dyn" });
+    box.appendChild(dyn);
+    function draw() {
+      dyn.textContent = "";
+      var c = { first: true, exceptId: "" };
+      var q = edProps();
+      edRow(q, "怎么来的", edChips(edOpts(d.item_steps.start), f.what, function (v) {
+        var redo = !!OBJ_MADE[v] !== !!OBJ_MADE[f.what];
+        f.what = v;
+        if (redo) { draw(); }
+      }));
+      edRow(q, "什么时候", edInput(f.at, "现在", function (v) { f.at = v; }, { cls: "ed-num", auto: true }), THING_AT_TIP);
+      edRow(q, "谁", edChips(edPeople("没说"), f.by, function (v) { f.by = v; }));
+      if (OBJ_MADE[f.what] || f.from.length) {
+        edRow(q, "材料", edPicker(f, "from", function () { return objCands(""); }, { add: "挑材料", live: true }), "用家里哪几件东西做的，例如红纸剪成窗花");
+      }
+      ["place", "holder", "state"].forEach(function (k) { objFieldRow(q, f, k, c); });
+      edRow(q, "备注", edInput(f.note, "可空", function (v) { f.note = v; }));
+      dyn.appendChild(edSec(q));
+      edFitIn(dyn);
+    }
+    draw();
     return worldFormFoot(box, function () { thingCloseForm(key); }, "添加", function () {
       if (!String(f.name || "").trim()) { toast("写一下叫什么", { err: true }); return null; }
+      var at = fullTime(f.at, thingToday());
+      if (at === null) { toast("时间写成 08:30、昨天 08:30 或 10-18 08:30", { err: true }); return null; }
       return thingPost({ action: "add", cat: "item", name: f.name, kind: f.kind, look: f.look, owner: f.owner, origin: f.origin, from: f.from,
-        stage: { what: f.what, at: f.at, place: f.place, holder: f.holder, state: f.state, by: f.by, note: f.note } },
+        stage: { what: f.what, at: at, place: f.place, holder: f.holder, state: f.state, by: f.by, note: f.note } },
         "已添加", function () { delete S.tEdit[key]; });
     }, function () { return worldDirty(f); });
   }
@@ -6051,12 +6559,41 @@
   function objStageForm(it, st) {
     var key = st ? "oe:" + it.id + ":" + st.idx : "os:" + it.id;
     var f = S.tEdit[key];
-    var box = worldFormBox(null, st ? "正在改这一步" : "加一步", it.id + " " + it.name,
-      st ? String(st.at || "").slice(5, 16) + " " + st.what : (it.virtual ? "会先把它存下来" : "存成「网页手动」"));
+    var first = !!st && st.idx === 0;
+    var box = edBox(null, st ? "改这一步" : "加一步", it.id + " " + it.name + (st ? " · " + thingAt(st.at) + " " + st.what : ""),
+      it.virtual ? "会先把它存下来" : "存成网页手动");
     box.setAttribute("data-tf", key);
-    objStageFields(box, f, !!st && st.idx === 0, it.id);
+    var dyn = h("div", { class: "ed-dyn" });
+    box.appendChild(dyn);
+    var ui = edState(f);
+    function draw() {
+      dyn.textContent = "";
+      var c = { first: first, exceptId: it.id, af: true };
+      var all = first ? ["place", "holder", "state"] : ["place", "holder", "state", "owner", "into"];
+      var main = first ? all : OBJ_MAIN[f.what] || [];
+      var steps = first ? edOpts(S.things.item_steps.start)
+        : edOpts(S.things.item_steps.mid).concat(S.things.item_steps.end.map(function (x, i) { return { key: x, label: x, end: true, br: i === 0 }; }));
+      var p = edProps();
+      edRow(p, "这一步", edChips(steps, f.what, function (v) { if (v !== f.what) { f.what = v; draw(); } }));
+      edRow(p, "什么时候", edInput(f.at, "现在", function (v) { f.at = v; }, { cls: "ed-num", auto: true }), THING_AT_TIP);
+      edRow(p, "谁", edChips(edPeople("没说"), f.by, function (v) { f.by = v; }));
+      main.forEach(function (k) { objFieldRow(p, f, k, c); });
+      edRow(p, "备注", edInput(f.note, "可空", function (v) { f.note = v; }));
+      var sec = edSec(p);
+      var rest = all.filter(function (k) { return main.indexOf(k) < 0; });
+      if (rest.length) {
+        sec.appendChild(edFold(ui, "more", "更多", rest.map(function (k) { return OBJ_FIELDS[k]; }).join("、"),
+          function () { return objFieldSum(f, rest); },
+          function () { var q = edProps(); rest.forEach(function (k) { objFieldRow(q, f, k, { first: first, exceptId: it.id }); }); return q; }));
+      }
+      dyn.appendChild(sec);
+    }
+    draw();
     return worldFormFoot(box, function () { thingCloseForm(key); }, st ? "保存" : "添加", function () {
-      var stage = { what: f.what, at: f.at, place: f.place, holder: f.holder, state: f.state, owner: f.owner, by: f.by, into: f.into, note: f.note };
+      var at = fullTime(f.at, thingToday());
+      if (at === null) { toast("时间写成 08:30、昨天 08:30 或 10-18 08:30", { err: true }); return null; }
+      var stage = { what: f.what, at: at || (st ? String(st.at || "").slice(0, 16) : ""), place: f.place, holder: f.holder, state: f.state,
+        owner: f.owner, by: f.by, into: f.into, note: f.note };
       if (st) {
         return thingPost({ action: "update_stage", id: it.id, index: st.idx, guard: { at: st.at, what: st.what }, fields: stage },
           "已保存", function () { delete S.tEdit[key]; }, it.id);
@@ -6068,16 +6605,16 @@
   function objItemForm(it) {
     var key = "oi:" + it.id;
     var f = S.tEdit[key];
-    var box = worldFormBox(null, "正在改", it.id + " " + it.name, "编号改不了" + (it.virtual ? " · 会先把它存下来" : ""));
+    var box = edBox(null, "改名字和样子", it.id + " · 编号改不了", it.virtual ? "会先把它存下来" : "");
     box.setAttribute("data-tf", key);
-    box.appendChild(h("div", { class: "wcols" },
-      worldField("叫什么", f.name, "", function (v) { f.name = v; }),
-      worldField("是什么", f.kind, "一个词：围巾、窗花、纸条……", function (v) { f.kind = v; }),
-      worldPick("归谁", [{ key: "", label: "大家一起用" }].concat(thingPeople(false)), f.owner, function (v) { f.owner = v; })));
-    box.appendChild(h("div", { class: "wcols c2" },
-      worldField("样子", f.look, "能和同一种的别的那件分清", function (v) { f.look = v; }),
-      worldField("哪来的", f.origin, "可空", function (v) { f.origin = v; })));
-    box.appendChild(objSourcePicker(f, it.id));
+    box.appendChild(edSec(edInput(f.name, "叫什么", function (v) { f.name = v; }, { cls: "ed-title", focus: true })));
+    var p = edProps();
+    edRow(p, "是什么", edInput(f.kind, "一个词：围巾、窗花、纸条……", function (v) { f.kind = v; }), "同一种的排在一起，提醒认准编号");
+    edRow(p, "样子", edInput(f.look, "能和同一种的别的那件分清", function (v) { f.look = v; }, { area: true }));
+    edRow(p, "归谁", edChips(edPeople("大家一起用"), f.owner, function (v) { f.owner = v; }));
+    edRow(p, "哪来的", edInput(f.origin, "可空", function (v) { f.origin = v; }));
+    edRow(p, "材料", edPicker(f, "from", function () { return objCands(it.id); }, { add: "挑材料", live: true }), "用家里哪几件东西做的；买来的、别人送的不用挑");
+    box.appendChild(edSec(p));
     return worldFormFoot(box, function () { thingCloseForm(key); }, "保存", function () {
       if (!String(f.name || "").trim()) { toast("名字不能空", { err: true }); return null; }
       return thingPost({ action: "update_item", id: it.id, name: f.name, kind: f.kind, look: f.look, owner: f.owner, origin: f.origin, from: f.from },
