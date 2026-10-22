@@ -548,6 +548,37 @@
             }
         }
     },
+    "image_gen": {
+        "description": "⑧-4 画图工具 draw_image",
+        "type": "object",
+        "hint": "给她一个画图工具：调图像生成模型出一张图发给对方。模型只认提示词、参考图（主人发的图、她上一次画的图）和分辨率，不思考。画出来的图存在插件数据目录 images/ 下。",
+        "items": {
+            "enabled": {
+                "description": "启用",
+                "type": "bool",
+                "hint": "关掉就不给她这个工具。",
+                "default": true
+            },
+            "provider_id": {
+                "description": "用哪个图像模型",
+                "type": "string",
+                "_special": "select_provider",
+                "hint": "必须是 OpenAI 兼容 chat 接口的源；出来的图夹在回复里（![…](data:image/…;base64,…)）。分辨率写在请求的 size 里（宽x高）。",
+                "default": "gemini/gemini-3.1-flash-image"
+            },
+            "timeout": {
+                "description": "最多等几秒",
+                "type": "int",
+                "hint": "AstrBot 调一个工具默认 120 秒就掐断，这里别超过它。实测 1K 约 19 秒、2K 约 24 秒，图越大越慢。",
+                "slider": {
+                    "min": 30,
+                    "max": 115,
+                    "step": 5
+                },
+                "default": 100
+            }
+        }
+    },
     "bot_dialog": {
         "description": "⑩ 多机器人对话节奏（bot↔bot）",
         "type": "object",

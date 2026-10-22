@@ -32,6 +32,7 @@ from .core.features.context_tools import ContextToolsFeature
 from .core.features.history_merge import HistoryMergeFeature
 from .core.features.history_transcript import HistoryTranscriptFeature
 from .core.features.zero_think import ZeroThinkRetryFeature
+from .core.features.image_gen import ImageGenFeature
 from .core.features.daily_compact import DailyCompact
 from .core.features.overflow_guard import OverflowGuard
 from .core.features import error_voice
@@ -118,6 +119,11 @@ class SuperEnhance(Star):
         )
         # 一个字没想的回复（DeepSeek 偶尔跳过思考）不发，原样再要一次
         self.zero_think = ZeroThinkRetryFeature(SectionConfig(raw, "zero_think_retry"))
+        # 画图工具：调图像生成模型出一张图发给对方（主人发过的图记下来当参考图）
+        self.image_gen = ImageGenFeature(
+            context, SectionConfig(raw, "image_gen"), data_dir,
+            is_bot=lambda sender: sender in self.bot_dialog.bot_ids,
+        )
         # 发消息 / tell 的说明换成写死对象和会话号的中文版（只改这一轮的工具清单）
         self.tool_guide = ToolGuideFeature(
             SectionConfig(raw, "bot_dialog"),
@@ -189,6 +195,7 @@ class SuperEnhance(Star):
             ("recall", self.life.enabled and live),
             ("look_things", self.life.enabled and live),
             ("tell", self.life.enabled),
+            ("draw_image", self.image_gen.enabled),
         ):
             try:
                 if enabled:
@@ -619,6 +626,7 @@ class SuperEnhance(Star):
             event.stop_event()
             return
         self.life.record_incoming(event)
+        self.image_gen.note_incoming(event)
         self.silence.note_incoming(event)
         self.bot_dialog.note_incoming(event)
         await self.bot_dialog.record_exchange(event)
@@ -814,6 +822,27 @@ class SuperEnhance(Star):
             家里的东西。
         """
         return self.life.tool_look_things(getattr(event, "unified_msg_origin", "") or "", kind, id)
+
+    @filter.llm_tool(name="draw_image")
+    async def draw_image(
+        self, event: AstrMessageEvent, prompt: str, size: str = "", use_sent_images: bool = False, use_last_image: bool = False
+    ) -> str:
+        """画一张图发给对方：主人想看图、叫你画点什么、叫你照着他发的图改的时候用。
+
+        画图的模型看不到聊天记录和你的设定，只看 prompt、参考图和分辨率：prompt 把画面写全（画什么、谁、长什么样、在哪、在干什么、什么风格、照片还是画）。
+
+        和这个工具写在同一条回复里的话，会在工具跑之前先单独发给对方；工具跑完你再说的话会另发一条。画一张要十几秒到一分钟。
+
+        Args:
+            prompt (string): 画面描述，写具体。
+            size (string): 分辨率，写成 宽x高，比例照着出。最长边不超过 1280 出 1K 的图，不超过 2560 出 2K，再大出 4K（越大越慢）。常用：1024x1024（方）、1280x720（横）、720x1280（竖）；2K 如 2560x1440，4K 如 3840x2160。空着让模型自己定。
+            use_sent_images (boolean): true 就把主人发的图给模型参考（他这条消息里的、他回复的那条里的，没有就用他半小时内发过的最近几张）。
+            use_last_image (boolean): true 就把你上一次画的那张给模型，在它上面接着改。
+
+        Returns:
+            画好没有、发出去没有。
+        """
+        return await self.image_gen.draw(event, prompt, size, use_sent_images, use_last_image)
 
     # ------------------------------------------------------------------
     # 10. Laya 判定服务（本机容器，调试命令）
