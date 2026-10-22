@@ -851,7 +851,8 @@
   .tlist .trow > .tdot{grid-column:1;grid-row:1}
   .tlist .trow > .tacts{grid-column:3;grid-row:1}
   .tlist .trow > .tmain{display:contents}
-  .tlist .tmain > *{grid-column:2;min-width:0}
+  .tlist .tmain > *{grid-column:2 / -1;min-width:0}
+  .tlist .tmain > .thead{grid-column:2}
   .tlist .tmain > .tdetail{grid-column:1 / -1}
   .tsteps > li > .wform,.tdetail > .wform{margin:4px 0}
   .tlist .pc > .wform{margin-bottom:4px}
@@ -887,6 +888,11 @@
   .tlink{border:0;background:transparent;padding:0;color:var(--accent);font-size:12px;cursor:pointer;text-align:left}
   .tlink:hover{text-decoration:underline;text-underline-offset:3px}
   .tacts{display:flex;gap:4px;align-items:center;margin-top:calc((24px - var(--ctl-sm)) / 2)}
+  .tmore{gap:2px;padding-right:6px}
+  .tmore svg.i{width:14px;height:14px;transition:transform .15s}
+  .tmore.on{color:var(--t1)}
+  .tmore.on svg.i{transform:rotate(90deg)}
+  @media (hover:none){.tmore:hover{background:transparent;color:var(--t2)}.tmore.on:hover{color:var(--t1)}}
   .tdetail{margin-top:14px;border-top:1px dashed var(--line2);padding-top:12px;display:flex;flex-direction:column;gap:12px}
   .tsteps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
   .tstep{display:grid;grid-template-columns:84px minmax(0,1fr) auto;column-gap:12px;align-items:start;padding:8px 0}
@@ -6388,7 +6394,8 @@
     main.appendChild(line);
     if (open) { main.appendChild(thingDetail(it)); }
     row.appendChild(main);
-    row.appendChild(h("div", { class: "tacts" }, h("button", { class: "btn quiet sm", type: "button", onclick: function () {
+    row.appendChild(h("div", { class: "tacts" }, h("button", { class: "btn quiet sm tmore" + (open ? " on" : ""), type: "button",
+      "aria-expanded": open ? "true" : "false", title: open ? "收起每一步" : "看每一步、改某一步", onclick: function () {
       if (S.thingsOpen[it.id]) {
         var keys = Object.keys(S.tEdit).filter(function (k) { return k.split(":")[1] === it.id; });
         if (keys.some(function (k) { return worldDirty(S.tEdit[k]); })) { toast("先保存或取消正在改的那一项", { err: true }); return; }
@@ -6396,7 +6403,7 @@
         delete S.thingsOpen[it.id];
       } else { S.thingsOpen[it.id] = true; }
       thingRedraw(it.id);
-    } }, open ? "收起" : "每一步")));
+    } }, "每一步", icon("chev"))));
     return row;
   }
 
@@ -6414,7 +6421,20 @@
     return null;
   }
 
-  function thingStageRow(it, st, vidx) {
+  // 世界线那一段里标的那一步（没存进存货）：在这里改就是改那一段里标的
+  function thingWlStep(st) { return (st.idx === null || st.idx === undefined) && !!st.wl; }
+  // 改某一步的编辑框编号：存下来的按第几步，世界线里标的按在清单里排第几；obj 是东西
+  function thingStageKey(it, st, pos, obj) {
+    var p = obj ? "o" : "";
+    if (thingWlStep(st)) { return p + "w:" + it.id + ":" + pos; }
+    return st.idx !== null && st.idx !== undefined ? p + "e:" + it.id + ":" + st.idx : "";
+  }
+  // 同一段里同一件同一种步排第几个（认世界线那一段里的哪一步）
+  function thingWlNth(it, st, pos) {
+    return it.stages.slice(0, pos).filter(function (x) { return thingWlStep(x) && x.wl === st.wl && x.what === st.what; }).length;
+  }
+
+  function thingStageRow(it, st, vidx, pos) {
     var isVoid = vidx !== undefined;
     var kind = thingIsStart(st.what) ? "start" : thingIsEnd(st.what) ? "end" : "";
     var bits = [];
@@ -6457,6 +6477,11 @@
         });
         acts.appendChild(del);
       }
+    } else if (thingWlStep(st)) {
+      acts.appendChild(h("button", { class: "btn quiet sm", type: "button", title: "改这一步（改的是世界线那一段里标的）", onclick: function () {
+        thingOpenForm(thingStageKey(it, st, pos), { what: st.what, left: st.left || "", amount: st.amount || "", used: st.used || "",
+          place: st.place || "", keep: st.keep || "", spot: st.spot || "", state: st.state || "" });
+      } }, icon("edit")));
     }
     row.appendChild(acts);
     return row;
@@ -6465,10 +6490,8 @@
   function thingDetail(it) {
     var box = h("div", { class: "tdetail" });
     var list = h("ol", { class: "tsteps" });
-    it.stages.forEach(function (st) {
-      var key = "e:" + it.id + ":" + st.idx;
-      list.appendChild(st.idx !== null && st.idx !== undefined && S.tEdit[key]
-        ? h("li", null, thingStageForm(it, st)) : thingStageRow(it, st));
+    it.stages.forEach(function (st, i) {
+      list.appendChild(S.tEdit[thingStageKey(it, st, i)] ? h("li", null, thingStageForm(it, st, i)) : thingStageRow(it, st, undefined, i));
     });
     box.appendChild(list);
     if (it.voided.length) {
@@ -6496,11 +6519,6 @@
       foot.appendChild(h("button", { class: "btn sm", type: "button", onclick: function () {
         thingOpenForm("i:" + it.id, { name: it.name, kind: it.kind, origin: it.origin || "", from: it.from.map(function (y) { return y.id; }) });
       } }, icon("edit"), "改名字和来历"));
-    }
-    if (it.virtual) {
-      foot.appendChild(h("button", { class: "btn sm", type: "button", title: "存进 things.json，从此算确定有的（之后的步照旧从世界线里算）", onclick: function () {
-        thingPost({ action: "keep", id: it.id }, "已存下来", null, it.id);
-      } }, "存下来"));
     }
     if (!it.ended) {
       var wrong = h("button", { class: "btn sm danger", type: "button", title: "整件都是记错的：加一步「记错了」收尾（编号留着）" }, "记错了");
@@ -6615,13 +6633,14 @@
     }, function () { return worldDirty(f); });
   }
 
-  function thingStageForm(it, st) {
-    var key = st ? "e:" + it.id + ":" + st.idx : "s:" + it.id;
+  function thingStageForm(it, st, pos) {
+    var wl = !!st && thingWlStep(st);
+    var key = st ? thingStageKey(it, st, pos) : "s:" + it.id;
     var f = S.tEdit[key];
-    var first = !!st && st.idx === 0;
+    var first = !!st && (wl ? pos === 0 : st.idx === 0);
     var measured = !!it.measured;
     var box = edBox(null, st ? "改这一步" : "加一步", it.id + " " + it.name + (st ? " · " + thingAt(st.at) + " " + st.what : ""),
-      it.virtual ? "会先把它存下来" : "存成网页手动");
+      wl ? "改的是世界线那一段，时间跟着那一段" : "存成网页手动");
     box.setAttribute("data-tf", key);
     var dyn = h("div", { class: "ed-dyn" });
     box.appendChild(dyn);
@@ -6636,10 +6655,12 @@
         : edOpts(S.things.steps.mid).concat(S.things.steps.end.map(function (x, i) { return { key: x, label: x, end: true, br: i === 0 }; }));
       var p = edProps();
       edRow(p, "这一步", edChips(steps, f.what, function (v) { if (v !== f.what) { f.what = v; draw(); } }));
-      edRow(p, "什么时候", edInput(f.at, "现在", function (v) { f.at = v; }, { cls: "ed-num", auto: true }), THING_AT_TIP);
-      edRow(p, "谁", edMulti(edWho(), f.by, function (v) { f.by = v; }), "可以多选；都不选就是没说");
+      if (!wl) {
+        edRow(p, "什么时候", edInput(f.at, "现在", function (v) { f.at = v; }, { cls: "ed-num", auto: true }), THING_AT_TIP);
+        edRow(p, "谁", edMulti(edWho(), f.by, function (v) { f.by = v; }), "可以多选；都不选就是没说");
+      }
       main.forEach(function (k) { thingFieldRow(p, f, k, c); });
-      edRow(p, "备注", edInput(f.note, "可空", function (v) { f.note = v; }));
+      if (!wl) { edRow(p, "备注", edInput(f.note, "可空", function (v) { f.note = v; })); }
       var sec = edSec(p);
       var rest = all.filter(function (k) { return main.indexOf(k) < 0; });
       if (rest.length) {
@@ -6652,6 +6673,11 @@
     }
     draw();
     return worldFormFoot(box, function () { thingCloseForm(key); }, st ? "保存" : "添加", function () {
+      if (wl) {
+        return thingPost({ action: "wl_stage", ref: st.wl, id: it.id, guard: { what: st.what, into: st.into ? st.into.id : "", nth: thingWlNth(it, st, pos) },
+          fields: { what: f.what, left: f.left, amount: f.amount, used: f.used, place: f.place, keep: f.keep, spot: f.spot, state: f.state } },
+          "已保存", function () { delete S.tEdit[key]; }, it.id);
+      }
       var at = fullTime(f.at, thingToday());
       if (at === null) { toast("时间写成 08:30、昨天 08:30 或 10-18 08:30", { err: true }); return null; }
       var stage = { what: f.what, at: at || (st ? String(st.at || "").slice(0, 16) : ""), left: f.left, amount: f.amount, used: f.used,
@@ -6667,7 +6693,7 @@
   function thingItemForm(it) {
     var key = "i:" + it.id;
     var f = S.tEdit[key];
-    var box = edBox(null, "改名字和来历", it.id + " · 编号改不了", it.virtual ? "会先把它存下来" : "");
+    var box = edBox(null, "改名字和来历", it.id + " · 编号改不了", "");
     box.setAttribute("data-tf", key);
     box.appendChild(edSec(edInput(f.name, "名字", function (v) { f.name = v; }, { cls: "ed-title", focus: true })));
     var p = edProps();
@@ -6809,7 +6835,7 @@
   function objRow(it) {
     var open = !!S.thingsOpen[it.id];
     var row = h("div", { class: "trow", "data-tk": "t:" + it.id });
-    row.appendChild(h("span", { class: "tdot " + (it.ended ? "gone" : it.virtual ? "acc" : "ok"), title: it.ended ? "没了" : "在家里" }));
+    row.appendChild(h("span", { class: "tdot " + (it.ended ? "gone" : "ok"), title: it.ended ? "没了" : "在家里" }));
     var main = h("div", { class: "tmain" });
     main.appendChild(h("div", { class: "thead" },
       h("span", { class: "tid", text: it.id }),
@@ -6837,7 +6863,8 @@
     main.appendChild(line);
     if (open) { main.appendChild(objDetail(it)); }
     row.appendChild(main);
-    row.appendChild(h("div", { class: "tacts" }, h("button", { class: "btn quiet sm", type: "button", onclick: function () {
+    row.appendChild(h("div", { class: "tacts" }, h("button", { class: "btn quiet sm tmore" + (open ? " on" : ""), type: "button",
+      "aria-expanded": open ? "true" : "false", title: open ? "收起每一步" : "看每一步、改某一步", onclick: function () {
       if (S.thingsOpen[it.id]) {
         var keys = Object.keys(S.tEdit).filter(function (k) { return k.split(":")[1] === it.id; });
         if (keys.some(function (k) { return worldDirty(S.tEdit[k]); })) { toast("先保存或取消正在改的那一项", { err: true }); return; }
@@ -6845,11 +6872,11 @@
         delete S.thingsOpen[it.id];
       } else { S.thingsOpen[it.id] = true; }
       thingRedraw(it.id);
-    } }, open ? "收起" : "每一步")));
+    } }, "每一步", icon("chev"))));
     return row;
   }
 
-  function objStageRow(it, st, vidx, isFirst) {
+  function objStageRow(it, st, vidx, isFirst, pos) {
     var isVoid = vidx !== undefined;
     var kind = isFirst ? "start" : objIsEnd(st.what) ? "end" : "";
     var bits = [objWhere(st), st.state, st.owner ? "归" + (st.owner_label || st.owner) : ""].filter(Boolean);
@@ -6863,7 +6890,7 @@
         bits.length ? h("span", { text: "　" + bits.join(" · ") }) : null),
       h("div", { class: "ts-m" },
         thingSrc(st),
-        st.src && st.src.entry ? objEntryLink(st) : null,
+        st.src && st.src.entry && !st.wl ? objEntryLink(st) : null,
         st.note ? h("span", { text: "备注：" + st.note }) : null,
         st.edited ? h("span", { text: "网页改过 " + String(st.edited).slice(5, 16) }) : null,
         isVoid ? h("span", { text: "作废于 " + String(st.void_at || "").slice(5, 16) + (st.void_why ? "：" + st.void_why : "") }) : null)));
@@ -6884,6 +6911,11 @@
         });
         acts.appendChild(del);
       }
+    } else if (thingWlStep(st)) {
+      acts.appendChild(h("button", { class: "btn quiet sm", type: "button", title: "改这一步（改的是世界线那一段里标的）", onclick: function () {
+        thingOpenForm(thingStageKey(it, st, pos, true), { what: st.what, place: st.place || "", holder: st.holder || "", state: st.state || "",
+          owner: st.owner || "" });
+      } }, icon("edit")));
     }
     row.appendChild(acts);
     return row;
@@ -6894,9 +6926,7 @@
     if (it.note) { box.appendChild(h("div", { class: "muted", style: "font-size:12.5px", text: it.note })); }
     var list = h("ol", { class: "tsteps" });
     it.stages.forEach(function (st, i) {
-      var key = "oe:" + it.id + ":" + st.idx;
-      list.appendChild(st.idx !== null && st.idx !== undefined && S.tEdit[key]
-        ? h("li", null, objStageForm(it, st)) : objStageRow(it, st, undefined, i === 0));
+      list.appendChild(S.tEdit[thingStageKey(it, st, i, true)] ? h("li", null, objStageForm(it, st, i)) : objStageRow(it, st, undefined, i === 0, i));
     });
     box.appendChild(list);
     if (it.voided.length) {
@@ -6924,11 +6954,6 @@
         thingOpenForm("oi:" + it.id, { name: it.name, kind: it.kind, look: it.look || "", owner: it.owner || "", origin: it.origin || "",
           from: it.from.map(function (y) { return y.id; }) });
       } }, icon("edit"), "改名字和样子"));
-    }
-    if (it.virtual) {
-      foot.appendChild(h("button", { class: "btn sm", type: "button", title: "存进 things.json，从此算确定有的（之后的步照旧从世界线里算）", onclick: function () {
-        thingPost({ action: "keep", id: it.id }, "已存下来", null, it.id);
-      } }, "存下来"));
     }
     if (!it.ended) {
       var wrong = h("button", { class: "btn sm danger", type: "button", title: "整件都是记错的：加一步「记错了」收尾（编号留着）" }, "记错了");
@@ -7012,12 +7037,13 @@
     }, function () { return worldDirty(f); });
   }
 
-  function objStageForm(it, st) {
-    var key = st ? "oe:" + it.id + ":" + st.idx : "os:" + it.id;
+  function objStageForm(it, st, pos) {
+    var wl = !!st && thingWlStep(st);
+    var key = st ? thingStageKey(it, st, pos, true) : "os:" + it.id;
     var f = S.tEdit[key];
-    var first = !!st && st.idx === 0;
+    var first = !!st && (wl ? pos === 0 : st.idx === 0);
     var box = edBox(null, st ? "改这一步" : "加一步", it.id + " " + it.name + (st ? " · " + thingAt(st.at) + " " + st.what : ""),
-      it.virtual ? "会先把它存下来" : "存成网页手动");
+      wl ? "改的是世界线那一段，时间跟着那一段" : "存成网页手动");
     box.setAttribute("data-tf", key);
     var dyn = h("div", { class: "ed-dyn" });
     box.appendChild(dyn);
@@ -7031,10 +7057,12 @@
         : edOpts(S.things.item_steps.mid).concat(S.things.item_steps.end.map(function (x, i) { return { key: x, label: x, end: true, br: i === 0 }; }));
       var p = edProps();
       edRow(p, "这一步", edChips(steps, f.what, function (v) { if (v !== f.what) { f.what = v; draw(); } }));
-      edRow(p, "什么时候", edInput(f.at, "现在", function (v) { f.at = v; }, { cls: "ed-num", auto: true }), THING_AT_TIP);
-      edRow(p, "谁", edMulti(edWho(), f.by, function (v) { f.by = v; }), "可以多选；都不选就是没说");
+      if (!wl) {
+        edRow(p, "什么时候", edInput(f.at, "现在", function (v) { f.at = v; }, { cls: "ed-num", auto: true }), THING_AT_TIP);
+        edRow(p, "谁", edMulti(edWho(), f.by, function (v) { f.by = v; }), "可以多选；都不选就是没说");
+      }
       main.forEach(function (k) { objFieldRow(p, f, k, c); });
-      edRow(p, "备注", edInput(f.note, "可空", function (v) { f.note = v; }));
+      if (!wl) { edRow(p, "备注", edInput(f.note, "可空", function (v) { f.note = v; })); }
       var sec = edSec(p);
       var rest = all.filter(function (k) { return main.indexOf(k) < 0; });
       if (rest.length) {
@@ -7046,6 +7074,11 @@
     }
     draw();
     return worldFormFoot(box, function () { thingCloseForm(key); }, st ? "保存" : "添加", function () {
+      if (wl) {
+        return thingPost({ action: "wl_stage", ref: st.wl, id: it.id, guard: { what: st.what, nth: thingWlNth(it, st, pos) },
+          fields: { what: f.what, place: f.place, holder: f.holder, state: f.state, owner: f.owner } },
+          "已保存", function () { delete S.tEdit[key]; }, it.id);
+      }
       var at = fullTime(f.at, thingToday());
       if (at === null) { toast("时间写成 08:30、昨天 08:30 或 10-18 08:30", { err: true }); return null; }
       var stage = { what: f.what, at: at || (st ? String(st.at || "").slice(0, 16) : ""), place: f.place, holder: f.holder, state: f.state,
@@ -7061,7 +7094,7 @@
   function objItemForm(it) {
     var key = "oi:" + it.id;
     var f = S.tEdit[key];
-    var box = edBox(null, "改名字和样子", it.id + " · 编号改不了", it.virtual ? "会先把它存下来" : "");
+    var box = edBox(null, "改名字和样子", it.id + " · 编号改不了", "");
     box.setAttribute("data-tf", key);
     box.appendChild(edSec(edInput(f.name, "叫什么", function (v) { f.name = v; }, { cls: "ed-title", focus: true })));
     var p = edProps();

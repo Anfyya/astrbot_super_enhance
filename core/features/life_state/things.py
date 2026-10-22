@@ -1274,6 +1274,59 @@ class ThingStore:
             out.append({k: v for k, v in step.items() if v not in ("", None, []) or k == "left"})
         return out
 
+    def edit_entry_step(self, entry_things, thing_id, guard: dict, fields: dict, now: datetime.datetime) -> tuple:
+        """网页上改世界线一段里标的某一步（家里的吃的、东西「每一步」里改）：按编号和做了什么认出那一步
+        （同一段里同一件同一种步有好几个，guard.nth 是第几个）；做菜时程序替料补的「用掉一部分」那段里本来没有，
+        就照改的写进去。时间、谁跟着那一段，这里不改。返回 (改好的整段 things, 不收的原因)。"""
+        old = [dict(x) for x in entry_things or [] if isinstance(x, dict)]
+        shelf = self.view(now)
+        item = shelf.find(thing_id)
+        if item is None:
+            return None, "没有 %s 这一件" % thing_id
+        cat, tid = cat_of(item), str(item.get("id"))
+        what = norm_step(guard.get("what"), cat)
+
+        def mine(step: dict) -> bool:
+            token = str(step.get("new") or step.get("id") or "").strip()
+            found = shelf.find(token) if token else None
+            return found is not None and str(found.get("id")) == tid and norm_step(step.get("what"), cat) == what
+
+        hits = [i for i, x in enumerate(old) if mine(x)]
+        try:
+            nth = max(0, int(guard.get("nth") or 0))
+        except (TypeError, ValueError):
+            nth = 0
+        if hits:
+            index = hits[min(nth, len(hits) - 1)]
+        elif cat == CAT_FOOD and what in USE_STEPS and guard.get("into"):
+            old.append({"id": tid, "what": what, "into": str(guard["into"])})
+            index = len(old) - 1
+        else:
+            return None, "世界线那一段里找不到这一步了，刷新一下再改"
+        target = dict(old[index])
+        keys = ("what", "left", "amount", "used", "place", "keep", "spot", "state") if cat == CAT_FOOD \
+            else ("what", "place", "holder", "state", "owner")
+        for key in keys:
+            if fields.get(key) is not None:
+                target[key] = fields[key]
+        starts, mids, ends = steps_of(cat)
+        if cat == CAT_FOOD:
+            fixed = self.entry_steps([target], entry_things, now)
+            if len(fixed) != 1:
+                return None, "这样改对不上：第一步得是%s，后面的步不能是这几种" % " / ".join(starts)
+            old[index] = fixed[0]
+        else:
+            target["what"] = norm_step(target.get("what"), cat)
+            if target.get("new") and target["what"] not in starts:
+                return None, "第一步得是%s" % " / ".join(starts)
+            if not target.get("new") and target["what"] not in mids + ends:
+                return None, "这一步得是%s" % " / ".join(dict.fromkeys(mids + ends))
+            for key, limit in (("place", MAX_PLACE), ("state", MAX_ITEM_STATE), ("holder", 12), ("owner", 12)):
+                if key in target:
+                    target[key] = clean_text(target.get(key), limit)
+            old[index] = {k: v for k, v in target.items() if v not in ("", None)}
+        return old, ""
+
     # ---------- 新鲜度 ----------
 
     def _weathers(self) -> dict:

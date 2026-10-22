@@ -695,6 +695,23 @@ class ContextPageApi:
             return "这样改对不上（比如怎么来的不是买回来、收到、做好了）"
         return "" if life.world.manual_update(date_text, entry_id, things=new_steps) else "没存上：世界线那一段改不动"
 
+    @staticmethod
+    def _wl_stage_update(life, store, ref: str, tid: str, guard, fields, now) -> str:
+        """改世界线那一段里标的某一步（家里的吃的、东西「每一步」里改）：ThingStore.edit_entry_step 认出那一步改好，
+        照网页手改存（manual_update：那段算手动，补写、记录员不再动它）。返回不收的原因。"""
+        m = re.fullmatch(r"(\d{4}-\d{2}-\d{2})/(.+)", ref)
+        if not m or not tid:
+            return "找不到世界线里那一段"
+        date_text, entry_id = m.group(1), m.group(2)
+        entry = next((x for x in life.world.entries(date_text, "") if str(x.get("id")) == entry_id), None)
+        if entry is None:
+            return "世界线里那一段已经不在了"
+        steps, why = store.edit_entry_step(entry.get("things") or [], tid, guard if isinstance(guard, dict) else {},
+                                           fields if isinstance(fields, dict) else {}, now)
+        if why:
+            return why
+        return "" if life.world.manual_update(date_text, entry_id, things=steps) else "没存上：世界线那一段改不动"
+
     async def things_view(self):
         """家里的吃的：此刻现算的每一件（存下来的 + 世界线里做完的段标的），每一步、新鲜度、用料和用它做的；
         按量记的另给现算的剩多少。objects 是吃的以外的东西：每一步在哪、谁手上、什么样、归谁。"""
@@ -847,7 +864,8 @@ class ContextPageApi:
     async def things_edit(self):
         """家里的吃的和别的东西（网页手动）：add 新的一件（cat=item 是吃的以外的东西）/ stage 加一步 / update_item 改名字类别来历用料
         （东西另有样子、归谁）/ update_stage 改某一步 / void_stage 作废某一步 / unvoid_stage 恢复 / void_item 整件记错了 /
-        keep 把世界线里现算的存下来。编号由程序发、改不了；什么都不真删。"""
+        keep 把世界线里现算的存下来 / plan_update 改「未来」里的一件 / wl_stage 改世界线那一段里标的某一步。
+        编号由程序发、改不了；什么都不真删。"""
         life = getattr(self.plugin, "life", None)
         if life is None or getattr(life, "things", None) is None:
             return _err("家里的吃的没加载")
@@ -949,6 +967,8 @@ class ContextPageApi:
                 why = "" if tid else "没有这一件"
             elif action == "plan_update":
                 why = self._plan_update(life, store, str(body.get("ref") or ""), tid, body.get("fields") or {}, now)
+            elif action == "wl_stage":
+                why = self._wl_stage_update(life, store, str(body.get("ref") or ""), tid, body.get("guard"), body.get("fields"), now)
             else:
                 why = "不支持的操作：%s" % action
             if why:
