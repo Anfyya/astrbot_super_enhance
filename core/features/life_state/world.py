@@ -309,6 +309,9 @@ class WorldStore:
             "things": [dict(x) for x in (entry.get("things") or []) if isinstance(x, dict)],
             "created": str(entry.get("created") or fmt_time(self.now_local())),
         }
+        if isinstance(entry.get("moved_from"), dict):
+            # 记录员把补写排在后面的那段挪到现在（她提前去做了）：原来那段留一份，她一直没去做时照原样恢复
+            record["moved_from"] = entry["moved_from"]
         if not entry.get("id"):
             day["next_id"] = int(day.get("next_id") or 1) + 1
         kept.append(record)
@@ -930,6 +933,31 @@ def detail_of(entry: dict) -> str:
 META_WHY_WORDS = ("排的是", "对话里", "聊天里", "日程", "补写", "世界线", "这段")
 
 
+# 比两段是不是同一件事时不算的字：人名、和谁一起这种
+SAME_SKIP = ("亚托莉", "丛雨", "主人", "一起", "和", "跟", "给", "帮", "替", "去", "把")
+
+
+def same_thing(a, b) -> bool:
+    """两句说的是不是同一件事：去掉人名这些字以后，有一截连着 3 个字以上一样（「炒蛋炒饭」「厚蛋烧」）。"""
+    def norm(text) -> str:
+        text = re.sub(r"[^\u4e00-\u9fff]", "", str(text or ""))
+        for word in SAME_SKIP:
+            text = text.replace(word, "")
+        return text
+    x, y = norm(a), norm(b)
+    if len(x) < 3 or len(y) < 3:
+        return False
+    best, row = 0, [0] * (len(y) + 1)
+    for ch in x:
+        new = [0] * (len(y) + 1)
+        for j, other in enumerate(y, 1):
+            if ch == other:
+                new[j] = row[j - 1] + 1
+                best = max(best, new[j])
+        row = new
+    return best >= 3
+
+
 def real_stop(entry: dict) -> bool:
     """真被打断、没做完的段：给她看成「做到哪先放下了、为什么、后来怎么样」。
     闲着、睡觉、主人自己的、记录员从聊天里记的（多半是同一件事说法更新了）、停在最后一步（收尾）的，
@@ -939,8 +967,15 @@ def real_stop(entry: dict) -> bool:
         return False
     if str(entry.get("who") or "") == "master":
         return False
-    if str(entry.get("source") or "") == "chat" and not entry.get("asked"):
-        return False
+    if str(entry.get("source") or "") == "chat" and not entry.get("stop_why"):
+        # 记录员从聊天里记的段被下一条接上：多半是它估的结束时刻长了、她接着做下一件了（买完拎回家），不算停下；
+        # 记录员明说停下了（撤段时写了 stop_why）才算。主人叫她去做的那件，被别的事接上（不是同一件事往下接）也算停下
+        if not entry.get("asked"):
+            return False
+        by = str(entry.get("stop_by") or "").strip()
+        by = by[2:] if by.startswith("改去") else by
+        if not by or same_thing(entry.get("doing"), by):
+            return False
     planned = clean_steps(entry.get("steps_planned"))
     kept = clean_steps(entry.get("steps"))
     if len(planned) >= 2 and len(kept) >= len(planned):
