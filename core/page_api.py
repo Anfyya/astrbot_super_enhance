@@ -654,14 +654,14 @@ class ContextPageApi:
         out = []
         for row in rows:
             step = row["step"]
-            item = {k: step.get(k) or "" for k in ("what", "name", "kind", "origin", "left", "amount", "place", "keep", "state",
+            item = {k: step.get(k) or "" for k in ("what", "name", "kind", "origin", "left", "amount", "place", "keep", "spot", "state",
                                                     "look", "owner", "holder")}
             item.update({
                 "id": row["id"],
                 "cat": row["cat"],
                 "from": [{"id": x, "name": names.get(x, "")} for x in step.get("from") or []],
                 "made": made_of(row["made"]),
-                "later": [dict({k: x["step"].get(k) or "" for k in ("what", "left", "used", "amount", "place", "keep", "state", "holder")},
+                "later": [dict({k: x["step"].get(k) or "" for k in ("what", "left", "used", "amount", "place", "keep", "spot", "state", "holder")},
                                made=made_of(x["made"])) for x in row["later"]],
             })
             if item["owner"]:
@@ -685,7 +685,7 @@ class ContextPageApi:
         target = next((x for x in steps if str(x.get("new") or "") == tid), None)
         if target is None:
             return "世界线那一段里已经没有 %s 了" % tid
-        for key in ("what", "name", "kind", "origin", "from", "left", "amount", "place", "keep", "state"):
+        for key in ("what", "name", "kind", "origin", "from", "left", "amount", "place", "keep", "spot", "state"):
             if key in fields and fields[key] is not None:
                 target[key] = fields[key]
         if not str(target.get("name") or "").strip():
@@ -715,7 +715,7 @@ class ContextPageApi:
             counted = {}  # 按量记的那几件：每一步现算的用了多少、之后剩多少（网页上显示 left_shown）
 
             def stage_row(stage: dict) -> dict:
-                row = {k: stage.get(k) for k in ("at", "what", "left", "amount", "used", "place", "keep", "state", "holder", "owner",
+                row = {k: stage.get(k) for k in ("at", "what", "left", "amount", "used", "place", "keep", "spot", "state", "holder", "owner",
                                                   "by", "note", "wl", "src", "recorded", "edited", "void_why", "void_at")}
                 row["by_label"] = self._thing_who(life, stage.get("by"))
                 row["idx"] = stage.get("_i")
@@ -746,6 +746,7 @@ class ContextPageApi:
                 fresh = store.freshness(item, now)
                 stages = item.get("stages") or []
                 last = stages[-1] if stages else {}
+                keep, spot = things_mod.split_keep(last.get("keep"), last.get("spot"), last.get("place"))
                 end = things_mod.is_ended(item)
                 share = things_mod.share_left(item)  # 还剩一开始的几成（余量条）；说不准是 None
                 items.append({
@@ -766,8 +767,11 @@ class ContextPageApi:
                     # 余量不多（排到前面）：按量记的看快用完了，别的看剩到一开始的几成以下
                     "low": bool(info["low"]) if info else (share is not None and 0 < share <= things_mod.LOW_LEFT_SHARE),
                     "place": last.get("place") or "",
-                    "keep": last.get("keep") or "",
+                    "keep": keep or "",
+                    "spot": spot or things_mod.DEFAULT_SPOT,
                     "state": last.get("state") or "",
+                    # 口感（蔫了、串味、凉了、熟过头……）：[{key, level, text, fix, danger}]，毛病在前、变好了的在后
+                    "quality": store.quality(item, now, shelf),
                     "fresh": {
                         "level": fresh["level"], "x": fresh["x"], "word": fresh["word"],
                         "text": store.fresh_text(item, now),
@@ -823,6 +827,7 @@ class ContextPageApi:
                 "future": future,
                 "kinds": [{"key": k, "hours": v[0], "word": v[1]} for k, v in things_mod.KINDS.items()],
                 "keeps": list(things_mod.KEEPS),
+                "spots": list(things_mod.SPOTS),
                 "states": list(things_mod.STATES),
                 "steps": {"start": list(things_mod.START_STEPS), "mid": list(things_mod.MID_STEPS), "end": list(things_mod.END_STEPS)},
                 "objects": obj_rows,
@@ -876,7 +881,7 @@ class ContextPageApi:
                 if things_mod.parse_time(at) > now + datetime.timedelta(minutes=5):
                     return None, "不能晚于现在"
                 stage = {"at": at, "src": src, "recorded": stamp}
-                for key in ("what", "left", "amount", "used", "place", "keep", "state", "holder", "owner", "by", "note"):
+                for key in ("what", "left", "amount", "used", "place", "keep", "spot", "state", "holder", "owner", "by", "note"):
                     if raw.get(key) is not None:
                         stage[key] = raw.get(key)
                 return stage, ""

@@ -11,8 +11,9 @@
   做完了、没停在半路的段，把它标的那几步算进去；世界线改了（撤了、截断停下了、手动改了）下次一算就跟着变。
   聊天里记的和世界线对不上时以聊天为准（记录员记过的步在前，世界线的步插不进去就不算）。
   世界线文件到期会清掉：做完满 SETTLE_DAYS 天的段，把它标的那几步沉进 things.json。
-- 新鲜度不存，按每一步现算：每一段按当时的放法、整的还是切开了、屋里的气温（月份 + 当天天气 + 钟点）
-  算出老化得多快，一段段加起来，跟这一类东西「20 度、收着放」能放多久比。
+- 新鲜度不存，按每一步现算：每一段按当时怎么放（收着、敞着、泡在水里……）、放在哪（屋里、冰箱、地窖、灶上温着……
+  按月份 + 当天天气 + 钟点现算多少度）、整的还是切开了、腌晒熏到哪了，算出老化得多快，一段段加起来，
+  跟这一类东西「20 度、收着放」能放多久比。口感（蔫了、回软、串味、凉了、熟过头……）另算，见 food.py。
 - 剩多少分三种：米面油盐、调料干货、腌菜这些按量用、用得慢的（MEASURED_KINDS）记准确的量（克 / 毫升），
   每一步存「这次用了多少」（used）或「一共 / 清点出来还有多少」（amount），剩多少按先后现算（measure），
   没写用了多少的按平常一次的用量扣（STAPLES），扣到 0 就算用完了；一盘菜这种照旧写「吃了一半」；按个数的写「两块」。
@@ -34,6 +35,9 @@ from pathlib import Path
 
 from astrbot.api import logger
 
+from .food import (DEFAULT_KEEP, DEFAULT_SHIFT, DEFAULT_SPOT, DEFAULT_STATE, KEEPS, MONTH_TEMP, PROCESS_STEPS, SLICE_MINUTES,
+                   SPOTS, STATES, WEATHER_SHIFT, SpaceIndex, month_temp, norm_keep, norm_spot, norm_state, room_temp,
+                   simulate, split_keep, weather_kind, weather_shift)
 from .world import clean_text, fmt_time, parse_time
 
 FILE_NAME = "things.json"
@@ -87,29 +91,22 @@ KINDS = {
 }
 DEFAULT_KIND = "别的吃的"
 
-# 放法：老化快慢乘多少（冰箱、冻着、阴凉处、太阳底下另按温度算，见 keep_temp）
-KEEPS = ("收着放", "敞着放", "泡在水里", "阴凉处", "冰箱里", "冻着", "太阳底下", "活养着")
-KEEP_RATE = {"敞着放": 1.25, "泡在水里": 0.7}
-DEFAULT_KEEP = "收着放"
-KEEP_WORDS = (
-    ("盖", "收着放"), ("柜", "收着放"), ("装", "收着放"), ("收", "收着放"),
-    ("敞", "敞着放"), ("桌上", "敞着放"), ("摊", "敞着放"),
-    ("泡", "泡在水里"), ("水盆", "泡在水里"), ("井", "阴凉处"), ("阴凉", "阴凉处"), ("背阴", "阴凉处"),
-    ("冷藏", "冰箱里"), ("冰箱", "冰箱里"), ("冷冻", "冻着"), ("冻", "冻着"),
-    ("晒", "太阳底下"), ("太阳", "太阳底下"), ("活", "活养着"), ("养", "活养着"),
-)
-STATES = {"整的": 1.0, "切开了": 1.5}
-DEFAULT_STATE = "整的"
+# 放法拆成两栏：怎么放（KEEPS：收着放 / 罩着放 / 敞着放 / 泡在水里 / 挂着通风 / 活养着）
+# 和放在哪（SPOTS：屋里 / 阴凉处 / 地窖 / 井里 / 冰箱 / 冻着 / 屋外 / 太阳底下 / 灶上温着），见 food.py
 
 # 原来就有：家里一直备着、还没记进清单的（盐罐、米缸这类），头一回说到时记下来
 START_STEPS = ("买回来", "收到", "做好了", "原来就有")
 # 清点：按量记的东西重新看了还剩多少（amount 写多少），之后从这个数接着扣
-MID_STEPS = ("挪地方", "切开了", "用掉一部分", "吃了一部分", "清点")
+# 热了一下：凉了的热回来、发硬的饭软回来、回软的炸物复脆，回锅几回也记着；腌上了 / 晒上了 / 熏上了：开始加工，
+# 按温度、天气走进度，走完了能放多久跟着变（food.py）
+MID_STEPS = ("挪地方", "切开了", "用掉一部分", "吃了一部分", "清点", "热了一下") + PROCESS_STEPS
 END_STEPS = ("用完了", "吃完了", "丢了", "坏了扔了", "送人了", "记错了")
 # 做菜用掉料的那两步
 USE_STEPS = ("用掉一部分", "用完了")
 STEPS = START_STEPS + MID_STEPS + END_STEPS
 STEP_WORDS = (
+    ("热了", "热了一下"), ("热一热", "热了一下"), ("热一下", "热了一下"), ("回锅", "热了一下"), ("复热", "热了一下"),
+    ("腌", "腌上了"), ("风干", "晒上了"), ("晾干", "晒上了"), ("晒", "晒上了"), ("熏", "熏上了"),
     ("原来", "原来就有"), ("本来", "原来就有"), ("一直有", "原来就有"), ("清点", "清点"), ("盘点", "清点"),
     ("记错", "记错了"), ("用完", "用完了"), ("用光", "用完了"), ("吃完", "吃完了"), ("吃光", "吃完了"),
     ("坏了", "坏了扔了"), ("扔", "丢了"), ("倒掉", "丢了"), ("丢", "丢了"),
@@ -118,7 +115,7 @@ STEP_WORDS = (
     ("挪", "挪地方"), ("搬", "挪地方"), ("切", "切开了"), ("用", "用掉一部分"), ("吃", "吃了一部分"),
 )
 # 这几步之后剩多少不变（没写 left 就照上一步）
-KEEP_LEFT_STEPS = ("挪地方", "切开了")
+KEEP_LEFT_STEPS = ("挪地方", "切开了", "热了一下") + PROCESS_STEPS
 
 # ---------- 按量记的（米面油盐、调料干货、腌菜） ----------
 
@@ -314,18 +311,6 @@ SAME_STEP_MINUTES = 20
 # 同名、同一种来法（买回来 / 收到 / 做好了），前后这么多分钟以内新建的算同一件
 SAME_NEW_MINUTES = 45
 
-# 穗织是山里的温泉镇：各月平均气温（摄氏度），按月中取值、日子之间线性插
-MONTH_TEMP = (2, 3, 7, 12, 17, 21, 25, 26, 22, 15, 9, 4)
-# 天气（daily_seeds 里抽的那几种）→（比平常高几度，屋里一天里上下差几度）；按顺序认，先认细的
-WEATHER_SHIFT = (
-    ("晴热", 4, 4), ("闷热", 5, 2.5), ("回暖", 3, 4), ("暖阳", 2, 4), ("晴冷", -1, 4),
-    ("大风降温", -5, 3), ("寒风", -3, 3), ("降温", -4, 3),
-    ("雨夹雪", -2, 1.5), ("小雪", -2, 1.5), ("暴雨", -2, 1.5), ("雷阵雨", -1, 2), ("春雨", -1, 1.5),
-    ("小雨", -2, 1.5), ("雨", -2, 1.5), ("起雾", -1, 2.5), ("阴天微凉", -2, 2), ("阴", -1, 2),
-    ("凉风", -1, 2.5), ("起风", -1, 2.5), ("大风", -2, 3), ("多云", 0, 2.5), ("晴", 1, 4),
-)
-DEFAULT_SHIFT = (0, 2.5)
-SLICE_MINUTES = 30
 # 世界线里做完满这么多天的段，把它标的那几步沉进 things.json（世界线文件到期会清掉）
 SETTLE_DAYS = 7
 # 往回看几天的世界线
@@ -359,78 +344,10 @@ def norm_kind(value) -> str:
     return _pick(value, tuple(KINDS), default=DEFAULT_KIND)
 
 
-def norm_keep(value) -> str:
-    return _pick(value, KEEPS, KEEP_WORDS)
-
-
-def norm_state(value) -> str:
-    return _pick(value, tuple(STATES), (("切", "切开了"), ("整", "整的")))
-
-
 def norm_step(value, cat: str = CAT_FOOD) -> str:
     if cat == CAT_ITEM:
         return _pick(value, ITEM_STEPS, ITEM_STEP_WORDS)
     return _pick(value, STEPS, STEP_WORDS)
-
-
-def weather_kind(text) -> str:
-    """天气原文 → 当天实际的天气：「昨天是「X」，今天慢慢转成「Y」」取 Y，「和昨天差不多（昨天是「X」）」取 X。"""
-    text = str(text or "")
-    m = re.search(r"转成「([^」]+)」", text)
-    if m:
-        return m.group(1)
-    m = re.search(r"「([^」]+)」", text)
-    return m.group(1) if m else text
-
-
-def weather_shift(text) -> tuple:
-    kind = weather_kind(text)
-    for key, shift, amp in WEATHER_SHIFT:
-        if key in kind:
-            return shift, amp
-    return DEFAULT_SHIFT
-
-
-def month_temp(moment: datetime.datetime) -> float:
-    """这一天的平均气温：各月按月中取值，日子之间线性插。"""
-    mid = datetime.datetime(moment.year, moment.month, 15)
-    if moment >= mid:
-        month2 = moment.month % 12 + 1
-        other = datetime.datetime(moment.year + (moment.month == 12), month2, 15)
-        lo, hi, frac = MONTH_TEMP[moment.month - 1], MONTH_TEMP[month2 - 1], (moment - mid) / (other - mid)
-    else:
-        month0 = (moment.month - 2) % 12 + 1
-        other = datetime.datetime(moment.year - (moment.month == 1), month0, 15)
-        lo, hi, frac = MONTH_TEMP[month0 - 1], MONTH_TEMP[moment.month - 1], (moment - other) / (mid - other)
-    return lo + (hi - lo) * frac
-
-
-def room_temp(moment: datetime.datetime, weather_text) -> float:
-    """屋里这一刻的气温：当天平均 + 天气 + 一天里的起伏（下午两点最暖、凌晨两点最凉）。"""
-    shift, amp = weather_shift(weather_text)
-    hour = moment.hour + moment.minute / 60.0
-    return month_temp(moment) + shift + amp * math.sin(2 * math.pi * (hour - 8) / 24)
-
-
-def keep_temp(keep: str, moment: datetime.datetime, weather_text) -> float:
-    if keep == "冰箱里":
-        return 4.0
-    if keep == "冻着":
-        return -18.0
-    temp = room_temp(moment, weather_text)
-    if keep == "阴凉处":
-        return temp - 4.0
-    if keep == "太阳底下" and 8 <= moment.hour < 17:
-        return temp + 8.0
-    return temp
-
-
-def age_rate(keep: str, state: str, moment: datetime.datetime, weather_text) -> float:
-    """这一刻老化得多快：20 度、收着放、整的 = 1；每高 10 度乘 2.5。活养着的不老。"""
-    if keep == "活养着":
-        return 0.0
-    temp = keep_temp(keep, moment, weather_text)
-    return 2.5 ** ((temp - 20.0) / 10.0) * KEEP_RATE.get(keep, 1.0) * STATES.get(state, 1.0)
 
 
 def part_of_day(moment: datetime.datetime) -> str:
@@ -614,7 +531,8 @@ def clean_by(value) -> str:
 
 
 def clean_stage(stage: dict, cat: str = CAT_FOOD) -> dict:
-    """一步规整成固定的几个字段；place / keep / state 空着的，插进去时照上一步。
+    """一步规整成固定的几个字段；place / keep / spot / state 空着的，插进去时照上一步。
+    吃的放法分两栏：keep 怎么放、spot 放在哪（没写的从放法那栏、地点里认，见 food.split_keep）。
     按量记的另带 amount（一共 / 清点出来有多少）、used（这次用了多少），原样留着字（「15 克」「半斤」），算的时候再折。
     吃的以外的东西：state 随便写（织到一半），另有 holder（在谁手上）、owner（归属换了才写）。"""
     out = {
@@ -630,7 +548,7 @@ def clean_stage(stage: dict, cat: str = CAT_FOOD) -> dict:
         if stage.get("owner"):
             out["owner"] = clean_text(stage.get("owner"), 12)
     else:
-        out["keep"] = norm_keep(stage.get("keep"))
+        out["keep"], out["spot"] = split_keep(stage.get("keep"), stage.get("spot"), stage.get("place"))
         out["state"] = norm_state(stage.get("state"))
         for key in ("amount", "used"):
             value = stage.get(key)
@@ -682,7 +600,7 @@ def insert_stage(item: dict, new: dict) -> str:
             new["place"], new["holder"] = prev.get("place") or "", prev.get("holder") or ""
         new["state"] = new.get("state") or prev.get("state") or ""
     else:
-        for key in ("place", "keep", "state"):
+        for key in ("place", "keep", "spot", "state"):
             new[key] = new.get(key) or prev.get(key) or ""
     if new["what"] in ends:
         new["left"] = ""
@@ -835,6 +753,7 @@ class ThingStore:
                 return None, "「%s」以前记过（%s），没了得去买" % (name, old.get("id"))
         if cat == CAT_FOOD:
             first["keep"] = first["keep"] or DEFAULT_KEEP
+            first["spot"] = first.get("spot") or DEFAULT_SPOT
             first["state"] = first["state"] or DEFAULT_STATE
         item = {
             "id": self.reserve_id(cat),
@@ -989,7 +908,7 @@ class ThingStore:
         if not 0 <= index < len(stages) or not self._same_stage(stages[index], guard):
             return "这一步已经变了，刷新一下再改"
         merged = dict(stages[index])
-        for key in ("at", "what", "left", "amount", "used", "place", "keep", "state", "holder", "owner", "by", "into", "note"):
+        for key in ("at", "what", "left", "amount", "used", "place", "keep", "spot", "state", "holder", "owner", "by", "into", "note"):
             if fields.get(key) is not None:
                 merged[key] = fields[key]
         new = clean_stage(merged, cat_of(item))
@@ -1095,7 +1014,7 @@ class ThingStore:
             if cat == CAT_ITEM:
                 fields.update(holder=step.get("holder"), owner=step.get("owner"))
             else:
-                fields.update(keep=step.get("keep"), amount=step.get("amount"), used=step.get("used"))
+                fields.update(keep=step.get("keep"), spot=step.get("spot"), amount=step.get("amount"), used=step.get("used"))
             return clean_stage(fields, cat)
 
         made = []
@@ -1132,6 +1051,7 @@ class ThingStore:
             first = stage_of(step, cat, what)
             if cat == CAT_FOOD:
                 first["keep"] = first["keep"] or DEFAULT_KEEP
+                first["spot"] = first.get("spot") or DEFAULT_SPOT
                 first["state"] = first["state"] or DEFAULT_STATE
             sources = []
             for token in step.get("from") or []:
@@ -1347,8 +1267,9 @@ class ThingStore:
                 into = resolve(raw.get("into"))
                 if into and into != tid:
                     step["into"] = into
+            keep, spot = split_keep(raw.get("keep"), raw.get("spot"), raw.get("place"))
             step.update({"what": what, "left": clean_text(raw.get("left"), MAX_LEFT), "place": clean_text(raw.get("place"), MAX_PLACE),
-                         "keep": norm_keep(raw.get("keep")), "state": norm_state(raw.get("state")),
+                         "keep": keep, "spot": spot, "state": norm_state(raw.get("state")),
                          "amount": clean_text(raw.get("amount"), MAX_LEFT), "used": clean_text(raw.get("used"), MAX_LEFT)})
             out.append({k: v for k, v in step.items() if v not in ("", None, []) or k == "left"})
         return out
@@ -1362,66 +1283,62 @@ class ThingStore:
             data = {}
         return data if isinstance(data, dict) else {}
 
-    @staticmethod
-    def _weather_on(weathers: dict, day: datetime.date, fallback: str) -> str:
-        return str(weathers.get(day.isoformat()) or fallback)
-
-    def freshness(self, item: dict, now: datetime.datetime) -> dict:
-        """按每一步现算：x = 折算成「20 度收着放」的小时数 / 这一类能放的小时数。
-        返回 x、level（还新鲜 / 还行 / 快不行了 / 坏了 / 活养着 / 没了）、坏了从什么时候起、照现在的放法撑到几点。"""
-        flat = now.replace(tzinfo=None)
-        hours, word = KINDS.get(str(item.get("kind") or ""), KINDS[DEFAULT_KIND])
+    def _weather_fn(self, flat: datetime.datetime):
+        """日子 → 那天的天气（没抽到的日子照最近抽到的那天）。"""
         weathers = self._weathers()
         known = [weathers[k] for k in sorted(weathers) if k <= flat.date().isoformat()]
         fallback = known[-1] if known else "多云"
-        stages = [x for x in item.get("stages") or [] if parse_time(x.get("at")) is not None]
-        out = {"x": 0.0, "level": "还新鲜", "word": word, "bad_since": None, "hurry_at": None, "bad_at": None}
-        end = is_ended(item)
-        end_at = parse_time(end.get("at")) if end else None
-        stop = min(flat, end_at) if end_at else flat
-        aged = 0.0
-        step = datetime.timedelta(minutes=SLICE_MINUTES)
-        for i, stage in enumerate(stages):
-            if stage.get("what") in END_STEPS:
-                break
-            start = parse_time(stage.get("at"))
-            until = parse_time(stages[i + 1].get("at")) if i + 1 < len(stages) else stop
-            until = min(until, stop)
-            cur = start
-            while cur < until:
-                nxt = min(cur + step, until)
-                mid = cur + (nxt - cur) / 2
-                weather = self._weather_on(weathers, mid.date(), fallback)
-                aged += age_rate(stage.get("keep"), stage.get("state"), mid, weather) * (nxt - cur).total_seconds() / 3600.0
-                if out["bad_since"] is None and aged >= hours:
-                    out["bad_since"] = nxt
-                cur = nxt
-        out["x"] = round(aged / hours, 3)
-        if end:
+        return lambda day: str(weathers.get(day.isoformat()) or fallback)
+
+    def freshness(self, item: dict, now: datetime.datetime) -> dict:
+        """按每一步现算（food.simulate）：x = 坏到了这一类能放多久的几成（腌、晒、熏好了能放多久跟着变）。
+        返回 x、level（还新鲜 / 还行 / 快不行了 / 坏了 / 活养着 / 没了）、坏了从什么时候起、照现在的放法撑到几点、
+        加工做完的时刻（events）。"""
+        flat = now.replace(tzinfo=None)
+        hours, word = KINDS.get(str(item.get("kind") or ""), KINDS[DEFAULT_KIND])
+        sim = simulate(item, hours, flat, self._weather_fn(flat), lookahead_days=LOOKAHEAD_DAYS)
+        out = {"x": round(sim["frac"], 3), "level": "还新鲜", "word": word, "bad_since": sim["bad_since"],
+               "hurry_at": sim["hurry_at"], "bad_at": sim["bad_at"], "events": sim["events"]}
+        if is_ended(item):
             out["level"] = "没了"
-            return out
-        last = stages[-1] if stages else {}
-        if last.get("keep") == "活养着":
+        elif sim["alive"]:
             out["level"] = "活养着"
-            return out
-        if aged >= hours:
+        elif sim["frac"] >= 1.0:
             out["level"] = "坏了"
-            return out
-        out["level"] = "还新鲜" if out["x"] < SOON_AT else ("还行" if out["x"] < HURRY_AT else "快不行了")
-        # 照现在的放法往后推：到哪个钟点「快不行了」、哪个钟点坏
-        cur, limit, ahead = flat, flat + datetime.timedelta(days=LOOKAHEAD_DAYS), aged
-        while cur < limit:
-            nxt = cur + step
-            mid = cur + step / 2
-            weather = self._weather_on(weathers, mid.date(), fallback)
-            ahead += age_rate(last.get("keep"), last.get("state"), mid, weather) * step.total_seconds() / 3600.0
-            if out["hurry_at"] is None and ahead >= hours * HURRY_AT:
-                out["hurry_at"] = nxt
-            if ahead >= hours:
-                out["bad_at"] = nxt
-                break
-            cur = nxt
+        else:
+            out["level"] = "还新鲜" if out["x"] < SOON_AT else ("还行" if out["x"] < HURRY_AT else "快不行了")
         return out
+
+    def _index(self, view, flat: datetime.datetime):
+        """东西之间的影响（串味、催熟……）要知道谁跟谁放一块：按此刻的存货建一次，同一个 view 里复用。"""
+        if view is None:
+            return None
+        cached = getattr(view, "_food_index", None)
+        if cached is None or cached[0] != flat:
+            cached = (flat, SpaceIndex(view.values(), flat))
+            view._food_index = cached
+        return cached[1]
+
+    def quality(self, item: dict, now: datetime.datetime, view=None) -> list:
+        """此刻的口感（food.Sim.report）：[{key, level（2 很 / 1 有点 / 0 变了 / -1 变好了）, text, fix, danger}]。
+        给了 view 才算东西之间的影响。没了的、不是吃的不算。"""
+        if cat_of(item) != CAT_FOOD or is_ended(item):
+            return []
+        flat = now.replace(tzinfo=None)
+        hours, _word = KINDS.get(str(item.get("kind") or ""), KINDS[DEFAULT_KIND])
+        sim = simulate(item, hours, flat, self._weather_fn(flat), index=self._index(view, flat), quality=True, lookahead_days=0)
+        return sim.get("quality") or []
+
+    @staticmethod
+    def taste_text(quality: list, limit: int = 4) -> str:
+        """口感写成一句：毛病在前（有法子的带上法子），变好了的在后。"""
+        bits = []
+        for row in quality[:limit]:
+            text = row["text"]
+            if row.get("fix") and (row["level"] >= 1 or row.get("danger")):
+                text += "（%s）" % row["fix"]
+            bits.append(text)
+        return "；".join(bits)
 
     def fresh_text(self, item: dict, now: datetime.datetime) -> str:
         """新鲜度的人话（不带该怎么办）。"""
@@ -1474,8 +1391,14 @@ class ThingStore:
             return raw if (fresh or raw.startswith(("剩", "还剩"))) else "剩" + raw
         return "多少没说" if fresh else "剩多少没说"
 
+    @staticmethod
+    def keep_text(stage: dict) -> str:
+        """怎么放、放在哪写成一句（屋里不写）：「收着放、冰箱」「泡在水里」。"""
+        cover, spot = split_keep(stage.get("keep"), stage.get("spot"), stage.get("place"))
+        return "、".join(x for x in (cover, spot if spot != DEFAULT_SPOT else "") if x)
+
     def line(self, item: dict, now: datetime.datetime, view: View, label_fn=None) -> str:
-        """一件一行：编号 名字〔哪类；用什么做的〕：剩多少｜在哪、怎么放｜哪来的｜新不新鲜。"""
+        """一件一行：编号 名字〔哪类；用什么做的〕：剩多少｜在哪、怎么放、放在哪｜哪来的｜新不新鲜｜口感。"""
         if cat_of(item) == CAT_ITEM:
             return self.item_line(item, view, label_fn)
         stages = item.get("stages") or [{}]
@@ -1483,7 +1406,7 @@ class ThingStore:
         tags = [str(item.get("kind") or DEFAULT_KIND)]
         if item.get("from"):
             tags.append("用 %s 做的" % "、".join(self._name_of(view, x) for x in item["from"]))
-        where = "，".join(x for x in (last.get("place"), last.get("keep"),
+        where = "，".join(x for x in (last.get("place"), self.keep_text(last),
                                       last.get("state") if last.get("state") != DEFAULT_STATE else "") if x)
         came = "%s %s%s" % (str(first.get("at"))[5:16], self._who(first.get("by"), label_fn), first.get("what"))
         if item.get("origin"):
@@ -1493,6 +1416,9 @@ class ThingStore:
             parts.append(where)
         parts.append(came)
         parts.append(self.fresh_text(item, now))
+        taste = self.taste_text(self.quality(item, now, view), 3)
+        if taste:
+            parts.append("口感：" + taste)
         return "%s %s〔%s〕：%s" % (item.get("id"), item.get("name"), "；".join(tags), "｜".join(parts))
 
     def history(self, item: dict, now: datetime.datetime, view: View, label_fn=None) -> str:
@@ -1524,8 +1450,8 @@ class ThingStore:
             elif stage.get("left"):
                 raw = str(stage["left"])
                 bits.append(raw if (stage.get("what") in START_STEPS or raw.startswith(("剩", "还剩"))) else "剩" + raw)
-            if stage.get("what") in START_STEPS + ("挪地方", "切开了"):
-                bits.append("，".join(x for x in (stage.get("place"), stage.get("keep"), stage.get("state")) if x))
+            if stage.get("what") in START_STEPS + ("挪地方", "切开了", "热了一下") + PROCESS_STEPS:
+                bits.append("，".join(x for x in (stage.get("place"), self.keep_text(stage), stage.get("state")) if x))
             if stage.get("note"):
                 bits.append(stage["note"])
             bits = [x for x in bits if x]
@@ -1536,6 +1462,9 @@ class ThingStore:
         now_text = self.fresh_text(item, now)
         if info is not None and not is_ended(item):
             now_text = "%s｜%s（平常一次用 %s 上下）" % (self.left_text(item), now_text, fmt_amount(info["per_use"], info["unit"]))
+        taste = self.taste_text(self.quality(item, now, view), 6)
+        if taste:
+            now_text += "｜口感：" + taste
         lines.append("现在：%s" % now_text)
         return "\n".join(lines)
 

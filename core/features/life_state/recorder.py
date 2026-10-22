@@ -16,8 +16,8 @@ from astrbot.api import logger
 
 from ..message_text import strip_inline_system
 from .models import bot_of_umo, extract_json
-from .things import (CAT_FOOD, CAT_ITEM, KEEPS, KINDS, SAME_NEW_MINUTES, SAME_STEP_MINUTES, STEPS, USE_STEPS, cat_of, find_same,
-                     norm_step, usable)
+from .things import (CAT_FOOD, CAT_ITEM, KEEPS, KINDS, SAME_NEW_MINUTES, SAME_STEP_MINUTES, SPOTS, STEPS, USE_STEPS, cat_of,
+                     find_same, norm_step, usable)
 from .world import WorldStore, clean_text, doing_text, fmt_time, is_event, is_sleep, parse_time, progress_of, result_text, steps_text
 
 # 记录员停过一阵时，往前最多翻几天的原始消息（原始消息副本最多也只留这么久）
@@ -92,7 +92,7 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
    - kind 从这几类里挑：{kinds}。origin 写哪来的（谁在哪买的、谁送的）；自己做的留空。
    - 做菜：做好的那盘菜是新的一件，第一步「做好了」，from 写用了清单里哪几件（写编号；这一批里新记的写临时代号；用到的米面油盐、调料也写上）；用掉的每一件，各记一步「用掉一部分」或「用完了」，into 写那盘菜，按量记的写上 used。用的料清单里没有的，from 里就不写它，一件都对不上就留空。买来的、别人送的熟菜，from 留空。剩下的菜还是那一件，又吃了就记「吃了一部分」「吃完了」。
    - 已有的那件又发生了一步：写 id（清单里的编号；这一批里新记的写临时代号）和这一步。同样的东西有好几件、说不清是哪件的，记在最早有的那件上。
-   - 每一步写：at（发生的时刻 YYYY-MM-DD HH:MM）、what（{steps}）、left（这一步之后还剩多少，比如「两块」「小半锅」；用完、吃完写空——用完、吃完必须单独写一步，what 填「用完了」或「吃完了」，别把「吃完了」塞进 left 里）、amount / used（按量记的才写，见上）、place（放在哪）、keep（放法：{keeps}）、state（整的 / 切开了）、by（谁：napcat / napcat2 / master，别人写名字）、into（用掉是做进了哪盘菜）、quote（摘原文里说这件事的那句话）。place、keep、state 跟上一步一样的不用写。
+   - 每一步写：at（发生的时刻 YYYY-MM-DD HH:MM）、what（{steps}）、left（这一步之后还剩多少，比如「两块」「小半锅」；用完、吃完写空——用完、吃完必须单独写一步，what 填「用完了」或「吃完了」，别把「吃完了」塞进 left 里）、amount / used（按量记的才写，见上）、place（放在哪个地方，例如「灶房·柜格」）、keep（怎么放：{keeps}）、spot（放在哪，管冷热：{spots}；屋里常温的不用写）、state（整的 / 切开了 / 碰伤了）、by（谁：napcat / napcat2 / master，别人写名字）、into（用掉是做进了哪盘菜）、quote（摘原文里说这件事的那句话）。place、keep、spot、state 跟上一步一样的不用写。剩菜回锅、凉了热一热记一步「热了一下」；开始腌、晒、熏记「腌上了」「晒上了」「熏上了」（晒、熏写上 spot，比如太阳底下、屋外）。
    - 「记错了」只用在清单里确实记错了的那件（根本没这回事）。
 19. 家里的东西（吃的以外的：衣裳围巾、书册本子、纸条信、画和窗花、布偶摆件、工具器物、首饰小物……）：每件一个编号（p 开头），写进 items，记它从哪来、经过谁手、搁在哪、变成什么样。只记聊天里说已经发生了的，规矩和第 18 条一样。
    - 新的一件（上面「家里的东西」里没有的）：写 new（这一批里的临时代号 x1、x2……；编号由程序发）、name（叫得出区别的名字，例如「深青围巾」「兔子窗花」「压在茶壶底下的纸条」，别只写「围巾」「纸条」）、kind（它是什么，一个词：围巾、窗花、纸条、布偶、书……）、look（样子：颜色、材料、大小、上面有什么，能和同一种的别的那件分清）、owner（归谁：napcat / napcat2 / master，大家一起用的留空）、origin（哪来的）、from（用清单里哪几件做的），再加上它的第一步。第一步只能是「买回来」「收到」「捡到」「开始做」（起了个头、还没做完）「做好了」「原来就有」（家里本来就有、清单里还没记的）。
@@ -457,6 +457,7 @@ class Recorder:
             kinds=" / ".join(KINDS),
             steps=" / ".join(STEPS),
             keeps=" / ".join(KEEPS),
+            spots=" / ".join(SPOTS),
             world_notes=self.world_notes,
         )
 

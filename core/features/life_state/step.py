@@ -18,7 +18,7 @@ from astrbot.api import logger
 from .models import extract_json
 from .recorder import norm_time
 from .things import (CAT_ITEM, END_STEPS, ITEM_END_STEPS, ITEM_MID_STEPS, ITEM_START_STEPS, KEEPS, KINDS, MEASURED_KINDS, MID_STEPS,
-                     START_STEPS, had_before, norm_keep, norm_kind, norm_state, norm_step)
+                     SPOTS, START_STEPS, had_before, norm_kind, norm_state, norm_step, split_keep)
 from .variety import default_pools, twists_of, when_map, with_when
 from .world import (WorldStore, clean_text, doing_text, fmt_time, is_event, is_sleep, parse_steps, parse_time, progress_of, real_stop, result_text,
                     steps_text)
@@ -97,11 +97,12 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
 16. **两个人一起做的事，细节只能有一个版本，而且要写到具体**：with 里写了对方、两人一起做的事（一起吃饭、一起做点心、一起出门、一起翻一本书）——吃的是什么菜、谁掌的勺、买了什么、书或报纸上讲了什么、路上碰见了谁、做出来的东西什么样，先在聊天记录和已经写好的段落里找，找到就照原样用；找不到就由你定一份具体的（不许写成「菜炒好了、东西买回来了」这种没内容的话），两边的 doing/steps/result 都用同一份。措辞可以随视角不同，事实、名字、数量必须完全一样。只有一个人做的事不强制写具体。
 17. **亚托莉做饭的写法**：家常那几样练熟的照常做好；做没做过的新菜、或者复杂的大菜时，偶尔留一个小岔子（盐搁重了、火候偏了、形状歪了这种）；平时做饭也有小概率失手——一处就够，「笨手笨脚」落在过程和学新东西上，不是做成黑暗料理。翻车了多半由丛雨接手收拾（接过勺补救、或者干脆重做一道），把灶上收拾干净就翻篇。她嘴上怪火候怪锅，下次照旧认真学，别写成她怕进厨房。
 18. **家里的吃的**：上面「家里的吃的」是此刻家里有的（编号、剩多少、放在哪、还能放到什么时候）。段里动到家里的吃的，写进这段的 things（没动到就是空数组）：
-   - 用了、吃了家里有的：写 id（编号）、what（用掉一部分 / 用完了 / 吃了一部分 / 吃完了）、left（这段做完还剩多少，用完、吃完写空——用完、吃完必须单独写一步，what 填「用完了」或「吃完了」，别把「吃完了」塞进 left 里）；做进了这一次新做的菜，into 写那盘菜的临时代号。换了地方或放法、切开了：what 写「挪地方」或「切开了」，写上新的 place / keep / state。扔掉：what 写「丢了」或「坏了扔了」。
-   - 做出来的菜、买回来的、别人给的：写 new（临时代号 n1、n2……，这一次里每件一个；编号由程序发）、name、kind、what（做好了 / 买回来 / 收到）、left、place、keep；做的菜 from 写用了哪几件（编号或这一次的临时代号），买来的 origin 写在哪买的。
+   - 用了、吃了家里有的：写 id（编号）、what（用掉一部分 / 用完了 / 吃了一部分 / 吃完了）、left（这段做完还剩多少，用完、吃完写空——用完、吃完必须单独写一步，what 填「用完了」或「吃完了」，别把「吃完了」塞进 left 里）；做进了这一次新做的菜，into 写那盘菜的临时代号。换了地方或放法、切开了：what 写「挪地方」或「切开了」，写上新的 place / keep（怎么放）/ spot（放在哪）/ state。剩菜回锅、凉了热一热：what 写「热了一下」。开始腌、晒、熏：what 写「腌上了」「晒上了」「熏上了」，晒、熏写上 spot（晒在太阳底下、挂在屋外风干、搁灶上熏）。扔掉：what 写「丢了」或「坏了扔了」。
+   - 做出来的菜、买回来的、别人给的：写 new（临时代号 n1、n2……，这一次里每件一个；编号由程序发）、name、kind、what（做好了 / 买回来 / 收到）、left、place、keep、spot；做的菜 from 写用了哪几件（编号或这一次的临时代号），买来的 origin 写在哪买的。
    - 这一次里先做好、后面又吃掉的菜，吃饭那段也要写一步：id 填它的临时代号（n1 这种），what 写吃完了或吃了一部分，left 写还剩多少（比如给主人留的那份）。
    - 做饭用料先用家里有的，先用快不行了的；新鲜的料（豆腐、菜、鱼肉、蛋、水果）家里没有，就在做饭之前排一段去买回来。米面油盐、调料干货、腌菜这些按量记的（清单里写着「还剩多少克 / 毫升」），用到的也要写：写进那盘菜的 from，再各写一步「用掉一部分」，used 写这次用了多少（「250 克」「3 克」「15 毫升」，照这道菜平常的用量）；标着「快用完了」的，排一段去买（买回来的写 amount，例如「5 斤」「500 毫升」）。家里一直备着、清单里还没记的常备调料（糖、醋这类），头一回用到就写一件 new，what 写「原来就有」，amount 写估计还有多少；别的清单里没有的料要先买。两人一起做的饭、一起吃的饭，things 写在其中一个人那段里。
-   - kind 从这几类里挑：{kinds}；keep 从这几样里挑：{keeps}。
+   - 清单里写了口感的（叶子蔫了、饭发硬了、凉透了、串了味、熟过头了……），排做饭、吃东西时顺手照着处理：凉了的热一热，发硬的饭炒成炒饭，蔫了的菜泡会儿冷水，熟过头的香蕉做成饼，串了味的拿去做红烧、麻辣这种重口的菜；标着有毒的（土豆发芽发绿）扔掉。放东西也照常理：剩菜盖好收着；气味冲的（葱蒜、卤味、鱼）跟豆腐、米饭、点心分开放或者都盖好；生肉包好，跟熟食分开放；炸的晾凉了再盖。
+   - kind 从这几类里挑：{kinds}；keep（怎么放）从这几样里挑：{keeps}；spot（放在哪，管冷热）从这几样里挑：{spots}。
 19. **被打断的事后来怎么样了**：上面「被打断、还没交代后来怎么样的事」里每一件，在 stopped_results 里用编号写一句后来怎么样了：撂下不做了、交给谁接着做完了、等手上的事忙完回头接着做完了、或者赶紧几下做完了，挑合情理的写。要和你这次排的段对得上：写了回头接着做，就把接着做的那段排上；写了交给对方，对方那段就是接着做这件事。没列出来的不写。
 20. **家里的东西**（吃的以外）：上面「家里的东西」是此刻家里有的（编号、样子、在哪、在谁手上）。段里做了、用了、挪了、交给别人了、接着做了一截的东西，写进这段的 items（没动到就是空数组）：
    - 已有的写 id、what（挪地方 / 交给 / 用了 / 做了一截 / 做好了 / 变了样 / 送人了 / 丢了 / 坏了扔了 / 用完了）、place、holder（交到谁手上）、state（这段做完它什么样，比如「织到两尺长」）。接着做没做完的那件（比如接着织那条围巾），就是清单里那一件，写「做了一截」或「做好了」，不要另建一件。
@@ -365,8 +366,9 @@ class LifeStep:
                 into = resolve(raw.get("into"))
                 if into and into != tid:
                     step["into"] = into
+            keep, spot = split_keep(raw.get("keep"), raw.get("spot"), raw.get("place"))
             step.update({"what": what, "left": clean_text(raw.get("left"), 20), "place": clean_text(raw.get("place"), 40),
-                         "keep": norm_keep(raw.get("keep")), "state": norm_state(raw.get("state")),
+                         "keep": keep, "spot": spot, "state": norm_state(raw.get("state")),
                          "amount": clean_text(raw.get("amount"), 20), "used": clean_text(raw.get("used"), 20)})
             out.append({k: v for k, v in step.items() if v not in ("", None, []) or k == "left"})
         return out
@@ -873,6 +875,7 @@ class LifeStep:
             task_block=self._task_block(tasks),
             kinds=" / ".join(KINDS),
             keeps=" / ".join(KEEPS),
+            spots=" / ".join(SPOTS),
             example_start=fmt_time(example_start),
             example_end=fmt_time(example_start + datetime.timedelta(minutes=25)),
             example_end2=fmt_time(example_start + datetime.timedelta(minutes=40)),
