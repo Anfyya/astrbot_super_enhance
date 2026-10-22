@@ -1319,15 +1319,19 @@ class ThingStore:
             view._food_index = cached
         return cached[1]
 
-    def quality(self, item: dict, now: datetime.datetime, view=None) -> list:
-        """此刻的口感（food.Sim.report）：[{key, level（2 很 / 1 有点 / 0 变了 / -1 变好了）, text, fix, danger}]。
-        给了 view 才算东西之间的影响。没了的、不是吃的不算。"""
+    def taste(self, item: dict, now: datetime.datetime, view=None) -> dict:
+        """此刻的口感：rows（food.Sim.report：[{key, level（2 很 / 1 有点 / 0 变了 / -1 变好了）, text, fix, danger}]）
+        和 left（口感还剩几成，0～1，网页上的口感条）。给了 view 才算东西之间的影响。没了的、不是吃的不算（left 是 None）。"""
         if cat_of(item) != CAT_FOOD or is_ended(item):
-            return []
+            return {"rows": [], "left": None}
         flat = now.replace(tzinfo=None)
         hours, _word = KINDS.get(str(item.get("kind") or ""), KINDS[DEFAULT_KIND])
         sim = simulate(item, hours, flat, self._weather_fn(flat), index=self._index(view, flat), quality=True, lookahead_days=0)
-        return sim.get("quality") or []
+        return {"rows": sim.get("quality") or [], "left": sim.get("texture")}
+
+    def quality(self, item: dict, now: datetime.datetime, view=None) -> list:
+        """此刻的口感（taste 的 rows）。"""
+        return self.taste(item, now, view)["rows"]
 
     @staticmethod
     def taste_text(quality: list, limit: int = 4) -> str:

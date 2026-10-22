@@ -873,10 +873,8 @@
   .tmeta{font-size:13px;line-height:20px;color:var(--t2);margin-top:2px}
   .tfresh{margin-top:6px;font-size:12.5px;line-height:18px;color:var(--t2)}
   .tfresh.gone{color:var(--t3)}
-  /* 两根条：保鲜（还能放多久）、余量（还剩几成）；左边名字、中间条、右边字，两行对齐 */
+  /* 三根条：保鲜（还能放多久）、余量（还剩几成）、口感（还剩几成）；左边名字、中间条、右边字，几行对齐 */
   .tgauges{display:grid;grid-template-columns:auto 104px minmax(0,1fr);column-gap:10px;row-gap:6px;align-items:start;margin-top:8px;font-size:12.5px;line-height:18px}
-  .tquality{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:4px}
-  .tquality .tag{white-space:normal;height:auto;line-height:18px;padding:1px 7px}
   .tgauge{display:contents;--tg:var(--accent)}
   .tg-l{color:var(--t3);font-size:12px}
   .tg-t{height:6px;margin-top:6px;border-radius:3px;background:var(--sunk);overflow:hidden}
@@ -5889,7 +5887,7 @@
   });
 
   /* ================= 家里的吃的 ================= */
-  // 存货只有记录员写（聊天里说的）；补写在世界线每段上标的，做完了就现算进来（标着「世界线现算」）。
+  // 存货只有记录员写（聊天里说的）；补写在世界线每段上标的，做完了就现算进来。
   // 编号由程序发、改不了；这里什么都不真删：某一步作废是挪到「作废的」里留着，整件记错了是加一步「记错了」。
   var THING_TONE = { "还新鲜": "ok", "还行": "acc", "快不行了": "warn", "坏了": "bad", "活养着": "acc" };
   var THING_RANK = { "坏了": 0, "快不行了": 1, "还行": 2, "还新鲜": 3, "活养着": 4 };
@@ -5917,11 +5915,11 @@
         known ? h("i", { style: "width:" + (Math.max(0, Math.min(1, share)) * 100).toFixed(1) + "%" }) : null),
       h("span", { class: "tg-x", text: text }));
   }
-  // 两根条：保鲜（还能放多久，越放越短）和余量（还剩一开始的几成，越吃越短）
+  // 三根条：保鲜（还能放多久，越放越短）、余量（还剩一开始的几成，越吃越短）、口感（还剩几成，毛病越多越短）
   function thingGauges(it) {
     var f = it.fresh || {}, live = f.level === "活养着";
     var keep = live ? 1 : Math.max(0, 1 - (+f.x || 0));
-    var left = String(it.left || "").replace(/，快用完了$/, "");
+    var left = String(it.left || "");
     var m = it.measured;
     return h("div", { class: "tgauges" },
       thingGauge("保鲜", keep, live ? "acc" : thingTone(it), f.text || "",
@@ -5930,17 +5928,20 @@
         it.share === null || it.share === undefined ? "吃过、用过，没说剩多少"
           : (m ? "对着" + (m.pack ? "一包 " + m.pack + " " + m.unit + "（买来不止一包就对着买来的那么多）" : "买来的那么多") : "对着一开始的那么多")
             + "还剩 " + Math.round(it.share * 100) + "%"),
-      thingQuality(it));
+      thingTexture(it));
   }
-  // 口感（跟坏没坏分开算）：有毒的红、很的橙、有点的灰、腌晒熏到哪了蓝、变好了的绿；有法子缓回来的写在括号里
-  function thingQuality(it) {
-    var rows = it.quality || [];
-    if (!rows.length) { return null; }
-    return h("div", { class: "tquality" }, rows.map(function (q) {
-      var cls = q.danger ? "bad" : q.level >= 2 ? "warn" : q.level === 1 ? "" : q.level < 0 ? "up" : "acc";
-      var fix = q.fix && (q.level >= 1 || q.danger) ? "（" + q.fix + "）" : "";
-      return h("span", { class: "tag " + cls, text: q.text + fix });
-    }));
+  // 口感（跟坏没坏分开算）：条是还剩几成，颜色看最要紧的那样（有毒红、很的橙、有点的蓝、没毛病绿）；
+  // 右边写有哪几样：毛病在前，有法子缓回来的写在括号里，腌晒熏到哪了、变好了的在后
+  var TEXTURE_RANK = { ok: 0, acc: 1, warn: 2, bad: 3 };
+  function thingTexture(it) {
+    if (it.texture === null || it.texture === undefined) { return null; }
+    var rows = it.quality || [], tone = "ok";
+    rows.forEach(function (q) {
+      var t = q.danger ? "bad" : q.level >= 2 ? "warn" : q.level === 1 ? "acc" : "ok";
+      if (TEXTURE_RANK[t] > TEXTURE_RANK[tone]) { tone = t; }
+    });
+    var text = rows.map(function (q) { return q.text + (q.fix && (q.level >= 1 || q.danger) ? "（" + q.fix + "）" : ""); }).join("；");
+    return thingGauge("口感", it.texture, tone, text || "没什么变化", "跟刚有的时候比，口感还剩 " + Math.round(it.texture * 100) + "%");
   }
   function thingFind(id) {
     return ((S.things && S.things.items) || []).filter(function (x) { return x.id === id; })[0] || null;
@@ -6100,14 +6101,12 @@
 
     var nHurry = live.filter(function (x) { return x.fresh.level === "快不行了"; }).length;
     var nBad = live.filter(function (x) { return x.fresh.level === "坏了"; }).length;
-    var nVirt = live.filter(function (x) { return x.virtual; }).length;
     var nLow = live.filter(function (x) { return x.low; }).length;
     var sum = h("div", { class: "tsum" });
     if (nHurry) { sum.appendChild(h("span", { class: "tag warn", text: "快不行了 " + nHurry })); }
     if (nLow) { sum.appendChild(h("span", { class: "tag warn", title: "米面油盐、调料快用完了的（该买了），和剩得不多的", text: "余量不多 " + nLow })); }
     if (nBad) { sum.appendChild(h("span", { class: "tag bad", title: "按时间算已经坏了，聊天里还没说扔", text: "按时间算坏了 " + nBad })); }
-    if (nVirt) { sum.appendChild(h("span", { class: "tag acc", title: "世界线里做完的段标的，每次现算；聊天里说到或在这里改它时才存下来", text: "世界线现算 " + nVirt })); }
-    sum.appendChild(h("span", { text: "保鲜：还能放多久，按每一步怎么放、放在哪（冷热）、切没切、腌晒熏到哪了、当天天气和钟点现算。口感（蔫了、回软、串味、凉了、熟过头……）另算，标在每件下面。余量：还剩一开始的几成，米面油盐、调料干货、腌菜按克 / 毫升记、用一次扣一次。快不行了、余量不多的排在前面；世界线里做完满 " + d.settle_days + " 天的段会沉进存货" }));
+    sum.appendChild(h("span", { text: "保鲜：还能放多久，按每一步怎么放、放在哪（冷热）、切没切、腌晒熏到哪了、当天天气和钟点现算。余量：还剩一开始的几成，米面油盐、调料干货、腌菜按克 / 毫升记、用一次扣一次。口感：跟刚有的时候比还剩几成，蔫了、回软、串味、凉了、熟过头……都往下扣，凉了热一热、发硬蒸一蒸这种缓回来就又满了。快不行了、余量不多的排在前面" }));
     box.appendChild(sum);
     box.appendChild(h("div", { class: "tlist" }, h("div", { class: "pc", id: "thingsList" })));
     drawThingList();
@@ -6224,10 +6223,10 @@
     main.appendChild(h("div", { class: "thead" },
       h("span", { class: "tid", text: x.id }),
       h("span", { class: "tname", text: x.name || "（还没起名）" }),
-      x.kind ? h("span", { class: "tag", text: x.kind }) : null,
-      h("span", { class: "tag acc", text: (m.going ? "正在做 · " : "") + futureVerb(x) + " · " + (m.who_label ? m.who_label + " " : "") + futureWhen(x) })));
-    var meta = [x.amount || x.left, [x.place, x.keep, thingSpotShown(x.spot)].filter(Boolean).join("，"), x.look].filter(Boolean);
-    if (meta.length) { main.appendChild(h("div", { class: "tmeta", text: meta.join(" · ") })); }
+      x.kind ? h("span", { class: "tag", text: x.kind }) : null));
+    var meta = [(m.who_label ? m.who_label + " " : "") + futureWhen(x) + " " + futureVerb(x) + (m.going ? "（正在做）" : ""),
+      x.amount || x.left, [x.place, x.keep, thingSpotShown(x.spot)].filter(Boolean).join("，"), x.look].filter(Boolean);
+    main.appendChild(h("div", { class: "tmeta", text: meta.join(" · ") }));
     var line = h("div", { class: "tfrom" }, futureEntryLink(m), m.doing ? h("span", { text: m.doing }) : null);
     if ((x.from || []).length) {
       line.appendChild(h("span", { text: x.cat === "item" ? "材料" : "用料" }));
@@ -6371,9 +6370,7 @@
     main.appendChild(h("div", { class: "thead" },
       h("span", { class: "tid", text: it.id }),
       h("span", { class: "tname", text: it.name }),
-      h("span", { class: "tag", text: it.kind }),
-      it.measured && it.measured.low && !it.ended ? h("span", { class: "tag warn", title: "剩得不多了，该买了", text: "快用完了" }) : null,
-      it.virtual ? h("span", { class: "tag acc", title: "世界线里做完的段标的，每次现算；聊天里说到、或在这里改它时才存下来", text: "世界线现算" }) : null));
+      h("span", { class: "tag", text: it.kind })));
     var where = [it.place, it.keep, thingSpotShown(it.spot), it.state && it.state !== "整的" ? it.state : ""].filter(Boolean).join("，");
     if (!it.ended && where) { main.appendChild(h("div", { class: "tmeta", text: where })); }
     main.appendChild(it.ended ? h("div", { class: "tfresh " + tone, text: it.fresh.text }) : thingGauges(it));
@@ -6467,9 +6464,6 @@
 
   function thingDetail(it) {
     var box = h("div", { class: "tdetail" });
-    if (it.virtual) {
-      box.appendChild(h("div", { class: "muted", style: "font-size:12.5px", text: "这件是世界线里做完的段标出来的，每次现算。在这里加一步、改名字会先把它存下来，之后的步照旧从世界线里算；世界线里那段被撤、停在半路或被改掉，它也跟着变。" }));
-    }
     var list = h("ol", { class: "tsteps" });
     it.stages.forEach(function (st) {
       var key = "e:" + it.id + ":" + st.idx;
@@ -6762,10 +6756,8 @@
     var kinds = {};
     live.forEach(function (x) { kinds[objKind(x)] = (kinds[objKind(x)] || 0) + 1; });
     var nSame = Object.keys(kinds).filter(function (k) { return kinds[k] > 1; }).length;
-    var nVirt = live.filter(function (x) { return x.virtual; }).length;
     var sum = h("div", { class: "tsum" });
     if (nSame) { sum.appendChild(h("span", { class: "tag warn", title: "同一种东西有好几件，排在一起，认准编号", text: "长得像的 " + nSame + " 组" })); }
-    if (nVirt) { sum.appendChild(h("span", { class: "tag acc", title: "世界线里做完的段标的，每次现算；聊天里说到或在这里改它时才存下来", text: "世界线现算 " + nVirt })); }
     sum.appendChild(h("span", { text: "每件一个编号，记哪来的、经过谁手、搁在哪、变成什么样；同一种东西排在一起，模型查的也是这一份" }));
     box.appendChild(sum);
     box.appendChild(h("div", { class: "tlist" }, h("div", { class: "pc", id: "objList" })));
@@ -6823,8 +6815,7 @@
       h("span", { class: "tid", text: it.id }),
       h("span", { class: "tname", text: it.name }),
       it.kind ? h("span", { class: "tag", text: it.kind }) : null,
-      it.owner_label ? h("span", { class: "tag", text: "归" + it.owner_label }) : null,
-      it.virtual ? h("span", { class: "tag acc", title: "世界线里做完的段标的，每次现算；聊天里说到、或在这里改它时才存下来", text: "世界线现算" }) : null));
+      it.owner_label ? h("span", { class: "tag", text: "归" + it.owner_label }) : null));
     if (it.look) { main.appendChild(h("div", { class: "tmeta", text: it.look })); }
     if (it.ended) {
       main.appendChild(h("div", { class: "tmeta", text: "已经没了：" + String(it.ended.at || "").slice(5, 16) + " " + it.ended.what }));
@@ -6900,9 +6891,6 @@
 
   function objDetail(it) {
     var box = h("div", { class: "tdetail" });
-    if (it.virtual) {
-      box.appendChild(h("div", { class: "muted", style: "font-size:12.5px", text: "这件是世界线里做完的段标出来的，每次现算。在这里加一步、改名字会先把它存下来，之后的步照旧从世界线里算。" }));
-    }
     if (it.note) { box.appendChild(h("div", { class: "muted", style: "font-size:12.5px", text: it.note })); }
     var list = h("ol", { class: "tsteps" });
     it.stages.forEach(function (st, i) {

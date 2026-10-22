@@ -274,6 +274,16 @@ LIVE_THIN_HOURS = 48.0
 # 凉吃的：这么凉以下算镇着（井水十五六度），这么暖以上慢慢变温
 CHILL_AT = 16.0
 WARM_AT = 20.0
+# 口感还剩几成（网页上的口感条，1 = 跟刚有的时候一样）：每样毛病到了「很」那一档扣掉这么多，到「有点」那档扣它的
+# TEXTURE_SOME，中间按攒的数连着走，过了「很」不再往下扣；没到「有点」不扣（条满就是写着没什么变化）；几样一起的乘起来。
+# 能缓回来的（凉了、变温、发硬）扣得少，有毒的（土豆发绿）扣到底；profile 里写了 hurt 的照它（盐糖结块、发芽有毒、冻豆腐）。
+TEXTURE_HURT = {
+    "dry": 0.5, "cut_dry": 0.25, "soggy": 0.5, "weep": 0.45, "mush": 0.55, "cool": 0.3, "chill": 0.3, "melt": 0.7,
+    "reheat": 0.45, "burn": 0.45, "refreeze": 0.5, "frozen_bad": 0.7, "thawed": 0.1, "chill_inj": 0.5, "stale": 0.35,
+    "rancid": 0.7, "aroma": 0.4, "egg": 0.25, "ripen": 0.6, "veg_age": 0.4, "yellow": 0.35, "sprout": 0.4,
+    "green": 1.0, "bitter": 0.5, "brown": 0.3, "bruise": 0.35, "absorb": 0.45, "drip": 0.5, "live": 0.4, "rain": 0.3,
+}
+TEXTURE_SOME = 0.3
 
 
 def cover_rate(keep: str, kind: str) -> float:
@@ -530,7 +540,8 @@ def profile(name, kind) -> dict:
         p["soggy"] = {"h": (18, 60), "text": ("有点受潮，不太脆了", "受潮发软了"), "fix": "烤一烤能缓回来",
                       "reset": True, "fried": False}
     elif kind == "干货调料粮食" and (name.endswith(("盐", "糖")) or _has(name, ("白糖", "红糖", "砂糖", "冰糖", "糖粉"))):
-        p["soggy"] = {"h": (168, 600), "text": ("有点结块", "结成块了"), "fix": "敲散就行", "reset": False, "fried": False}
+        p["soggy"] = {"h": (168, 600), "text": ("有点结块", "结成块了"), "fix": "敲散就行", "reset": False, "fried": False,
+                      "hurt": 0.15}
     if _has(name, ("凉拌", "拍黄瓜", "沙拉", "凉菜")) or (kind in COOKED and "拌" in name and not _has(name, NOODLE_WORDS)):
         p["weep"] = {"h": (1.0, 4.0), "text": ("有点出汤了", "出了一盘汤，软塌塌的"), "fix": "倒掉汤凑合吃"}
     elif kind == "熟菜炒菜" and _has(name, LEAFY_DISH):
@@ -580,7 +591,7 @@ def profile(name, kind) -> dict:
     watery = "weep" in p and not p["weep"].get("tofu")  # 凉拌菜、切开的瓜果这种水汪汪的，冻上也就坏了
     if kind in FREEZE_BAD_KINDS or (kind == "熟菜炒菜" and _has(name, LEAFY_DISH)) or watery:
         if kind == "鲜水豆腐":
-            p["frozen_bad"] = {"text": "冻成冻豆腐了，一个个小孔，炖汤正好", "neutral": True}
+            p["frozen_bad"] = {"text": "冻成冻豆腐了，一个个小孔，炖汤正好", "neutral": True, "hurt": 0.0}
         elif kind == "鲜奶乳饮":
             p["frozen_bad"] = {"text": "冻过了，化开会分层"}
         elif kind == "禽蛋类":
@@ -650,7 +661,7 @@ def profile(name, kind) -> dict:
             p["yellow"] = {"h": YELLOW_KINDS[kind], "text": ("有点发黄", "发黄了")}
     for words, hours, t1, t2, danger in SPROUT if fresh else ():
         if _has(name, words):
-            p["sprout"] = {"h": hours, "text": (t1, t2), "danger": danger}
+            p["sprout"] = {"h": hours, "text": (t1, t2), "danger": danger, "hurt": 1.0 if danger else TEXTURE_HURT["sprout"]}
             break
     if fresh and _has(name, POTATO):
         p["green"] = {"h": (8, 30), "text": ("皮有点发绿，削厚点", "发绿了，有毒，别吃了")}
@@ -766,6 +777,15 @@ class SpaceIndex:
 
 def _hot(info: dict, moment: datetime.datetime) -> bool:
     return any(0 <= (moment - t).total_seconds() < 1800 for t in info["heat"])
+
+
+def _degree(value: float, h1: float, h2: float) -> float:
+    """攒的数 → 到了「很」那一档的几成：没到「有点」是 0，到「有点」是 TEXTURE_SOME，接着走到「很」是 1，过了「很」就是 1。"""
+    if value < h1:
+        return 0.0
+    if value >= h2:
+        return 1.0
+    return TEXTURE_SOME + (1.0 - TEXTURE_SOME) * (value - h1) / (h2 - h1)
 
 
 # ---------- 一件吃的从有了起往后推 ----------
@@ -1209,6 +1229,41 @@ class Sim:
             out.append({"key": "smoke", "level": 0, "text": "熏着呢（%d 成）" % max(1, int(share * 10)), "fix": "", "danger": False})
         return out
 
+    # 攒着数的这几样按数连着扣；回锅几回、冻过几回、冻坏、化开、养瘦、淋雨、沾生肉汁照 report 给的档
+    TEXTURE_ACC = ("dry", "cut_dry", "soggy", "weep", "mush", "chill_inj", "rancid", "aroma", "egg", "veg_age", "yellow",
+                   "bitter", "brown", "bruise", "cool", "chill", "melt", "burn", "stale", "sprout", "green", "absorb")
+    TEXTURE_LEVELED = ("reheat", "refreeze", "frozen_bad", "thawed", "live", "rain", "drip")
+
+    def texture(self, rows: list) -> float:
+        """口感还剩几成（0～1）：rows 是 report 的结果。这会儿变好了的那样（正热乎、镇得正凉）不扣，熟到正好不扣，
+        跟写出来的口感对得上：没写毛病就是满的。"""
+        p, acc = self.p, self.acc
+        shown = {r["key"]: r["level"] for r in rows}
+        left = 1.0
+
+        def take(key, degree):
+            nonlocal left
+            hurt = p.get(key, {}).get("hurt", TEXTURE_HURT.get(key, 0.5))
+            left *= 1.0 - min(1.0, hurt * degree)
+
+        for key in self.TEXTURE_ACC:
+            if key not in p or shown.get(key, 0) < 0:
+                continue
+            if key == "melt" and acc.get("refrozen_treat"):
+                take(key, 1.0)
+                continue
+            h1, h2 = p[key]["h"]
+            take(key, _degree(acc.get(key, 0.0), h1, h2))
+        if "ripen" in p:
+            # 熟到正好吃不扣，熟过头那两档才扣
+            _t1, t2, t3 = p["ripen"]["h"]
+            take("ripen", _degree(acc.get("ripen", 0.0), t2, t3))
+        for key in self.TEXTURE_LEVELED:
+            level = shown.get(key, 0)
+            if level > 0:
+                take(key, 1.0 if level >= 2 or key == "drip" else 0.5)
+        return max(0.0, min(1.0, left))
+
 
 def _stale_rate(temp: float) -> float:
     """淀粉回生：冷藏（0～8 度）最快，屋里中等，热着、冻着都不回生。"""
@@ -1239,7 +1294,7 @@ def _sprout_rate(temp: float) -> float:
 def simulate(item: dict, life: float, now: datetime.datetime, weather_of, index: SpaceIndex | None = None,
              quality: bool = False, lookahead_days: int = 45) -> dict:
     """一件吃的从有了起推到现在（没了就到没了那一刻），再照最后一步的放法往后推，算到几点「快不行了」、几点坏。
-    返回 {frac, bad_since, hurry_at, bad_at, life, events, quality（要的话）, alive}。"""
+    返回 {frac, bad_since, hurry_at, bad_at, life, events, quality、texture（口感还剩几成；要的话）, alive}。"""
     flat = now.replace(tzinfo=None)
     stages = [x for x in item.get("stages") or [] if parse_time(x.get("at")) is not None]
     sim = Sim(item, life, weather_of, index, quality)
@@ -1266,8 +1321,10 @@ def simulate(item: dict, life: float, now: datetime.datetime, weather_of, index:
            "alive": sim.cover == "活养着" and sim.live_hours < LIVE_LIMIT.get(sim.kind, LIVE_DEFAULT)}
     if quality and started:
         out["quality"] = sim.report(stop)
+        out["texture"] = round(sim.texture(out["quality"]), 3)
     elif quality:
         out["quality"] = []
+        out["texture"] = 1.0
     if end is not None or not started or sim.frac >= 1.0:
         return out
     # 照现在的放法往后推（不攒口感）：到哪个钟点「快不行了」、哪个钟点坏

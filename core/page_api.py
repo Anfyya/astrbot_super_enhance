@@ -749,6 +749,7 @@ class ContextPageApi:
                 keep, spot = things_mod.split_keep(last.get("keep"), last.get("spot"), last.get("place"))
                 end = things_mod.is_ended(item)
                 share = things_mod.share_left(item)  # 还剩一开始的几成（余量条）；说不准是 None
+                taste = store.taste(item, now, shelf)
                 items.append({
                     "id": item.get("id"),
                     "name": item.get("name"),
@@ -770,8 +771,10 @@ class ContextPageApi:
                     "keep": keep or "",
                     "spot": spot or things_mod.DEFAULT_SPOT,
                     "state": last.get("state") or "",
-                    # 口感（蔫了、串味、凉了、熟过头……）：[{key, level, text, fix, danger}]，毛病在前、变好了的在后
-                    "quality": store.quality(item, now, shelf),
+                    # 口感（蔫了、串味、凉了、熟过头……）：[{key, level, text, fix, danger}]，毛病在前、变好了的在后；
+                    # texture 是口感还剩几成（0～1，口感条），没了的是 None
+                    "quality": taste["rows"],
+                    "texture": taste["left"],
                     "fresh": {
                         "level": fresh["level"], "x": fresh["x"], "word": fresh["word"],
                         "text": store.fresh_text(item, now),
