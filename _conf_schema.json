@@ -549,9 +549,9 @@
         }
     },
     "image_gen": {
-        "description": "⑧-4 画图工具 draw_image",
+        "description": "⑧-4 画图工具 draw_image / send_image",
         "type": "object",
-        "hint": "给她一个画图工具：调图像生成模型出一张图发给对方。模型只认提示词、参考图（主人发的图、她上一次画的图）和分辨率，不思考。画出来的图存在插件数据目录 images/ 下。",
+        "hint": "给她两个工具：draw_image 调图像生成模型画一张，画好先放进她这一轮的上下文给她看（不发、不存进会话历史）；她觉得好了再用 send_image 按编号发给对方，不满意就接着画。模型只认提示词、参考图（主人发的图、她上一次画的图）和分辨率，不思考。原图存在插件数据目录 images/ 下，编号记在 images/index.json。",
         "items": {
             "enabled": {
                 "description": "启用",

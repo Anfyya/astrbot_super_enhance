@@ -1,4 +1,5 @@
-"""画图工具 draw_image：调图像生成模型（默认 AstrBot 里的 gemini/gemini-3.1-flash-image）出一张图，发给对方。
+"""画图：draw_image 调图像生成模型（默认 AstrBot 里的 gemini/gemini-3.1-flash-image）画一张，先放进她的上下文给她看；
+她看过觉得好，再用 send_image 发给对方，不满意就接着画。
 
 这个模型只认提示词、参考图和分辨率，不思考：
 - 用 AstrBot 里配好的那个模型源（OpenAI 格式）发一条用户消息（提示词 + 参考图），分辨率放在 size（宽x高）；
@@ -6,12 +7,18 @@
   和 1K / 2K / 4K 档（最长边不超过 1280 / 2560 / 更大），系统提示、工具、思考都不往上游带；
   参考图只认 base64 的 data URI（http 链接会被跳过），出来的图夹在回复里：![…](data:image/jpeg;base64,…)。
 - 参考图：主人这条消息里的图、他回复的那条里的图；都没有就用他在这个会话里半小时内发过的最近几张。也能拿她上一次画的那张接着改。
-- 出来的图存进插件数据目录 images/，发的时候用 base64（NapCat 在别的容器里，读不到这边的文件路径）。
+
+画好的图怎么给她看：chat 接口的工具消息里不能带图，所以工具只回文字；图缩成一张小预览挂在这一轮的事件上，
+她下一次向模型要回复之前（包 ToolLoopAgentRunner._iter_llm_responses_with_fallback），作为一条用户消息放进这一轮的上下文，
+那一步要完回复就拿掉——AstrBot 回完话会把 run_context.messages 原样存回会话，几百 KB 的 base64 不能进存档。
+原图存在插件数据目录 images/，编号 img1、img2……（images/index.json）；send_image 按编号发原图，用 base64（NapCat 在别的容器里，读不到这边的文件）。
 """
 
 import asyncio
 import base64
 import datetime
+import io
+import json
 import re
 import time
 from pathlib import Path
@@ -24,10 +31,14 @@ RATIO_RE = re.compile(r"^\s*(\d{1,2})\s*[:：]\s*(\d{1,2})\s*$")
 DATA_IMAGE = re.compile(r"!\[[^\]]*\]\(\s*data:(image/[\w.+-]+);base64,([A-Za-z0-9+/=\s]+?)\s*\)")
 URL_IMAGE = re.compile(r"!\[[^\]]*\]\(\s*(https?://[^)\s]+)\s*\)")
 ANY_IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
+ID_RE = re.compile(r"img\d+", re.IGNORECASE)
 SENT_KEEP_SECONDS = 30 * 60  # 主人发过的图，半小时内还算「刚发的」
 SENT_MAX = 4  # 每个会话记最近几张
 REF_MAX = 4  # 一次最多带几张参考图
+PREVIEW_SIDE = 768  # 给她看的预览最长边
 EXT = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
+EXTRA_KEY = "super_enhance_drawn"  # 这一轮画好、还没给她看的图（挂在事件上，不会串到别的轮次）
+TARGET = "_iter_llm_responses_with_fallback"
 
 
 def clean_size(text) -> str:
@@ -56,6 +67,23 @@ def mime_of(data: bytes) -> str:
     return ""
 
 
+def preview_of(data: bytes) -> tuple[str, str, str]:
+    """给她看的小图：(mime, base64, 原图宽x高)。缩不了就用原图。"""
+    try:
+        from PIL import Image
+
+        img = Image.open(io.BytesIO(data))
+        dims = "%dx%d" % img.size
+        img = img.convert("RGB")
+        img.thumbnail((PREVIEW_SIDE, PREVIEW_SIDE))
+        out = io.BytesIO()
+        img.save(out, "JPEG", quality=85)
+        return "image/jpeg", base64.b64encode(out.getvalue()).decode(), dims
+    except Exception:
+        logger.warning("[super_enhance/image] 缩预览失败，给她看原图", exc_info=True)
+        return mime_of(data) or "image/jpeg", base64.b64encode(data).decode(), ""
+
+
 class ImageGenFeature:
     def __init__(self, context, config, data_dir: Path, is_bot=None) -> None:
         self.context = context
@@ -63,6 +91,7 @@ class ImageGenFeature:
         self.dir = Path(data_dir) / "images"
         self.is_bot = is_bot or (lambda sender: False)
         self._sent: dict[str, tuple[float, list]] = {}  # 会话 → (什么时候发的, 主人发的图)
+        self._patches: list = []
 
     @property
     def enabled(self) -> bool:
@@ -78,6 +107,8 @@ class ImageGenFeature:
             return max(20, min(int(self.config.get("timeout", 100)), 600))
         except Exception:
             return 100
+
+    # ---------- 主人发的图 ----------
 
     @staticmethod
     def images_of(event) -> list:
@@ -116,9 +147,28 @@ class ImageGenFeature:
         mime = mime_of(data)
         return (mime, base64.b64encode(data).decode()) if mime else None
 
-    def _last_path(self, bot: str) -> Path | None:
-        files = sorted(self.dir.glob("%s_*" % bot)) if self.dir.exists() else []
-        return files[-1] if files else None
+    # ---------- 画过的图（编号、存档） ----------
+
+    def _load_index(self) -> dict:
+        try:
+            data = json.loads((self.dir / "index.json").read_text(encoding="utf-8"))
+            if isinstance(data, dict) and isinstance(data.get("items"), dict):
+                return data
+        except Exception:
+            pass
+        return {"seq": 0, "items": {}}
+
+    def _save_index(self, index: dict) -> None:
+        self.dir.mkdir(parents=True, exist_ok=True)
+        path = self.dir / "index.json"
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(index, ensure_ascii=False, indent=1), encoding="utf-8")
+        tmp.replace(path)
+
+    @staticmethod
+    def _latest(index: dict, bot: str) -> str:
+        mine = [k for k, v in index["items"].items() if v.get("bot") == bot]
+        return max(mine, key=lambda k: int(k[3:])) if mine else ""
 
     async def _refs(self, event, umo: str, bot: str, use_sent: bool, use_last: bool, notes: list) -> list:
         """要带给模型的参考图：[(mime, base64)]。"""
@@ -135,16 +185,20 @@ class ImageGenFeature:
             if not refs:
                 notes.append("主人最近没发图（或者图读不出来），没带参考图")
         if use_last:
-            path = self._last_path(bot)
-            data = path.read_bytes() if path is not None else b""
+            index = self._load_index()
+            last = self._latest(index, bot)
+            path = self.dir / index["items"][last]["file"] if last else None
+            data = path.read_bytes() if path is not None and path.exists() else b""
             if mime_of(data):
                 refs.append((mime_of(data), base64.b64encode(data).decode()))
             else:
                 notes.append("你之前没画过图，没法接着改")
         return refs
 
+    # ---------- 工具 ----------
+
     async def draw(self, event, prompt: str, size: str = "", use_sent: bool = False, use_last: bool = False) -> str:
-        """出一张图发给对方，返回给模型看的结果（只写事实）。"""
+        """画一张，存起来、挂在这一轮的事件上等着给她看；不发。返回给模型看的结果（只写事实）。"""
         if not self.enabled:
             return "画图没开。"
         prompt = str(prompt or "").strip()
@@ -178,27 +232,142 @@ class ImageGenFeature:
                 return "没画出来：等了 %d 秒模型还没出图（图越大越慢）。" % self.timeout
             return "没画出来：图像模型出错了（%s）。" % str(e)[:80]
         found = [(m.group(1).lower(), re.sub(r"\s+", "", m.group(2))) for m in DATA_IMAGE.finditer(text)]
-        urls = [] if found else URL_IMAGE.findall(text)
-        if not found and not urls:
+        if not found:
             said = " ".join(ANY_IMAGE.sub("", text).split())[:120]
             logger.info("[super_enhance/image] [%s] 模型没给图：%s", bot, said or "（空）")
+            if URL_IMAGE.search(text):
+                return "没画出来：模型给的是图片链接，这个工具只认直接给出的图。"
             return "没画出来：模型没给图%s。" % ("，它说：%s" % said if said else "（多半是提示词被拦了，换个说法再试）")
-        chain = MessageChain()
-        size_kb = 0
-        stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        index = self._load_index()
+        drawn = list(event.get_extra(EXTRA_KEY) or []) if hasattr(event, "get_extra") else []
+        stamp = datetime.datetime.now()
+        ids, sizes = [], []
         for i, (mime, b64) in enumerate(found):
             data = base64.b64decode(b64)
-            size_kb += len(data) // 1024
+            index["seq"] = int(index.get("seq") or 0) + 1
+            image_id = "img%d" % index["seq"]
+            name = "%s_%s_%s.%s" % (bot, stamp.strftime("%Y%m%d_%H%M%S"), image_id, EXT.get(mime, "jpg"))
             self.dir.mkdir(parents=True, exist_ok=True)
-            (self.dir / ("%s_%s_%d.%s" % (bot, stamp, i, EXT.get(mime, "jpg")))).write_bytes(data)
-            chain.base64_image(b64)
-        for url in urls[:REF_MAX]:
-            chain.url_image(url)
+            (self.dir / name).write_bytes(data)
+            view_mime, view_b64, dims = await asyncio.to_thread(preview_of, data)
+            index["items"][image_id] = {"bot": bot, "file": name, "prompt": prompt[:300], "size": dims,
+                                        "at": stamp.strftime("%Y-%m-%d %H:%M"), "sent": []}
+            drawn.append({"id": image_id, "mime": view_mime, "b64": view_b64})
+            ids.append(image_id)
+            sizes.append(dims or "?")
+        self._save_index(index)
+        if hasattr(event, "set_extra"):
+            event.set_extra(EXTRA_KEY, drawn)
+        logger.info("[super_enhance/image] [%s] 画了 %s（%s，参考图 %d 张，%.0f 秒）：%s", bot, "、".join(ids),
+                    "、".join(sizes), len(refs), time.time() - began, prompt[:40])
+        return ("画好了：%s（%s）。图在下一条消息里给你看，主人还没看到。满意就用 send_image 发给他（id 填编号）；"
+                "不满意就改 prompt 再画，或者 use_last_image=true 在这张上接着改，画到你觉得好了再发%s。") % (
+            "、".join(ids), "、".join(sizes), "；" + "；".join(notes) if notes else "")
+
+    async def send(self, event, image_id: str = "") -> str:
+        """把画好的图（原图）发到当前会话。"""
+        if not self.enabled:
+            return "画图没开。"
+        umo = str(getattr(event, "unified_msg_origin", "") or "")
+        bot = umo.split(":", 1)[0] or "bot"
+        index = self._load_index()
+        hit = ID_RE.search(str(image_id or ""))
+        key = hit.group(0).lower() if hit else self._latest(index, bot)
+        item = index["items"].get(key) if key else None
+        if item is None:
+            return "没发：%s。" % ("没有 %s 这张图" % key if key else "你还没画过图")
+        if item.get("bot") != bot:
+            return "没发：%s 不是你画的。" % key
+        path = self.dir / str(item.get("file") or "")
+        if not path.exists():
+            return "没发：%s 的图文件找不到了。" % key
         try:
-            await self.context.send_message(umo, chain)
+            await self.context.send_message(umo, MessageChain().base64_image(base64.b64encode(path.read_bytes()).decode()))
         except Exception as e:
-            logger.warning("[super_enhance/image] [%s] 图画好了但没发出去：%s", bot, e, exc_info=True)
-            return "图画好了，但没发出去（%s）。" % str(e)[:80]
-        logger.info("[super_enhance/image] [%s] 画了 %d 张（%s，参考图 %d 张，%.0f 秒，%d KB）：%s", bot, len(found) or len(urls),
-                    want or "默认大小", len(refs), time.time() - began, size_kb, prompt[:40])
-        return "图已经发给对方了（%s）%s。" % (want or "大小模型自己定的", "；" + "；".join(notes) if notes else "")
+            logger.warning("[super_enhance/image] [%s] %s 没发出去：%s", bot, key, e, exc_info=True)
+            return "没发出去（%s）。" % str(e)[:80]
+        item.setdefault("sent", []).append(datetime.datetime.now().strftime("%Y-%m-%d %H:%M"))
+        self._save_index(index)
+        logger.info("[super_enhance/image] [%s] 发了 %s", bot, key)
+        return "%s 已经发给对方了。" % key
+
+    # ---------- 画好的图放进她的上下文 ----------
+
+    @staticmethod
+    def _event_of(runner):
+        return getattr(getattr(getattr(runner, "run_context", None), "context", None), "event", None)
+
+    @staticmethod
+    def _view_message(drawn: list):
+        from astrbot.core.agent.message import ImageURLPart, Message, TextPart
+
+        ids = "、".join(x["id"] for x in drawn)
+        parts = [TextPart(text="（这是你刚用 draw_image 画好的图：%s。只有你看得到，主人还没看到；满意就用 send_image 发给他，"
+                               "不满意就接着画。）" % ids)]
+        for item in drawn:
+            parts.append(TextPart(text="%s：" % item["id"]))
+            parts.append(ImageURLPart(image_url=ImageURLPart.ImageURL(
+                url="data:%s;base64,%s" % (item["mime"], item["b64"]), id=item["id"])))
+        return Message(role="user", content=parts)
+
+    def take_view(self, runner):
+        """这一轮有画好、还没给她看的图：放进上下文，返回放进去的那条（要完回复后拿掉）。"""
+        event = self._event_of(runner)
+        drawn = event.get_extra(EXTRA_KEY) if event is not None and hasattr(event, "get_extra") else None
+        if not drawn:
+            return None
+        event.set_extra(EXTRA_KEY, [])
+        messages = getattr(getattr(runner, "run_context", None), "messages", None)
+        if not isinstance(messages, list):
+            return None
+        message = self._view_message(drawn)
+        messages.append(message)
+        return message
+
+    @staticmethod
+    def drop_view(runner, message) -> None:
+        messages = getattr(getattr(runner, "run_context", None), "messages", None)
+        if isinstance(messages, list):
+            for pos in range(len(messages) - 1, -1, -1):
+                if messages[pos] is message:
+                    del messages[pos]
+                    break
+
+    def install(self) -> None:
+        try:
+            from astrbot.core.agent.runners.tool_loop_agent_runner import ToolLoopAgentRunner
+        except Exception:
+            logger.error("[super_enhance/image] 找不到 ToolLoopAgentRunner（AstrBot 版本可能变了），画好的图没法给她看", exc_info=True)
+            return
+        if not hasattr(ToolLoopAgentRunner, TARGET):
+            logger.error("[super_enhance/image] ToolLoopAgentRunner 里找不到 %s，画好的图没法给她看", TARGET)
+            return
+        current = ToolLoopAgentRunner.__dict__.get(TARGET) or getattr(ToolLoopAgentRunner, TARGET)
+        orig = getattr(current, "_super_enhance_image_orig", None) or current
+        feature = self
+
+        async def wrapped(runner, *args, **kwargs):
+            try:
+                message = feature.take_view(runner)
+            except Exception:
+                logger.error("[super_enhance/image] 画好的图放不进上下文", exc_info=True)
+                message = None
+            try:
+                async for resp in orig(runner, *args, **kwargs):
+                    yield resp
+            finally:
+                if message is not None:
+                    feature.drop_view(runner, message)
+
+        wrapped._super_enhance_image_orig = orig
+        setattr(ToolLoopAgentRunner, TARGET, wrapped)
+        self._patches.append((ToolLoopAgentRunner, TARGET, orig))
+        logger.info("[super_enhance/image] 已安装：画好的图先放进她的上下文给她看，看完不存进历史")
+
+    def uninstall(self) -> None:
+        for owner, name, orig in reversed(self._patches):
+            try:
+                setattr(owner, name, orig)
+            except Exception:
+                logger.error("[super_enhance/image] 卸载 %s 失败", name, exc_info=True)
+        self._patches = []

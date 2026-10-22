@@ -147,6 +147,7 @@ class SuperEnhance(Star):
         self.cron_context.install()
         self.transcript.install()
         self.zero_think.install()
+        self.image_gen.install()
         self.daily_compact.start()
         self.overflow.install()
         self.history_merge.install()
@@ -196,6 +197,7 @@ class SuperEnhance(Star):
             ("look_things", self.life.enabled and live),
             ("tell", self.life.enabled),
             ("draw_image", self.image_gen.enabled),
+            ("send_image", self.image_gen.enabled),
         ):
             try:
                 if enabled:
@@ -218,6 +220,7 @@ class SuperEnhance(Star):
         self.cron_context.uninstall()
         self.transcript.uninstall()
         self.zero_think.uninstall()
+        self.image_gen.uninstall()
         self.daily_compact.stop()
         self.overflow.uninstall()
         self.history_merge.uninstall()
@@ -827,11 +830,13 @@ class SuperEnhance(Star):
     async def draw_image(
         self, event: AstrMessageEvent, prompt: str, size: str = "", use_sent_images: bool = False, use_last_image: bool = False
     ) -> str:
-        """画一张图发给对方：主人想看图、叫你画点什么、叫你照着他发的图改的时候用。
+        """画一张图，先给你自己看：主人想看图、叫你画点什么、叫你照着他发的图改的时候用。画出来不会直接发给主人。
+
+        先说一句话再调用（比如「等我一下，这就画」）：画一张要十几秒到一分钟，这期间你发不了消息。和这个工具写在同一条回复里的话，会在工具跑之前先单独发给对方；工具跑完你再说的话会另发一条。
+
+        画好的图会接着放进来给你看。满意了用 send_image 发给主人；不满意就改 prompt 再画，或者 use_last_image=true 在这张上接着改，画到你觉得好了再发。
 
         画图的模型看不到聊天记录和你的设定，只看 prompt、参考图和分辨率：prompt 把画面写全（画什么、谁、长什么样、在哪、在干什么、什么风格、照片还是画）。
-
-        和这个工具写在同一条回复里的话，会在工具跑之前先单独发给对方；工具跑完你再说的话会另发一条。画一张要十几秒到一分钟。
 
         Args:
             prompt (string): 画面描述，写具体。
@@ -840,9 +845,23 @@ class SuperEnhance(Star):
             use_last_image (boolean): true 就把你上一次画的那张给模型，在它上面接着改。
 
         Returns:
-            画好没有、发出去没有。
+            画好没有、图的编号。
         """
         return await self.image_gen.draw(event, prompt, size, use_sent_images, use_last_image)
+
+    @filter.llm_tool(name="send_image")
+    async def send_image(self, event: AstrMessageEvent, id: str = "") -> str:
+        """把你用 draw_image 画好、看过觉得满意的图发给对方。
+
+        和这个工具写在同一条回复里的话，会在工具跑之前先单独发给对方；工具跑完你再说的话会另发一条。
+
+        Args:
+            id (string): 图的编号（draw_image 给的，比如 img3）；空着就发你最近画的那张。
+
+        Returns:
+            发出去没有。
+        """
+        return await self.image_gen.send(event, id)
 
     # ------------------------------------------------------------------
     # 10. Laya 判定服务（本机容器，调试命令）
