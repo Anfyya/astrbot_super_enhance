@@ -412,6 +412,7 @@ class LifeStateService:
             "source": "chat",
             "src_umo": umo,
             "asked": True,
+            "tool": "start_doing",
         })
         if record is None:
             for item in removed:

@@ -71,7 +71,7 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
 3. 主人说他自己的事（去了哪、在干什么），记成一条 who = "master" 的条目。他说还在外面、还没回来、还得一会才回去，也是他这会儿的情况，照样记一条（人在外面、还没回宿舍），要回来那件事另记打算。他的反问、抱怨、随口一问（例如「你知道我几点回来？」）不是他的安排，不记。主人说他自己**之后**要干什么（明天有课、晚上要去图书馆、晚饭后陪她去夜市），不记成条目，记成 who = "master" 的打算（intentions）：text 写清楚他要去做什么、在哪、跟谁，date 写哪天，window 写钟点（说了才写）；要带上她一起去的，她那边另记一条 with 是 ["master"] 的打算。主人的打算过了那天程序会自己撤；他说不去了、改了主意的，照常按编号撤（第 14 条）。
 4. 主人给她定的、往后一直管着她的规矩（不许做什么、往后都要怎么做），记成 constraints（约束）：到期或主人撤了才解除。text 只写主人自己说出口的话；她回话里自己添上的、答应时顺嘴加的，都不是主人的规矩，不写进去。主人叫她去做一件做完就了结的事，不是规矩：叫她过会儿再去做的，按第 6 条记成打算；叫她现在就去做的，她去做了记成她的条目。约束的 since 填主人说这句话的那条消息的时间；主人说了期限的要换算成 until_time（"这几天"按三天算、"今晚"到当天 23:59、"明天之前"到明天 0:00），只说了条件的写进 until。新规矩不要写编号，编号由程序分配。
 5. 她的条目分两种，写在 kind 里：
-   - "activity"：她开始做另一件事、换了地方、把手上的事放下去干别的（主人叫她过去、叫她去做什么，她答应并去做了也算）。一条只写一件事，她说了接连要做几件的，按先后拆成几条首尾相接。end 只在说清楚了几点做完、要做多久（「洗个澡，二十分钟」），或者她说已经做完了（写做完的那一刻）的时候写；说不准多久、要看后面怎么样的（出门办事、去买东西、等主人定、陪主人、做饭），end 留空，不要猜，另写 about：大概要多少分钟（只作参考）。end 留空的那段一直算她还在做，等她说做完了、回来了，或者开始做下一件，程序就让它在那一刻结束。
+   - "activity"：她开始做另一件事、换了地方、把手上的事放下去干别的（主人叫她过去、叫她去做什么，她答应并去做了也算）。一条只写一件事，她说了接连要做几件的，按先后拆成几条首尾相接。end 写这件事按常理预计做完的时刻（晚于 start）；她说已经做完的，end 写做完的那一刻。
    - 主人叫她现在去做的一件事（去买、去看看、去做饭、重新做一遍……），她答应了马上去的：照样记一段 activity，再写 asked: true（做完了程序会叫她回来跟主人说一声）。她只是嘴上答应「这就去」，不等于已经做上了：之后她的话要是说明其实还没去、改了主意、或者被叫去干别的了，按第 16 条把这段写进 stale。
    - "event"：做手上的事当中顺带发生的一件事（递了个东西、被摸了头、答应了什么），只有一个时刻，不写 end，不打断手上那件。
    她只是边做事边跟人说话，或者说的就是「今天的简略世界线」里标着「正在做」的那件，什么都不用记：聊天本身不算一件事。她说自己做了什么、在做什么，就算做了（哪怕听着像编的）。
@@ -115,7 +115,7 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
 
 {{
   "entries": [
-    {{"who": "napcat", "kind": "activity", "start": "2026-10-11 09:00", "end": "2026-10-11 09:40", "about": "", "place": "", "doing": "",
+    {{"who": "napcat", "kind": "activity", "start": "2026-10-11 09:00", "end": "2026-10-11 09:40", "place": "", "doing": "",
       "public": "", "with": [], "training": "", "seen_by": [], "asked": false, "same_as": "", "quote": "摘一句原文"}}
   ],
   "constraints": [
@@ -685,6 +685,12 @@ class Recorder:
                 start = fmt_time(ready)
                 if end:
                     end = fmt_time(parse_time(end) + shift)
+            mine = self._by_start_doing(who, start, end) if kind == "activity" and who != "master" else None
+            if mine is not None:
+                # 她用「现在去做」自己写过了：记录员不另记，也不盖掉它（几点做完、做完叫她都照那段）
+                logger.info("[super_enhance/world] 记录员记的「%s」撞上%s用现在去做写的 %s，不另记",
+                            clean_text(raw.get("doing"), 30), self.label(who) or who, mine.get("id"))
+                continue
             entry = {
                 "who": who,
                 "kind": kind,
@@ -703,9 +709,6 @@ class Recorder:
                 # 主人叫她现在去做的：做完叫她回来说一声；被打断照实写；后来发现其实没去做，记录员能撤
                 "asked": bool(raw.get("asked")) and kind == "activity" and who != "master",
             }
-            if kind == "activity" and not end and self._minutes(raw.get("about")):
-                # 没说什么时候做完的：大概要多久只作参考（补写等聊天停了再定结束时参考它）
-                entry["about"] = min(self._minutes(raw.get("about")), 600)
             moved = self._take_planned(raw.get("same_as"), who, start, end, flat_now) if kind == "activity" else None
             if moved:
                 entry.update(moved)
@@ -883,6 +886,22 @@ class Recorder:
         if not end and begin is not None and old_start is not None and old_end is not None and old_end > old_start:
             out["end"] = fmt_time(begin + (old_end - old_start))
         return out
+
+    def _by_start_doing(self, who: str, start: str, end: str) -> dict | None:
+        """她用「现在去做」自己写的、和这条条目时间撞上的那段（没有返回 None）。end 空着算开口。"""
+        begin = parse_time(start)
+        stop = parse_time(end) if end else None
+        if begin is None:
+            return None
+        for day in sorted({(begin.date() - datetime.timedelta(days=1)).isoformat(), begin.date().isoformat()}):
+            for item in self.world.entries(day, who):
+                if item.get("tool") != "start_doing" or is_event(item):
+                    continue
+                s0 = parse_time(item.get("start"))
+                s1 = parse_time(item.get("end")) if item.get("end") else None
+                if s0 is not None and (stop is None or s0 < stop) and (s1 is None or s1 > begin):
+                    return item
+        return None
 
     def _take_planned(self, token, who: str, start: str, end: str, now: datetime.datetime) -> dict | None:
         """记录员说她这会儿做的就是补写排在后面的那段（same_as）：把那段撤下来，返回要接着用的字段。"""
