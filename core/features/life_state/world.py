@@ -309,6 +309,10 @@ class WorldStore:
             "things": [dict(x) for x in (entry.get("things") or []) if isinstance(x, dict)],
             "created": str(entry.get("created") or fmt_time(self.now_local())),
         }
+        if entry.get("stopped") and isinstance(entry.get("stop_at_step"), int):
+            record["stop_at_step"] = entry["stop_at_step"]  # 做完了原定的第几步（收尾 / 交给时记录员定的收场）
+        if entry.get("stopped") and str(entry.get("wrap") or "").strip():
+            record["wrap"] = clean_text(entry.get("wrap"), MAX_STEP)  # 走之前收尾做了什么（关火、盛出来……）
         if isinstance(entry.get("moved_from"), dict):
             # 记录员把补写排在后面的那段挪到现在（她提前去做了）：原来那段留一份，她一直没去做时照原样恢复
             record["moved_from"] = entry["moved_from"]
@@ -322,6 +326,21 @@ class WorldStore:
         day["entries"] = kept[-MAX_DAY_ENTRIES:]
         self._save_day(date_text)
         return record
+
+    def patch_entry(self, date_text: str, entry_id: str, fields: dict):
+        """原样改几个字段（收尾、做完、交给时用：分步已经按收场算好了，不再按起止重排）。"""
+        day = self._load_day(date_text)
+        for item in day.get("entries") or []:
+            if str(item.get("id")) != str(entry_id):
+                continue
+            for key, value in fields.items():
+                if value is None:
+                    item.pop(key, None)
+                else:
+                    item[key] = value
+            self._save_day(date_text)
+            return item
+        return None
 
     def update_entry(self, date_text: str, entry_id: str, **fields):
         day = self._load_day(date_text)
@@ -977,6 +996,10 @@ def real_stop(entry: dict) -> bool:
         if not by or same_thing(entry.get("doing"), by):
             return False
     planned = clean_steps(entry.get("steps_planned"))
+    at = entry.get("stop_at_step")
+    if isinstance(at, int):
+        # 记录员定的收场（收尾 / 交给 / 放下）：原定的几步都做完了才不算停下（加上去的那步收尾不算原定的）
+        return not planned or at < len(planned)
     kept = clean_steps(entry.get("steps"))
     if len(planned) >= 2 and len(kept) >= len(planned):
         return False  # 停在最后一步（收尾），正事做完了
@@ -984,10 +1007,18 @@ def real_stop(entry: dict) -> bool:
 
 
 def stop_note(entry: dict) -> str:
-    """「做到「某一步」先放下了，因为……（结果：……）」：分步已经按停下的时刻截过（fit_steps），最后一步就是做到的那步。"""
+    """「做到「某一步」先放下了，先……（收尾），因为……（结果：……）」：分步已经按停下的时刻截过（fit_steps），
+    最后一步就是做到的那步；收尾 / 交给的那段记着做完了原定的第几步（stop_at_step）和收尾做了什么（wrap）。"""
     entry = entry or {}
     steps = clean_steps(entry.get("steps"))
-    head = "做到「%s」先放下了" % steps[-1] if steps else "做到一半先放下了"
+    at = entry.get("stop_at_step")
+    if isinstance(at, int) and (at > 0 or clean_steps(entry.get("steps_planned"))):
+        head = "做到「%s」先放下了" % steps[at - 1] if 0 < at <= len(steps) else "刚开了个头就放下了"
+    else:
+        head = "做到「%s」先放下了" % steps[-1] if steps else "做到一半先放下了"
+    wrap = str(entry.get("wrap") or "").strip()
+    if wrap:
+        head += "，走之前先" + wrap
     why = str(entry.get("stop_why") or "").strip()
     if any(word in why for word in META_WHY_WORDS):
         why = ""
@@ -1049,6 +1080,80 @@ def parse_steps(value) -> tuple:
     if not texts or any(x <= 0 for x in minutes):
         minutes = []
     return texts, minutes
+
+
+def wind_up(item: dict, now: datetime.datetime, how: str, minutes: int = 0, wrap: str = "") -> dict:
+    """手上这段怎么收场（记录员定的），算出要改的字段（不改 item）：
+    - 做完：快做完了，先做完再走：原定的几步都留着，剩下的挤进 minutes 分钟，到那时结束，算做完；
+    - 收尾 / 交给：做到此刻做完了的几步留着，加一步收尾（wrap，minutes 分钟），到那时结束，算没做完，
+      stop_at_step 记做完了原定的第几步（正做着的那步没做完不算）；
+    - 放下：到此刻为止，算没做完。
+    另给 rest：没做完的那截（正做着那步剩下的 + 后面的步，交给别人时接着做）。"""
+    start = parse_time(item.get("start"))
+    flat = now.replace(second=0, microsecond=0)
+    if start is None or flat <= start:
+        flat = (start or flat) + datetime.timedelta(minutes=1)
+    planned = item.get("steps_planned")
+    if isinstance(planned, list) and planned:
+        texts, mins = parse_steps(planned)
+    else:
+        texts, mins = clean_steps(item.get("steps")), step_minutes(item)
+    elapsed = max(1, int(round((flat - start).total_seconds() / 60)))
+    done_texts, done_mins, full, rest = [], [], 0, []
+    if texts and mins:
+        left = elapsed
+        for index, (text, value) in enumerate(zip(texts, mins)):
+            if left >= value:
+                done_texts.append(text)
+                done_mins.append(value)
+                full += 1
+                left -= value
+                continue
+            if left > 0:
+                done_texts.append(text)
+                done_mins.append(left)
+                rest.append({"text": text, "minutes": max(1, value - left)})
+            else:
+                rest.append({"text": text, "minutes": value})
+            rest.extend({"text": t, "minutes": m} for t, m in zip(texts[index + 1:], mins[index + 1:]))
+            break
+    elif texts:
+        total = max(1, int(round(((parse_time(item.get("end")) or flat) - start).total_seconds() / 60)))
+        full = min(len(texts), int(len(texts) * min(1.0, elapsed / total)))
+        done_texts = texts[:max(full, 1)]
+        rest = [{"text": t, "minutes": 0} for t in texts[full:]]
+    minutes = max(1, min(int(minutes or 0) or 2, 30))
+    out = {}
+    if how == "做完":
+        end = flat + datetime.timedelta(minutes=minutes)
+        out.update(end=fmt_time(end), stopped=False, stop_why="", stop_by="", stop_result="", stop_at_step=None, wrap=None)
+        if texts and mins:
+            rest_total = sum(r["minutes"] for r in rest) or 1
+            shares = [max(1, int(round(r["minutes"] * minutes / rest_total))) for r in rest]
+            new_mins = list(done_mins[:full])
+            if len(done_texts) > full:
+                # 正做着的那步：做过的那截 + 分到的
+                new_mins.append(done_mins[full] + (shares[0] if shares else 0))
+                shares = shares[1:]
+            new_mins.extend(shares)
+            if len(new_mins) == len(texts):
+                out.update(steps=list(texts), step_minutes=new_mins)
+        out["rest"] = []
+        return out
+    if how in ("收尾", "交给"):
+        text = clean_text(wrap, MAX_STEP) or "把手上的东西收好放下"
+        end = flat + datetime.timedelta(minutes=minutes)
+        out.update(end=fmt_time(end), stopped=True, stop_at_step=full, wrap=text, intent="",
+                   steps=done_texts + [text], step_minutes=(done_mins + [minutes]) if (done_mins or not done_texts) else [])
+        if texts and mins:
+            out["steps_planned"] = [{"text": t, "minutes": m} for t, m in zip(texts, mins)]
+    else:
+        out.update(end=fmt_time(flat), stopped=True, stop_at_step=full, intent="",
+                   steps=done_texts, step_minutes=done_mins if done_mins else [])
+        if texts and mins:
+            out["steps_planned"] = [{"text": t, "minutes": m} for t, m in zip(texts, mins)]
+    out["rest"] = rest
+    return out
 
 
 def clean_flag(value):

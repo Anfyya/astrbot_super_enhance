@@ -576,7 +576,8 @@ def step_no(value) -> int:
 def reached_steps(entry: dict, steps: list) -> list:
     """一段被打断（stopped）时，它标的哪几步算数：写了第几步的，做到了那一步才算（截短后留下的分步数）；
     没写第几步的，停在最后收尾那一步的照算（world.real_stop 不算真停下），真停在前面的不算。"""
-    done = len(clean_steps(entry.get("steps")))
+    at = entry.get("stop_at_step")
+    done = at if isinstance(at, int) else len(clean_steps(entry.get("steps")))
     real = real_stop(entry)
     out = []
     for step in steps:

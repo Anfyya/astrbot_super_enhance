@@ -19,7 +19,7 @@ from .models import bot_of_umo, extract_json
 from .things import (CAT_FOOD, CAT_ITEM, KEEPS, KINDS, SAME_NEW_MINUTES, SAME_STEP_MINUTES, SPOTS, STEPS, USE_STEPS, cat_of,
                      find_same, norm_step, usable)
 from .world import (WorldStore, clean_steps, clean_text, doing_text, fit_steps, fmt_time, is_event, is_sleep, parse_time, progress_of,
-                    result_text, step_minutes, steps_text)
+                    result_text, step_minutes, steps_text, wind_up)
 from .things import reached_steps
 
 # 记录员停过一阵时，往前最多翻几天的原始消息（原始消息副本最多也只留这么久）
@@ -87,8 +87,15 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
 13. 她在回答、解释、回忆以前的事（昨天、早上、刚才已经说过的）时，那件事不是这会儿发生的：不要按这条消息的时间再记一条；下面「今天已经记了的」里有的别重复记。确实没记过、要补的，时间写成那件事实际发生的时候。
 14. 上面列的「打算」里（每条前面有编号，比如 i3），已经做完的、或者后来的事已经和它对不上的（例如说好在社务所等，后来人已经回了宿舍），把那几条的编号填进 drop_intentions（只撤这几条，别的留着）；这次又说了新打算的，照常写进 intentions；她之前说过、还没做完也没对不上的，不用重写。
 15. 她把「今天的简略世界线」里标着「还没到」的某件事，说成已经做了、或者正在做：这件事不记成条目，也不要为它改别的条目，写进 early：who、entry（那段的编号）、said（她原话里说的那句）。只算那份清单里标了「还没到」的事；清单里没有的、已经做过或正在做的事，照上面的规则记（那件事前面已经做过一截、现在只是「接着」往下做的，不算说早了）。她说的是「待会儿去」「打算做」，不算，不写 early。
-16. 「今天的简略世界线」里补写排的、主人让做的、你之前从聊天里记的（标着「正在做」「还没到」的都算），都是按当时的情况写的。这段对话里说的事让其中某几段对不上了的（例如主人说他回来了、出门了，主人说那件事先不做了，她答应了这会儿去做别的，人换了地方，那段写的事已经做过了，另一个人那段跟她有关的事跟着变了），把对不上的那几段写进 stale：who、entry（编号）、why（一句话写那件事为什么停下、不做了，用她那边发生的事来说，例如「主人已经回来了，不用再守着水等他」）。只写对不上的；照样做得了、不受影响的不写。写进 stale 的段：还没开始的撤掉，正在做的到此刻为止，按现在的情况重排。那件事其实压根没做（她只是嘴上答应了，后面一直在聊别的、改了主意），写 never: true，整段撤掉；她那段时间实际在干什么，照第 5 条另记一条（时间写实际的）。还没开始、时间上和这段对话说的事不冲突的段（比如她先去做一件事，做完那时候才轮到的段），不算对不上，不要写进 stale。
-    主人叫她现在去做的，正好就是清单里补写排在后面、标着「还没到」的那件事（例如补写排了 18:00 收衣裳，主人 17:20 叫她现在就去收）：照第 5 条记她这条条目（asked: true），再写 same_as 填那段的编号，那段不要写进 stale。程序会把那段挪到现在，原来写好的分步、要用的吃的都留着；她要是后来其实没去做（stale 写了 never），原来那段会恢复。不是同一件事的，不写 same_as。
+16. 「今天的简略世界线」里补写排的、主人让做的、你之前从聊天里记的（标着「正在做」「还没到」的都算），都是按当时的情况写的。这段对话里说的事让其中某几段对不上了的（例如主人说他回来了、出门了，主人说那件事先不做了，她答应了这会儿去做别的，人换了地方，那段写的事已经做过了，另一个人那段跟她有关的事跟着变了），把对不上的那几段写进 stale：who、entry（编号）、why（一句话写为什么不照原样做了，用她那边发生的事来说，例如「主人叫她去街上看看有什么硬菜」），再写 how：这件事怎么收场。照常人的做法想，手上正做着扔不下的事，不会撂下就走：
+    - 做完：快做完了，先把它做完再去；minutes 写还要几分钟。
+    - 收尾：手上的事扔不下（灶上炒着菜、锅里煮着东西、手里端着东西），先收个尾再走；wrap 写收尾做了什么（例如「关火，把炒了一半的饭盛出来扣好」），minutes 写几分钟；result 写放下时那件事是什么样（例如「饭炒到一半，盛在盘里扣着」）。这件事算没做完。
+    - 交给：交给另一个人接着做；to 写交给谁（napcat / napcat2），doing 写那个人接着做什么，minutes 写交接用几分钟。
+    - 放下：随时能停的事（看书、坐着、闲聊），或者还没开始的，直接放下。
+    - 没做：其实压根没做（她只是嘴上答应了，后面一直在聊别的、改了主意），整段撤掉；她那段时间实际在干什么，照第 5 条另记一条（时间写实际的）。
+    - 接着做：清单里标着「和她一起」的另一个人那段，她走了以后对方一个人接着做；doing 写对方一个人接着做什么。
+    她要去做的新的那件，从收尾、做完、交接完的时候才开始（start 照常写那条消息的时间，程序会往后挪）。和她一起做这件事的另一个人那段（清单里标着「和她一起」），也写进 stale，按上面挑一样（多半是接着做、放下，或者被交给的那个人接手）。只写对不上的；照样做得了、不受影响的不写。还没开始、时间上和这段对话说的事不冲突的段（比如她先去做一件事，做完那时候才轮到的段），不算对不上，不要写进 stale。
+    主人叫她现在去做的，正好就是清单里补写排在后面、标着「还没到」的那件事（例如补写排了 18:00 收衣裳，主人 17:20 叫她现在就去收）：照第 5 条记她这条条目（asked: true），再写 same_as 填那段的编号，那段不要写进 stale。程序会把那段挪到现在，原来写好的分步、要用的吃的都留着；她要是后来其实没去做（stale 里 how 写了没做），原来那段会恢复。不是同一件事的，不写 same_as。
 17. 对话原文里标着「（主动发的）」的，是她自己主动发给主人的消息，不是在回主人的话：里面说的打算、提议、规矩一概不记（不写 intentions，也不写 constraints）；里面说她做了什么、在做什么，照常按第 5 条记。
 18. 吃的（家里的存货）：买回来的、收到的、做好的吃的，每件一个编号，从有了那一刻起每一步都记进 things。只记聊天里说已经发生了的：「待会去买」「明天做」不记；世界线里写着、聊天里没说的不记（那些程序会按世界线自己算进清单）。标「（主动发的）」的消息里说已经买了、做了、吃了的，也照记（这一条和第 17 条不一样）。
    - 新的一件（上面「家里的吃的」里没有的）：写 new（这一批里的临时代号 n1、n2……；不要写编号，编号由程序发）、name、kind、origin、from，再加上它的第一步。第一步只能是「买回来」「收到」「做好了」「原来就有」：买回来、收到的，必须是聊天里说了真的买了、收到了；家里一直备着、清单里还没记的（盐、糖、醋、米面油这类），头一回说到用了它，先记一件「原来就有」（amount 写估计还有多少），再记用掉；别的清单里没有的东西被吃了、用了，不记（不知道它是哪来的）。清单里已经有的同一件（同一次买的、同一锅做的）不要再建。旧的还没吃完又买了一份，是新的一件。买了当场就吃完的零嘴不用记。
@@ -120,7 +127,7 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
                  {{"who": "master", "text": "去鹈茅学院上课（23:03 睡前他说明天还有课）", "window": "", "date": "2026-10-18", "with": []}}],
   "drop_intentions": ["i3"],
   "early": [{{"who": "napcat2", "entry": "e88", "said": "衣裳收进屋叠好了"}}],
-  "stale": [{{"who": "napcat2", "entry": "e100", "why": "主人已经回来了，不用再守着水等他", "never": false}}],
+  "stale": [{{"who": "napcat2", "entry": "e100", "why": "主人叫她去街上看看有什么硬菜", "how": "收尾", "wrap": "关火，把炒了一半的饭盛出来扣好", "minutes": 2, "result": "饭炒到一半，盛在盘里扣着", "to": "", "doing": ""}}],
   "things": [
     {{"new": "n1", "name": "嫩豆腐", "kind": "鲜水豆腐", "origin": "主人在商店街豆腐店买的", "from": [],
       "at": "2026-10-18 08:30", "what": "买回来", "left": "两块", "place": "灶房·水盆里", "keep": "泡在水里", "state": "整的", "by": "master", "quote": "摘一句原文"}},
@@ -185,6 +192,10 @@ def norm_time(value, date_text: str, fallback: str = "") -> str:
 
 def _digest(text: str) -> str:
     return hashlib.md5(str(text or "").encode("utf-8")).hexdigest()[:12]
+
+
+# 她得先收尾 / 做完 / 交接完才去做新的那件：只挪这么多分钟以内开始的（再早的是在补记以前的事）
+FREE_SHIFT_MINUTES = 10
 
 
 class Recorder:
@@ -405,6 +416,11 @@ class Recorder:
                         flags.append("睡觉")
                     if item.get("asked"):
                         flags.append("主人让做的")
+                    partners = [self.label(x) or x for x in (item.get("with") or []) if x in bots and x != who]
+                    if "master" in (item.get("with") or []):
+                        partners.append("主人")
+                    if partners:
+                        flags.append("和%s一起" % "、".join(partners))
                     place = clean_text(item.get("place") or "", 40)
                     head = "- %s %s %s%s" % (item.get("id"), hm, name,
                                               "（%s）" % "、".join(flags) if flags else "")
@@ -640,6 +656,9 @@ class Recorder:
     def apply(self, umo: str, data: dict, now: datetime.datetime, items=None) -> None:
         batch = list(items or [])
         flat_now = now.replace(tzinfo=None)
+        # 先定对不上的那几段怎么收场（收尾、做完、交接要几分钟），再记这次的新条目：免得新条目先把手上的事一刀截断
+        self._collect_early(data.get("early") or [], umo, items, now)
+        free_at = self._apply_stale(data.get("stale") or [], data.get("early") or [], now)
         for raw in data.get("entries") or []:
             if not isinstance(raw, dict):
                 continue
@@ -658,6 +677,14 @@ class Recorder:
             end = "" if kind == "event" else norm_time(raw.get("end"), date_text)
             if end and parse_time(end) is not None and parse_time(end) <= parse_time(start):
                 end = ""
+            ready = free_at.get(who)
+            if kind == "activity" and ready is not None and parse_time(start) < ready \
+                    and parse_time(start) >= flat_now - datetime.timedelta(minutes=FREE_SHIFT_MINUTES):
+                # 她得先收完尾、做完、交接完手上的事才去做这件：开始往后挪到那时（结束跟着挪）
+                shift = ready - parse_time(start)
+                start = fmt_time(ready)
+                if end:
+                    end = fmt_time(parse_time(end) + shift)
             entry = {
                 "who": who,
                 "kind": kind,
@@ -736,8 +763,6 @@ class Recorder:
             if record and str(record.get("id")) not in known and who != "master":
                 self._make_room(record, now)
         self._apply_promises(data.get("promises") or [], now, umo)
-        self._collect_early(data.get("early") or [], umo, items, now)
-        self._apply_stale(data.get("stale") or [], data.get("early") or [], now)
         self._apply_trainings(data.get("trainings") or [], now)
         self._apply_abilities(data.get("abilities") or [], now)
         self._apply_things(data.get("things") or [], umo, batch, now)
@@ -876,23 +901,47 @@ class Recorder:
         if fit_steps(record):
             self.world._save_day(str(record.get("start"))[:10])
 
-    def _apply_stale(self, raws, early, now: datetime.datetime) -> None:
-        """记录员说对不上了的段（补写排的、主人让做的、之前从聊天里记的；手动写的不动）：还没开始的撤掉，
-        正在做的到此刻为止；记录员说压根没做（never）的整段撤掉，要是从补写排的那段挪过来的，原来那段恢复。
-        撤掉、截短以后，跟着处理两类段（_follow_up）：另一个人写着和她一起的；靠它做出来的东西、接着它往下做的。
-        空出来的由补写按现在的情况重排。"""
+    HOWS = (("没做", "没做"), ("压根", "没做"), ("做完", "做完"), ("收尾", "收尾"), ("收个尾", "收尾"), ("交给", "交给"), ("交接", "交给"),
+            ("接手", "交给"), ("接着做", "接着做"), ("一个人", "接着做"), ("继续", "接着做"), ("放下", "放下"), ("撂下", "放下"), ("停", "放下"))
+
+    @staticmethod
+    def _minutes(value) -> int:
+        """「2」「2分钟」「两三分钟」都认成分钟数；认不出是 0（按 2 分钟算）。"""
+        hit = re.search(r"\d+", str(value or ""))
+        if hit:
+            return int(hit.group())
+        for word, number in (("一", 1), ("两", 2), ("二", 2), ("三", 3), ("五", 5), ("十", 10)):
+            if word in str(value or ""):
+                return number
+        return 0
+
+    @classmethod
+    def _how(cls, raw: dict) -> str:
+        text = str(raw.get("how") or "").strip()
+        if raw.get("never"):
+            return "没做"
+        return next((v for k, v in cls.HOWS if k in text), "放下")
+
+    def _apply_stale(self, raws, early, now: datetime.datetime) -> dict:
+        """记录员说对不上了的段（补写排的、主人让做的、之前从聊天里记的；手动写的不动），照它定的收场办（how）：
+        做完（先做完再走，算做完）、收尾（先关火盛出来这种再走，算没做完）、交给（交给另一个人接着做）、放下（到此刻为止）、
+        没做（压根没做，整段撤掉；要是从补写排的那段挪过来的，原来那段恢复）、接着做（一起做的另一个人一个人接着做）。
+        还没开始的段（接着做以外）撤掉。之后跟着处理（_follow_up）：一起做的另一个人那段记录员没提的，只把她从「一起」里去掉；
+        靠没做成的东西的、接着没做成的事往下做的、还没开始的补写段撤掉。
+        返回 {谁: 什么时候腾出手来}（收尾、做完、交接完的时刻），这次的新条目从那时开始。"""
         flat = now.replace(tzinfo=None)
         bots = set(self.raw_log.enabled_bots())
         # 同一段又被说成「说早了」的：要叫她改口，那段得留着
         keep = {str(x.get("entry") or "").strip() for x in early if isinstance(x, dict)}
-        for raw in raws:
-            if not isinstance(raw, dict):
-                continue
+        mentioned = {str(x.get("entry") or "").strip() for x in raws if isinstance(x, dict)}
+        free_at, leaving, pending, orphans = {}, [], [], []
+        later = [x for x in raws if isinstance(x, dict) and self._how(x) == "接着做"]
+        for raw in [x for x in raws if isinstance(x, dict) and self._how(x) != "接着做"] + later:
             who = str(raw.get("who") or "").strip()
             entry_id = str(raw.get("entry") or "").strip()
             if who not in bots or not entry_id or entry_id in keep:
                 continue
-            never = bool(raw.get("never"))
+            how = self._how(raw)
             why = clean_text(raw.get("why"), 60)
             date_text = self.world.date_of(entry_id, who, flat)
             entry = next((x for x in self.world.entries(date_text, who) if str(x.get("id")) == entry_id), None) if date_text else None
@@ -902,7 +951,7 @@ class Recorder:
             if entry is None or start is None or is_event(entry) or source not in ("step", "chat"):
                 logger.info("[super_enhance/world] 记录员说%s的 %s 对不上了，但它是手动写的或已经不在了，不动", who, entry_id)
                 continue
-            if end is not None and end <= flat and not never:
+            if end is not None and end <= flat and how != "没做":
                 logger.info("[super_enhance/world] 记录员说%s的 %s 对不上了，可那段已经做完了，不动（%s）", who, entry_id, why)
                 continue
             if is_sleep(entry) and start <= flat:
@@ -910,22 +959,126 @@ class Recorder:
                             who, entry_id, why)
                 continue
             name = self.label(who) or who
-            if not never and start < flat - datetime.timedelta(minutes=2):
-                # 正在做、已经做了一会儿的：到此刻为止（做到一半停下，那条打算不算做完）
-                cut = fmt_time(flat.replace(second=0, microsecond=0))
-                self.world.update_entry(date_text, entry_id, end=cut, intent="", stopped=True, stop_why=why)
-                logger.info("[super_enhance/world] 记录员让%s正在做的 %s %s 到此刻为止（%s）",
-                            name, entry_id, clean_text(entry.get("doing"), 30), why)
-                after = next((x for x in self.world.entries(date_text, who) if str(x.get("id")) == entry_id), entry)
-                self._follow_up(who, entry, after, flat, why)
+            if how == "接着做":
+                was_with = list(entry.get("with") or [])
+                together = [x for x in was_with if x not in bots]  # 一起的另一个人走了：只留主人
+                fields = {"with": together}
+                if str(raw.get("doing") or "").strip():
+                    fields["doing"] = clean_text(raw.get("doing"), 120)
+                self.world.update_entry(date_text, entry_id, **fields)
+                # 走了的那个人段里没做到的那几步标的吃的、东西（两人一起的饭常只标在一个人那段里）：跟到这段上，她做完就算
+                moved = []
+                for leaver, tags in orphans:
+                    if leaver in was_with and tags:
+                        moved.extend({k: v for k, v in tag.items() if k != "step"} for tag in tags)
+                        tags.clear()
+                if moved:
+                    current = next((x for x in self.world.entries(date_text, who) if str(x.get("id")) == entry_id), entry)
+                    self.world.patch_entry(date_text, entry_id, {"things": list(current.get("things") or []) + moved})
+                logger.info("[super_enhance/world] %s的 %s 改成一个人接着做：%s%s（%s）", name, entry_id,
+                            clean_text(fields.get("doing") or entry.get("doing"), 30),
+                            "，接过 %d 样吃的 / 东西" % len(moved) if moved else "", why)
                 continue
-            self.world.delete_entry(date_text, entry_id)
-            logger.info("[super_enhance/world] 记录员撤掉%s的 %s %s–%s %s（%s%s）",
-                        name, entry_id, str(entry.get("start"))[11:16], str(entry.get("end") or "")[11:16],
-                        clean_text(entry.get("doing"), 30), "压根没做；" if never else "", why)
-            if self._restore_moved(entry, flat):
+            if how == "没做" or start > flat:
+                self.world.delete_entry(date_text, entry_id)
+                logger.info("[super_enhance/world] 记录员撤掉%s的 %s %s–%s %s（%s%s）",
+                            name, entry_id, str(entry.get("start"))[11:16], str(entry.get("end") or "")[11:16],
+                            clean_text(entry.get("doing"), 30), "压根没做；" if how == "没做" else "", why)
+                if self._restore_moved(entry, flat):
+                    continue
+                leaving.append((who, entry, start))
+                orphans.append((who, [dict(x) for x in entry.get("things") or [] if isinstance(x, dict)]))
+                pending.append((who, entry, None, why))
                 continue
-            self._follow_up(who, entry, None, flat, why)
+            if how == "收尾":
+                wrap = raw.get("wrap")
+            elif how == "交给":
+                wrap = raw.get("wrap") or "把手上的活交给%s" % (self.label(str(raw.get("to") or "")) or "别人")
+            else:
+                wrap = ""
+            fields = wind_up(entry, flat, how, self._minutes(raw.get("minutes")), wrap)
+            rest = fields.pop("rest", [])
+            if how != "做完":
+                fields["stop_why"] = why
+                result = clean_text(raw.get("result"), 80)
+                if how == "交给":
+                    result = result or "交给%s接着做" % (self.label(str(raw.get("to") or "")) or "别人")
+                if result:
+                    fields["stop_result"] = result
+            before = dict(entry)  # 改之前的样子（原来几点结束、标了什么）：后面跟着处理要用
+            after = self.world.patch_entry(date_text, entry_id, fields) or entry
+            ready = parse_time(after.get("end"))
+            if ready is not None and ready > flat:
+                free_at[who] = max(free_at.get(who, ready), ready)
+            logger.info("[super_enhance/world] %s的 %s %s：%s，到 %s（%s）", name, entry_id, how, clean_text(entry.get("doing"), 30),
+                        str(after.get("end"))[11:16], why)
+            if how == "交给":
+                self._hand_over(who, after, rest, raw, flat)
+            elif how != "做完":
+                tags = [x for x in before.get("things") or [] if isinstance(x, dict)]
+                reached = reached_steps(after, tags)
+                orphans.append((who, [dict(x) for x in tags if x not in reached]))
+                leaving.append((who, before, flat))
+                pending.append((who, before, after, why))
+        # 没做成的东西：接着做的人接过去的不算没做成；靠剩下那些的后续段跟着撤
+        for who, entry, after, why in pending:
+            left = set()
+            for leaver, tags in orphans:
+                if leaver == who:
+                    left |= {str(x.get("new")) for x in tags if x.get("new")}
+            self._follow_up(who, entry, after, flat, why, only=left)
+        # 一起做的另一个人那段，记录员没提到的：不截断，只把走了的人从「一起」里去掉，写一句她中途走了
+        for who, entry, since in leaving:
+            name = self.label(who) or who
+            old_end = parse_time(entry.get("end")) if entry.get("end") else None
+            for other in bots:
+                if other == who:
+                    continue
+                for day in sorted({flat.date().isoformat(), (flat.date() + datetime.timedelta(days=1)).isoformat()}):
+                    for item in list(self.world.entries(day, other)):
+                        if str(item.get("id")) in mentioned or item.get("source") != "step" or is_event(item) or who not in (item.get("with") or []):
+                            continue
+                        s0 = parse_time(item.get("start"))
+                        s1 = parse_time(item.get("end")) if item.get("end") else None
+                        if s0 is None or (s1 is not None and s1 <= flat) or not (s0 < (old_end or since + datetime.timedelta(hours=1))
+                                                                               and (s1 is None or s1 > since)):
+                            continue
+                        note = "（%s中途走了）" % name if s0 < flat else "（%s不来了）" % name
+                        doing = str(item.get("doing") or "")
+                        self.world.update_entry(day, str(item.get("id")), doing=doing if note in doing else doing + note,
+                                                **{"with": [x for x in (item.get("with") or []) if x != who]})
+                        logger.info("[super_enhance/world] %s的 %s 写着和%s一起，记录员没提：只把她去掉，写上%s", self.label(other) or other,
+                                    item.get("id"), name, note)
+        return free_at
+
+    def _hand_over(self, who: str, after: dict, rest: list, raw: dict, now: datetime.datetime) -> None:
+        """交给另一个人接着做：那个人从交接完的时候起接着做没做完的那截（剩下的分步、要用到 / 做出来的吃的跟过去）。"""
+        to = str(raw.get("to") or "").strip()
+        if to not in set(self.raw_log.enabled_bots()) or to == who:
+            return
+        start = parse_time(after.get("end")) or now
+        minutes = sum(int(x.get("minutes") or 0) for x in rest) or 15
+        done = after.get("stop_at_step") or 0
+        steps = []
+        for item in after.get("things") or []:
+            if not isinstance(item, dict):
+                continue
+            number = item.get("step") if isinstance(item.get("step"), int) else 0
+            if number > done:
+                steps.append(dict(item, step=number - done))
+        name = self.label(who) or who
+        record = self.world.add_entry(str(start.date()), {
+            "who": to, "kind": "activity", "start": fmt_time(start), "end": fmt_time(start + datetime.timedelta(minutes=minutes)),
+            "place": after.get("place"), "doing": clean_text(raw.get("doing"), 120) or "接着把%s做完（%s交过来的）" % (
+                clean_text(after.get("doing"), 40), name),
+            "public": after.get("public"), "with": [], "seen_by": [to],
+            "steps": [x for x in rest if x.get("minutes")] or [x.get("text") for x in rest],
+            "things": steps, "source": "step", "at_home": after.get("at_home"), "importance": after.get("importance"),
+            "origin": {"kind": "continue", "text": str(after.get("doing") or "")}, "created": fmt_time(now),
+        })
+        if record is not None:
+            logger.info("[super_enhance/world] %s交给%s接着做：%s %s–%s", name, self.label(to) or to, record.get("id"),
+                        str(record.get("start"))[11:16], str(record.get("end"))[11:16])
 
     def _restore_moved(self, entry: dict, now: datetime.datetime) -> bool:
         """撤掉的这段是从补写排的那段挪过来的（她说马上去做，其实没去）：原来那段还没到时候的，照原样放回去。"""
@@ -944,79 +1097,61 @@ class Recorder:
                     str(record.get("start"))[11:16], str(record.get("end") or "")[11:16], clean_text(record.get("doing"), 30))
         return True
 
-    def _follow_up(self, who: str, before: dict, after, now: datetime.datetime, why: str) -> None:
-        """一段被撤掉（after 是 None）或截短以后，跟着处理：
-        - 另一个人补写排的、写着和她一起、时间上撞着没了的那截的段：还没开始的撤掉，正在做的到此刻为止；
-        - 靠这段做出来的东西的（段里标的吃的、东西用到、吃到它），和接着这段往下做的（来源是「接着前面」这段）：
-          还没开始的撤掉，一层层往下找。正在做的不动。"""
+    def _follow_up(self, who: str, before: dict, after, now: datetime.datetime, why: str, only=None) -> None:
+        """一段被撤掉（after 是 None）或没做完就放下以后：靠这段做出来的东西的（段里标的吃的、东西用到、吃到它），
+        和接着这段往下做的（来源是「接着前面」这段，只在整段撤掉时算），还没开始的补写段撤掉，一层层往下找。
+        正在做的不动；一起做的另一个人那段由记录员定（见 _apply_stale）。"""
         bots = list(self.raw_log.enabled_bots())
-        name = self.label(who) or who
-        start = parse_time(before.get("start"))
-        old_end = parse_time(before.get("end")) if before.get("end") else None
-        gone_from = start if after is None else now
-        gone_to = old_end or (gone_from + datetime.timedelta(hours=1))
         steps = [x for x in before.get("things") or [] if isinstance(x, dict)]
         kept = {str(x.get("new")) for x in reached_steps(after, steps) if x.get("new")} if after is not None else set()
         lost = {str(x.get("new")) for x in steps if x.get("new")} - kept
+        if only is not None:
+            lost &= set(only)  # 一起做的另一个人接着做、接过去的那几样不算没做成
         doings = {str(before.get("doing") or "")} if after is None else set()
+        if not lost and not doings:
+            return
         days = sorted({now.date().isoformat(), (now.date() + datetime.timedelta(days=1)).isoformat()})
-        done = []
-        queue = [(who, gone_from, gone_to)]
-        while queue:
-            owner, lo, hi = queue.pop()
-            # 对方写着和她一起的段
-            for other in bots:
-                if other == owner:
-                    continue
+        done, changed, gone, gone_ids = [], True, [], set()
+
+        def _overlap(a: dict, b: dict) -> bool:
+            a0, b0 = parse_time(a.get("start")), parse_time(b.get("start"))
+            a1 = parse_time(a.get("end")) if a.get("end") else None
+            b1 = parse_time(b.get("end")) if b.get("end") else None
+            return a0 is not None and b0 is not None and (a1 is None or b0 < a1) and (b1 is None or a0 < b1)
+
+        while changed:
+            changed = False
+            for bot in bots:
                 for day in days:
-                    for item in list(self.world.entries(day, other)):
-                        if item.get("source") != "step" or is_event(item) or is_sleep(item) or owner not in (item.get("with") or []):
+                    for item in list(self.world.entries(day, bot)):
+                        if item.get("source") != "step" or is_event(item):
                             continue
                         s0 = parse_time(item.get("start"))
-                        s1 = parse_time(item.get("end")) if item.get("end") else None
-                        if s0 is None or (s1 is not None and s1 <= now) or not (s0 < hi and (s1 is None or s1 > lo)):
+                        if s0 is None or s0 <= now:
                             continue
-                        if s0 < now:
-                            self.world.update_entry(day, str(item.get("id")), end=fmt_time(now.replace(second=0, microsecond=0)),
-                                                    intent="", stopped=True, stop_by="%s那边不做了" % (self.label(owner) or owner))
-                            done.append("%s %s 到此刻为止" % (item.get("id"), clean_text(item.get("doing"), 20)))
-                        else:
-                            self.world.delete_entry(day, str(item.get("id")))
-                            done.append("%s %s 撤掉" % (item.get("id"), clean_text(item.get("doing"), 20)))
-                            lost |= {str(x.get("new")) for x in item.get("things") or [] if isinstance(x, dict) and x.get("new")}
-                            doings.add(str(item.get("doing") or ""))
-                            queue.append((other, s0, s1 or (s0 + datetime.timedelta(hours=1))))
-            # 靠没做成的东西的、接着没做成的事往下做的
-            changed = True
-            while changed:
-                changed = False
-                for bot in bots:
-                    for day in days:
-                        for item in list(self.world.entries(day, bot)):
-                            if item.get("source") != "step" or is_event(item):
-                                continue
-                            s0 = parse_time(item.get("start"))
-                            if s0 is None or s0 <= now:
-                                continue
-                            uses = set()
-                            for step in item.get("things") or []:
-                                if isinstance(step, dict):
-                                    uses |= {str(step.get("id") or ""), str(step.get("into") or "")}
-                                    uses |= {str(x) for x in step.get("from") or []}
-                            origin = item.get("origin") if isinstance(item.get("origin"), dict) else {}
-                            text = str(origin.get("text") or "")
-                            follows = origin.get("kind") == "continue" and bool(text) and any(
-                                len(d) >= 4 and (d in text or text in d) for d in doings)
-                            if not (uses & lost) and not follows:
-                                continue
-                            self.world.delete_entry(day, str(item.get("id")))
-                            done.append("%s %s 撤掉" % (item.get("id"), clean_text(item.get("doing"), 20)))
-                            lost |= {str(x.get("new")) for x in item.get("things") or [] if isinstance(x, dict) and x.get("new")}
-                            doings.add(str(item.get("doing") or ""))
-                            queue.append((bot, s0, parse_time(item.get("end")) or (s0 + datetime.timedelta(hours=1))))
-                            changed = True
+                        uses = set()
+                        for step in item.get("things") or []:
+                            if isinstance(step, dict):
+                                uses |= {str(step.get("id") or ""), str(step.get("into") or "")}
+                                uses |= {str(x) for x in step.get("from") or []}
+                        origin = item.get("origin") if isinstance(item.get("origin"), dict) else {}
+                        text = str(origin.get("text") or "")
+                        follows = origin.get("kind") == "continue" and bool(text) and any(
+                            len(d) >= 4 and (d in text or text in d) for d in doings)
+                        partner = any(str(x.get("id")) in gone_ids and x["who"] in (item.get("with") or []) and _overlap(x, item)
+                                      for x in gone)
+                        if not (uses & lost) and not follows and not partner:
+                            continue
+                        self.world.delete_entry(day, str(item.get("id")))
+                        done.append("%s %s 撤掉" % (item.get("id"), clean_text(item.get("doing"), 20)))
+                        lost |= {str(x.get("new")) for x in item.get("things") or [] if isinstance(x, dict) and x.get("new")}
+                        doings.add(str(item.get("doing") or ""))
+                        gone.append(dict(item))
+                        gone_ids.add(str(item.get("id")))
+                        changed = True
         if done:
-            logger.info("[super_enhance/world] %s的 %s 没了 / 停了，跟着处理：%s（%s）", name, before.get("id"), "、".join(done), why)
+            logger.info("[super_enhance/world] %s的 %s 没做成，靠它的后续段跟着撤：%s（%s）", self.label(who) or who,
+                        before.get("id"), "、".join(done), why)
 
     async def _flush_early(self, now: datetime.datetime) -> None:
         """攒下的「说早了」逐条交出去叫她改口；出错不影响记录员。"""
