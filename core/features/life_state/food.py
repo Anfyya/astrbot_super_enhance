@@ -30,7 +30,8 @@ KEEPS = ("收着放", "罩着放", "敞着放", "泡在水里", "挂着通风", 
 DEFAULT_KEEP = "收着放"
 SPOTS = ("屋里", "阴凉处", "地窖", "井里", "冰箱", "冻着", "屋外", "太阳底下", "灶上温着")
 DEFAULT_SPOT = "屋里"
-STATES = {"整的": 1.0, "切开了": 1.5, "碰伤了": 1.3}
+# 没熟透：中间还生着（煎、煮的时候火候不到），吃了要闹肚子，回锅煎透煮透（热了一下）就好；生着的坏得也快些
+STATES = {"整的": 1.0, "切开了": 1.5, "碰伤了": 1.3, "没熟透": 1.3}
 DEFAULT_STATE = "整的"
 # 一栏的时候的老放法：后四样其实是放在哪（太阳底下那会儿指摆在晒得到的地方，算敞着）
 OLD_KEEPS = {"阴凉处": ("", "阴凉处"), "冰箱里": ("", "冰箱"), "冻着": ("", "冻着"), "太阳底下": ("敞着放", "太阳底下")}
@@ -61,7 +62,9 @@ PLACE_SPOT_WORDS = (
     ("院子", "屋外"), ("院里", "屋外"), ("檐下", "屋外"), ("屋外", "屋外"), ("门外", "屋外"),
 )
 # 「切开了」之外：剥了皮、削了皮、去了皮也是切开了（露着面）；摔了、压了、磕了是碰伤了
-STATE_WORDS = (("碰伤", "碰伤了"), ("磕", "碰伤了"), ("摔", "碰伤了"), ("压坏", "碰伤了"), ("压烂", "碰伤了"),
+STATE_WORDS = (("没熟", "没熟透"), ("夹生", "没熟透"), ("不熟", "没熟透"), ("半生", "没熟透"),
+               ("没煎透", "没熟透"), ("没煮透", "没熟透"), ("没烤透", "没熟透"), ("没蒸透", "没熟透"),
+               ("碰伤", "碰伤了"), ("磕", "碰伤了"), ("摔", "碰伤了"), ("压坏", "碰伤了"), ("压烂", "碰伤了"),
                ("切", "切开了"), ("剥", "切开了"), ("削", "切开了"), ("去皮", "切开了"), ("剖", "切开了"), ("开封", "切开了"),
                ("整", "整的"))
 
@@ -282,6 +285,7 @@ TEXTURE_HURT = {
     "reheat": 0.45, "burn": 0.45, "refreeze": 0.5, "frozen_bad": 0.7, "thawed": 0.1, "chill_inj": 0.5, "stale": 0.35,
     "rancid": 0.7, "aroma": 0.4, "egg": 0.25, "ripen": 0.6, "veg_age": 0.4, "yellow": 0.35, "sprout": 0.4,
     "green": 1.0, "bitter": 0.5, "brown": 0.3, "bruise": 0.35, "absorb": 0.45, "drip": 0.5, "live": 0.4, "rain": 0.3,
+    "raw": 0.6,
 }
 TEXTURE_SOME = 0.3
 
@@ -845,6 +849,8 @@ class Sim:
         if heated:
             if what == "热了一下":
                 self.reheats += 1
+                if self.state == "没熟透":
+                    self.state = DEFAULT_STATE  # 回锅煎透、煮透了
                 # 热一热：凉了的热回来、发硬的饭软回来、回软的炸物复脆、稠了的粥加水
                 for key in ("cool", "stale"):
                     self.acc[key] = 0.0
@@ -1199,6 +1205,8 @@ class Sim:
                 out.append({"key": "live", "level": 2, "text": "养太久，养死了", "fix": "", "danger": False})
             elif self.live_hours >= LIVE_THIN_HOURS:
                 out.append({"key": "live", "level": 1, "text": "养了两天多，有点瘦了", "fix": "", "danger": False})
+        if self.state == "没熟透":
+            out.append({"key": "raw", "level": 2, "text": "中间没熟透，吃了要闹肚子", "fix": "回锅煎透、煮透再吃", "danger": True})
         out.extend(self.process_report())
         order = {2: 0, 1: 1, 0: 2, -1: 3}
         out.sort(key=lambda x: (0 if x["danger"] else 1, order.get(x["level"], 9)))
@@ -1232,7 +1240,7 @@ class Sim:
     # 攒着数的这几样按数连着扣；回锅几回、冻过几回、冻坏、化开、养瘦、淋雨、沾生肉汁照 report 给的档
     TEXTURE_ACC = ("dry", "cut_dry", "soggy", "weep", "mush", "chill_inj", "rancid", "aroma", "egg", "veg_age", "yellow",
                    "bitter", "brown", "bruise", "cool", "chill", "melt", "burn", "stale", "sprout", "green", "absorb")
-    TEXTURE_LEVELED = ("reheat", "refreeze", "frozen_bad", "thawed", "live", "rain", "drip")
+    TEXTURE_LEVELED = ("reheat", "refreeze", "frozen_bad", "thawed", "live", "rain", "drip", "raw")
 
     def texture(self, rows: list) -> float:
         """口感还剩几成（0～1）：rows 是 report 的结果。这会儿变好了的那样（正热乎、镇得正凉）不扣，熟到正好不扣，

@@ -38,7 +38,7 @@ from astrbot.api import logger
 from .food import (DEFAULT_KEEP, DEFAULT_SHIFT, DEFAULT_SPOT, DEFAULT_STATE, KEEPS, MONTH_TEMP, PROCESS_STEPS, SLICE_MINUTES,
                    SPOTS, STATES, WEATHER_SHIFT, SpaceIndex, month_temp, norm_keep, norm_spot, norm_state, room_temp,
                    simulate, split_keep, weather_kind, weather_shift)
-from .world import clean_text, fmt_time, parse_time
+from .world import clean_steps, clean_text, fmt_time, parse_time, real_stop
 
 FILE_NAME = "things.json"
 CAT_FOOD = "food"
@@ -564,6 +564,30 @@ def clean_stage(stage: dict, cat: str = CAT_FOOD) -> dict:
     return out
 
 
+def step_no(value) -> int:
+    """世界线一段里标的吃的、东西写在第几步（从 1 数）；没写、写不对是 0。"""
+    try:
+        number = int(str(value).strip())
+    except (TypeError, ValueError):
+        return 0
+    return number if 0 < number <= 50 else 0
+
+
+def reached_steps(entry: dict, steps: list) -> list:
+    """一段被打断（stopped）时，它标的哪几步算数：写了第几步的，做到了那一步才算（截短后留下的分步数）；
+    没写第几步的，停在最后收尾那一步的照算（world.real_stop 不算真停下），真停在前面的不算。"""
+    done = len(clean_steps(entry.get("steps")))
+    real = real_stop(entry)
+    out = []
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        number = step_no(step.get("step"))
+        if (number and number <= done) or (not number and not real):
+            out.append(step)
+    return out
+
+
 def insert_stage(item: dict, new: dict) -> str:
     """给一件加一步（clean_stage 过的），按时刻插进去；返回不收的原因，收了返回空串。不存盘。
     先在的步算数：它没了以后的步、它后面还有步时的「没了」、和已有的同一步重复的，都不收。
@@ -600,8 +624,11 @@ def insert_stage(item: dict, new: dict) -> str:
             new["place"], new["holder"] = prev.get("place") or "", prev.get("holder") or ""
         new["state"] = new.get("state") or prev.get("state") or ""
     else:
+        given = new.get("state")
         for key in ("place", "keep", "spot", "state"):
             new[key] = new.get(key) or prev.get(key) or ""
+        if new["what"] == "热了一下" and not given and new["state"] == "没熟透":
+            new["state"] = DEFAULT_STATE  # 回锅煎透、煮透了
     if new["what"] in ends:
         new["left"] = ""
     elif not new.get("left") and new["what"] in KEEP_LEFT_STEPS:
@@ -968,7 +995,8 @@ class ThingStore:
     # ---------- 世界线里的（现算） ----------
 
     def segments(self, now: datetime.datetime) -> list:
-        """世界线里已经做完（没停在半路）、标了吃的的段，按做完的时刻排：[{at, start, ref, by, steps}]。"""
+        """世界线里已经做完、标了吃的的段，按做完的时刻排：[{at, start, ref, by, steps}]。
+        被打断的段只算做到了的那几步（reached_steps）。"""
         if self.world is None:
             return []
         try:
@@ -981,8 +1009,12 @@ class ThingStore:
             day = (flat.date() - datetime.timedelta(days=back)).isoformat()
             for entry in self.world.entries(day):
                 steps = entry.get("things")
-                if not isinstance(steps, list) or not steps or entry.get("stopped"):
+                if not isinstance(steps, list) or not steps:
                     continue
+                if entry.get("stopped"):
+                    steps = reached_steps(entry, steps)
+                    if not steps:
+                        continue
                 if bots and str(entry.get("who")) not in bots:
                     continue
                 end = parse_time(entry.get("end"))
@@ -1270,7 +1302,8 @@ class ThingStore:
             keep, spot = split_keep(raw.get("keep"), raw.get("spot"), raw.get("place"))
             step.update({"what": what, "left": clean_text(raw.get("left"), MAX_LEFT), "place": clean_text(raw.get("place"), MAX_PLACE),
                          "keep": keep, "spot": spot, "state": norm_state(raw.get("state")),
-                         "amount": clean_text(raw.get("amount"), MAX_LEFT), "used": clean_text(raw.get("used"), MAX_LEFT)})
+                         "amount": clean_text(raw.get("amount"), MAX_LEFT), "used": clean_text(raw.get("used"), MAX_LEFT),
+                         "step": step_no(raw.get("step")) or ""})
             out.append({k: v for k, v in step.items() if v not in ("", None, []) or k == "left"})
         return out
 

@@ -18,7 +18,8 @@ from ..message_text import strip_inline_system
 from .models import bot_of_umo, extract_json
 from .things import (CAT_FOOD, CAT_ITEM, KEEPS, KINDS, SAME_NEW_MINUTES, SAME_STEP_MINUTES, SPOTS, STEPS, USE_STEPS, cat_of,
                      find_same, norm_step, usable)
-from .world import WorldStore, clean_text, doing_text, fmt_time, is_event, is_sleep, parse_time, progress_of, result_text, steps_text
+from .world import (WorldStore, clean_steps, clean_text, doing_text, fit_steps, fmt_time, is_event, is_sleep, parse_time, progress_of,
+                    result_text, step_minutes, steps_text)
 
 # 记录员停过一阵时，往前最多翻几天的原始消息（原始消息副本最多也只留这么久）
 RAW_BACK_DAYS = 6
@@ -85,6 +86,7 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
 14. 上面列的「打算」里（每条前面有编号，比如 i3），已经做完的、或者后来的事已经和它对不上的（例如说好在社务所等，后来人已经回了宿舍），把那几条的编号填进 drop_intentions（只撤这几条，别的留着）；这次又说了新打算的，照常写进 intentions；她之前说过、还没做完也没对不上的，不用重写。
 15. 她把「今天的简略世界线」里标着「还没到」的某件事，说成已经做了、或者正在做：这件事不记成条目，也不要为它改别的条目，写进 early：who、entry（那段的编号）、said（她原话里说的那句）。只算那份清单里标了「还没到」的事；清单里没有的、已经做过或正在做的事，照上面的规则记（那件事前面已经做过一截、现在只是「接着」往下做的，不算说早了）。她说的是「待会儿去」「打算做」，不算，不写 early。
 16. 「今天的简略世界线」里补写排的、主人让做的（标着「正在做」「还没到」的都算），都是按排的那会儿的情况写的。这段对话里说的事让其中某几段对不上了的（例如主人说他回来了、出门了，主人说那件事先不做了，她答应了这会儿去做别的，人换了地方，那段写的事已经做过了，另一个人那段跟她有关的事跟着变了），把对不上的那几段写进 stale：who、entry（编号）、why（一句话写那件事为什么停下、不做了，用她那边发生的事来说，例如「主人已经回来了，不用再守着水等他」）。只写对不上的；照样做得了、不受影响的不写。写进 stale 的段：还没开始的撤掉，正在做的到此刻为止，按现在的情况重排。
+    她这会儿去做的，就是清单里补写排在后面、标着「还没到」的那件事，只是提前做了（例如晚饭排在 17:45 炒蛋炒饭，她 17:18 就去炒了）：照第 5 条记她这条条目，再写 same_as 填那段的编号；那段不要写进 stale。程序会把那段挪到她现在做的时候，原来写好的分步、要用的吃的都留着。
 17. 对话原文里标着「（主动发的）」的，是她自己主动发给主人的消息，不是在回主人的话：里面说的打算、提议、规矩一概不记（不写 intentions，也不写 constraints）；里面说她做了什么、在做什么，照常按第 5 条记。
 18. 吃的（家里的存货）：买回来的、收到的、做好的吃的，每件一个编号，从有了那一刻起每一步都记进 things。只记聊天里说已经发生了的：「待会去买」「明天做」不记；世界线里写着、聊天里没说的不记（那些程序会按世界线自己算进清单）。标「（主动发的）」的消息里说已经买了、做了、吃了的，也照记（这一条和第 17 条不一样）。
    - 新的一件（上面「家里的吃的」里没有的）：写 new（这一批里的临时代号 n1、n2……；不要写编号，编号由程序发）、name、kind、origin、from，再加上它的第一步。第一步只能是「买回来」「收到」「做好了」「原来就有」：买回来、收到的，必须是聊天里说了真的买了、收到了；家里一直备着、清单里还没记的（盐、糖、醋、米面油这类），头一回说到用了它，先记一件「原来就有」（amount 写估计还有多少），再记用掉；别的清单里没有的东西被吃了、用了，不记（不知道它是哪来的）。清单里已经有的同一件（同一次买的、同一锅做的）不要再建。旧的还没吃完又买了一份，是新的一件。买了当场就吃完的零嘴不用记。
@@ -92,7 +94,7 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
    - kind 从这几类里挑：{kinds}。origin 写哪来的（谁在哪买的、谁送的）；自己做的留空。
    - 做菜：做好的那盘菜是新的一件，第一步「做好了」，from 写用了清单里哪几件（写编号；这一批里新记的写临时代号；用到的米面油盐、调料也写上）；用掉的每一件，各记一步「用掉一部分」或「用完了」，into 写那盘菜，按量记的写上 used。用的料清单里没有的，from 里就不写它，一件都对不上就留空。买来的、别人送的熟菜，from 留空。剩下的菜还是那一件，又吃了就记「吃了一部分」「吃完了」。
    - 已有的那件又发生了一步：写 id（清单里的编号；这一批里新记的写临时代号）和这一步。同样的东西有好几件、说不清是哪件的，记在最早有的那件上。
-   - 每一步写：at（发生的时刻 YYYY-MM-DD HH:MM）、what（{steps}）、left（这一步之后还剩多少，比如「两块」「小半锅」；用完、吃完写空——用完、吃完必须单独写一步，what 填「用完了」或「吃完了」，别把「吃完了」塞进 left 里）、amount / used（按量记的才写，见上）、place（放在哪个地方，例如「灶房·柜格」）、keep（怎么放：{keeps}）、spot（放在哪，管冷热：{spots}；屋里常温的不用写）、state（整的 / 切开了 / 碰伤了）、by（谁：napcat / napcat2 / master，别人写名字）、into（用掉是做进了哪盘菜）、quote（摘原文里说这件事的那句话）。place、keep、spot、state 跟上一步一样的不用写。剩菜回锅、凉了热一热记一步「热了一下」；开始腌、晒、熏记「腌上了」「晒上了」「熏上了」（晒、熏写上 spot，比如太阳底下、屋外）。
+   - 每一步写：at（发生的时刻 YYYY-MM-DD HH:MM）、what（{steps}）、left（这一步之后还剩多少，比如「两块」「小半锅」；用完、吃完写空——用完、吃完必须单独写一步，what 填「用完了」或「吃完了」，别把「吃完了」塞进 left 里）、amount / used（按量记的才写，见上）、place（放在哪个地方，例如「灶房·柜格」）、keep（怎么放：{keeps}）、spot（放在哪，管冷热：{spots}；屋里常温的不用写）、state（整的 / 切开了 / 碰伤了 / 没熟透）、by（谁：napcat / napcat2 / master，别人写名字）、into（用掉是做进了哪盘菜）、quote（摘原文里说这件事的那句话）。place、keep、spot、state 跟上一步一样的不用写。剩菜回锅、凉了热一热记一步「热了一下」；端回锅里重新煎透、煮透、再蒸一下、回炉也是「热了一下」（她说已经下锅了就记，不用等做完）；聊天里说出来中间没熟、夹生、没煎透的，在说出来的那一刻给那件记一步「清点」，state 写「没熟透」，left 照原样；开始腌、晒、熏记「腌上了」「晒上了」「熏上了」（晒、熏写上 spot，比如太阳底下、屋外）。
    - 「记错了」只用在清单里确实记错了的那件（根本没这回事）。
 19. 家里的东西（吃的以外的：衣裳围巾、书册本子、纸条信、画和窗花、布偶摆件、工具器物、首饰小物……）：每件一个编号（p 开头），写进 items，记它从哪来、经过谁手、搁在哪、变成什么样。只记聊天里说已经发生了的，规矩和第 18 条一样。
    - 新的一件（上面「家里的东西」里没有的）：写 new（这一批里的临时代号 x1、x2……；编号由程序发）、name（叫得出区别的名字，例如「深青围巾」「兔子窗花」「压在茶壶底下的纸条」，别只写「围巾」「纸条」）、kind（它是什么，一个词：围巾、窗花、纸条、布偶、书……）、look（样子：颜色、材料、大小、上面有什么，能和同一种的别的那件分清）、owner（归谁：napcat / napcat2 / master，大家一起用的留空）、origin（哪来的）、from（用清单里哪几件做的），再加上它的第一步。第一步只能是「买回来」「收到」「捡到」「开始做」（起了个头、还没做完）「做好了」「原来就有」（家里本来就有、清单里还没记的）。
@@ -105,7 +107,7 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
 {{
   "entries": [
     {{"who": "napcat", "kind": "activity", "start": "2026-10-11 09:00", "end": "2026-10-11 09:40", "place": "", "doing": "",
-      "public": "", "with": [], "training": "", "seen_by": [], "quote": "摘一句原文"}}
+      "public": "", "with": [], "training": "", "seen_by": [], "same_as": "", "quote": "摘一句原文"}}
   ],
   "constraints": [
     {{"who": "napcat", "text": "练成收放之前不许出藏经阁", "public": "在藏经阁闭关练功",
@@ -634,6 +636,7 @@ class Recorder:
     def apply(self, umo: str, data: dict, now: datetime.datetime, items=None) -> None:
         batch = list(items or [])
         flat_now = now.replace(tzinfo=None)
+        added = []  # 这一批新写的她的条目：撤补写段时，同一件事提前做了就把分步、标的吃的接过来
         for raw in data.get("entries") or []:
             if not isinstance(raw, dict):
                 continue
@@ -668,7 +671,16 @@ class Recorder:
                 "src_quote": raw.get("quote"),
                 "created": fmt_time(now),
             }
-            self.world.add_entry(date_text, entry)
+            moved = self._take_planned(raw.get("same_as"), who, start, end, flat_now) if kind == "activity" else None
+            if moved:
+                entry.update(moved)
+            record = self.world.add_entry(date_text, entry)
+            if record is not None and moved:
+                self._fit_moved(record)
+                logger.info("[super_enhance/world] 记录员把%s排好的 %s 挪到 %s（%s），分步和标的吃的照留",
+                            self.label(who) or who, raw.get("same_as"), start[11:16], clean_text(record.get("doing"), 30))
+            if record is not None and kind == "activity" and who != "master":
+                added.append(record)
         if batch and not any(str(x.get("role") or "") == "user" for x in batch):
             # 这批全是她主动发的、主人一句没说：规矩和打算都不可能从这里来（主动消息里的不记）
             if data.get("constraints") or data.get("intentions"):
@@ -722,7 +734,7 @@ class Recorder:
                 self._make_room(record, now)
         self._apply_promises(data.get("promises") or [], now, umo)
         self._collect_early(data.get("early") or [], umo, items, now)
-        self._apply_stale(data.get("stale") or [], data.get("early") or [], now)
+        self._apply_stale(data.get("stale") or [], data.get("early") or [], now, added)
         self._apply_trainings(data.get("trainings") or [], now)
         self._apply_abilities(data.get("abilities") or [], now)
         self._apply_things(data.get("things") or [], umo, batch, now)
@@ -813,8 +825,86 @@ class Recorder:
             logger.info("[super_enhance/world] 新打算 %s（%s %s）腾地方：%s", intention.get("id"),
                         self.label(who) or who, intention.get("window"), "；".join(done))
 
-    def _apply_stale(self, raws, early, now: datetime.datetime) -> None:
-        """记录员说对不上了的补写段：还没开始的撤掉，正在做的到此刻为止；空出来的由补写按现在的情况重排。"""
+    # 比两段是不是同一件事时不算的字：人名、和谁一起这种
+    SAME_SKIP = ("亚托莉", "丛雨", "主人", "一起", "和", "跟", "给", "帮", "替", "去", "把")
+
+    @classmethod
+    def _same_thing(cls, a: dict, b: dict) -> bool:
+        """两段说的是不是同一件事：去掉人名这些字以后，doing 里有一截连着 3 个字以上一样（「炒蛋炒饭」「厚蛋烧」）。"""
+        def norm(text) -> str:
+            text = re.sub(r"[^\u4e00-\u9fff]", "", str(text or ""))
+            for word in cls.SAME_SKIP:
+                text = text.replace(word, "")
+            return text
+        x, y = norm(a.get("doing")), norm(b.get("doing"))
+        if len(x) < 3 or len(y) < 3:
+            return False
+        best, row = 0, [0] * (len(y) + 1)
+        for ch in x:
+            new = [0] * (len(y) + 1)
+            for j, other in enumerate(y, 1):
+                if ch == other:
+                    new[j] = row[j - 1] + 1
+                    best = max(best, new[j])
+            row = new
+        return best >= 3
+
+    def _movable(self, entry, now: datetime.datetime) -> bool:
+        """补写排的、还没做完的段（不是睡觉、不是顺带的事）：她提前做了能整段挪过来。"""
+        if not entry or str(entry.get("source") or "") != "step" or is_event(entry) or is_sleep(entry) or entry.get("stopped"):
+            return False
+        end = parse_time(entry.get("end")) if entry.get("end") else None
+        return end is None or end > now
+
+    @staticmethod
+    def _carry(planned: dict, start: str, end: str) -> dict:
+        """挪过来时接着用的：分步（带分钟）、标的吃的、结果、做的哪条打算……；没写结束就按原来的时长往后算。"""
+        texts, mins = clean_steps(planned.get("steps")), step_minutes(planned)
+        out = {
+            "steps": [{"text": t, "minutes": m} for t, m in zip(texts, mins)] if mins else texts,
+            "things": [dict(x) for x in planned.get("things") or [] if isinstance(x, dict)],
+            "result": planned.get("result") or "",
+            "importance": planned.get("importance") or 0,
+            "meal": planned.get("meal"),
+            "at_home": planned.get("at_home"),
+            "intent": planned.get("intent") or "",
+            "origin": planned.get("origin"),
+        }
+        if mins:
+            out["step_minutes"] = list(mins)
+        begin, old_start, old_end = parse_time(start), parse_time(planned.get("start")), parse_time(planned.get("end"))
+        if not end and begin is not None and old_start is not None and old_end is not None and old_end > old_start:
+            out["end"] = fmt_time(begin + (old_end - old_start))
+        return out
+
+    def _take_planned(self, token, who: str, start: str, end: str, now: datetime.datetime) -> dict | None:
+        """记录员说她这会儿做的就是补写排在后面的那段（same_as）：把那段撤下来，返回要接着用的字段。"""
+        entry_id = str(token or "").strip()
+        if not entry_id:
+            return None
+        date_text = self.world.date_of(entry_id, who, now)
+        planned = next((x for x in self.world.entries(date_text, who) if str(x.get("id")) == entry_id), None) if date_text else None
+        if not self._movable(planned, now):
+            logger.info("[super_enhance/world] 记录员说%s这会儿做的是 %s，可那段不是还没做完的补写段，照常另记", who, entry_id)
+            return None
+        self.world.delete_entry(date_text, entry_id)
+        return self._carry(planned, start, end)
+
+    def _fit_moved(self, record: dict, force: bool = False) -> None:
+        """挪过来的段：分步分钟按新的起止对上（多的加在最后一步、少的从后往前截）。"""
+        if force:
+            texts = clean_steps(record.get("steps"))
+            mins = record.get("step_minutes") or []
+            if isinstance(record.get("steps"), list) and record["steps"] and isinstance(record["steps"][0], dict):
+                record["steps"], record["step_minutes"] = texts, [int(x.get("minutes") or 0) for x in record["steps"]]
+            elif len(mins) != len(texts):
+                record["step_minutes"] = []
+        fit_steps(record)
+        self.world._save_day(str(record.get("start"))[:10])
+
+    def _apply_stale(self, raws, early, now: datetime.datetime, added=None) -> None:
+        """记录员说对不上了的补写段：还没开始的撤掉，正在做的到此刻为止；空出来的由补写按现在的情况重排。
+        还没开始的那段要是这一批里她已经提前做了（added 里有同一个人、同一件事的新条目），分步和标的吃的接到新条目上。"""
         flat = now.replace(tzinfo=None)
         bots = set(self.raw_log.enabled_bots())
         # 同一段又被说成「说早了」的：要叫她改口，那段得留着
@@ -849,7 +939,15 @@ class Recorder:
                     self.label(who) or who, entry_id, clean_text(entry.get("doing"), 30), clean_text(raw.get("why"), 60),
                 )
                 continue
+            taker = next((x for x in added or [] if str(x.get("who")) == who and not clean_steps(x.get("steps"))
+                          and self._same_thing(x, entry)), None)
             self.world.delete_entry(date_text, entry_id)
+            if taker is not None:
+                taker.update(self._carry(entry, str(taker.get("start") or ""), str(taker.get("end") or "")))
+                self._fit_moved(taker, force=True)
+                logger.info("[super_enhance/world] %s排好的 %s 她提前做了（%s），分步和标的吃的接到 %s 上",
+                            self.label(who) or who, entry_id, clean_text(entry.get("doing"), 30), taker.get("id"))
+                continue
             logger.info(
                 "[super_enhance/world] 记录员撤掉%s排好的 %s %s–%s %s（%s）",
                 self.label(who) or who, entry_id, str(entry.get("start"))[11:16], str(entry.get("end"))[11:16],

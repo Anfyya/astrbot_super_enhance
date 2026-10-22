@@ -4948,7 +4948,7 @@
       box.appendChild(h("button", { class: "tchip", type: "button", title: obj ? "到「家里的东西」看这一件" : "到「家里的吃的」看这一件",
         onclick: function () { openThings(id, obj ? "item" : "food"); } }, worldThingText(d, t)));
     });
-    if (e.stopped) { box.appendChild(h("span", { class: "tag warn", title: "做到一半停下的段，标的不算", text: "停在半路，不算" })); }
+    if (e.stopped) { box.appendChild(h("span", { class: "tag warn", title: "做到一半停下的段：标了第几步的，做到了那一步才算；没标的，停在最后收尾那步照算", text: "停在半路，做到的才算" })); }
     else if (!done) { box.appendChild(h("span", { class: "muted", text: "做完才算" })); }
     return box;
   }
@@ -6264,7 +6264,7 @@
     return row;
   }
 
-  // 改未来里的一件吃的：名字、怎么来的、哪一类、多少、用料；放在哪、放法、切开没收在「更多」里
+  // 改未来里的一件吃的：名字、怎么来的、哪一类、多少、用料；放在哪、放法、状态收在「更多」里
   function futureForm(x) {
     var key = "f:" + x.id;
     var f = S.tEdit[key];
@@ -6301,14 +6301,14 @@
       }
       edRow(p, "哪来的", edInput(f.origin, "可空", function (v) { f.origin = v; }));
       var sec = edSec(p);
-      sec.appendChild(edFold(ui, "more", "更多", "放在哪、放法、切开没", function () {
+      sec.appendChild(edFold(ui, "more", "更多", "放在哪、放法、状态", function () {
         return [f.place, f.keep, thingSpotShown(f.spot), f.state].filter(Boolean).join(" · ");
       }, function () {
         var q = edProps();
         edRow(q, "放在哪", edInput(f.place, "例如：堂屋·矮桌", function (v) { f.place = v; }));
         edRow(q, "怎么放", edChips(edOpts(S.things.keeps, "没说"), f.keep || "", function (v) { f.keep = v; }));
         edRow(q, "冷热", edChips(edOpts(S.things.spots || [], "没说"), f.spot || "", function (v) { f.spot = v; }));
-        edRow(q, "切开没", edChips(edOpts(S.things.states, "没说"), f.state || "", function (v) { f.state = v; }));
+        edRow(q, "状态", edChips(edOpts(S.things.states, "没说"), f.state || "", function (v) { f.state = v; }));
         return q;
       }));
       dyn.appendChild(sec);
@@ -6544,7 +6544,7 @@
   }
 
   // 吃的某一步要填的一格。c：{ first 第一步（怎么来的）, measured 按克 / 毫升记的, perUse 平常一次用多少, exceptId 它自己, af 光标先放第一格 }
-  var THING_FIELDS = { left: "还剩多少", amount: "清点出", used: "用了多少", place: "放在哪", keep: "怎么放", spot: "冷热", state: "切开没" };
+  var THING_FIELDS = { left: "还剩多少", amount: "清点出", used: "用了多少", place: "放在哪", keep: "怎么放", spot: "冷热", state: "状态" };
   // 冷热那栏是屋里（默认）就不写出来
   function thingSpotShown(v) { return v && v !== "屋里" ? v : ""; }
   function thingFieldRow(p, f, k, c) {
@@ -6565,7 +6565,7 @@
       edRow(p, "冷热", edChips(edOpts(S.things.spots || [], c.first ? null : "照上一步"), f.spot, function (v) { f.spot = v; }),
         "屋里常温、阴凉处、地窖、井里、冰箱、冻着、屋外、太阳底下、灶上温着");
     } else if (k === "state") {
-      edRow(p, "切开没", edChips(edOpts(S.things.states, c.first ? null : "照上一步"), f.state, function (v) { f.state = v; }));
+      edRow(p, "状态", edChips(edOpts(S.things.states, c.first ? null : "照上一步"), f.state, function (v) { f.state = v; }));
     }
   }
   // 收在「更多」里的几格：收着时写出填了的值
