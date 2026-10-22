@@ -309,6 +309,8 @@ class WorldStore:
             "things": [dict(x) for x in (entry.get("things") or []) if isinstance(x, dict)],
             "created": str(entry.get("created") or fmt_time(self.now_local())),
         }
+        if isinstance(entry.get("about"), int) and entry["about"] > 0 and not record["end"]:
+            record["about"] = entry["about"]  # 记录员说的大概要多少分钟（没定什么时候做完时参考）
         if entry.get("stopped") and isinstance(entry.get("stop_at_step"), int):
             record["stop_at_step"] = entry["stop_at_step"]  # 做完了原定的第几步（收尾 / 交给时记录员定的收场）
         if entry.get("stopped") and str(entry.get("wrap") or "").strip():

@@ -190,6 +190,11 @@ def state_of(raw: dict) -> str:
     return "sleep" if is_sleep({"doing": raw.get("doing")}) else "do"
 
 
+# 她和主人的私聊这么多分钟内有人说过话，就算还聊着：记录员记的、没说什么时候做完的那段先不替她定结束
+CHAT_QUIET_MINUTES = 15
+# 那段最多这么久不替她定结束（大概要多久的两倍更长就按那个）
+OPEN_WAIT_MINUTES = 60
+
 class LifeStep:
     """补写。"""
 
@@ -486,6 +491,13 @@ class LifeStep:
         if cur is not None:
             end = parse_time(cur.get("end")) if cur.get("end") else None
             if end is None:
+                begun = parse_time(cur.get("start"))
+                about = cur.get("about") if isinstance(cur.get("about"), int) else 0
+                wait = datetime.timedelta(minutes=max(OPEN_WAIT_MINUTES, 2 * about))
+                if str(cur.get("source") or "") == "chat" and begun is not None and flat - begun < wait and self.chatting(bot, flat):
+                    # 记录员记的、没说什么时候做完的，她和主人还聊着：等聊天里说做完了、开始做下一件了再说，不替她猜
+                    # （聊得太久也不能一直挂着：过了大概要多久的两倍、至少一小时，就照常给它定个结束）
+                    return None
                 return {"mode": "open", "start": None, "cur": cur}
             if self.world.next_after(bot, end) is not None:
                 return self._hole(bot, end, flat, ahead_minutes)
@@ -506,6 +518,24 @@ class LifeStep:
             # 此刻断着、后面还排着：补到后面那段开始为止
             return {"mode": "fill", "start": start, "until": later_start, "cur": None, "next": later}
         return {"mode": "gap", "start": start, "cur": None}
+
+    def chatting(self, bot: str, flat: datetime.datetime) -> bool:
+        """她和主人这会儿还聊着：CHAT_QUIET_MINUTES 分钟内她和主人的私聊里有人说过话。"""
+        sessions = set(self.raw_log.target_sessions())
+        cutoff = flat - datetime.timedelta(minutes=CHAT_QUIET_MINUTES)
+        for day in sorted({cutoff.date().isoformat(), flat.date().isoformat()}):
+            try:
+                rows = self.raw_log.read_day(day)
+            except Exception:
+                continue
+            for row in rows:
+                umo = str(row.get("umo") or "")
+                if (sessions and umo not in sessions) or not umo.startswith(bot + ":"):
+                    continue
+                moment = parse_time("%s %s" % (row.get("date"), row.get("time")))
+                if moment is not None and cutoff <= moment <= flat:
+                    return True
+        return False
 
     def hole_at(self, bot: str, after: datetime.datetime, flat: datetime.datetime):
         """after 之后排好的段中间第一个空档：(空档开始, 空档后面那段)；没有返回 None。"""
@@ -808,10 +838,14 @@ class LifeStep:
             name = "%s（%s）" % (self.label(bot) or bot, bot)
             cur = info.get("cur") or {}
             if info["mode"] == "open":
+                about = cur.get("about") if isinstance(cur.get("about"), int) else 0
                 lines.append(
-                    "- %s：手上「%s」（%s 起）还没定什么时候做完。先在 end_current 里给它定一个做完的时刻"
-                    "（不早于此刻之后五分钟），再从那个时刻往下写。"
-                    % (name, clean_text(cur.get("doing") or cur.get("place"), 60), str(cur.get("start"))[11:16])
+                    "- %s：手上「%s」（%s 起%s）还没定什么时候做完。先在 end_current 里给它定一个做完的时刻"
+                    "（不早于此刻之后五分钟%s），再从那个时刻往下写。"
+                    % (name, clean_text(cur.get("doing") or cur.get("place"), 60), str(cur.get("start"))[11:16],
+                       "，记录员说大概要 %d 分钟" % about if about else "",
+                       "，也不早于 %s" % fmt_time(parse_time(cur.get("start")) + datetime.timedelta(minutes=about))[11:]
+                       if about and parse_time(cur.get("start")) else "")
                 )
             elif info["mode"] == "fill":
                 later = info.get("next") or {}
@@ -1066,6 +1100,8 @@ class LifeStep:
                     if isinstance(raw, dict):
                         end = parse_time(norm_time(raw.get("start"), date_text))
                 floor = flat + datetime.timedelta(minutes=5)
+                if isinstance(cur.get("about"), int) and cur["about"] > 0:
+                    floor = max(floor, cur_start + datetime.timedelta(minutes=cur["about"]))  # 记录员说的大概要多久
                 if end is None or end < floor:
                     end = floor
                 end = self._limit(cur_start, end, is_sleep(cur))
