@@ -76,6 +76,7 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
 规则：
 
 1. 只写「这次要你写的」里列出的人。每人从上面给的时刻开始，按时间顺序写几段，首尾相接、不重叠；最后一段的结束时间必须晚于现在（{now}）。一次最多写到 {horizon} 左右，不要把后面一整天都写完（睡觉那段除外，可以一直写到第二天起床）。
+   **地方也要接上**：每人这次的第一段，从她上一段结束时人在哪、在干什么接下去（「这次要你写的」里写着那时候她在哪、结果怎样）。上一段结束时她还在路上、还在外面的，先把路走完——写一段走回去，或者这一段第一步就是走回去——到了地方才做下一件；不许上一段还在外面、下一段一开头就已经在屋里。段和段之间换到远一点的地方，中间也要写路上（在宿舍里换个屋子不用单写）。出门在外的事写到她到了地方为止，不许停在半路；快到 {horizon} 时正在路上的那段可以多写一点，把路走完。
 2. **一段只写一件事**：doing 只写这件事是什么（一句话），result 写这件事最后的结果（修好了没、找着没、谁赢了这类，一句；不算一步、没有分钟；state 是「闲着」「睡觉」的段不写），不要把几件事用「然后」「又」「再」串在同一段里。steps 把这件事按先后分成 1–5 步，每步写 text（一句，这一阵子她一直在干什么，写成能持续这一步那么多分钟的事）和 minutes（这一步按常理要几分钟）；最后一步是收尾，这件事用过的东西收好、归位都写在这一步里，做完就接着做下一件事。**这段做多久就是各步 minutes 加起来**，程序按它算结束时间，end 照着算好写上就行（洗碗十来分钟、吃饭二三十分钟、看书一两个小时……）；state 是「闲着」「睡觉」的段不写 steps，end 照常写。每段都是一件要花些工夫的事。上面今天已经做过的事，别再原样做一遍。
 3. **每段写 state，三选一**：「做事」「闲着」「睡觉」。
    - 没事就写闲着：她手上没有打算、约定、规矩要做的事，也没什么想做的，就写一段闲着，state 填「闲着」：doing 照上面「闲着的样子」里她的写，steps 留空。闲着一段最长一小时，歇够了就接着写下一件事（也可以再歇一段）。
@@ -840,31 +841,46 @@ class LifeStep:
                 )
             elif info["mode"] == "fill":
                 later = info.get("next") or {}
+                place = clean_text(later.get("place") or "", 40)
                 lines.append(
                     "- %s：%s 到 %s 这一截空着（原来排的撤掉了），把它补上：从 %s 开始写，最后一段在 %s 结束，"
-                    "接上后面已经排好的「%s」（%s 起，这段不改）。"
+                    "接上后面已经排好的「%s」（%s 起%s，这段不改）。%s"
                     % (name, fmt_time(info["start"])[11:], fmt_time(info["until"])[11:], fmt_time(info["start"]),
                        fmt_time(info["until"]), clean_text(later.get("doing") or later.get("place"), 60),
-                       fmt_time(info["until"])[11:])
+                       fmt_time(info["until"])[11:], "，在%s" % place if place else "",
+                       self._where(self.world.last_activity(bot, info["start"] - datetime.timedelta(minutes=1)), "空着之前那段"))
                 )
             elif info["mode"] == "after":
                 lines.append(
-                    "- %s：已经排到 %s（最后一段「%s」），从 %s 开始往下写；在那之前排好的不改。"
+                    "- %s：已经排到 %s（最后一段「%s」），从 %s 开始往下写；在那之前排好的不改。%s"
                     % (name, fmt_time(info["start"])[11:], clean_text(cur.get("doing") or cur.get("place"), 60),
-                       fmt_time(info["start"]))
+                       fmt_time(info["start"]), self._where(cur))
                 )
             elif info["mode"] == "next":
                 lines.append(
-                    "- %s：手上「%s」%s 做完，从 %s 开始往下写。"
+                    "- %s：手上「%s」%s 做完，从 %s 开始往下写。%s"
                     % (name, clean_text(cur.get("doing") or cur.get("place"), 60),
-                       fmt_time(info["start"])[11:], fmt_time(info["start"]))
+                       fmt_time(info["start"])[11:], fmt_time(info["start"]), self._where(cur))
                 )
             else:
+                last = self.world.last_activity(bot, info["start"])
                 lines.append(
-                    "- %s：%s 之后没有记录。从 %s 开始写（已经过去的那部分照常补上），一直写到此刻之后。"
-                    % (name, fmt_time(info["start"]), fmt_time(info["start"]))
+                    "- %s：%s 之后没有记录。从 %s 开始写（已经过去的那部分照常补上），一直写到此刻之后。%s"
+                    % (name, fmt_time(info["start"]), fmt_time(info["start"]), self._where(last))
                 )
         return "\n".join(lines)
+
+    def _where(self, entry, what: str = "那段") -> str:
+        """接着写时交代她上一段结束时的样子：在哪、结果怎样（第一段从这儿接上，人在外面就先把路走完）；没有那段就空。"""
+        if not entry or is_event(entry):
+            return ""
+        out = "%s结束时她在：%s" % (what, clean_text(entry.get("place") or "", 40) or "（没写地方）")
+        if entry.get("at_home") is False:
+            out += "，人不在宿舍"
+        if real_stop(entry):
+            stopped = clean_text(entry.get("stop_result") or "", 60)
+            return out + ("（停下时：%s）。" % stopped if stopped else "。")
+        return out + result_text(entry) + "。"
 
     async def build_prompt(self, tasks: dict, now: datetime.datetime) -> str:
         bots = list(self.raw_log.enabled_bots())
