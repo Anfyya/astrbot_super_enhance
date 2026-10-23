@@ -724,9 +724,10 @@ class WorldStore:
         return top + 1
 
     def set_intention(self, who: str, text: str, window: str = "", source: str = "step",
-                      with_list=None, date: str = "", heard_by=None):
+                      with_list=None, date: str = "", heard_by=None, now_at: str = ""):
         """记一条打算。with_list 里有 "master" = 主人提的或答应了的、要和主人一起做的事；
-        date 是哪天做（YYYY-MM-DD，可空）；heard_by 是主人自己的打算由谁听到的（主人的打算只给听到的人看）。"""
+        date 是哪天做（YYYY-MM-DD，可空）；heard_by 是主人自己的打算由谁听到的（主人的打算只给听到的人看）；
+        now_at 是她答应「现在就去做」的时刻（补写马上先排这件）。"""
         body = clean_text(text, MAX_INTENTION_TEXT)
         if not who or not body:
             return None
@@ -750,6 +751,9 @@ class WorldStore:
         heard = [str(x) for x in (heard_by or []) if str(x).strip()]
         if heard:
             record["heard_by"] = heard
+        moment = str(now_at or "").strip()[:16]
+        if parse_time(moment) is not None:
+            record["now_at"] = moment
         items.append(record)
         state["intentions"] = items
         self._save_state()

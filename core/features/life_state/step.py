@@ -90,7 +90,7 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
 9. public 是住在一起的人自然会知道的粗粒度信息（人在哪、大概在干哪类事），可以为空。doing 是细节。
 10. 两人在一起的时段，两边的 start/end 和共同的事要一致，with 互相写上对方的 key；对方手上的事还没做完的，别写成和她在一起。对方不在「这次要你写的」里时，她那段时间做什么以「她们此刻手上的事」和「已经排好、这次不改的」为准，你改不了：只有她那边写的也是这件事、也在这个地方，才能写成和她一起；不然就别把她写进来。
 11. 段里是在练「在练的事」里的某件，training 填它的编号（例如 "#2"）；不是在练就留空，不要往里写别的。
-12. 段里做的是「各自的打算」里她的某一条，intent 填那条的编号（例如 "i2"）；不是就留空。
+12. 段里做的是「各自的打算」里她的某一条，intent 填那条的编号（例如 "i2"）；不是就留空。标着「现在就去」的，是她刚答应马上去做的：这次就从给你的时刻起先排它，别排在别的事后面；她人还不在做这件事的地方、世界线上也还没在往那边去的，先写一段走过去；可以分成几段（比如先去买、再回来做），每段 intent 都填这个编号。
 13. 每段写 from：这段是照上面哪一样写的。照「可能碰上的小事」「手边的消遣」「闲着的样子」「今天会碰上一件意外」里的某一样写的，照抄那一样的原文；照打算、约定、规矩、在练的事、作息（起床、三餐、睡觉）写的，写「打算」「约定」「规矩」「在练」「作息」；接着前面已经做过的某件事往下写的，写「接着：」再加那件事；都不是、自己想的，写「自己想的」。
 14. 接着前面已经写过的事往下写时，前面写定的东西照原样沿用：写过的内容、放在哪、做出来的是什么，都和前面写的一致。
 15. **同一类事一天里做过一次就不要再排**（比如今天已经做过点心、炖过汤，就别再排第二次）；主人对做出来的东西提的意见（「甜度再多一点」「汤有点淡」）**不等于叫她现在去做**——当天不重做，想改的留到以后（改配方、下次做的时候再试），现在照常排别的事。
@@ -427,6 +427,8 @@ class LifeStep:
         when = " ".join(x for x in (str(item.get("date") or "")[5:], str(item.get("window") or "")) if x)
         if when:
             tags.append(when)
+        if item.get("now_at"):
+            tags.append("现在就去，%s 刚答应的" % str(item.get("now_at"))[11:16])
         return "- %s（%s）：%s" % (item.get("id"), "，".join(tags), item.get("text"))
 
     def _intent_with_master(self, intent_id: str) -> bool:
@@ -488,9 +490,16 @@ class LifeStep:
             if end is None:
                 return {"mode": "open", "start": None, "cur": cur}
             if self.world.next_after(bot, end) is not None:
-                return self._hole(bot, end, flat, ahead_minutes)
+                hole = self._hole(bot, end, flat, ahead_minutes)
+                if hole is None and self._now_waiting(bot):
+                    # 手上那段后面接着记录员记的（比如往回走）：她刚答应的事从排完的地方马上接着排
+                    front = self._frontier(bot, flat)
+                    if front is not None:
+                        return {"mode": "after", "start": front[0], "cur": front[1]}
+                return hole
             lead = datetime.timedelta(minutes=self.lead_minutes + ahead_minutes)
-            if flat >= end - lead:
+            # 她刚答应现在就去做的事还没排：不等手上那段快做完，马上接着排
+            if flat >= end - lead or self._now_waiting(bot):
                 return {"mode": "next", "start": end, "cur": cur}
             return None
         floor = flat - datetime.timedelta(hours=self.window_hours)
@@ -506,6 +515,22 @@ class LifeStep:
             # 此刻断着、后面还排着：补到后面那段开始为止
             return {"mode": "fill", "start": start, "until": later_start, "cur": None, "next": later}
         return {"mode": "gap", "start": start, "cur": None}
+
+    def _now_waiting(self, bot: str) -> bool:
+        """她有一条「现在就去」的打算，世界线上还没有段挂着它，而且记下它以后补写还没跑过：要马上补写。
+        补写跑过一次就不再催（排没排进去都不催），免得一直重跑。"""
+        done = parse_time(self.world.last_step())
+        for item in self.world.intentions(bot):
+            at = parse_time(item.get("now_at"))
+            if at is None:
+                continue
+            created = parse_time(item.get("created")) or at
+            if done is not None and done >= created:
+                continue
+            days = sorted({at.date().isoformat(), (at.date() + datetime.timedelta(days=1)).isoformat()})
+            if not any(str(x.get("intent") or "") == str(item.get("id")) for day in days for x in self.world.entries(day, bot)):
+                return True
+        return False
 
     def hole_at(self, bot: str, after: datetime.datetime, flat: datetime.datetime):
         """after 之后排好的段中间第一个空档：(空档开始, 空档后面那段)；没有返回 None。"""

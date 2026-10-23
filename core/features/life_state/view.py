@@ -244,6 +244,8 @@ def build_world_text(
         when = _plan_when(item, today)
         if when:
             tags.append(when)
+        if item.get("now_at"):
+            tags.append("%s 答应了现在就去" % str(item.get("now_at"))[11:16])
         lines.append("你说过的打算：%s%s" % (item.get("text"), "（%s）" % "，".join(tags) if tags else ""))
     for item in world.constraints(viewer, active_only=True):
         lines.append("主人定的规矩：%s（%s 起%s）" % (
