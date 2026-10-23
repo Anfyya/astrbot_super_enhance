@@ -44,6 +44,9 @@ _TIME_PATTERNS = (
     re.compile(r"Current datetime:\s*(\d{4}-\d{2}-\d{2} \d{2}:\d{2})"),
     re.compile(r"Sent at:\s*(\d{4}-\d{2}-\d{2} \d{2}:\d{2})"),
 )
+_RECORD_TIME = re.compile(re.escape(RECORD_HEAD) + r"(\d{2})-(\d{2}) (\d{2}):(\d{2})")
+# 查「我上一句」记过没有时，往回翻主人会话最近这么多条
+RECORD_LOOKBACK = 40
 
 
 def _text_of(message) -> str:
@@ -66,8 +69,8 @@ def _text_of(message) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def _stamp_of(message) -> str:
-    """从 system_reminder 里取时间（形如 09-27 23:41），取不到就空。"""
+def _moment_of(message) -> datetime.datetime | None:
+    """从 system_reminder 里取这条消息的时间（当地钟点，不带时区），取不到就 None。"""
     raw = ""
     content = message.get("content") if isinstance(message, dict) else None
     if isinstance(content, str):
@@ -81,13 +84,28 @@ def _stamp_of(message) -> str:
     for pattern in _TIME_PATTERNS:
         match = pattern.search(raw or "")
         if match:
-            value = match.group(1)
             try:
-                moment = datetime.datetime.strptime(value, "%Y-%m-%d %H:%M")
-                return moment.strftime("%m-%d %H:%M")
-            except Exception:
-                return value[5:]
-    return ""
+                return datetime.datetime.strptime(match.group(1), "%Y-%m-%d %H:%M")
+            except ValueError:
+                return None
+    return None
+
+
+def _record_moment(text: str, near: datetime.datetime) -> datetime.datetime | None:
+    """跨会话记录开头的「MM-DD HH:MM」：年份取离 near 最近的那年。不是记录就 None。"""
+    match = _RECORD_TIME.match(text or "")
+    if not match:
+        return None
+    month, day, hour, minute = (int(x) for x in match.groups())
+    best = None
+    for year in (near.year, near.year - 1, near.year + 1):
+        try:
+            moment = datetime.datetime(year, month, day, hour, minute)
+        except ValueError:
+            continue
+        if best is None or abs(moment - near) < abs(best - near):
+            best = moment
+    return best
 
 
 def _body(text: str) -> str:
@@ -183,6 +201,11 @@ class BotDialogFeature:
     def _other_name(self, sender_id: str) -> str:
         names = self._names()
         return str(names.get(str(sender_id)) or "").strip() or "另一个机器人"
+
+    def bot_name(self, qq: str) -> str:
+        """这个 QQ 号是另一个机器人就给出她的名字（没配 bot_names 写「另一个机器人」），不是就空。"""
+        qq = str(qq or "").strip()
+        return self._other_name(qq) if qq and qq in self.bot_ids else ""
 
     # ---------- 记账 ----------
 
@@ -313,6 +336,8 @@ class BotDialogFeature:
             【跨会话记录】MM-DD HH:MM（双方都是机器人，不是主人）
             3810794928 → 3036624768：「对方发来的话」
             3036624768 → 3810794928：「我上一条发出去的话」
+
+        「我上一条」只写这次来回里说的（离现在不超过 window_minutes）、主人会话里还没记过的。
         """
         if not self.enabled or self.context is None:
             return
@@ -530,7 +555,7 @@ class BotDialogFeature:
             own_id = ""
         own_id = own_id or bot
 
-        sent_text, _ = await self._last_message(
+        sent_text, sent_at = await self._last_message(
             conv_mgr, other_session, role="assistant"
         )
         reply_text = re.sub(r"\s+", " ", str(event.get_message_str() or "")).strip()
@@ -545,14 +570,25 @@ class BotDialogFeature:
         if not reply_text:
             # 对方这条什么都没说（空事件漏网），不写记录
             return ""
-        if sent_text:
-            self._last_own_line[key] = sent_text
 
         own_label = self._label(own_id)
         other_label = self._label(other_id)
-        lines = ["%s%s" % (RECORD_HEAD, self._now_text())]
+        own_line = "%s → %s：「%s」" % (own_label, other_label, sent_text) if sent_text else ""
+        if own_line and not self._fresh(sent_at):
+            # 那句是上回聊的时候说的（超过 window_minutes，或者没带时间），不算这次的来回：
+            # 不然会按现在的时间再记一遍（10-23 22:38 把 10-17 22:47 那句又记了一次）
+            own_line = ""
+        elif own_line and await self._recorded(
+            conv_mgr, "%s:FriendMessage:%s" % (bot, master_id), own_line, sent_at
+        ):
+            # 主人会话里已经记过这句（上面内存里那份重启就没了）
+            own_line = ""
         if sent_text:
-            lines.append("%s → %s：「%s」" % (own_label, other_label, sent_text))
+            self._last_own_line[key] = sent_text
+
+        lines = ["%s%s" % (RECORD_HEAD, self._now_text())]
+        if own_line:
+            lines.append(own_line)
         if reply_text:
             lines.append("%s → %s：「%s」" % (other_label, own_label, reply_text))
         return "\n".join(lines)
@@ -597,27 +633,57 @@ class BotDialogFeature:
         text = re.sub(r"\s+", " ", str(text or "")).strip()
         return text if len(text) <= limit else text[: limit - 1] + "…"
 
+    def _fresh(self, moment) -> bool:
+        """这句是不是这次来回里说的：带着时间、离现在不超过 window_minutes。"""
+        if moment is None:
+            return False
+        now = datetime.datetime.now(self._zone()).replace(tzinfo=None)
+        return (now - moment).total_seconds() <= self.window_minutes * 60
+
+    async def _recorded(self, conv_mgr, umo: str, line: str, since) -> bool:
+        """这句说出口以后，主人会话里写过的跨会话记录里是不是已经有这一行。"""
+        try:
+            cid = await conv_mgr.get_curr_conversation_id(umo)
+            conv = await conv_mgr.get_conversation(umo, cid) if cid else None
+            history = json.loads(getattr(conv, "history", "") or "[]") if conv is not None else []
+        except Exception:
+            logger.warning("[super_enhance/bot_dialog] 翻主人会话失败，照常记这句（%s）", umo, exc_info=True)
+            return False
+        if not isinstance(history, list):
+            return False
+        for message in reversed(history[-RECORD_LOOKBACK:]):
+            text = _text_of(message)
+            at = _record_moment(text, since)
+            if at is None:
+                continue
+            if at < since:
+                return False  # 再往前的记录都在这句说出口之前
+            if line in text:
+                return True
+        return False
+
     @staticmethod
     async def _last_message(conv_mgr, umo: str, role: str):
+        """这个会话里最后一条有字的 role 消息：(纯文本, 它的时间)，没有就 ("", None)。"""
         cid = await conv_mgr.get_curr_conversation_id(umo)
         if not cid:
-            return "", ""
+            return "", None
         conv = await conv_mgr.get_conversation(umo, cid)
         if conv is None:
-            return "", ""
+            return "", None
         try:
             history = json.loads(getattr(conv, "history", "") or "[]")
         except Exception:
-            return "", ""
+            return "", None
         if not isinstance(history, list):
-            return "", ""
+            return "", None
         for message in reversed(history):
             if not isinstance(message, dict) or message.get("role") != role:
                 continue
             text = _text_of(message)
             if text:
-                return text, _stamp_of(message)
-        return "", ""
+                return text, _moment_of(message)
+        return "", None
 
     async def _append_to_history(self, umo: str, text: str) -> None:
         conv_mgr = getattr(self.context, "conversation_manager", None)

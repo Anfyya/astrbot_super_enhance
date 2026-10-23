@@ -113,9 +113,10 @@ class SuperEnhance(Star):
         self.life = LifeStateService(
             context, SectionConfig(raw, "life_state"), data_dir
         )
-        # 发给模型时把历史写成一段「最近的聊天记录」（存档不动）
+        # 发给模型时把历史写成一段「最近的聊天记录」（存档不动）；两个机器人私聊时对面写对方的名字
         self.transcript = HistoryTranscriptFeature(
-            SectionConfig(raw, "history_transcript"), life=self.life
+            SectionConfig(raw, "history_transcript"), life=self.life,
+            peer_name=self.bot_dialog.bot_name,
         )
         # 一个字没想的回复（DeepSeek 偶尔跳过思考）不发，原样再要一次
         self.zero_think = ZeroThinkRetryFeature(SectionConfig(raw, "zero_think_retry"))

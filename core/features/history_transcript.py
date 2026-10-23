@@ -9,6 +9,7 @@
 - 思考、工具调用、工具结果不写进去；本轮正在进行的工具调用照常是消息；
 - 主人消息里随手塞的 <system>……</system> 提示只在那一轮起作用，之后的聊天记录里去掉（2026-10-18）；
 - 她自己的话标成「你：」（不写她的名字），免得读着像别人的记录、不知道那是自己说过的（2026-10-16）；
+- 两个机器人私聊的会话里，对面那几句标对方的名字、标题写「你和她最近的聊天记录」，不再写成主人（2026-10-23）；
 - 只改发出去的这一份：AstrBot 回完话会把 ``run_context.messages`` 原样存回会话
   （``internal.py::_save_to_history``），所以不能改 ``req.contexts``，会把存档冲掉。
   这里包装 ``ToolLoopAgentRunner``：``reset`` 之后记下本轮那条用户消息，
@@ -56,11 +57,12 @@ def _text(message: dict) -> str:
     return ""
 
 
-def render_lines(history: list) -> tuple[list[str], str, list[str]]:
+def render_lines(history: list, other: str = "主人") -> tuple[list[str], str, list[str]]:
     """历史 → (原话行「[10-15 12:18] 主人：……」「[10-15 12:19] 你：……」, 前情备忘, 摘录行)。
 
     /compact v2 写进去的样子：第一条是前情备忘，紧跟着几段摘录（没有时间戳标签），
     再往后是原样保留的对话（每条都带时间戳标签）。
+    ``other`` 是对面说话的人：平时是主人，两个机器人私聊时是对方的名字。
     """
     lines, memo, excerpts = [], "", []
     in_excerpts = False
@@ -84,7 +86,7 @@ def render_lines(history: list) -> tuple[list[str], str, list[str]]:
                 memo = body.split("\n", 1)[1].strip() if "\n" in body else body
                 in_excerpts = True
             continue
-        who = "主人" if role == "user" else "你"
+        who = other if role == "user" else "你"
         stamp = hit.group(1) if hit else ""
         pre = PRE_RE.match(body)  # 摘录里主人那几句的时间写在正文开头
         if pre:
@@ -98,8 +100,8 @@ def render_lines(history: list) -> tuple[list[str], str, list[str]]:
     return lines, memo, excerpts
 
 
-def build_block(history: list, label: str, recent: int, include_memo: bool) -> tuple[str, int]:
-    lines, memo, excerpts = render_lines(history)
+def build_block(history: list, label: str, recent: int, include_memo: bool, other: str = "主人") -> tuple[str, int]:
+    lines, memo, excerpts = render_lines(history, other)
     kept = lines[-recent:] if recent > 0 else lines
     parts = []
     if include_memo and memo:
@@ -107,7 +109,7 @@ def build_block(history: list, label: str, recent: int, include_memo: bool) -> t
         if excerpts:
             parts.append("【更早的几段聊天原话（摘录，中间有省略；「你：」是你自己说的）】\n" + "\n".join(excerpts))
     if kept:
-        parts.append("【你和主人最近的聊天记录（按时间先后；「你：」那几句就是你（%s）自己发给主人的消息）】\n" % label
+        parts.append("【你和%s最近的聊天记录（按时间先后；「你：」那几句就是你（%s）自己发给%s的消息）】\n" % (other, label, other)
                      + "\n".join(kept))
     return "\n\n".join(parts), len(kept)
 
@@ -149,7 +151,7 @@ def _turn_start(contexts: list, index: int) -> int:
     return start
 
 
-def transform(contexts: list, turn_message, label: str, recent: int, include_memo: bool):
+def transform(contexts: list, turn_message, label: str, recent: int, include_memo: bool, other: str = "主人"):
     """把本轮那条用户消息之前的历史换成系统提示里的一段聊天记录。找不到本轮消息就返回 None。"""
     index = next((i for i, m in enumerate(contexts) if m is turn_message), None)
     if index is None:
@@ -158,7 +160,7 @@ def transform(contexts: list, turn_message, label: str, recent: int, include_mem
     head, rest = contexts[:index], contexts[index:]
     system = head[0] if head and _dump(head[0]).get("role") == "system" else None
     history = head[1:] if system is not None else head
-    block, kept = build_block(history, label, recent, include_memo)
+    block, kept = build_block(history, label, recent, include_memo, other)
     if system is not None:
         text = _text(_dump(system))
         new_system = _with_content(system, (text + "\n\n" + block) if block else text)
@@ -171,9 +173,11 @@ def transform(contexts: list, turn_message, label: str, recent: int, include_mem
 class HistoryTranscriptFeature:
     """普通聊天和主动对话都改成「聊天记录」写法（只管配置里的会话）。"""
 
-    def __init__(self, config, life=None) -> None:
+    def __init__(self, config, life=None, peer_name=None) -> None:
         self.config = config
         self.life = life
+        # 会话那头的 QQ 号 → 是另一个机器人就给她的名字，不是就空（bot_dialog.bot_name）
+        self.peer_name = peer_name
         self._patches: list = []
 
     @property
@@ -192,6 +196,15 @@ class HistoryTranscriptFeature:
             return str(self.life.scene.label_for(bot)) if self.life is not None else bot
         except Exception:
             return bot
+
+    def _other(self, umo: str) -> str:
+        """聊天记录里对面那个人怎么写：两个机器人私聊写对方的名字，别的都是主人。"""
+        peer = umo.rsplit(":", 1)[-1].strip()
+        try:
+            name = str(self.peer_name(peer) or "").strip() if self.peer_name is not None else ""
+        except Exception:
+            name = ""
+        return name or "主人"
 
     def _applies(self, umo: str) -> bool:
         sessions = [str(s).strip() for s in (self.config.get("sessions") or []) if str(s).strip()]
@@ -215,7 +228,7 @@ class HistoryTranscriptFeature:
         bot = bot_of_umo(umo)
         setattr(req, MARK_ATTR, {
             "umo": umo, "label": self._label(bot), "recent": self.recent,
-            "memo": bool(self.config.get("include_memo", True)),
+            "memo": bool(self.config.get("include_memo", True)), "other": self._other(umo),
         })
 
     async def on_llm_request(self, event, req) -> None:
@@ -256,7 +269,8 @@ class HistoryTranscriptFeature:
                 if info and isinstance(contexts, list):
                     try:
                         opts = info["opts"]
-                        done = transform(contexts, info["turn"], opts["label"], opts["recent"], opts["memo"])
+                        done = transform(contexts, info["turn"], opts["label"], opts["recent"], opts["memo"],
+                                         opts.get("other", "主人"))
                         if done is None:
                             if not info["logged"]:
                                 logger.warning("[super_enhance/transcript] %s 找不到本轮消息（上下文被压缩过？），这次照原样发", opts["umo"])
