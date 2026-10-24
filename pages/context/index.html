@@ -7941,10 +7941,12 @@
   }, 30000);
 
   /* ================= 启动 ================= */
+  // 面板网页聊天（webchat）多是试模型用的，不跟着新消息往前排，统一放最后
+  function isWebchat(c) { return String(c.umo || "").split(":")[0] === "webchat"; }
   function loadConvs() {
     return api("ctx/conversations").then(function (d) {
       var list = (d && d.conversations) || [];
-      list.sort(function (a, b) { return (b.updated_at || 0) - (a.updated_at || 0); });
+      list.sort(function (a, b) { return (isWebchat(a) - isWebchat(b)) || (b.updated_at || 0) - (a.updated_at || 0); });
       S.convs = list;
       S.convErr = "";
       renderSide();
