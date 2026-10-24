@@ -85,6 +85,9 @@ class ReplyGuardFeature:
             logger.debug("[super_enhance/reply_guard] 指令消息跳过新消息优先")
             return
         umo = event.unified_msg_origin
+        if str(umo or "").split(":")[0] == "webchat":
+            # 面板网页聊天不参与「新消息优先」（2026-10-24 用户要求）：这一轮不登记，后面几个钩子查不到也就都不管
+            return
         previous = self._turn.get(umo)
         if (
             previous
