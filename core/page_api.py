@@ -99,6 +99,19 @@ def _text_parts(item: dict) -> tuple[list[str], list[str], int]:
     return texts, thinks, images
 
 
+def _pictures(item: dict) -> list[str]:
+    """这条里存着的图（AstrBot 存在历史里的 data URI），网页直接拿来显示。"""
+    out = []
+    content = item.get("content")
+    for part in content if isinstance(content, list) else []:
+        if isinstance(part, dict) and str(part.get("type") or "").lower() == "image_url":
+            image = part.get("image_url")
+            url = image.get("url") if isinstance(image, dict) else image
+            if isinstance(url, str) and url.startswith("data:image/"):
+                out.append(url)
+    return out
+
+
 def _stamp_of(text: str) -> str:
     for regex in _STAMP_RES:
         match = regex.search(text or "")
@@ -1414,10 +1427,12 @@ class ContextPageApi:
                     fn = call.get("function") or {}
                     tool_names[str(call["id"])] = str(fn.get("name") or "")
 
+        drawer = getattr(self.plugin, "image_gen", None)
         items = []
         for index in range(start, end):
             item = history[index]
             texts, thinks, images = _text_parts(item)
+            pictures = _pictures(item)
             calls = []
             for call in item.get("tool_calls") or []:
                 if not isinstance(call, dict):
@@ -1433,6 +1448,12 @@ class ContextPageApi:
             text = "\n".join(texts)
             reason = "\n".join(thinks)
             tool_id = str(item.get("tool_call_id") or "")
+            if drawer is not None and tool_names.get(tool_id) == "draw_image" and text.startswith("画好了："):
+                # 她画的图不在历史里（存成文件了）：画好那条回包下面按编号显示存着的小图
+                for image_id in dict.fromkeys(re.findall(r"img\d+", text.split("。", 1)[0])):
+                    uri = drawer.view_uri(image_id)
+                    if uri:
+                        pictures.append(uri)
             content = item.get("content")
             if isinstance(content, str):
                 editable = True
@@ -1454,6 +1475,7 @@ class ContextPageApi:
                     or isinstance(item.get("reasoning_content"), str)
                     or str(item.get("role") or "") == "assistant",
                     "images": images,
+                    "pictures": pictures,
                     "tool_calls": calls,
                     "tool_call_id": tool_id,
                     "tool_name": tool_names.get(tool_id, ""),

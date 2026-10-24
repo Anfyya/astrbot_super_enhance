@@ -338,6 +338,13 @@ class ImageGenFeature:
         self._keep_view(image_id, name, mime, b64)
         return mime, b64
 
+    def view_uri(self, image_id: str) -> str:
+        """这张图回看用的小图写成 data URI（网页上下文页显示用）；没有这张就空。"""
+        image_id = str(image_id or "").lower()
+        item = self._load_index()["items"].get(image_id)
+        view = self._recall_view(image_id, item) if isinstance(item, dict) else None
+        return "data:%s;base64,%s" % view if view else ""
+
     def attach_images(self, message, images: list, other: str = "主人"):
         """聊天记录里的图（history_transcript.recent_images 挑好的，按先后）放进本轮那条用户消息的副本里给她看：
         她发出去的用这里存的小图（画图关了就不带），对面发来的用历史里那份。
