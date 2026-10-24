@@ -174,7 +174,7 @@ class ImageGenFeature:
 
     @staticmethod
     def _latest(index: dict, bot: str) -> str:
-        mine = [k for k, v in index["items"].items() if v.get("bot") == bot]
+        mine = [k for k, v in index["items"].items() if v.get("bot") == bot and not v.get("deleted")]
         return max(mine, key=lambda k: int(k[3:])) if mine else ""
 
     async def _refs(self, event, umo: str, bot: str, use_sent: bool, use_last: bool, notes: list) -> list:
@@ -286,6 +286,8 @@ class ImageGenFeature:
             return "没发：%s。" % ("没有 %s 这张图" % key if key else "你还没画过图")
         if item.get("bot") != bot:
             return "没发：%s 不是你画的。" % key
+        if item.get("deleted"):
+            return "没发：%s 已经删掉了。" % key
         path = self.dir / str(item.get("file") or "")
         if not path.exists():
             return "没发：%s 的图文件找不到了。" % key
@@ -318,7 +320,9 @@ class ImageGenFeature:
             logger.warning("[super_enhance/image] %s 回看用的小图没存下来", image_id, exc_info=True)
 
     def _recall_view(self, image_id: str, item: dict):
-        """回看用的小图 (mime, base64)：内存里有就用，再看存着的小图文件，都没有就从原图缩一张存下来；图没了就 None。"""
+        """回看用的小图 (mime, base64)：内存里有就用，再看存着的小图文件，都没有就从原图缩一张存下来；图没了、删了就 None。"""
+        if item.get("deleted"):
+            return None
         if image_id in self._views:
             return self._views[image_id]
         name = str(item.get("file") or "")
@@ -339,11 +343,82 @@ class ImageGenFeature:
         return mime, b64
 
     def view_uri(self, image_id: str) -> str:
-        """这张图回看用的小图写成 data URI（网页上下文页显示用）；没有这张就空。"""
+        """这张图回看用的小图写成 data URI（网页上下文页显示用）；没有这张、删了就空。"""
         image_id = str(image_id or "").lower()
         item = self._load_index()["items"].get(image_id)
         view = self._recall_view(image_id, item) if isinstance(item, dict) else None
         return "data:%s;base64,%s" % view if view else ""
+
+    def is_deleted(self, image_id: str) -> bool:
+        item = self._load_index()["items"].get(str(image_id or "").lower())
+        return bool(isinstance(item, dict) and item.get("deleted"))
+
+    def _retire(self, item: dict, stamp: str) -> list[str]:
+        """这张的原图和小图挪进 images/old/（文件名后面加上时间），不真删；返回挪过去的文件名。"""
+        moved = []
+        old = self.dir / "old"
+        name = str(item.get("file") or "")
+        for path in (self.dir / name, self._view_path(name)) if name else ():
+            if path.exists():
+                old.mkdir(parents=True, exist_ok=True)
+                target = old / ("%s.%s%s" % (path.stem, stamp, path.suffix))
+                path.replace(target)
+                moved.append(target.name)
+        return moved
+
+    def replace_image(self, image_id: str, data_uri: str) -> str:
+        """网页上把她画的这张换成别的图：原图、小图挪进 old/ 留着，新的存成这个编号的原图（最长边不超过 2560 的 JPEG）
+        和小图；之后网页显示、给她回看的都是新的（QQ 上已经发出去的那张撤不回）。成了返回空，不成返回原因。"""
+        image_id = str(image_id or "").lower()
+        index = self._load_index()
+        item = index["items"].get(image_id)
+        if not isinstance(item, dict):
+            return "没有 %s 这张图" % image_id
+        match = re.match(r"^data:image/[\w.+-]+;base64,([A-Za-z0-9+/=\s]+)$", str(data_uri or ""))
+        try:
+            from PIL import Image
+
+            img = Image.open(io.BytesIO(base64.b64decode(re.sub(r"\s+", "", match.group(1))))) if match else None
+            if img is None:
+                return "%s：传上来的不是图片" % image_id
+            img = img.convert("RGB")
+            img.thumbnail((2560, 2560))
+            out = io.BytesIO()
+            img.save(out, "JPEG", quality=90)
+        except Exception:
+            logger.warning("[super_enhance/image] %s 换图读不出来", image_id, exc_info=True)
+            return "%s：传上来的图读不出来" % image_id
+        stamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        moved = self._retire(item, stamp)
+        name = "%s.jpg" % Path(str(item.get("file") or image_id)).stem
+        data = out.getvalue()
+        self.dir.mkdir(parents=True, exist_ok=True)
+        (self.dir / name).write_bytes(data)
+        self._views.pop(image_id, None)
+        mime, b64, dims = preview_of(data)
+        self._keep_view(image_id, name, mime, b64)
+        item.update(file=name, size=dims or item.get("size"))
+        item.pop("deleted", None)
+        item.setdefault("edits", []).append({"at": stamp, "what": "换了一张", "old": moved})
+        self._save_index(index)
+        logger.info("[super_enhance/image] 网页上换了 %s（原来的挪进 old/：%s）", image_id, "、".join(moved) or "没有")
+        return ""
+
+    def delete_image(self, image_id: str) -> str:
+        """网页上删掉她画的这张：原图、小图挪进 old/ 留着，编号记成删了；之后网页不显示、不给她回看、也发不了。"""
+        image_id = str(image_id or "").lower()
+        index = self._load_index()
+        item = index["items"].get(image_id)
+        if not isinstance(item, dict):
+            return "没有 %s 这张图" % image_id
+        stamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        moved = self._retire(item, stamp)
+        self._views.pop(image_id, None)
+        item["deleted"] = stamp
+        item.setdefault("edits", []).append({"at": stamp, "what": "删了", "old": moved})
+        self._save_index(index)
+        logger.info("[super_enhance/image] 网页上删了 %s（挪进 old/：%s）", image_id, "、".join(moved) or "没有")
+        return ""
 
     def attach_images(self, message, images: list, other: str = "主人"):
         """聊天记录里的图（history_transcript.recent_images 挑好的，按先后）放进本轮那条用户消息的副本里给她看：

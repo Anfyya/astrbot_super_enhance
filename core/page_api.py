@@ -1248,6 +1248,12 @@ class ContextPageApi:
             "上下文页面：编辑条目正文 / 思考链",
         )
         register(
+            f"{PAGE_API_PREFIX}/drawn",
+            self.edit_drawn,
+            ["POST"],
+            "上下文页面：她画的图换一张 / 删掉",
+        )
+        register(
             f"{PAGE_API_PREFIX}/append",
             self.append_item,
             ["POST"],
@@ -1504,11 +1510,14 @@ class ContextPageApi:
             tool_id = str(item.get("tool_call_id") or "")
             drawn = []
             if drawer is not None and tool_names.get(tool_id) == "draw_image" and text.startswith("画好了："):
-                # 她画的图不在历史里（存成文件了）：画好那条回包下面按编号显示存着的小图（只看，不能在这儿改）
+                # 她画的图不在历史里（存成文件了）：画好那条回包下面按编号显示存着的小图，换图、删图走 ctx/drawn
                 for image_id in dict.fromkeys(re.findall(r"img\d+", text.split("。", 1)[0])):
+                    if drawer.is_deleted(image_id):
+                        drawn.append({"id": image_id, "url": "", "deleted": True})
+                        continue
                     uri = drawer.view_uri(image_id)
                     if uri:
-                        drawn.append(uri)
+                        drawn.append({"id": image_id, "url": uri})
             content = item.get("content")
             if isinstance(content, str):
                 editable = True
@@ -1703,6 +1712,30 @@ class ContextPageApi:
                 "estimate_tokens": tokens,
             }
         )
+
+    async def edit_drawn(self):
+        """她画的图（按编号，存在图片文件夹里）：changes = [{"id": "img3", "image": data URI} 换一张 / {"id", "delete": true} 删掉]。"""
+        payload = await request.get_json(silent=True) or {}
+        changes = payload.get("changes") if isinstance(payload, dict) else None
+        if not isinstance(changes, list) or not changes:
+            return _err("缺少要改的图")
+        drawer = getattr(self.plugin, "image_gen", None)
+        if drawer is None:
+            return _err("画图没装上")
+        done, failed = [], []
+        for change in changes:
+            image_id = str((change or {}).get("id") or "").strip().lower() if isinstance(change, dict) else ""
+            if not re.fullmatch(r"img\d+", image_id):
+                failed.append("编号不对：%s" % image_id)
+                continue
+            if change.get("delete"):
+                why = drawer.delete_image(image_id)
+            else:
+                why = drawer.replace_image(image_id, str(change.get("image") or ""))
+            (failed if why else done).append(why or image_id)
+        if failed and not done:
+            return _err("；".join(failed))
+        return _ok({"done": done, "failed": failed})
 
     async def clear_think(self):
         """删思考链：给了 indexes 只删这几条的，没给就删整段对话的（先备份，能用「撤销」退回）。"""

@@ -323,6 +323,8 @@
   .imged img.big{width:auto;height:auto;max-width:min(520px,80vw);object-fit:contain;cursor:zoom-out}
   .imged .rm{position:absolute;top:-7px;right:-7px;width:22px;height:22px;padding:0;border-radius:50%;border:1px solid var(--line2);background:var(--bg);color:var(--t2);font-size:14px;line-height:20px;cursor:pointer}
   .imged .rm:hover{color:var(--danger);border-color:var(--danger)}
+  .imged .cap{display:flex;align-items:center;gap:6px;margin-top:4px;font-size:12px;color:var(--t3)}
+  .imged .ph-img{width:96px;height:96px;border-radius:10px;border:1px dashed var(--line2);display:flex;align-items:center;justify-content:center;color:var(--t3);font-size:12px}
   details.call{border:1px solid var(--line);border-radius:12px;font-size:12.5px;background:var(--bg);overflow:hidden}
   details.call>summary{list-style:none;min-height:36px;padding:0 14px;display:flex;align-items:center;gap:6px;color:var(--t2);cursor:pointer}
   details.call>summary:hover{background:var(--hover)}
@@ -2128,14 +2130,17 @@
 
   // 这条带的图：消息里存着的（主人发的、网页上放的）、她画的（画好那条回包下面，存着的小图）；点一下放大 / 缩回
   function picsEl(it) {
-    var pics = (it.pictures || []).concat(it.drawn || []);
-    if (!pics.length) { return null; }
+    var drawn = it.drawn || [];
+    var pics = (it.pictures || []).concat(drawn.filter(function (d) { return d.url; }).map(function (d) { return d.url; }));
+    var gone = drawn.filter(function (d) { return d.deleted; });
+    if (!pics.length && !gone.length) { return null; }
     var w = h("div", { class: "pics" });
     pics.forEach(function (src) {
       var img = h("img", { src: src, alt: "图片", loading: "lazy" });
       img.addEventListener("click", function (ev) { ev.stopPropagation(); img.classList.toggle("big"); });
       w.appendChild(img);
     });
+    gone.forEach(function (d) { w.appendChild(h("span", { class: "tag", text: d.id + " 已删掉" })); });
     return w;
   }
 
@@ -2388,20 +2393,65 @@
     (it.tool_calls || []).forEach(function (c) { tags.appendChild(h("span", { class: "tag" }, icon("tool"), c.name || "?")); });
     body.appendChild(tags);
     var canPic = it.role === "user" || it.role === "assistant";
-    if (!canPic) {
-      var pics = picsEl(it);
-      if (pics) { body.appendChild(pics); }
-    }
 
     var save = h("button", { class: "btn pri", type: "button", text: "保存", disabled: true, title: "⌘/Ctrl + Enter" });
     var taText = null, taThink = null;
     // 这条要留下的图：一开始是存着的那几张，网页上加、删只改这份，点保存才写回
     var imgs = { orig: (it.pictures || []).slice(), list: (it.pictures || []).slice() };
+    // 她画的图（画好那条回包下面）：每张记下要换成哪张 / 删掉，点保存才走 ctx/drawn
+    var draws = { list: (it.drawn || []).map(function (d) { return { id: d.id, url: d.url, deleted: !!d.deleted, change: null }; }) };
     var markDirty = function () {
-      var d = (taText && taText.value !== parts.body) || (taThink && taThink.value !== (it.think || "")) || imgs.list.join("\n") !== imgs.orig.join("\n");
+      var d = (taText && taText.value !== parts.body) || (taThink && taThink.value !== (it.think || "")) || imgs.list.join("\n") !== imgs.orig.join("\n")
+        || draws.list.some(function (x) { return !!x.change; });
       st.dirty = !!d;
       save.disabled = !d;
     };
+
+    if (draws.list.length) {
+      var fDraw = h("div", { class: "fld" });
+      var drawDraws = function () {
+        clear(fDraw);
+        fDraw.appendChild(h("div", { class: "fld-l" }, h("span", { text: "她画的图" })));
+        var row = h("div", { class: "imged" });
+        draws.list.forEach(function (d) {
+          var gone = d.change ? !!d.change.delete : d.deleted;
+          var src = d.change && d.change.image ? d.change.image : d.url;
+          var cell = h("div", { class: "one" });
+          if (!gone && src) {
+            var img = h("img", { src: src, alt: d.id });
+            img.addEventListener("click", function () { img.classList.toggle("big"); });
+            cell.appendChild(img);
+          } else {
+            cell.appendChild(h("div", { class: "ph-img", text: "已删掉" }));
+          }
+          var pick = h("input", { type: "file", accept: "image/*", style: "display:none" });
+          pick.addEventListener("change", function () {
+            var f = pick.files && pick.files[0];
+            pick.value = "";
+            if (!f) { return; }
+            readImage(f).then(function (url) { d.change = { image: url }; drawDraws(); markDirty(); })
+              .catch(function (e) { toast("图片没换上：" + errMsg(e), { err: true }); });
+          });
+          var swap = h("button", { class: "btn quiet sm", type: "button", text: "换一张" });
+          swap.addEventListener("click", function () { pick.click(); });
+          cell.appendChild(h("div", { class: "cap" }, h("span", { text: d.id + (d.change ? (d.change.delete ? " · 要删" : " · 要换") : "") }), swap));
+          if (!gone) {
+            var rm = h("button", { class: "rm", type: "button", title: "删掉这张（保存后生效）", text: "×" });
+            rm.addEventListener("click", function () { d.change = { delete: true }; drawDraws(); markDirty(); });
+            cell.appendChild(rm);
+          }
+          cell.appendChild(pick);
+          row.appendChild(cell);
+        });
+        fDraw.appendChild(row);
+        fDraw.appendChild(h("div", { class: "fld-n", text: "换一张：之后网页上和给她回看的都是新图（QQ 上已经发出去的那张撤不回）。删掉：不再显示、不再带给她，也发不了。原来的图挪进图片文件夹的 old/ 里留着。" }));
+      };
+      drawDraws();
+      body.appendChild(fDraw);
+    } else if (!canPic) {
+      var pics = picsEl(it);
+      if (pics) { body.appendChild(pics); }
+    }
 
     // 正文
     var f1 = h("div", { class: "fld" }, h("div", { class: "fld-l" }, h("span", { text: it.role === "tool" ? "回包内容" : "正文" })));
@@ -2505,7 +2555,7 @@
     armed(del, "确认删除", function () { doDelete([it.i]); });
     var ins = h("button", { class: "btn quiet", type: "button", title: "在这条后面插入一条" }, icon("insert"), "在下方插入");
     ins.addEventListener("click", function () { startCompose(it.i); });
-    save.addEventListener("click", function () { doSave(it, parts, taText, taThink, save, imgs); });
+    save.addEventListener("click", function () { doSave(it, parts, taText, taThink, save, imgs, draws); });
     box.appendChild(h("div", { class: "pf" }, del, h("span", { class: "grow" }), ins, save));
   }
 
@@ -2534,16 +2584,22 @@
     });
   }
 
-  function doSave(it, parts, taText, taThink, btn, imgs) {
+  function doSave(it, parts, taText, taThink, btn, imgs, draws) {
     var payload = { cid: S.cid, index: it.i };
     if (taText && taText.value !== parts.body) { payload.text = joinReminder(taText.value, parts.tags); }
     if (taThink && taThink.value !== (it.think || "")) { payload.think = taThink.value; }
     if (imgs && imgs.list.join("\n") !== imgs.orig.join("\n")) { payload.images = imgs.list.slice(); }
-    if (payload.text === undefined && payload.think === undefined && payload.images === undefined) { return; }
+    var edits = payload.text !== undefined || payload.think !== undefined || payload.images !== undefined;
+    var changes = (draws ? draws.list : []).filter(function (d) { return d.change; }).map(function (d) { return Object.assign({ id: d.id }, d.change); });
+    if (!edits && !changes.length) { return; }
     btn.disabled = true;
-    post("ctx/edit", payload).then(function () {
+    (edits ? post("ctx/edit", payload) : Promise.resolve(null)).then(function () {
+      return changes.length ? post("ctx/drawn", { changes: changes }) : null;
+    }).then(function (r) {
       if (S.insp) { S.insp.dirty = false; }
-      toast("已保存 #" + it.i, { action: { label: "撤销", run: function () { doUndo(true); } } });
+      var failed = r && r.failed && r.failed.length ? "；没改成：" + r.failed.join("；") : "";
+      // 撤销只管存档里的改动；她画的图换了 / 删了，原图在图片文件夹的 old/ 里
+      toast("已保存 #" + it.i + failed, edits ? { action: { label: "撤销", run: function () { doUndo(true); } } } : {});
       return loadHistory("keep");
     }).catch(function (e) {
       btn.disabled = false;
