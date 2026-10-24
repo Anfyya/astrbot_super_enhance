@@ -7,6 +7,10 @@
 - 会话开头有 /compact v2 的前情备忘和原话摘录就放在最前面，后面是备忘之后的全部原话
   （配合每天 0 点自动压缩：昨晚最后几句 + 今天的）；也可以只放最近 N 条；
 - 思考、工具调用、工具结果不写进去；本轮正在进行的工具调用照常是消息；
+  画图的两个工具例外（2026-10-24）：draw_image 写成一行「（你用 draw_image 画了 img2……写给画图模型的画面：……）」，
+  send_image 发出去了写成「你：[图片 img2]」；
+- 聊天记录里的图不丢（2026-10-24）：她发出去的、主人发来的，按先后取最近 IMAGE_KEEP 张，放进本轮那条用户消息的副本里
+  （``attach``，接 image_gen.attach_images），原消息不动、存档里不会多出图；
 - 主人消息里随手塞的 <system>……</system> 提示只在那一轮起作用，之后的聊天记录里去掉（2026-10-18）；
 - 她自己的话标成「你：」（不写她的名字），免得读着像别人的记录、不知道那是自己说过的（2026-10-16）；
 - 两个机器人私聊的会话里，对面那几句标对方的名字、标题写「你和她最近的聊天记录」，不再写成主人（2026-10-23）；
@@ -17,6 +21,7 @@
 """
 
 import datetime
+import json
 import re
 
 from astrbot.api import logger
@@ -33,6 +38,13 @@ MEMO_PREFIX = "（前情备忘："
 NOTE_MARK = "系统代发"
 # 本轮那条前面紧挨着、还没回的主人消息，离本轮不超过这么久的也算本轮（连发几句、上一句的回复被作废）（分钟）
 TURN_PULL_MINUTES = 5
+# 聊天记录里照样写出来的工具（画图的两个）；别的工具调用不写
+DRAW_TOOLS = ("draw_image", "send_image")
+IMG_ID_RE = re.compile(r"img\d+", re.IGNORECASE)
+# 画图那一行里提示词最多写这么多字
+PROMPT_CLIP = 200
+# 聊天记录里的图（她发出去的、对面发来的一起算）每轮最多带最近几张给她看
+IMAGE_KEEP = 6
 
 
 def _dump(message) -> dict:
@@ -57,6 +69,93 @@ def _text(message: dict) -> str:
     return ""
 
 
+def _tool_results(history: list) -> dict:
+    """工具调用编号 → 工具结果的文字。"""
+    out = {}
+    for raw in history:
+        message = _dump(raw)
+        if message.get("role") == "tool" and message.get("tool_call_id"):
+            out[str(message["tool_call_id"])] = _text(message)
+    return out
+
+
+def _draw_lines(message: dict, results: dict) -> list[tuple[str, str]]:
+    """这条里画图工具的调用写成聊天记录里的几行：[(那一行（不带时间）, 发出去的图的编号，没发就空)]。"""
+    out = []
+    for call in message.get("tool_calls") or []:
+        call = _dump(call)
+        fn = call.get("function") or {}
+        name = str(fn.get("name") or "")
+        if name not in DRAW_TOOLS:
+            continue
+        try:
+            args = json.loads(fn.get("arguments") or "{}")
+        except (TypeError, ValueError):
+            args = {}
+        args = args if isinstance(args, dict) else {}
+        result = " ".join(str(results.get(str(call.get("id") or ""), "")).split())
+        if name == "draw_image":
+            prompt = " ".join(str(args.get("prompt") or "").split())
+            if len(prompt) > PROMPT_CLIP:
+                prompt = prompt[: PROMPT_CLIP - 1] + "…"
+            if result.startswith("画好了："):
+                out.append(("（你用 draw_image 画了 %s，写给画图模型的画面：%s）" % (result[4:].split("。", 1)[0], prompt), ""))
+            elif result:
+                out.append(("（你用 draw_image 想画一张，%s；写的画面：%s）" % (result.split("。", 1)[0], prompt), ""))
+            else:
+                out.append(("（你用 draw_image 画图，写的画面：%s）" % prompt, ""))
+            continue
+        hit = IMG_ID_RE.search(result) or IMG_ID_RE.search(str(args.get("id") or ""))
+        image_id = hit.group(0).lower() if hit else ""
+        if image_id and "已经发给对方了" in result:
+            out.append(("你：[图片 %s]" % image_id, image_id))
+        elif result:
+            out.append(("（你想用 send_image 发%s，%s）" % (" " + image_id if image_id else "图", result.rstrip("。")), ""))
+    return out
+
+
+def history_images(history: list) -> list[dict]:
+    """聊天记录里的图，按先后：她用 send_image 真发出去的 {"mine": True, "id", "stamp"}；
+    对面（主人）发来的 {"mine": False, "url", "stamp", "nth", "count"}，url 是 AstrBot 原样存在历史里的 data URI。"""
+    results = _tool_results(history)
+    out = []
+    for raw in history:
+        message = _dump(raw)
+        role = message.get("role")
+        hit = TIME_RE.search(_text(message))
+        stamp = hit.group(1) if hit else ""
+        if role == "assistant" and message.get("tool_calls"):
+            out += [{"mine": True, "id": image_id, "stamp": stamp} for _line, image_id in _draw_lines(message, results) if image_id]
+        elif role == "user" and isinstance(message.get("content"), list):
+            urls = []
+            for part in message["content"]:
+                image = part.get("image_url") if isinstance(part, dict) and part.get("type") == "image_url" else None
+                url = image.get("url") if isinstance(image, dict) else image
+                if isinstance(url, str) and url.startswith("data:image/"):
+                    urls.append(url)
+            out += [{"mine": False, "url": url, "stamp": stamp, "nth": n, "count": len(urls)} for n, url in enumerate(urls, 1)]
+    return out
+
+
+def sent_images(history: list) -> list[tuple[str, str]]:
+    """聊天记录里她用 send_image 真发出去的图：[(编号, 时间 MM-DD HH:MM)]，按先后。"""
+    return [(item["id"], item["stamp"]) for item in history_images(history) if item["mine"]]
+
+
+def recent_images(history: list) -> list[dict]:
+    """要带给她回看的图：聊天记录里的图按先后，她同一张发过几回只算最后一回，取最近 IMAGE_KEEP 张。"""
+    picked, seen = [], set()
+    for item in reversed(history_images(history)):
+        if item["mine"]:
+            if item["id"] in seen:
+                continue
+            seen.add(item["id"])
+        picked.append(item)
+        if len(picked) >= IMAGE_KEEP:
+            break
+    return picked[::-1]
+
+
 def render_lines(history: list, other: str = "主人") -> tuple[list[str], str, list[str]]:
     """历史 → (原话行「[10-15 12:18] 主人：……」「[10-15 12:19] 你：……」, 前情备忘, 摘录行)。
 
@@ -66,6 +165,7 @@ def render_lines(history: list, other: str = "主人") -> tuple[list[str], str, 
     """
     lines, memo, excerpts = [], "", []
     in_excerpts = False
+    results = _tool_results(history)
     for raw in history:
         message = _dump(raw)
         role = message.get("role")
@@ -77,8 +177,9 @@ def render_lines(history: list, other: str = "主人") -> tuple[list[str], str, 
         body = REMINDER_RE.sub("", text).strip()
         if role == "user":
             body = strip_inline_system(body)
-        if not body:
-            continue  # 只有工具调用、只剩时间戳的那几条
+        drawn = _draw_lines(message, results) if role == "assistant" else []
+        if not body and not drawn:
+            continue  # 只有（画图以外的）工具调用、只剩时间戳的那几条
         if notes:
             body += "".join("（%s）" % note for note in notes)
         if role == "user" and body.startswith(MEMO_PREFIX):
@@ -91,12 +192,14 @@ def render_lines(history: list, other: str = "主人") -> tuple[list[str], str, 
         pre = PRE_RE.match(body)  # 摘录里主人那几句的时间写在正文开头
         if pre:
             stamp, body = stamp or pre.group(1), body[pre.end():]
-        line = "%s%s：%s" % ("[%s] " % stamp if stamp else "", who, " ".join(body.split("\n")))
+        head = "[%s] " % stamp if stamp else ""
+        out = ["%s%s：%s" % (head, who, " ".join(body.split("\n")))] if body or not drawn else []
+        out += [head + line for line, _image_id in drawn]
         if in_excerpts and not REMINDER_RE.search(text):
-            excerpts.append(line)
+            excerpts.extend(out)
             continue
         in_excerpts = False
-        lines.append(line)
+        lines.extend(out)
     return lines, memo, excerpts
 
 
@@ -151,8 +254,11 @@ def _turn_start(contexts: list, index: int) -> int:
     return start
 
 
-def transform(contexts: list, turn_message, label: str, recent: int, include_memo: bool, other: str = "主人"):
-    """把本轮那条用户消息之前的历史换成系统提示里的一段聊天记录。找不到本轮消息就返回 None。"""
+def transform(contexts: list, turn_message, label: str, recent: int, include_memo: bool, other: str = "主人", attach=None):
+    """把本轮那条用户消息之前的历史换成系统提示里的一段聊天记录。找不到本轮消息就返回 None。
+
+    ``attach(本轮那条消息, recent_images 给的图, 对面是谁)`` 给出带上图的副本：聊天记录里的图放进去给她看。
+    """
     index = next((i for i, m in enumerate(contexts) if m is turn_message), None)
     if index is None:
         return None
@@ -167,6 +273,15 @@ def transform(contexts: list, turn_message, label: str, recent: int, include_mem
     else:
         new_system = {"role": "system", "content": block}
     out = ([new_system] if (system is not None or block) else []) + list(rest)
+    images = recent_images(history) if attach is not None else []
+    if images:
+        try:
+            shown = attach(turn_message, images, other)
+        except Exception:
+            logger.error("[super_enhance/transcript] 聊天记录里的图放不进去，这次不带", exc_info=True)
+            shown = turn_message
+        if shown is not turn_message:
+            out = [shown if m is turn_message else m for m in out]
     return out, len(history), kept, len(block)
 
 
@@ -178,6 +293,8 @@ class HistoryTranscriptFeature:
         self.life = life
         # 会话那头的 QQ 号 → 是另一个机器人就给她的名字，不是就空（bot_dialog.bot_name）
         self.peer_name = peer_name
+        # 聊天记录里的图放进本轮那条用户消息的副本（image_gen.attach_images，main.py 里接上）
+        self.attach = None
         self._patches: list = []
 
     @property
@@ -270,7 +387,7 @@ class HistoryTranscriptFeature:
                     try:
                         opts = info["opts"]
                         done = transform(contexts, info["turn"], opts["label"], opts["recent"], opts["memo"],
-                                         opts.get("other", "主人"))
+                                         opts.get("other", "主人"), attach=self.attach)
                         if done is None:
                             if not info["logged"]:
                                 logger.warning("[super_enhance/transcript] %s 找不到本轮消息（上下文被压缩过？），这次照原样发", opts["umo"])

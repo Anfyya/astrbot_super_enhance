@@ -125,6 +125,8 @@ class SuperEnhance(Star):
             context, SectionConfig(raw, "image_gen"), data_dir,
             is_bot=lambda sender: sender in self.bot_dialog.bot_ids,
         )
+        # 聊天记录里的图（她发出去的、主人发来的），之后每轮放进本轮那条用户消息的副本里给她看
+        self.transcript.attach = self.image_gen.attach_images
         # 发消息 / tell 的说明换成写死对象和会话号的中文版（只改这一轮的工具清单）
         self.tool_guide = ToolGuideFeature(
             SectionConfig(raw, "bot_dialog"),
@@ -827,17 +829,20 @@ class SuperEnhance(Star):
         """
         return self.life.tool_look_things(getattr(event, "unified_msg_origin", "") or "", kind, id)
 
+    # 10-24：画的是她眼前看到的、她自己不在画里；说明里不写「相机」「拍照」这类字：她会照抄进 prompt，画图模型就真画出一台相机
     @filter.llm_tool(name="draw_image")
     async def draw_image(
         self, event: AstrMessageEvent, prompt: str, size: str = "", use_sent_images: bool = False, use_last_image: bool = False
     ) -> str:
-        """画一张图，先给你自己看：主人想看图、叫你画点什么、叫你照着他发的图改的时候用。画出来不会直接发给主人。
+        """画一张你这会儿眼前的景象，先给你自己看：主人想看看你那边什么样、想看看什么东西、叫你照着他发的图改的时候用。画出来不会直接发给主人。
 
-        先说一句话再调用（比如「等我一下，这就画」）：画一张要十几秒到一分钟，这期间你发不了消息。和这个工具写在同一条回复里的话，会在工具跑之前先单独发给对方；工具跑完你再说的话会另发一条。
+        画的是从你站着、坐着的地方看过去的样子：你在哪、面前有什么，就画什么。你自己不在画里，主人明说要看你本人的样子才把你画进去。
+
+        先说一句话再调用（比如「等我一下」）：画一张要十几秒到一分钟，这期间你发不了消息。和这个工具写在同一条回复里的话，会在工具跑之前先单独发给对方；工具跑完你再说的话会另发一条。
 
         画好的图会接着放进来给你看。满意了用 send_image 发给主人；不满意就改 prompt 再画，或者 use_last_image=true 在这张上接着改，画到你觉得好了再发。
 
-        画图的模型看不到聊天记录和你的设定，只看 prompt、参考图和分辨率：prompt 把画面写全（画什么、谁、长什么样、在哪、在干什么、什么风格、照片还是画）。
+        画图的模型看不到聊天记录和你的设定，只看 prompt、参考图和分辨率：prompt 只写画面里看得见的东西（有什么、在哪、什么样、光线天色、离得多近、从高处往下看还是平着看），写具体；不用写是谁在看、拿什么看的。
 
         Args:
             prompt (string): 画面描述，写具体。

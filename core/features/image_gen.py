@@ -12,6 +12,10 @@
 她下一次向模型要回复之前（包 ToolLoopAgentRunner._iter_llm_responses_with_fallback），作为一条用户消息放进这一轮的上下文，
 那一步要完回复就拿掉——AstrBot 回完话会把 run_context.messages 原样存回会话，几百 KB 的 base64 不能进存档。
 原图存在插件数据目录 images/，编号 img1、img2……（images/index.json）；send_image 按编号发原图，用 base64（NapCat 在别的容器里，读不到这边的文件）。
+
+聊天记录里的图之后每轮都给她看（2026-10-24）：history_transcript.recent_images 挑出最近几张（她用 send_image 发出去的、
+主人发来的），attach_images 放进本轮那条用户消息的副本里，只改发给模型的那一份、存档不动。
+她发的用这里存的小图：画的时候就存成 <原图名>.view.jpg，之前画的第一次用到时补上；主人发的用 AstrBot 存在历史里的那份。
 """
 
 import asyncio
@@ -39,6 +43,7 @@ PREVIEW_SIDE = 768  # 给她看的预览最长边
 EXT = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
 EXTRA_KEY = "super_enhance_drawn"  # 这一轮画好、还没给她看的图（挂在事件上，不会串到别的轮次）
 TARGET = "_iter_llm_responses_with_fallback"
+VIEW_SUFFIX = ".view.jpg"  # 回看用的小图：<原图名去掉扩展名>.view.jpg
 
 
 def clean_size(text) -> str:
@@ -91,6 +96,8 @@ class ImageGenFeature:
         self.dir = Path(data_dir) / "images"
         self.is_bot = is_bot or (lambda sender: False)
         self._sent: dict[str, tuple[float, list]] = {}  # 会话 → (什么时候发的, 主人发的图)
+        self._views: dict[str, tuple[str, str]] = {}  # 编号 → 回看用的小图 (mime, base64)
+        self._recalled: tuple = ()  # 上次回看带了哪几张（变了才记日志）
         self._patches: list = []
 
     @property
@@ -250,6 +257,7 @@ class ImageGenFeature:
             self.dir.mkdir(parents=True, exist_ok=True)
             (self.dir / name).write_bytes(data)
             view_mime, view_b64, dims = await asyncio.to_thread(preview_of, data)
+            self._keep_view(image_id, name, view_mime, view_b64)
             index["items"][image_id] = {"bot": bot, "file": name, "prompt": prompt[:300], "size": dims,
                                         "at": stamp.strftime("%Y-%m-%d %H:%M"), "sent": []}
             drawn.append({"id": image_id, "mime": view_mime, "b64": view_b64})
@@ -290,6 +298,88 @@ class ImageGenFeature:
         self._save_index(index)
         logger.info("[super_enhance/image] [%s] 发了 %s", bot, key)
         return "%s 已经发给对方了。" % key
+
+    # ---------- 发过的图之后给她回看 ----------
+
+    def _view_path(self, file_name: str) -> Path:
+        return self.dir / (Path(str(file_name)).stem + VIEW_SUFFIX)
+
+    def _keep_view(self, image_id: str, file_name: str, mime: str, b64: str) -> None:
+        """回看用的小图记下来：放进内存，缩好的 JPEG 再存成文件。"""
+        self._views[image_id] = (mime, b64)
+        while len(self._views) > 32:
+            self._views.pop(next(iter(self._views)))
+        if mime != "image/jpeg":
+            return
+        try:
+            self.dir.mkdir(parents=True, exist_ok=True)
+            self._view_path(file_name).write_bytes(base64.b64decode(b64))
+        except Exception:
+            logger.warning("[super_enhance/image] %s 回看用的小图没存下来", image_id, exc_info=True)
+
+    def _recall_view(self, image_id: str, item: dict):
+        """回看用的小图 (mime, base64)：内存里有就用，再看存着的小图文件，都没有就从原图缩一张存下来；图没了就 None。"""
+        if image_id in self._views:
+            return self._views[image_id]
+        name = str(item.get("file") or "")
+        try:
+            view = self._view_path(name)
+            if name and view.exists():
+                got = ("image/jpeg", base64.b64encode(view.read_bytes()).decode())
+                self._views[image_id] = got
+                return got
+            path = self.dir / name
+            if not name or not path.exists():
+                return None
+            mime, b64, _dims = preview_of(path.read_bytes())
+        except Exception:
+            logger.warning("[super_enhance/image] %s 读不出来，回看不带它", image_id, exc_info=True)
+            return None
+        self._keep_view(image_id, name, mime, b64)
+        return mime, b64
+
+    def attach_images(self, message, images: list, other: str = "主人"):
+        """聊天记录里的图（history_transcript.recent_images 挑好的，按先后）放进本轮那条用户消息的副本里给她看：
+        她发出去的用这里存的小图（画图关了就不带），对面发来的用历史里那份。
+        原消息不动（AstrBot 存回会话的是原来那条，存档里不会多出图）；一张都带不上就原样返回。"""
+        if not images:
+            return message
+        saved = self._load_index()["items"] if any(x.get("mine") for x in images) else {}
+        rows = []  # (说明, data URI, 编号)
+        for item in images:
+            when = " %s " % item["stamp"] if item.get("stamp") else ""
+            if item.get("mine"):
+                image_id = str(item.get("id") or "")
+                view = self._recall_view(image_id, saved[image_id]) if self.enabled and isinstance(saved.get(image_id), dict) else None
+                if view:
+                    rows.append(("%s（你%s发给%s的）：" % (image_id, when, other), "data:%s;base64,%s" % view, image_id))
+            else:
+                nth = "，第 %d 张" % item["nth"] if int(item.get("count") or 1) > 1 else ""
+                rows.append(("（%s%s发来的图%s）：" % (other, when, nth), item["url"], None))
+        if not rows:
+            return message
+        head = "（上面聊天记录里的图，按先后放在这儿给你看；你发过的%s都已经看过了，不用再发一遍）" % other
+        if isinstance(message, dict):
+            parts = [{"type": "text", "text": head}]
+            for text, url, _image_id in rows:
+                parts += [{"type": "text", "text": text}, {"type": "image_url", "image_url": {"url": url}}]
+            content = message.get("content")
+            base = list(content) if isinstance(content, list) else [{"type": "text", "text": str(content or "")}]
+            shown = dict(message, content=base + parts)
+        else:
+            from astrbot.core.agent.message import ImageURLPart, TextPart
+
+            parts = [TextPart(text=head)]
+            for text, url, image_id in rows:
+                parts += [TextPart(text=text), ImageURLPart(image_url=ImageURLPart.ImageURL(url=url, id=image_id))]
+            content = getattr(message, "content", None)
+            base = list(content) if isinstance(content, list) else [TextPart(text=str(content or ""))]
+            shown = message.model_copy(update={"content": base + parts})
+        names = tuple(image_id or "%s发来的" % other for _text, _url, image_id in rows)
+        if names != self._recalled:
+            self._recalled = names
+            logger.info("[super_enhance/image] 聊天记录里的图带给她看：%s", "、".join(names))
+        return shown
 
     # ---------- 画好的图放进她的上下文 ----------
 
