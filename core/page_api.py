@@ -7,7 +7,9 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import datetime
+import io
 import json
 import random
 import re
@@ -30,6 +32,13 @@ PAGE_API_PREFIX = f"/{PLUGIN_NAME}/ctx"
 _MAX_BACKUP_FILES = 30
 _POOL_SIMS = 400  # 插曲与消遣页：「明天抽中」按这么多次模拟算
 _DEFAULT_PAGE_SIZE = 200
+# 网页给消息放的图：不超过这么大、最长边也不超过 _IMAGE_SIDE 的原样存，不然缩成最长边 _IMAGE_SIDE 的 JPEG
+_IMAGE_SIDE = 1280
+_IMAGE_KEEP_BYTES = 400 * 1024
+_IMAGES_PER_ITEM = 8
+_DATA_URI_RE = re.compile(r"^data:(image/[\w.+-]+);base64,([A-Za-z0-9+/=\s]+)$")
+# AstrBot 存主人发的图时顺带写的一段字（「[Image 1: original path …]」）；网页改了这条的图就去掉，对不上了
+_IMAGE_NOTE_RE = re.compile(r"^\s*\[Image \d+: original path [^\]]*\]\s*$")
 
 _REMINDER_RE = re.compile(
     r"<system[-_\s]*reminder>.*?</system[-_\s]*reminder>", re.I | re.S
@@ -110,6 +119,51 @@ def _pictures(item: dict) -> list[str]:
             if isinstance(url, str) and url.startswith("data:image/"):
                 out.append(url)
     return out
+
+
+def _shrink_image(url: str) -> str | None:
+    """网页传上来的一张图：只认 data:image/…;base64；不大就原样，太大缩成最长边 _IMAGE_SIDE 的 JPEG。认不出就 None。"""
+    match = _DATA_URI_RE.match(str(url or ""))
+    if not match:
+        return None
+    try:
+        data = base64.b64decode(re.sub(r"\s+", "", match.group(2)))
+        from PIL import Image
+
+        img = Image.open(io.BytesIO(data))
+        img.load()
+    except Exception:
+        return None
+    mime = match.group(1).lower()
+    if len(data) <= _IMAGE_KEEP_BYTES and max(img.size) <= _IMAGE_SIDE and mime in ("image/jpeg", "image/png", "image/webp"):
+        return "data:%s;base64,%s" % (mime, base64.b64encode(data).decode())
+    img = img.convert("RGB")
+    img.thumbnail((_IMAGE_SIDE, _IMAGE_SIDE))
+    out = io.BytesIO()
+    img.save(out, "JPEG", quality=85)
+    return "data:image/jpeg;base64," + base64.b64encode(out.getvalue()).decode()
+
+
+def _apply_images(item: dict, images: list[str]) -> bool:
+    """把这条的图换成 images（按先后）：正文、思考、时间戳不动，图放在最后；图有变动时去掉 AstrBot 那段「[Image N: …]」。"""
+    if _pictures(item) == images:
+        return False
+    content = item.get("content")
+    if content is None:
+        parts = []
+    elif isinstance(content, str):
+        parts = [{"type": "text", "text": content}] if content else []
+    elif isinstance(content, list):
+        parts = [
+            part for part in content
+            if not (isinstance(part, dict) and str(part.get("type") or "").lower() in ("image_url", "image"))
+            and not (isinstance(part, dict) and str(part.get("type") or "text").lower() in ("text", "plain")
+                     and _IMAGE_NOTE_RE.match(str(part.get("text") or "")))
+        ]
+    else:
+        return False
+    item["content"] = parts + [{"type": "image_url", "image_url": {"url": url}} for url in images] or [{"type": "text", "text": ""}]
+    return True
 
 
 def _stamp_of(text: str) -> str:
@@ -1448,12 +1502,13 @@ class ContextPageApi:
             text = "\n".join(texts)
             reason = "\n".join(thinks)
             tool_id = str(item.get("tool_call_id") or "")
+            drawn = []
             if drawer is not None and tool_names.get(tool_id) == "draw_image" and text.startswith("画好了："):
-                # 她画的图不在历史里（存成文件了）：画好那条回包下面按编号显示存着的小图
+                # 她画的图不在历史里（存成文件了）：画好那条回包下面按编号显示存着的小图（只看，不能在这儿改）
                 for image_id in dict.fromkeys(re.findall(r"img\d+", text.split("。", 1)[0])):
                     uri = drawer.view_uri(image_id)
                     if uri:
-                        pictures.append(uri)
+                        drawn.append(uri)
             content = item.get("content")
             if isinstance(content, str):
                 editable = True
@@ -1476,6 +1531,7 @@ class ContextPageApi:
                     or str(item.get("role") or "") == "assistant",
                     "images": images,
                     "pictures": pictures,
+                    "drawn": drawn,
                     "tool_calls": calls,
                     "tool_call_id": tool_id,
                     "tool_name": tool_names.get(tool_id, ""),
@@ -1591,10 +1647,19 @@ class ContextPageApi:
             return _err("缺少序号")
         text = payload.get("text")
         think = payload.get("think")
+        images = payload.get("images")  # 这条最后要留下的图（data URI，按先后）；不给就不动图
         has_text = isinstance(text, str)
         has_think = isinstance(think, str)
-        if not has_text and not has_think:
-            return _err("缺少正文或思考链")
+        has_images = isinstance(images, list)
+        if not has_text and not has_think and not has_images:
+            return _err("缺少正文、思考链或图片")
+        if has_images:
+            if len(images) > _IMAGES_PER_ITEM:
+                return _err("一条最多放 %d 张图" % _IMAGES_PER_ITEM)
+            cleaned = [_shrink_image(url) for url in images]
+            if any(url is None for url in cleaned):
+                return _err("有一张图认不出来（只认 jpg / png / webp 这类图片）")
+            images = cleaned
 
         try:
             conv, history = await self._load(cid)
@@ -1604,11 +1669,15 @@ class ContextPageApi:
             return _err("序号越界: %d" % index)
 
         item = dict(history[index])
+        if has_images and str(item.get("role") or "") not in ("user", "assistant"):
+            return _err("只有主人和她的消息能放图")
         changed = False
         if has_text:
             changed = _apply_text(item, text) or changed
         if has_think:
             changed = _apply_think(item, think) or changed
+        if has_images:
+            changed = _apply_images(item, images) or changed
         if not changed:
             return _err("这条没有可改的内容")
 
@@ -1620,10 +1689,11 @@ class ContextPageApi:
             logger.error("[super_enhance/ctx] 编辑写回失败", exc_info=True)
             return _err(exc)
         logger.info(
-            "[super_enhance/ctx] 编辑第 %d 条（正文=%s 思考链=%s），%s",
+            "[super_enhance/ctx] 编辑第 %d 条（正文=%s 思考链=%s 图=%s），%s",
             index,
             has_text,
             has_think,
+            len(images) if has_images else "不动",
             cid,
         )
         return _ok(

@@ -114,39 +114,48 @@ def _draw_lines(message: dict, results: dict) -> list[tuple[str, str]]:
     return out
 
 
+def _image_urls(message: dict) -> list[str]:
+    """这条里存着的图（data URI）：主人发的是 AstrBot 存的，网页上给消息放的图也存成这样。"""
+    urls = []
+    content = message.get("content")
+    for part in content if isinstance(content, list) else []:
+        image = part.get("image_url") if isinstance(part, dict) and part.get("type") == "image_url" else None
+        url = image.get("url") if isinstance(image, dict) else image
+        if isinstance(url, str) and url.startswith("data:image/"):
+            urls.append(url)
+    return urls
+
+
 def history_images(history: list) -> list[dict]:
     """聊天记录里的图，按先后：她用 send_image 真发出去的 {"mine": True, "id", "stamp"}；
-    对面（主人）发来的 {"mine": False, "url", "stamp", "nth", "count"}，url 是 AstrBot 原样存在历史里的 data URI。"""
+    消息里存着的图 {"mine": 是不是她那条, "url", "stamp", "nth", "count"}——主人发来的是 AstrBot 存的 data URI，
+    网页上给她或主人的消息放的图也一样存在消息里。"""
     results = _tool_results(history)
     out = []
     for raw in history:
         message = _dump(raw)
         role = message.get("role")
+        if role not in ("user", "assistant"):
+            continue
         hit = TIME_RE.search(_text(message))
         stamp = hit.group(1) if hit else ""
         if role == "assistant" and message.get("tool_calls"):
             out += [{"mine": True, "id": image_id, "stamp": stamp} for _line, image_id in _draw_lines(message, results) if image_id]
-        elif role == "user" and isinstance(message.get("content"), list):
-            urls = []
-            for part in message["content"]:
-                image = part.get("image_url") if isinstance(part, dict) and part.get("type") == "image_url" else None
-                url = image.get("url") if isinstance(image, dict) else image
-                if isinstance(url, str) and url.startswith("data:image/"):
-                    urls.append(url)
-            out += [{"mine": False, "url": url, "stamp": stamp, "nth": n, "count": len(urls)} for n, url in enumerate(urls, 1)]
+        urls = _image_urls(message)
+        out += [{"mine": role == "assistant", "url": url, "stamp": stamp, "nth": n, "count": len(urls)} for n, url in enumerate(urls, 1)]
     return out
 
 
 def sent_images(history: list) -> list[tuple[str, str]]:
     """聊天记录里她用 send_image 真发出去的图：[(编号, 时间 MM-DD HH:MM)]，按先后。"""
-    return [(item["id"], item["stamp"]) for item in history_images(history) if item["mine"]]
+    return [(item["id"], item["stamp"]) for item in history_images(history) if item.get("id")]
 
 
 def recent_images(history: list) -> list[dict]:
     """要带给她回看的图：聊天记录里的图按先后，她同一张发过几回只算最后一回，取最近 IMAGE_KEEP 张。"""
     picked, seen = [], set()
     for item in reversed(history_images(history)):
-        if item["mine"]:
+        if item.get("id"):
             if item["id"] in seen:
                 continue
             seen.add(item["id"])
@@ -177,6 +186,9 @@ def render_lines(history: list, other: str = "主人") -> tuple[list[str], str, 
         body = REMINDER_RE.sub("", text).strip()
         if role == "user":
             body = strip_inline_system(body)
+        pics = len(_image_urls(message))
+        if pics and "[Image" not in body:  # 网页上放的图没有 AstrBot 那段「[Image N: …]」：补一个记号，好和带给她的图对上
+            body = (body + " " if body else "") + ("[图片]" if pics == 1 else "[图片×%d]" % pics)
         drawn = _draw_lines(message, results) if role == "assistant" else []
         if not body and not drawn:
             continue  # 只有（画图以外的）工具调用、只剩时间戳的那几条

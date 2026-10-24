@@ -317,6 +317,12 @@
   .pics{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
   .pics img{display:block;max-width:min(240px,100%);max-height:240px;border-radius:10px;border:1px solid var(--line);cursor:zoom-in;background:var(--bubble)}
   .pics img.big{max-width:100%;max-height:none;cursor:zoom-out}
+  .imged{display:flex;flex-wrap:wrap;gap:10px;margin:4px 0 8px}
+  .imged .one{position:relative}
+  .imged img{display:block;width:96px;height:96px;object-fit:cover;border-radius:10px;border:1px solid var(--line);cursor:zoom-in;background:var(--sunk)}
+  .imged img.big{width:auto;height:auto;max-width:min(520px,80vw);object-fit:contain;cursor:zoom-out}
+  .imged .rm{position:absolute;top:-7px;right:-7px;width:22px;height:22px;padding:0;border-radius:50%;border:1px solid var(--line2);background:var(--bg);color:var(--t2);font-size:14px;line-height:20px;cursor:pointer}
+  .imged .rm:hover{color:var(--danger);border-color:var(--danger)}
   details.call{border:1px solid var(--line);border-radius:12px;font-size:12.5px;background:var(--bg);overflow:hidden}
   details.call>summary{list-style:none;min-height:36px;padding:0 14px;display:flex;align-items:center;gap:6px;color:var(--t2);cursor:pointer}
   details.call>summary:hover{background:var(--hover)}
@@ -2120,9 +2126,9 @@
     return wireRow(row, it, opt);
   }
 
-  // 这条带的图：主人发的（历史里存的 data URI）、她画的（画好那条回包下面，存着的小图）；点一下放大 / 缩回
+  // 这条带的图：消息里存着的（主人发的、网页上放的）、她画的（画好那条回包下面，存着的小图）；点一下放大 / 缩回
   function picsEl(it) {
-    var pics = it.pictures || [];
+    var pics = (it.pictures || []).concat(it.drawn || []);
     if (!pics.length) { return null; }
     var w = h("div", { class: "pics" });
     pics.forEach(function (src) {
@@ -2381,13 +2387,18 @@
     if (it.role === "tool" && it.tool_name) { tags.appendChild(h("span", { class: "tag", text: "回包给 " + it.tool_name })); }
     (it.tool_calls || []).forEach(function (c) { tags.appendChild(h("span", { class: "tag" }, icon("tool"), c.name || "?")); });
     body.appendChild(tags);
-    var pics = picsEl(it);
-    if (pics) { body.appendChild(pics); }
+    var canPic = it.role === "user" || it.role === "assistant";
+    if (!canPic) {
+      var pics = picsEl(it);
+      if (pics) { body.appendChild(pics); }
+    }
 
     var save = h("button", { class: "btn pri", type: "button", text: "保存", disabled: true, title: "⌘/Ctrl + Enter" });
     var taText = null, taThink = null;
+    // 这条要留下的图：一开始是存着的那几张，网页上加、删只改这份，点保存才写回
+    var imgs = { orig: (it.pictures || []).slice(), list: (it.pictures || []).slice() };
     var markDirty = function () {
-      var d = (taText && taText.value !== parts.body) || (taThink && taThink.value !== (it.think || ""));
+      var d = (taText && taText.value !== parts.body) || (taThink && taThink.value !== (it.think || "")) || imgs.list.join("\n") !== imgs.orig.join("\n");
       st.dirty = !!d;
       save.disabled = !d;
     };
@@ -2403,6 +2414,51 @@
       f1.appendChild(h("div", { class: "ro", text: parts.body || "（这条没有可编辑的正文）" }));
     }
     body.appendChild(f1);
+
+    // 图片：和正文一样改完点保存；能选文件，也能在正文框里直接粘贴截图
+    if (canPic) {
+      var fImg = h("div", { class: "fld" });
+      var addImages = function (files) {
+        var picked = Array.prototype.filter.call(files || [], function (f) { return f && /^image\//.test(f.type || ""); });
+        if (!picked.length) { return false; }
+        Promise.all(picked.map(readImage)).then(function (urls) {
+          imgs.list = imgs.list.concat(urls).slice(0, 8);
+          drawImgs();
+          markDirty();
+        }).catch(function (e) { toast("图片没加上：" + errMsg(e), { err: true }); });
+        return true;
+      };
+      var drawImgs = function () {
+        clear(fImg);
+        var pick = h("input", { type: "file", accept: "image/*", multiple: true, style: "display:none" });
+        pick.addEventListener("change", function () { addImages(pick.files); pick.value = ""; });
+        var addI = h("button", { class: "addlink", type: "button" }, icon("plus"), "添加图片");
+        addI.addEventListener("click", function () { pick.click(); });
+        fImg.appendChild(h("div", { class: "fld-l" }, h("span", { text: "图片" }), h("span", { class: "grow" }), h("span", { class: "muted", text: imgs.list.length ? imgs.list.length + " 张" : "" })));
+        if (imgs.list.length) {
+          var row = h("div", { class: "imged" });
+          imgs.list.forEach(function (src, n) {
+            var img = h("img", { src: src, alt: "图片" });
+            img.addEventListener("click", function () { img.classList.toggle("big"); });
+            var rm = h("button", { class: "rm", type: "button", title: "去掉这张（保存后生效）", text: "×" });
+            rm.addEventListener("click", function () { imgs.list.splice(n, 1); drawImgs(); markDirty(); });
+            row.appendChild(h("div", { class: "one" }, img, rm));
+          });
+          fImg.appendChild(row);
+        }
+        if (imgs.list.length < 8) { fImg.appendChild(addI); }
+        fImg.appendChild(pick);
+        fImg.appendChild(h("div", { class: "fld-n", text: (it.role === "user" ? "当成主人发给她的图" : "当成她发给主人的图") + "；保存后她之后每轮都看得到（最近 6 张）。也能在正文框里直接粘贴图片。" }));
+      };
+      drawImgs();
+      if (taText) {
+        taText.addEventListener("paste", function (ev) {
+          var files = ev.clipboardData && ev.clipboardData.files;
+          if (files && files.length && addImages(files)) { ev.preventDefault(); }
+        });
+      }
+      body.appendChild(fImg);
+    }
 
     // 思考链
     if (it.think_editable) {
@@ -2449,15 +2505,41 @@
     armed(del, "确认删除", function () { doDelete([it.i]); });
     var ins = h("button", { class: "btn quiet", type: "button", title: "在这条后面插入一条" }, icon("insert"), "在下方插入");
     ins.addEventListener("click", function () { startCompose(it.i); });
-    save.addEventListener("click", function () { doSave(it, parts, taText, taThink, save); });
+    save.addEventListener("click", function () { doSave(it, parts, taText, taThink, save, imgs); });
     box.appendChild(h("div", { class: "pf" }, del, h("span", { class: "grow" }), ins, save));
   }
 
-  function doSave(it, parts, taText, taThink, btn) {
+  // 选的、粘贴的图读成 data URI：最长边超过 1280 或者太大，先在浏览器里缩成 JPEG（后台存之前还会再看一遍）
+  function readImage(file) {
+    return new Promise(function (resolve, reject) {
+      var fr = new FileReader();
+      fr.onerror = function () { reject(new Error("读不出这张图")); };
+      fr.onload = function () {
+        var src = String(fr.result || "");
+        var img = new Image();
+        img.onerror = function () { reject(new Error("不是能用的图片")); };
+        img.onload = function () {
+          var side = Math.max(img.naturalWidth, img.naturalHeight);
+          if (side <= 1280 && src.length < 540000 && /^data:image\/(jpeg|png|webp);/.test(src)) { resolve(src); return; }
+          var k = Math.min(1, 1280 / side);
+          var c = document.createElement("canvas");
+          c.width = Math.max(1, Math.round(img.naturalWidth * k));
+          c.height = Math.max(1, Math.round(img.naturalHeight * k));
+          c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+          resolve(c.toDataURL("image/jpeg", 0.85));
+        };
+        img.src = src;
+      };
+      fr.readAsDataURL(file);
+    });
+  }
+
+  function doSave(it, parts, taText, taThink, btn, imgs) {
     var payload = { cid: S.cid, index: it.i };
     if (taText && taText.value !== parts.body) { payload.text = joinReminder(taText.value, parts.tags); }
     if (taThink && taThink.value !== (it.think || "")) { payload.think = taThink.value; }
-    if (payload.text === undefined && payload.think === undefined) { return; }
+    if (imgs && imgs.list.join("\n") !== imgs.orig.join("\n")) { payload.images = imgs.list.slice(); }
+    if (payload.text === undefined && payload.think === undefined && payload.images === undefined) { return; }
     btn.disabled = true;
     post("ctx/edit", payload).then(function () {
       if (S.insp) { S.insp.dirty = false; }

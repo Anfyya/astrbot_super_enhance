@@ -347,21 +347,24 @@ class ImageGenFeature:
 
     def attach_images(self, message, images: list, other: str = "主人"):
         """聊天记录里的图（history_transcript.recent_images 挑好的，按先后）放进本轮那条用户消息的副本里给她看：
-        她发出去的用这里存的小图（画图关了就不带），对面发来的用历史里那份。
+        她画了发出去的用这里存的小图（画图关了就不带），消息里存着的（主人发来的、网页上放的）用历史里那份。
         原消息不动（AstrBot 存回会话的是原来那条，存档里不会多出图）；一张都带不上就原样返回。"""
         if not images:
             return message
-        saved = self._load_index()["items"] if any(x.get("mine") for x in images) else {}
+        saved = self._load_index()["items"] if any(x.get("id") for x in images) else {}
         rows = []  # (说明, data URI, 编号)
         for item in images:
             when = " %s " % item["stamp"] if item.get("stamp") else ""
-            if item.get("mine"):
-                image_id = str(item.get("id") or "")
+            if item.get("id"):
+                image_id = str(item["id"])
                 view = self._recall_view(image_id, saved[image_id]) if self.enabled and isinstance(saved.get(image_id), dict) else None
                 if view:
                     rows.append(("%s（你%s发给%s的）：" % (image_id, when, other), "data:%s;base64,%s" % view, image_id))
+                continue
+            nth = "，第 %d 张" % item["nth"] if int(item.get("count") or 1) > 1 else ""
+            if item.get("mine"):
+                rows.append(("（你%s发给%s的图%s）：" % (when, other, nth), item["url"], None))
             else:
-                nth = "，第 %d 张" % item["nth"] if int(item.get("count") or 1) > 1 else ""
                 rows.append(("（%s%s发来的图%s）：" % (other, when, nth), item["url"], None))
         if not rows:
             return message
@@ -382,7 +385,7 @@ class ImageGenFeature:
             content = getattr(message, "content", None)
             base = list(content) if isinstance(content, list) else [TextPart(text=str(content or ""))]
             shown = message.model_copy(update={"content": base + parts})
-        names = tuple(image_id or "%s发来的" % other for _text, _url, image_id in rows)
+        names = tuple(image_id or text.strip("（）：") for text, _url, image_id in rows)
         if names != self._recalled:
             self._recalled = names
             logger.info("[super_enhance/image] 聊天记录里的图带给她看：%s", "、".join(names))
