@@ -314,17 +314,16 @@
     white-space:pre-wrap;word-break:break-word;max-height:360px;overflow:auto;align-self:stretch}
   .calls{display:flex;flex-direction:column;gap:6px;margin-top:6px;align-self:stretch;min-width:min(300px,100%)}
   .calls:first-child{margin-top:0}
-  .pics{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
-  .pics img{display:block;max-width:min(240px,100%);max-height:240px;border-radius:10px;border:1px solid var(--line);cursor:zoom-in;background:var(--bubble)}
-  .pics img.big{max-width:100%;max-height:none;cursor:zoom-out}
-  .imged{display:flex;flex-wrap:wrap;gap:10px;margin:4px 0 8px}
-  .imged .one{position:relative}
-  .imged img{display:block;width:96px;height:96px;object-fit:cover;border-radius:10px;border:1px solid var(--line);cursor:zoom-in;background:var(--sunk)}
-  .imged img.big{width:auto;height:auto;max-width:min(520px,80vw);object-fit:contain;cursor:zoom-out}
-  .imged .rm{position:absolute;top:-7px;right:-7px;width:22px;height:22px;padding:0;border-radius:50%;border:1px solid var(--line2);background:var(--bg);color:var(--t2);font-size:14px;line-height:20px;cursor:pointer}
+  /* 图直接按宽度显示（不做缩略图、不点开放大），最宽到所在那一栏为止，不会撑出去 */
+  .pics{display:flex;flex-direction:column;align-items:flex-start;gap:8px;margin-top:6px;max-width:100%;min-width:0}
+  .pics img{display:block;max-width:100%;height:auto;border-radius:12px;border:1px solid var(--line);background:var(--sunk)}
+  .imged{display:flex;flex-direction:column;gap:14px;margin:4px 0 8px;max-width:100%;min-width:0}
+  .imged .one{position:relative;max-width:100%;min-width:0}
+  .imged img{display:block;max-width:100%;height:auto;border-radius:12px;border:1px solid var(--line);background:var(--sunk)}
+  .imged .rm{position:absolute;top:8px;right:8px;width:26px;height:26px;padding:0;border-radius:50%;border:1px solid var(--line2);background:var(--bg);color:var(--t2);font-size:16px;line-height:24px;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.18)}
   .imged .rm:hover{color:var(--danger);border-color:var(--danger)}
-  .imged .cap{display:flex;align-items:center;gap:6px;margin-top:4px;font-size:12px;color:var(--t3)}
-  .imged .ph-img{width:96px;height:96px;border-radius:10px;border:1px dashed var(--line2);display:flex;align-items:center;justify-content:center;color:var(--t3);font-size:12px}
+  .imged .cap{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px;color:var(--t3)}
+  .imged .ph-img{width:100%;height:96px;border-radius:12px;border:1px dashed var(--line2);display:flex;align-items:center;justify-content:center;color:var(--t3);font-size:13px}
   details.call{border:1px solid var(--line);border-radius:12px;font-size:12.5px;background:var(--bg);overflow:hidden}
   details.call>summary{list-style:none;min-height:36px;padding:0 14px;display:flex;align-items:center;gap:6px;color:var(--t2);cursor:pointer}
   details.call>summary:hover{background:var(--hover)}
@@ -2135,11 +2134,7 @@
     var gone = drawn.filter(function (d) { return d.deleted; });
     if (!pics.length && !gone.length) { return null; }
     var w = h("div", { class: "pics" });
-    pics.forEach(function (src) {
-      var img = h("img", { src: src, alt: "图片", loading: "lazy" });
-      img.addEventListener("click", function (ev) { ev.stopPropagation(); img.classList.toggle("big"); });
-      w.appendChild(img);
-    });
+    pics.forEach(function (src) { w.appendChild(h("img", { src: src, alt: "图片", loading: "lazy" })); });
     gone.forEach(function (d) { w.appendChild(h("span", { class: "tag", text: d.id + " 已删掉" })); });
     return w;
   }
@@ -2418,9 +2413,7 @@
           var src = d.change && d.change.image ? d.change.image : d.url;
           var cell = h("div", { class: "one" });
           if (!gone && src) {
-            var img = h("img", { src: src, alt: d.id });
-            img.addEventListener("click", function () { img.classList.toggle("big"); });
-            cell.appendChild(img);
+            cell.appendChild(h("img", { src: src, alt: d.id }));
           } else {
             cell.appendChild(h("div", { class: "ph-img", text: "已删掉" }));
           }
@@ -2489,7 +2482,6 @@
           var row = h("div", { class: "imged" });
           imgs.list.forEach(function (src, n) {
             var img = h("img", { src: src, alt: "图片" });
-            img.addEventListener("click", function () { img.classList.toggle("big"); });
             var rm = h("button", { class: "rm", type: "button", title: "去掉这张（保存后生效）", text: "×" });
             rm.addEventListener("click", function () { imgs.list.splice(n, 1); drawImgs(); markDirty(); });
             row.appendChild(h("div", { class: "one" }, img, rm));
