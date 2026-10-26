@@ -1,16 +1,21 @@
 """超级增强（Super Enhance）：把多项增强收进一个插件。
 
-功能与开关（所有会与旧插件重复触发的功能默认关闭）：
+功能与开关（设置页的分组，按页面上的顺序；世界线、上下文命令两组里再分小组，代码按键名取值）：
 
-1. NapCat 输入状态   ``typing``
-2. 静默工具          ``stay_silent``（LLM 工具）
-3. 消息时间戳        ``msg_time``
-4. 上下文工具        ``/usage`` ``/compact``（``context_tools``）
-5. 跨会话上下文修复  ``cross_session``
-6. 动态生活状态      ``life_state``（自研实现：状态生成 / 注入 / 主动对话 / 查询）
+1. 世界线            ``life_state``（记录员 / 补写 / 注入 / 主动对话；``start_doing`` ``recall`` ``look_things``）
+2. 历史写成聊天记录  ``history_transcript``
+3. 主动消息只带最近的聊天 ``cron_context``（cron 唤醒时只喂最近一段时间的纯对话正文，省 token）
+4. 上下文命令        ``/usage`` ``/compact``（``context_tools``）
+5. 真实请求快照      ``request_snapshot``
+6. 没思考就重来      ``zero_think_retry``
 7. 新消息优先        ``reply_guard``（回复没发出去时又收到消息 → 丢掉上一轮，连带上一条重答）
-8. 主动对话上下文裁剪 ``cron_context``（cron 唤醒时只喂最近一段时间的纯对话正文，省 token）
-9. 现在去做工具     ``start_doing``（世界线 live：从此刻起做一件事写进世界线，做完叫她一次）
+8. 出错时她说的话    ``error_voice``
+9. 消息时间戳        ``msg_time``
+10. NapCat 输入状态  ``typing``
+11. 静默工具         ``stay_silent``（LLM 工具）
+12. 画图             ``image_gen``（``draw_image`` ``send_image``）
+13. 多机器人对话节奏 ``bot_dialog``
+14. 跨会话上下文修复 ``cross_session``
 
 ⚠️ 同时启用本插件与对应的旧插件会造成重复行为（输入状态等待翻倍、主动消息重复、
    注入重复、/usage 输出两次），启用某一项前请先停用对应的旧插件。

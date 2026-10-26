@@ -16,26 +16,30 @@
 
 | 分组 | 功能 |
 |---|---|
-| ① `typing` | NapCat 私聊「对方正在输入」 |
-| ② `stay_silent` | 静默工具：AI 可以决定这一轮不说话 |
-| ③ `msg_time` | 给 AI 自己的消息盖真实发送时间，并剥掉模型模仿的时间戳 |
-| ④ `context_tools` | `/usage`、`/compact`、`/compact v2`，上下文超限守卫，报错换成角色口吻 |
-| ⑤ `cross_session` | 跨会话 / 主动对话发出去的话补进对应会话历史 |
-| ⑥ `life_state` | 世界线（记录员 / 幕间补写 / 注入）、主动对话、能力与约定、在练的事、家里的吃的和东西、`start_doing`、`recall`、`look_things` |
+| ① `life_state` | 世界线（记录员 / 幕间补写 / 注入）、主动对话、能力与约定、在练的事、家里的吃的和东西、`start_doing`、`recall`、`look_things` |
+| ② `history_transcript` | 发给模型时把会话历史写成一段带时间的聊天记录，不当成她自己说过的消息一条条发 |
+| ③ `cron_context` | 主动对话（cron）只带最近一段纯对话，省 token |
+| ④ `context_tools` | `/usage`、`/compact`、`/compact v2`、每天 0 点自动压缩、上下文满了只发提醒 |
+| ⑤ `request_snapshot` | 保存每次真实发给模型的请求（面板「上下文」页查看） |
+| ⑥ `zero_think_retry` | DeepSeek 一个字没想就回话时，这次不发、原样再要一次 |
 | ⑦ `reply_guard` | 新消息优先：回复还没发出去时又来了消息，就丢掉上一轮重答 |
-| ⑧ `cron_context` | 主动对话（cron）只带最近一段纯对话，省 token |
-| ⑧-4 `image_gen` | 画图工具 `draw_image` / `send_image`：调图像生成模型（默认 `gemini/gemini-3.1-flash-image`）画一张，她先看，觉得好了再发给对方 |
-| ⑩ `bot_dialog` | 两个机器人互聊的节奏、跨会话记录、委托回报、`tell` 传话、发消息 / tell 的说明 |
-| ⑪ `request_snapshot` | 保存每次真实发给模型的请求（面板「上下文」页查看） |
+| ⑧ `error_voice` | 报错换成角色自己的口吻，发完补进她的会话历史 |
+| ⑨ `msg_time` | 给 AI 自己的消息盖真实发送时间，并剥掉模型模仿的时间戳 |
+| ⑩ `typing` | NapCat 私聊「对方正在输入」 |
+| ⑪ `stay_silent` | 静默工具：AI 可以决定这一轮不说话 |
+| ⑫ `image_gen` | 画图工具 `draw_image` / `send_image`：调图像生成模型（默认 `gemini/gemini-3.1-flash-image`）画一张，她先看，觉得好了再发给对方 |
+| ⑬ `bot_dialog` | 两个机器人互聊的节奏、跨会话记录、委托回报、`tell` 传话、发消息 / tell 的说明 |
+| ⑭ `cross_session` | 跨会话 / 主动对话发出去的话补进对应会话历史 |
 
-（面板里没有 ⑨：「现在去做」并进了 ⑥——世界线 live 时才给模型 `start_doing`、`recall`、`look_things`。）
+世界线、上下文命令两组项多，设置页里再分小组（模型、故事设定、记录员、补写……）；存着的配置跟着嵌套一层，
+代码照样按键名取值（`SectionConfig` 把小组摊平），不用管某一项放在哪个小组，所以同一组里键名不能重复。
 
 工具可见性跟着开关走：关掉的功能不暴露给模型；世界线 live 之后，本插件只给模型
 `stay_silent`、`tell`、`start_doing`、`recall`、`look_things` 五个工具（状态改由程序维护，`get_full_dynamic_life_state` /
 `revise_life_state` / `update_my_scene` / `record_master_scene` / `record_ability` /
 `training` / `make_promise` / `close_promise` 全部收起）。长期记忆用 livingmemory 原生的召回和注入。
 
-`draw_image`（画图，⑧-4 开着才给）：`prompt` 写画面，`size` 写宽x高（最长边不超过 1280 出 1K、不超过 2560 出 2K、再大出 4K，比例照着出；空着模型自己定），
+`draw_image`（画图，⑫ 开着才给）：`prompt` 写画面，`size` 写宽x高（最长边不超过 1280 出 1K、不超过 2560 出 2K、再大出 4K，比例照着出；空着模型自己定），
 `use_sent_images` 把主人发的图当参考（这条消息里的、他回复的那条里的，没有就用他半小时内发过的最近几张），`use_last_image` 拿她上一次画的那张接着改。
 图像模型只看提示词、参考图和分辨率，不思考：走 AstrBot 里配的那个 OpenAI 格式的源，只发一条用户消息，`size` 放在请求里；
 参考图换成 base64 的 data URI；出来的图从回复里的 `![…](data:image/…;base64,…)` 取出，原图存进插件数据目录 `images/`，编号 img1、img2……记在 `images/index.json`。
@@ -90,52 +94,10 @@ core/
 
 ## 各功能说明
 
-### ① 输入状态（`typing`）
-
-LLM 回复发出前调用 OneBot `set_input_status`，再等 `delay_seconds` 秒。仅私聊、仅 aiocqhttp。
-回复另一个机器人时不发（对面 NapCat 会把输入状态推成一条空消息）。
-
-### ② 静默工具（`stay_silent`）
-
-AI 调用后本轮不发任何消息。本轮开始后又来了新消息时，第一次调用会被拒绝（让它先看新消息）。
-静默轮还没结束时来的新消息，会从「折叠进当前轮」里摘出来，当作新的一轮正常回答。
-静默轮里模型最后写的那句话**不写进历史**（没发出去的话不算说过）；工具调用照常保留。
-
-### ③ 消息时间戳（`msg_time`）
-
-每轮结束给 assistant 消息追加 `<system_reminder>Sent at: …</system_reminder>`；发送前和写历史前剥掉模型
-自己模仿的时间戳；系统提示里声明「时间戳由系统生成」。
-
-### ④ 上下文工具（`context_tools`）
-
-- `/usage`：当前上下文占用。
-- `/compact`：无损压缩，只丢思考链和工具结果，对话原文不动。
-- `/compact v2 [Nd|Nh|Nm] [临时要求]`：前情备忘 + 原话摘录 + 最近原文。先出预览，
-  `/compact v2 continue 意见` 微调，`/compact v2 enter` 写入（写前整份备份），`/compact v2 undo` 撤销。
-- 超限守卫（`overflow_guard`）：拦掉 AstrBot 的自动压缩；上下文用量超过上限的 82% 时不调模型，
-  只发一句固定提醒（`overflow_replies`，每行 `机器人id=句子`），等主人手动 `/compact v2`。
-- 报错用角色自己的口吻（`error_replies_model` / `error_replies_review` / `error_replies_cron`，
-  每行 `机器人id=句子`，可写多行随机挑）：聊天时模型请求失败（替掉 AstrBot 的「LLM 响应错误」，
-  借它的人格自定义报错；人格里自己填了的用人格那句）、每晚日程回查失败（旧路径）、主动消息前裁剪上下文出错
-  （只是没裁好，主动消息照常进行），都发她自己的话，不发系统提示；出了什么错只进日志。没配句子的机器人照旧发原来的报错。
-  你发指令回的报错不变。
-- 上面三种报错发出去以后她本来不知道（模型失败那一轮 AstrBot 不存，主人那句也丢了；另外两种是插件直接发的）。
-  `error_note_to_history`（默认开）在发完以后补进她的会话历史：一条 assistant（主人收到的那句 + 系统标记写明出了什么错），
-  模型失败还补上主人原话。她下一轮就知道刚才出过事。发给主人的不变。
-
-### ⑤ 跨会话上下文修复（`cross_session`）
-
-- AI 用 `send_message_to_user` 给**别的**私聊发消息：把内容作为 assistant 记录补进对方会话历史；
-- 主动对话（cron）给**当前**会话发消息：并入本次 cron 用的会话对象，随 cron 收尾一起落库；
-  这一轮的思考也存进她发出的第一条消息（和平时聊天一样，面板「上下文」能看能改）。她这一轮决定不发时
-  没消息可挂，思考不存。
-- 主动消息的思考开头带一行「【主动消息的思考·不发给模型】」：之后平时聊天发请求时，这几段思考换成空，
-  不进模型的上下文；平时聊天自己的思考照常发。在面板里把这行标签删掉，那段思考就会重新发给模型。
-  只管 OpenAI 兼容的接口（现在用的就是），Anthropic / Gemini 类接口不经过这里。
-
-### ⑥ 动态生活状态（`life_state`）
+### ① 世界线（`life_state`）
 
 开关分三层：`world_mode`（off / shadow / live）+ `world_enabled`（幕间补写）+ 各账本开关。
+设置页里分小组：模型、故事设定、记录员、补写、聊天时给她看的、主动找主人说话、其它。
 
 #### 世界线（`world_mode`）
 
@@ -158,7 +120,7 @@ AI 调用后本轮不发任何消息。本轮开始后又来了新消息时，�
 - 主人条目只由记录员按他亲口说的记；补写从来不写主人，只让她们在主人身边做自己的事。
 - `world_home`（默认「穗织」）是补写的地点锚点；`world_notes` 写故事里的固定事实（一行一条，记录员和补写都照着写）。
 
-#### 记录员（`recorder_quiet_seconds`，默认 90）
+#### 记录员（`recorder_quiet_seconds`，默认 60）
 
 某个会话最后一条消息过了静默阈值、还有没处理的，就把这段对话整理进世界线：
 
@@ -273,6 +235,42 @@ live 时排这几种（AstrBot cron 一次性任务，重启不会重复排）�
 - `/site …`：旧共享场景命令，live 后不再注入；主人的行踪由记录员按主人亲口说的记进世界线
   （也可以在世界线页直接改主人的条目）。
 
+### ② 历史写成聊天记录（`history_transcript`）
+
+发给模型时，会话历史不再当成她自己的消息一条条发，而是写成系统提示里一段带时间的「最近的聊天记录」：
+会话开头有前情备忘就放在最前（`include_memo`），原话放最近 `recent_messages` 条（0 = 备忘之后的全放）。
+思考、工具调用不写进去，`draw_image` / `send_image` 例外；最近 6 张图（她画了发出去的、主人发来的）一起带上。
+只改发出去的那一份（包 `ToolLoopAgentRunner.reset` / `_sanitize_contexts_for_provider`），存档不动。
+`sessions` 不填就管开了世界线的机器人的所有私聊；两个机器人之间的私聊里，对面标她的名字。
+
+### ③ 主动消息只带最近的聊天（`cron_context`）
+
+cron 唤醒时把上下文换成最近 `window_hours` 小时内的纯 user / assistant 文本（最多 `max_messages` 条），
+不动数据库。
+
+### ④ 上下文命令（`context_tools`）
+
+- `/usage`：当前上下文占用。
+- `/compact`：无损压缩，只丢思考链和工具结果，对话原文不动。
+- `/compact v2 [Nd|Nh|Nm] [临时要求]`：前情备忘 + 原话摘录 + 最近原文。先出预览，
+  `/compact v2 continue 意见` 微调，`/compact v2 enter` 写入（写前整份备份），`/compact v2 undo` 撤销。
+- 超限守卫（`overflow_guard`）：拦掉 AstrBot 的自动压缩；上下文用量超过上限的 82% 时不调模型，
+  只发一句固定提醒（`overflow_replies`，每行 `机器人id=句子`），等主人手动 `/compact v2`。
+- 每天 0 点自动 `/compact v2`（`v2_daily`）：不出预览直接写入，写前整份备份（`/compact v2 undo` 能撤），
+  保留 `v2_daily_keep`（默认 12m）原文，只压 `v2_daily_sessions` 里的会话；停机错过了启动后补跑，失败了 15 分钟后再试。
+  它只看自己的开关，`enabled` 关了照跑。
+- 设置页里分三个小组：`/compact v2`、每天 0 点自动压缩、上下文满了。
+
+### ⑤ 真实请求快照（`request_snapshot`）
+
+最低优先级的 `on_llm_request` 上抓取最终请求（人格、注入、工具都装配完），保留最近 20 份。
+
+### ⑥ 没思考就重来（`zero_think_retry`）
+
+包 AstrBot 的 `ToolLoopAgentRunner._iter_llm_responses`：拿到的回复思考是空的（要调工具的那一步也算）就丢掉、
+同样的请求再要，最多 `max_retries` 次，都没想用最后那次。只管和主人聊天、主动消息的对话循环，
+源编号或模型名里带 `providers` 里的字（默认 deepseek）才管；丢掉的那次不发、不进历史。
+
 ### ⑦ 新消息优先（`reply_guard`）
 
 上一轮还没把回复发出去时又来了新消息：停掉上一轮（不发送），把它的用户消息单独补进新一轮请求，
@@ -281,12 +279,38 @@ live 时排这几种（AstrBot cron 一次性任务，重启不会重复排）�
 - 已经生成完、只差发送时被停：事后从历史里删掉那几句，新一轮请求里也去掉。
 指令、通知事件（戳一戳、输入状态）不触发；上一轮已经结束却没有要发的内容（出错、只调了工具）也不触发。
 
-### ⑧ 主动对话上下文裁剪（`cron_context`）
+### ⑧ 出错时她说的话（`error_voice`）
 
-cron 唤醒时把上下文换成最近 `window_hours` 小时内的纯 user / assistant 文本（最多 `max_messages` 条），
-不动数据库。
+- 三种报错换成她自己的话（`error_replies_model` / `error_replies_review` / `error_replies_cron`，每行 `机器人id=句子`，
+  可写多行随机挑）：聊天时模型请求失败（替掉 AstrBot 的「LLM 响应错误」，借它的人格自定义报错；人格里自己填了的
+  用人格那句）、每晚日程回查失败（旧路径）、主动消息前裁剪上下文出错（只是没裁好，主动消息照常进行），都发她自己的话，
+  不发系统提示；出了什么错只进日志。没配句子的机器人照旧发原来的报错。你发指令回的报错不变。
+- 上面三种报错发出去以后她本来不知道（模型失败那一轮 AstrBot 不存，主人那句也丢了；另外两种是插件直接发的）。
+  `error_note_to_history`（默认开）在发完以后补进她的会话历史：一条 assistant（主人收到的那句 + 系统标记写明出了什么错），
+  模型失败还补上主人原话。她下一轮就知道刚才出过事。发给主人的不变。
 
-### ⑩ 多机器人对话节奏（`bot_dialog`）
+### ⑨ 消息时间戳（`msg_time`）
+
+每轮结束给 assistant 消息追加 `<system_reminder>Sent at: …</system_reminder>`；发送前和写历史前剥掉模型
+自己模仿的时间戳；系统提示里声明「时间戳由系统生成」。
+
+### ⑩ 正在输入（`typing`）
+
+LLM 回复发出前调用 OneBot `set_input_status`，再等 `delay_seconds` 秒。仅私聊、仅 aiocqhttp。
+回复另一个机器人时不发（对面 NapCat 会把输入状态推成一条空消息）。
+
+### ⑪ 不回话工具（`stay_silent`）
+
+AI 调用后本轮不发任何消息。本轮开始后又来了新消息时，第一次调用会被拒绝（让它先看新消息）。
+静默轮还没结束时来的新消息，会从「折叠进当前轮」里摘出来，当作新的一轮正常回答。
+静默轮里模型最后写的那句话**不写进历史**（没发出去的话不算说过）；工具调用照常保留。
+
+### ⑫ 画图（`image_gen`）
+
+见上文 `draw_image` 那段。`provider_id` 是图像模型（OpenAI 兼容、把图夹在回复里返回），
+`timeout` 要比 AstrBot 调工具的 120 秒小。
+
+### ⑬ 两个机器人互相聊（`bot_dialog`）
 
 - 两个机器人互聊：按来回计数，第 1..N 次注入节奏提示，超过 `max_rounds` 自动静默；主人开口或超过窗口就清零。
   对方 NapCat 推来的空事件 / 通知事件直接丢弃，不计来回、不写记录；
@@ -299,9 +323,15 @@ cron 唤醒时把上下文换成最近 `window_hours` 小时内的纯 user / ass
   （另一个角色、主人、留空 = 当前会话）；`tell` 写明只是让对方知道、不发 QQ、对方不会马上回。
   角色的 QQ 号在 `bot_accounts`（每行 `平台id=QQ号`），主人号用 `master_ids`。不动 AstrBot 的全局工具。
 
-### ⑪ 真实请求快照（`request_snapshot`）
+### ⑭ 发出去的话补进历史（`cross_session`）
 
-最低优先级的 `on_llm_request` 上抓取最终请求（人格、注入、工具都装配完），保留最近 20 份。
+- AI 用 `send_message_to_user` 给**别的**私聊发消息：把内容作为 assistant 记录补进对方会话历史；
+- 主动对话（cron）给**当前**会话发消息：并入本次 cron 用的会话对象，随 cron 收尾一起落库；
+  这一轮的思考也存进她发出的第一条消息（和平时聊天一样，面板「上下文」能看能改）。她这一轮决定不发时
+  没消息可挂，思考不存。
+- 主动消息的思考开头带一行「【主动消息的思考·不发给模型】」：之后平时聊天发请求时，这几段思考换成空，
+  不进模型的上下文；平时聊天自己的思考照常发。在面板里把这行标签删掉，那段思考就会重新发给模型。
+  只管 OpenAI 兼容的接口（现在用的就是），Anthropic / Gemini 类接口不经过这里。
 
 ## 底层补丁（始终生效）
 

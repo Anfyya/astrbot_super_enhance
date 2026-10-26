@@ -24,6 +24,7 @@ from astrbot.api import logger
 from astrbot.core.message.components import Plain
 from astrbot.core.message.message_event_result import MessageChain
 
+from ..config_view import SectionConfig
 from . import cron_history, error_voice
 
 # cron 事件在 extras 里带这两个键；用它把主动对话和普通聊天区分开
@@ -345,12 +346,13 @@ class CronContextFeature:
     def _notify_targets(self) -> list[str]:
         """安装期出错时的通知目标：取 life_state 的主动对话目标/会话名单。"""
         try:
-            life = self.config.root().get("life_state") or {}
+            # life_state 在面板里分了小组，按键名取要走 SectionConfig
+            life = SectionConfig(self.config.root(), "life_state")
         except Exception:
             life = {}
         targets = []
         for key in ("proactive_targets", "session_list"):
-            value = life.get(key) if isinstance(life, dict) else None
+            value = life.get(key)
             if isinstance(value, list):
                 targets.extend(str(x) for x in value if str(x).strip())
         seen = []

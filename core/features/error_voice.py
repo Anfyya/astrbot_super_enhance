@@ -8,7 +8,7 @@
 - ``review``：每晚 00:00 的日程回查失败。
 - ``cron``：主动消息的上下文裁剪出错。
 
-句子写在设置「上下文工具」分组里，跟「上下文满了」那几句挨着：每行 ``机器人id=句子``，
+句子写在设置「出错时她说的话」分组（``error_voice``）里：每行 ``机器人id=句子``，
 同一个机器人可以写多行，出错时随机挑一句（不跟上一次重复）。没给这个机器人配句子的，
 照旧发原来的报错。出了什么错只写日志。
 
@@ -40,7 +40,7 @@ except Exception:  # 老版本 AstrBot 没有人格自定义报错
     set_persona_custom_error_message_on_event = None
     logger.warning("[super_enhance/error_voice] 这版 AstrBot 没有人格自定义报错，模型失败时照旧发原来的报错")
 
-SECTION = "context_tools"
+SECTION = "error_voice"
 NOTE_KEY = "error_note_to_history"
 # 这一轮模型失败的记录，on_agent_done 记下，发完以后补进历史
 NOTE_FLAG = "_super_enhance_model_error_note"

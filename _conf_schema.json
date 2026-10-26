@@ -1,114 +1,623 @@
 {
-    "typing": {
-        "description": "① NapCat 输入状态",
+    "life_state": {
+        "description": "① 世界线（她们每天的日子）",
         "type": "object",
-        "hint": "回复发出前先让 NapCat 显示「对方正在输入」。启用前请先停用旧插件 astrbot_plugin_napcat_typing。",
+        "hint": "记录员把聊天里发生的事记进世界线，没人聊天时补写把接下来的空档一段段补上；她们聊天、主动找主人时都带着世界线。每个机器人一条线，网页「上下文」页能看能改。",
         "items": {
             "enabled": {
                 "description": "启用",
                 "type": "bool",
-                "hint": "开启后私聊回复前会先触发输入状态。",
-                "default": false
-            },
-            "only_private": {
-                "description": "仅私聊生效",
-                "type": "bool",
-                "hint": "NapCat 只有私聊支持输入状态，群聊不触发。",
+                "hint": "总开关，关了这一组都不起作用。",
                 "default": true
             },
-            "delay_seconds": {
-                "description": "发送前等待秒数",
-                "type": "float",
-                "hint": "触发输入状态后等多久再发消息（0-10 秒）。",
-                "default": 2.0
+            "world_mode": {
+                "description": "模式",
+                "type": "string",
+                "hint": "平时用「开启」。另外两种是旧的每日日程架构，只为退回去留着。",
+                "options": [
+                    "live",
+                    "shadow",
+                    "off"
+                ],
+                "labels": [
+                    "开启",
+                    "只记录，聊天还用旧日程",
+                    "关闭，用旧的每日日程"
+                ],
+                "condition": {
+                    "enabled": true
+                },
+                "default": "live"
             },
-            "event_type": {
-                "description": "输入状态类型",
-                "type": "int",
-                "hint": "1=对方正在输入… 0=对方正在说话…",
-                "default": 1
+            "bot_labels": {
+                "description": "机器人名字",
+                "type": "string",
+                "hint": "写成 napcat=丛雨,napcat2=亚托莉。世界线、网页、提示词里都用这个名字。",
+                "condition": {
+                    "enabled": true
+                },
+                "default": "napcat=丛雨,napcat2=亚托莉"
             },
-            "debug": {
-                "description": "调试日志",
-                "type": "bool",
-                "default": false
-            }
-        }
-    },
-    "stay_silent": {
-        "description": "② 静默工具 stay_silent",
-        "type": "object",
-        "hint": "让 AI 可以主动调用 stay_silent，让本轮一个字都不发（只影响当次）。启用前请先停用旧插件 astrbot_plugin_stay_silent。",
-        "items": {
-            "enabled": {
-                "description": "启用",
-                "type": "bool",
-                "hint": "关闭后 AI 调用该工具不会静默，请确认没有别处提供同名工具。",
-                "default": true
-            }
-        }
-    },
-    "msg_time": {
-        "description": "③ AI 消息时间戳",
-        "type": "object",
-        "hint": "给 AI 自己的消息盖上发送时间（写进历史），并在系统提示里声明不要模仿；模型自己写的时间戳会被剥掉。启用前请先停用旧插件 astrbot_plugin_msg_time。",
-        "items": {
-            "enabled": {
-                "description": "启用",
-                "type": "bool",
-                "default": false
+            "session_list_mode": {
+                "description": "管哪些机器人",
+                "type": "string",
+                "options": [
+                    "whitelist",
+                    "blacklist",
+                    "none"
+                ],
+                "labels": [
+                    "只管名单里的",
+                    "名单里的不管",
+                    "存过世界线的都管"
+                ],
+                "condition": {
+                    "enabled": true
+                },
+                "default": "whitelist"
+            },
+            "session_list": {
+                "description": "机器人名单",
+                "type": "list",
+                "hint": "填机器人 id（napcat、napcat2），填会话号也行，只看开头那段。一个机器人的所有会话共用一条世界线。",
+                "items": {
+                    "type": "string"
+                },
+                "condition": {
+                    "enabled": true
+                },
+                "default": []
             },
             "timezone": {
                 "description": "时区",
                 "type": "string",
-                "hint": "留空则使用 AstrBot 全局时区配置。",
+                "hint": "留空用 AstrBot 的全局时区，没设就是 Asia/Shanghai。",
+                "condition": {
+                    "enabled": true
+                },
                 "default": ""
+            },
+            "models": {
+                "description": "模型",
+                "type": "object",
+                "hint": "记录员和补写调模型时用。",
+                "condition": {
+                    "enabled": true
+                },
+                "items": {
+                    "llm_provider_id": {
+                        "description": "用哪个模型",
+                        "type": "string",
+                        "_special": "select_provider",
+                        "hint": "留空用 AstrBot 的默认模型。",
+                        "default": "opencodeGO/deepseek-v4.1-flash"
+                    },
+                    "world_llm_timeout": {
+                        "description": "最多等几秒",
+                        "type": "int",
+                        "obvious_hint": true,
+                        "hint": "补写一次要想五六分钟，别低于 600。",
+                        "default": 600
+                    },
+                    "persona_id": {
+                        "description": "补写用的人格",
+                        "type": "string",
+                        "_special": "select_persona",
+                        "hint": "留空（推荐）：每个机器人用自己的默认人格。填了两个机器人都用这一份。",
+                        "default": ""
+                    }
+                }
+            },
+            "story": {
+                "description": "故事设定",
+                "type": "object",
+                "hint": "记录员和补写都照着写。",
+                "condition": {
+                    "enabled": true
+                },
+                "items": {
+                    "world_home": {
+                        "description": "住在哪",
+                        "type": "string",
+                        "hint": "补写写的地方和活动都在这一带，人设里别的地方只当背景。",
+                        "default": "穗织"
+                    },
+                    "world_notes": {
+                        "description": "固定事实",
+                        "type": "text",
+                        "hint": "一行一条（哪里在哪、哪扇门关着）。剧情变了改这里。",
+                        "default": "藏经阁的门是关着的：里面的人不主动出来，外面的人看不见里面在做什么，不要写谁打那儿过瞧见里面。\n藏经阁不在神社里，是两处地方。"
+                    }
+                }
+            },
+            "recorder": {
+                "description": "记录员",
+                "type": "object",
+                "hint": "一段对话停下来以后，把里面发生的事记进世界线。",
+                "condition": {
+                    "enabled": true
+                },
+                "items": {
+                    "recorder_quiet_seconds": {
+                        "description": "停多久开始记（秒）",
+                        "type": "int",
+                        "hint": "一个会话最后一条消息过了这么久没有新的，就把这段记下来。",
+                        "slider": {
+                            "min": 10,
+                            "max": 600,
+                            "step": 10
+                        },
+                        "default": 60
+                    },
+                    "recorder_batch": {
+                        "description": "一次最多读几条",
+                        "type": "int",
+                        "slider": {
+                            "min": 10,
+                            "max": 200,
+                            "step": 10
+                        },
+                        "default": 60
+                    },
+                    "raw_log_enabled": {
+                        "description": "另存一份原始消息",
+                        "type": "bool",
+                        "obvious_hint": true,
+                        "hint": "记录员靠它读聊天原文，主动消息也要用，只留今天和昨天。世界线开着就别关。",
+                        "default": true
+                    }
+                }
+            },
+            "step": {
+                "description": "补写",
+                "type": "object",
+                "hint": "没人聊天时，把接下来几小时的事一段段写进世界线。",
+                "condition": {
+                    "enabled": true
+                },
+                "items": {
+                    "world_enabled": {
+                        "description": "启用补写",
+                        "type": "bool",
+                        "hint": "关了就只有记录员在记。",
+                        "default": true
+                    },
+                    "step_lead_minutes": {
+                        "description": "提前几分钟写下一段",
+                        "type": "int",
+                        "hint": "手上那件事快做完时，提前这么多分钟写下一段。",
+                        "slider": {
+                            "min": 1,
+                            "max": 30,
+                            "step": 1
+                        },
+                        "condition": {
+                            "world_enabled": true
+                        },
+                        "default": 5
+                    },
+                    "step_window_hours": {
+                        "description": "断档最多补几小时",
+                        "type": "int",
+                        "hint": "停机、出错断了很久时，最多往回补这么多，更早的不补。",
+                        "slider": {
+                            "min": 1,
+                            "max": 12,
+                            "step": 1
+                        },
+                        "condition": {
+                            "world_enabled": true
+                        },
+                        "default": 3
+                    }
+                }
+            },
+            "injection": {
+                "description": "聊天时给她看的",
+                "type": "object",
+                "hint": "和主人聊天、主动发消息时附上的世界线块里放什么。",
+                "condition": {
+                    "enabled": true
+                },
+                "items": {
+                    "world_inject_recent": {
+                        "description": "放今天最近几条",
+                        "type": "int",
+                        "slider": {
+                            "min": 2,
+                            "max": 40,
+                            "step": 1
+                        },
+                        "default": 12
+                    },
+                    "world_no_repeat": {
+                        "description": "别每句都说手上在干嘛",
+                        "type": "bool",
+                        "hint": "块尾加一句：主人问起、或者正好相关时再说。",
+                        "default": true
+                    },
+                    "world_voice_note": {
+                        "description": "别当管家厨娘",
+                        "type": "bool",
+                        "hint": "块尾再加一句：没问就别报菜单、碗洗没洗，照自己的性子说；主动消息另加一句别报家务清单。",
+                        "default": true
+                    },
+                    "abilities_enabled": {
+                        "description": "能力清单和在练的事",
+                        "type": "bool",
+                        "hint": "她后来学会的、正在练的事一起带上。在网页「能力与约定」里改。",
+                        "default": true
+                    },
+                    "promise_enabled": {
+                        "description": "约定",
+                        "type": "bool",
+                        "hint": "带上接下来 7 天的约定，到点主动提起。在网页「能力与约定」里改。",
+                        "default": true
+                    },
+                    "injection_mode": {
+                        "description": "怎么交给模型",
+                        "type": "string",
+                        "hint": "一般不用改。",
+                        "options": [
+                            "extra_user_content_parts",
+                            "fake_tool_call"
+                        ],
+                        "labels": [
+                            "附在主人这条消息后面",
+                            "装成一次工具调用的结果"
+                        ],
+                        "default": "extra_user_content_parts"
+                    }
+                }
+            },
+            "proactive": {
+                "description": "主动找主人说话",
+                "type": "object",
+                "hint": "早安、晚安、约定到点、做完一件事时，她会主动给主人发消息。",
+                "condition": {
+                    "enabled": true
+                },
+                "items": {
+                    "proactive_enable": {
+                        "description": "启用",
+                        "type": "bool",
+                        "hint": "主人 5 分钟内说过话就往后推；发不发、怎么说她自己看着办。",
+                        "default": true
+                    },
+                    "proactive_targets": {
+                        "description": "发到哪个会话",
+                        "type": "list",
+                        "hint": "填完整会话号（napcat:FriendMessage:QQ号）。哪个机器人这里没填，就用上面名单里它的会话；都没有就不给它排。",
+                        "items": {
+                            "type": "string"
+                        },
+                        "condition": {
+                            "proactive_enable": true
+                        },
+                        "default": []
+                    },
+                    "proactive_done_min_importance": {
+                        "description": "做完多大的事才说",
+                        "type": "int",
+                        "hint": "补写给每段事打 1–5 分（1 洗碗走路，3 逛街泡脚，4 修好东西、碰上新鲜事，5 练成一招、碰上意外），够这个分才叫她说。出门、到家、开饭那一刻总会叫一次。",
+                        "slider": {
+                            "min": 1,
+                            "max": 5,
+                            "step": 1
+                        },
+                        "condition": {
+                            "proactive_enable": true
+                        },
+                        "default": 3
+                    },
+                    "proactive_extra_requirements": {
+                        "description": "额外要求",
+                        "type": "text",
+                        "hint": "附在每次主动消息提示词的最后，留空不加。",
+                        "condition": {
+                            "proactive_enable": true
+                        },
+                        "default": ""
+                    }
+                }
+            },
+            "other": {
+                "description": "其它",
+                "type": "object",
+                "condition": {
+                    "enabled": true
+                },
+                "items": {
+                    "world_keep_days": {
+                        "description": "世界线留几天",
+                        "type": "int",
+                        "hint": "更早的那几天自动删掉。",
+                        "default": 30
+                    },
+                    "edit_tool_enabled": {
+                        "description": "改日程工具",
+                        "type": "bool",
+                        "hint": "旧的每日日程才用：给她 revise_life_state 改自己的日程。世界线开启时不给。",
+                        "default": true
+                    },
+                    "debug": {
+                        "description": "调试日志",
+                        "type": "bool",
+                        "default": false
+                    }
+                }
             }
         }
     },
-    "context_tools": {
-        "description": "④ 上下文工具（/usage、/compact）",
+    "history_transcript": {
+        "description": "② 历史写成聊天记录",
         "type": "object",
-        "hint": "/usage 查看上下文占用；/compact 立刻把当前会话历史压成摘要。两个命令都限管理员。启用前请先停用旧插件 astrbot_plugin_context_tools，否则两个插件会各回一次。",
+        "hint": "发给模型时，会话历史不再当成她自己一条条说过的话，而是写成系统提示里一段带时间的「最近的聊天记录」，免得她照着自己前几条的口气往下接。思考和工具调用不写（画图的两个工具例外）；只改发出去的那一份，存着的历史不动。",
         "items": {
             "enabled": {
                 "description": "启用",
                 "type": "bool",
-                "default": false
-            },
-            "keep_recent_ratio": {
-                "description": "压缩时保留最近原文比例",
-                "type": "float",
-                "hint": "0 表示不保留原文，全部压成摘要。",
-                "default": 0.0
-            },
-            "instruction": {
-                "description": "压缩指令",
-                "type": "text",
-                "hint": "留空使用默认压缩提示词。",
-                "editor_mode": true,
-                "editor_language": "markdown",
-                "default": ""
-            },
-            "overflow_guard": {
-                "description": "拦截 AstrBot 自动压缩，超限只发固定提醒",
-                "type": "bool",
-                "hint": "开启后 AstrBot 不再自动压缩/截断上下文。普通聊天到了自动压缩线（/usage 的 compress_at）时不调模型，只由当前号发下面那句固定的话（不进历史），提醒你手动 /compact v2；主动对话本来就裁过上下文，照常发。关掉恢复 AstrBot 原行为（需重启插件）。",
+                "hint": "关了回到 AstrBot 原来的发法：历史全量当消息发。",
                 "default": true
             },
-            "overflow_replies": {
-                "description": "超限时的固定提醒（每行 机器人id=句子）",
-                "type": "list",
-                "hint": "机器人 id 就是平台实例名（napcat=丛雨，napcat2=亚托莉）。没配到的机器人发「（上下文满了，请主人手动 /compact v2）」。",
-                "default": [
-                    "napcat=唔……本座脑子里塞得太满，一时理不清了。主人，先替本座收拾收拾罢。",
-                    "napcat2=呜……亚托莉的记忆体塞满了，反应不过来了……高性能也是有极限的嘛，主人帮亚托莉整理一下好不好？"
-                ]
+            "recent_messages": {
+                "description": "放最近几条原话",
+                "type": "int",
+                "hint": "只数主人和她有正文的消息。0 = 前情备忘之后的原话全放。",
+                "slider": {
+                    "min": 0,
+                    "max": 200,
+                    "step": 1
+                },
+                "condition": {
+                    "enabled": true
+                },
+                "default": 0
             },
-            "error_replies_model": {
-                "description": "聊天时模型请求失败说的话（每行 机器人id=句子，可写多行，随机挑一句）",
+            "include_memo": {
+                "description": "带上前情备忘",
+                "type": "bool",
+                "hint": "会话开头有 /compact v2 写的备忘时，放在聊天记录前面。",
+                "condition": {
+                    "enabled": true
+                },
+                "default": true
+            },
+            "sessions": {
+                "description": "只管这些会话",
                 "type": "list",
-                "hint": "替掉 AstrBot 的「LLM 响应错误: …」，出了什么错只进日志。AstrBot 人格里自己填了自定义报错的，用人格里那句。没配到的机器人照旧发原来的报错。",
+                "hint": "填会话号，一行一个；不填 = 开了世界线的机器人的所有私聊。",
+                "condition": {
+                    "enabled": true
+                },
+                "default": []
+            }
+        }
+    },
+    "cron_context": {
+        "description": "③ 主动消息只带最近的聊天",
+        "type": "object",
+        "hint": "她主动找主人说话时，只把最近一段的聊天正文交给模型（不带思考和工具调用），省 token。平时聊天不受影响，存着的历史不改。",
+        "items": {
+            "enabled": {
+                "description": "启用",
+                "type": "bool",
+                "hint": "关了主动消息带全部历史。",
+                "default": true
+            },
+            "window_hours": {
+                "description": "带最近几小时",
+                "type": "int",
+                "hint": "从最后一条消息往前数。前情备忘一直带着。",
+                "slider": {
+                    "min": 1,
+                    "max": 168,
+                    "step": 1
+                },
+                "condition": {
+                    "enabled": true
+                },
+                "default": 24
+            },
+            "max_messages": {
+                "description": "最多几条",
+                "type": "int",
+                "hint": "超过就只留最近这么多条；历史里认不出时间时也按它裁。",
+                "slider": {
+                    "min": 10,
+                    "max": 1000,
+                    "step": 10
+                },
+                "condition": {
+                    "enabled": true
+                },
+                "default": 200
+            },
+            "notify_errors": {
+                "description": "出错时说一声",
+                "type": "bool",
+                "hint": "裁剪出错时在会话里说一声，用「出错时她说的话」里那组句子，没配句子就发原因。",
+                "condition": {
+                    "enabled": true
+                },
+                "default": true
+            }
+        }
+    },
+    "context_tools": {
+        "description": "④ 上下文命令（/usage、/compact）",
+        "type": "object",
+        "hint": "/usage 看上下文占了多少；/compact 只去掉思考和工具结果、原话全留；/compact v2 写前情备忘、挑原话摘录。命令只有管理员能用。",
+        "items": {
+            "enabled": {
+                "description": "启用",
+                "type": "bool",
+                "hint": "管这几个命令和「上下文满了」。每天自动压缩有自己的开关，不受它管。",
+                "default": true
+            },
+            "compact_v2": {
+                "description": "/compact v2",
+                "type": "object",
+                "hint": "/compact v2 [12m|12h|1d] [临时要求] 出预览；/compact v2 continue 意见 接着改；/compact v2 enter 写入；/compact v2 undo 撤销。不写保留多少就留今天和昨天的原话。",
+                "items": {
+                    "v2_provider_id": {
+                        "description": "用哪个模型",
+                        "type": "string",
+                        "_special": "select_provider",
+                        "hint": "要 OpenAI 兼容接口，只用来写备忘、挑摘录。",
+                        "default": "opencodeGO/deepseek-v4.1-flash"
+                    },
+                    "v2_reasoning_effort": {
+                        "description": "思考强度",
+                        "type": "string",
+                        "hint": "原样作为 reasoning_effort 传给模型，留空不传。",
+                        "default": "high"
+                    },
+                    "v2_max_tokens": {
+                        "description": "输出上限（含思考）",
+                        "type": "int",
+                        "hint": "思考很吃 token，上限小了会被思考耗光、写不出备忘。0 = 不传。",
+                        "default": 200000
+                    },
+                    "v2_master_name": {
+                        "description": "主人叫什么",
+                        "type": "string",
+                        "hint": "备忘里这么称呼主人。",
+                        "default": "Ginka"
+                    }
+                }
+            },
+            "daily": {
+                "description": "每天 0 点自动压缩",
+                "type": "object",
+                "items": {
+                    "v2_daily": {
+                        "description": "启用",
+                        "type": "bool",
+                        "hint": "0 点自动跑一次 /compact v2，不出预览直接写入，写前整份备份（/compact v2 undo 能撤）。停机错过了启动后补跑，失败了 15 分钟后再试。",
+                        "default": false
+                    },
+                    "v2_daily_keep": {
+                        "description": "保留多少原话",
+                        "type": "string",
+                        "hint": "写法同 /compact v2：12m 最近 12 条，12h 最近 12 小时，1d 今天。",
+                        "condition": {
+                            "v2_daily": true
+                        },
+                        "default": "12m"
+                    },
+                    "v2_daily_sessions": {
+                        "description": "压缩哪些会话",
+                        "type": "list",
+                        "hint": "填会话号，一行一个；不填就不压缩。",
+                        "condition": {
+                            "v2_daily": true
+                        },
+                        "default": []
+                    }
+                }
+            },
+            "overflow": {
+                "description": "上下文满了",
+                "type": "object",
+                "condition": {
+                    "enabled": true
+                },
+                "items": {
+                    "overflow_guard": {
+                        "description": "不让 AstrBot 自动压缩",
+                        "type": "bool",
+                        "hint": "到了自动压缩线（/usage 里的 compress_at）不压缩、不调模型，只发下面那句提醒主人 /compact v2（不进历史）；主动消息照常发。关掉回到 AstrBot 原来的做法。",
+                        "default": true
+                    },
+                    "overflow_replies": {
+                        "description": "提醒的话",
+                        "type": "list",
+                        "hint": "每行「机器人id=句子」（napcat=丛雨，napcat2=亚托莉）。没配的发「（上下文满了，请主人手动 /compact v2）」。",
+                        "condition": {
+                            "overflow_guard": true
+                        },
+                        "default": [
+                            "napcat=唔……本座脑子里塞得太满，一时理不清了。主人，先替本座收拾收拾罢。",
+                            "napcat2=呜……亚托莉的记忆体塞满了，反应不过来了……高性能也是有极限的嘛，主人帮亚托莉整理一下好不好？"
+                        ]
+                    }
+                }
+            }
+        }
+    },
+    "request_snapshot": {
+        "description": "⑤ 真实请求快照",
+        "type": "object",
+        "hint": "把每次真正发给模型的东西整份存下来（系统提示、注入、工具、全部消息），网页「上下文」页切到「真实请求」能看。只留最近 20 份。",
+        "items": {
+            "enabled": {
+                "description": "启用",
+                "type": "bool",
+                "hint": "关了就不再存，网页里「真实请求」是空的。",
+                "default": true
+            }
+        }
+    },
+    "zero_think_retry": {
+        "description": "⑥ 没思考就重来",
+        "type": "object",
+        "hint": "DeepSeek 偶尔一个字不想就回话，回得发飘。开着时，和主人聊天、主动消息拿到没思考的回复就不发、不存，同样的请求再要一次。记录员、补写、记忆总结不管。",
+        "items": {
+            "enabled": {
+                "description": "启用",
+                "type": "bool",
+                "default": true
+            },
+            "max_retries": {
+                "description": "最多重来几次",
+                "type": "int",
+                "hint": "都没想就用最后那次。",
+                "slider": {
+                    "min": 0,
+                    "max": 5,
+                    "step": 1
+                },
+                "condition": {
+                    "enabled": true
+                },
+                "default": 2
+            },
+            "providers": {
+                "description": "只管这些模型",
+                "type": "list",
+                "hint": "源编号或模型名里带这些字的才管，一行一个。",
+                "condition": {
+                    "enabled": true
+                },
+                "default": [
+                    "deepseek"
+                ]
+            }
+        }
+    },
+    "reply_guard": {
+        "description": "⑦ 新消息优先",
+        "type": "object",
+        "hint": "她的回复还没发出去，主人又来了一条：丢掉上一轮（不发、不进历史），两条消息各带各的时间，一起重新回。面板里的网页聊天不管。",
+        "items": {
+            "enabled": {
+                "description": "启用",
+                "type": "bool",
+                "hint": "关了回到 AstrBot 原来的做法（另起一轮，或者并进正在回的那一轮）。",
+                "default": true
+            }
+        }
+    },
+    "error_voice": {
+        "description": "⑧ 出错时她说的话",
+        "type": "object",
+        "hint": "AstrBot 和插件的报错原文换成她自己的口气说，出了什么错只进日志。每行「机器人id=句子」（napcat=丛雨，napcat2=亚托莉），一个机器人写几行就随机挑一句；没配的照旧发原来的报错。",
+        "items": {
+            "error_replies_model": {
+                "description": "聊天时模型出错",
+                "type": "list",
+                "hint": "替掉「LLM 响应错误: …」。人格里自己配了报错的，用人格里那句。",
                 "default": [
                     "napcat=唔……本座方才走了神，主人说的那句没听真切，再说一遍可好？",
                     "napcat=主人且慢，吾辈脑子里忽地一片空白……稍等一会儿，再同吾辈说一次罢。",
@@ -120,29 +629,10 @@
                     "napcat2=主人，亚托莉刚才发了一下呆，你说的话从耳朵边溜过去了……过一会儿再讲给亚托莉听，好吗？"
                 ]
             },
-            "error_note_to_history": {
-                "description": "报错发出去以后补进她的会话历史",
-                "type": "bool",
-                "default": true,
-                "hint": "上面三种报错（模型失败、日程回查失败、主动消息前裁剪出错）发出去以后，她本来不知道。开着时补进她的会话历史：她这边一条，内容是主人收到的那句 + 系统标记写明出了什么错；模型失败还会补上主人那条原话（AstrBot 本来连它一起丢了）。发给主人的不变。"
-            },
-            "error_replies_review": {
-                "description": "日程回查失败说的话（每晚 00:00 回查昨天，那时多半已经睡下）",
-                "type": "list",
-                "hint": "替掉「[超级增强] 日程回查失败…」，出了什么错只进日志。没配到的机器人照旧发原来的报错。",
-                "default": [
-                    "napcat=主人睡了么……本座想把昨日的事从头捋一遍，越捋越乱，只好先搁下了。",
-                    "napcat=主人，吾辈对着月亮回想昨天，有几处怎么也想不起来……罢了，明日再说。",
-                    "napcat=本座方才想把昨日做过的事记清楚些，脑子却糊成一团，主人莫怪。",
-                    "napcat2=主人……亚托莉迷迷糊糊想把昨天的日志补完，可怎么也对不上号……明天再写",
-                    "napcat2=呜……主人，昨天的日志有几页亚托莉怎么也想不起来写什么了，高性能也有记不住的时候嘛……",
-                    "napcat2=主人睡了吗？亚托莉翻着昨天的日志发愣，好几件事记得乱七八糟的……先这样吧，明早再理。"
-                ]
-            },
             "error_replies_cron": {
-                "description": "主动消息前整理上下文出错时说的话（只是那一步没做好，主动消息照常进行）",
+                "description": "主动消息前整理聊天记录出错",
                 "type": "list",
-                "hint": "主动消息到点时，插件先把聊天记录裁成最近一段再交给模型；这一步出错（或 AstrBot 升级后装不上）时说这句，替掉「[超级增强] 主动对话上下文裁剪…」。主动消息照常进行，只是带着没裁的全部记录；出了什么错只进日志。没配到的机器人照旧发原来的报错。",
+                "hint": "这一步出错时主动消息照常发，只是带着没裁过的全部记录。",
                 "default": [
                     "napcat=主人，本座方才想找你说话，脑子里新事旧事搅成一团……若说得颠三倒四，莫要笑话本座。",
                     "napcat=唔……吾辈刚才一想起主人，前前后后的事全涌上来了，理不太清，主人多担待些。",
@@ -152,541 +642,280 @@
                     "napcat2=哼哼，亚托莉本来想跟主人说件事……诶？刚才想说什么来着？呜，主人等亚托莉想一想。"
                 ]
             },
-            "v2_provider_id": {
-                "description": "/compact v2 用的模型",
-                "type": "string",
-                "_special": "select_provider",
-                "hint": "必须是 OpenAI 兼容 chat 接口。只用来挑原话片段和写备忘。用法：/compact v2 [Nd|Nh|Nm] [临时要求] 生成预览（默认保留今天+昨天原文）；/compact v2 continue 意见 微调；/compact v2 enter 写入；/compact v2 undo 撤销。",
-                "default": "CmdCode/deepseek/deepseek-v4.1-flash"
-            },
-            "v2_reasoning_effort": {
-                "description": "/compact v2 思考强度",
-                "type": "string",
-                "hint": "原样作为 reasoning_effort 发给模型；留空不传。",
-                "default": "high"
-            },
-            "v2_max_tokens": {
-                "description": "/compact v2 输出上限（含思考）",
-                "type": "int",
-                "hint": "思考会吃掉大量 token，8192 之类的上限会被耗光导致没输出；0 表示不传。",
-                "default": 200000
-            },
-            "v2_master_name": {
-                "description": "/compact v2 里主人的名字",
-                "type": "string",
-                "default": "Ginka"
-            },
-            "v2_daily": {
-                "description": "每天 0 点自动 /compact v2",
-                "type": "bool",
-                "hint": "不出预览直接写入，写前照样整份备份（/compact v2 undo 能撤）。0 点没跑上（停机、重启）就在启动后补跑；失败了历史不动，15 分钟后再试。配合「历史写成聊天记录」：她看到的是备忘 + 摘录 + 备忘之后的全部原话。",
-                "default": false
-            },
-            "v2_daily_keep": {
-                "description": "自动压缩保留多少原文",
-                "type": "string",
-                "hint": "写法同 /compact v2：12m = 最近 12 条，12h = 最近 12 小时，1d = 今天。默认 12m（半夜正聊着也接得上）。",
-                "default": "12m"
-            },
-            "v2_daily_sessions": {
-                "description": "自动压缩哪些会话",
+            "error_replies_review": {
+                "description": "旧日程回查出错",
                 "type": "list",
-                "hint": "填会话号（如 napcat2:FriendMessage:QQ号），一行一个；不填就不自动压缩。",
-                "default": []
+                "hint": "只在世界线没开、用旧的每日日程时用到（每晚 0 点回查昨天）。",
+                "default": [
+                    "napcat=主人睡了么……本座想把昨日的事从头捋一遍，越捋越乱，只好先搁下了。",
+                    "napcat=主人，吾辈对着月亮回想昨天，有几处怎么也想不起来……罢了，明日再说。",
+                    "napcat=本座方才想把昨日做过的事记清楚些，脑子却糊成一团，主人莫怪。",
+                    "napcat2=主人……亚托莉迷迷糊糊想把昨天的日志补完，可怎么也对不上号……明天再写",
+                    "napcat2=呜……主人，昨天的日志有几页亚托莉怎么也想不起来写什么了，高性能也有记不住的时候嘛……",
+                    "napcat2=主人睡了吗？亚托莉翻着昨天的日志发愣，好几件事记得乱七八糟的……先这样吧，明早再理。"
+                ]
+            },
+            "error_note_to_history": {
+                "description": "报错以后让她知道",
+                "type": "bool",
+                "hint": "把主人收到的那句和出了什么错补进她的会话历史；模型出错那次，连主人那条原话一起补回去（AstrBot 本来会丢掉）。",
+                "default": true
             }
         }
     },
-    "cross_session": {
-        "description": "⑤ 跨会话上下文修复",
+    "msg_time": {
+        "description": "⑨ 消息时间戳",
         "type": "object",
-        "hint": "AI 用 send_message_to_user 主动给别的私聊发消息时，把内容补进对方会话历史。启用前请先停用旧插件 astrbot_plugin_proactive_context_fix。",
+        "hint": "她发出的每条消息记下真实发送时间写进历史，并告诉模型别模仿；模型自己写的时间戳会被剥掉。",
         "items": {
             "enabled": {
                 "description": "启用",
                 "type": "bool",
-                "default": false
-            },
-            "debug": {
-                "description": "调试日志",
-                "type": "bool",
-                "default": false
-            }
-        }
-    },
-    "life_state": {
-        "description": "⑥ 动态生活状态（世界线 / 注入 / 主动对话）",
-        "type": "object",
-        "hint": "世界线由记录员（把聊天里发生的事记进来）和幕间补写（没人聊天时把接下来的空档补上）共同维护，聊天时注入给角色，并按早安 / 晚安 / 约定 / 做完一件大事定时主动发消息。世界线按机器人（平台实例）隔离：每个机器人一条线，同一机器人下所有会话共用。启用前请先停用旧插件 astrbot_plugin_dynamic_life_state，否则会重复注入、重复主动发消息。",
-        "items": {
-            "enabled": {
-                "description": "启用",
-                "type": "bool",
-                "hint": "总开关。关闭时下面所有设置都不生效。",
-                "default": false
-            },
-            "session_list_mode": {
-                "description": "会话名单模式",
-                "type": "string",
-                "hint": "whitelist=仅列表中的机器人启用；blacklist=列表中的机器人不启用；none=所有已存过状态的机器人启用。",
-                "options": [
-                    "whitelist",
-                    "blacklist",
-                    "none"
-                ],
-                "default": "whitelist"
-            },
-            "session_list": {
-                "description": "会话名单",
-                "type": "list",
-                "hint": "填机器人 id（平台实例），如 napcat、napcat2；填完整 UMO 也行，会自动取第一段（napcat:FriendMessage:123456 → napcat）。同一个机器人下不管几个号、私聊群聊都共用同一份日程。",
-                "items": {
-                    "type": "string"
-                },
-                "default": []
-            },
-            "llm_provider_id": {
-                "description": "记录员 / 补写用模型",
-                "type": "string",
-                "hint": "记录员和幕间补写调用模型时用；留空使用全局默认模型。",
-                "_special": "select_provider",
-                "default": ""
-            },
-            "persona_id": {
-                "description": "补写用人格",
-                "type": "string",
-                "hint": "幕间补写把这份人格文本放进提示词；留空自动用机器人的默认人格。",
-                "_special": "select_persona",
-                "default": ""
-            },
-            "injection_mode": {
-                "description": "世界线注入方式",
-                "type": "string",
-                "hint": "把【世界线】块以哪种形式交给模型：extra_user_content_parts（默认）或 fake_tool_call。",
-                "options": [
-                    "extra_user_content_parts",
-                    "fake_tool_call"
-                ],
-                "default": "extra_user_content_parts"
-            },
-            "bot_labels": {
-                "description": "机器人名字",
-                "type": "string",
-                "hint": "平台实例到角色名的对照（例如 napcat=丛雨），页面、注入和记录都用它显示名字。",
-                "default": ""
+                "default": true
             },
             "timezone": {
                 "description": "时区",
                 "type": "string",
-                "hint": "留空则用全局时区，默认 Asia/Shanghai。",
+                "hint": "留空用 AstrBot 的全局时区。",
+                "condition": {
+                    "enabled": true
+                },
                 "default": ""
+            }
+        }
+    },
+    "typing": {
+        "description": "⑩ 正在输入",
+        "type": "object",
+        "hint": "回复发出去之前，先让 QQ 显示「对方正在输入…」。",
+        "items": {
+            "enabled": {
+                "description": "启用",
+                "type": "bool",
+                "default": true
             },
-            "world_mode": {
-                "description": "世界线（新架构）",
-                "type": "string",
-                "hint": "off=关闭；shadow=只跑记录员和幕间补写、世界线照常记，但聊天仍用旧日程；live=切换：聊天注入和主动消息都按世界线来，每日日程与回查停用。",
+            "delay_seconds": {
+                "description": "显示几秒再发",
+                "type": "float",
+                "slider": {
+                    "min": 0,
+                    "max": 10,
+                    "step": 0.5
+                },
+                "condition": {
+                    "enabled": true
+                },
+                "default": 2.0
+            },
+            "event_type": {
+                "description": "显示成",
+                "type": "int",
                 "options": [
-                    "off",
-                    "shadow",
-                    "live"
+                    1,
+                    0
                 ],
-                "default": "off"
+                "labels": [
+                    "对方正在输入…",
+                    "对方正在说话…"
+                ],
+                "condition": {
+                    "enabled": true
+                },
+                "default": 1
             },
-            "recorder_quiet_seconds": {
-                "description": "记录员静默阈值（秒）",
-                "type": "int",
-                "hint": "某个会话最后一条消息过了这么久还没新消息，就把这段对话整理进世界线。",
-                "default": 90
-            },
-            "step_lead_minutes": {
-                "description": "补写提前量（分钟）",
-                "type": "int",
-                "hint": "她手上那件事做完前多少分钟，补写接着写下一段（1-30）。聊天里说开始做一件没说多久的事、或者断了没记录时，会马上补写。",
-                "default": 5
-            },
-            "step_window_hours": {
-                "description": "补写断档上限（小时）",
-                "type": "int",
-                "hint": "断了很久（停机、出错）时，最多往回补多少小时（1-12）；更早的不补。",
-                "default": 3
-            },
-            "world_home": {
-                "description": "她们现在住的地方",
-                "type": "string",
-                "hint": "幕间补写用的地点锚点：补写出来的地点和活动都在这一带，人设里写的其它地方只当背景。",
-                "default": "穗织"
-            },
-            "world_notes": {
-                "description": "故事里的固定事实",
-                "type": "text",
-                "hint": "一行一条，记录员和幕间补写都会照着写（例如哪里在哪、哪扇门关着）。剧情变了就改这里，不用改代码。",
-                "default": "藏经阁的门是关着的：里面的人不主动出来，外面的人看不见里面在做什么，不要写谁打那儿过瞧见里面。\n藏经阁不在神社里，是两处地方。"
-            },
-            "world_keep_days": {
-                "description": "世界线保留天数",
-                "type": "int",
-                "hint": "每天的条目按这个天数保留，更早的日文件自动删。",
-                "default": 30
-            },
-            "world_inject_recent": {
-                "description": "注入最近条数",
-                "type": "int",
-                "hint": "聊天时把今天最近几条世界线条目给模型看。",
-                "default": 12
-            },
-            "world_no_repeat": {
-                "description": "别总复述手上在干什么",
+            "only_private": {
+                "description": "只在私聊",
                 "type": "bool",
-                "hint": "世界线最后加一句：手上在做的事说过了就别每句都提，主人问起或正好相关时再说。关掉她会每句都捎带一句在干嘛。",
-                "default": true
-            },
-            "world_voice_note": {
-                "description": "别当管家厨娘",
-                "type": "bool",
-                "hint": "世界线最后再加一句：她不是管家也不是厨娘，主人没问就别报菜单、碗洗没洗、菜温在哪，照她自己的性子说；主动消息另加一句别报家务清单。两个号各用各的说法。",
-                "default": true
-            },
-            "world_enabled": {
-                "description": "幕间补写",
-                "type": "bool",
-                "hint": "没人聊天时把接下来几小时的事一段段补进世界线；关了就只有记录员在记。",
-                "default": true
-            },
-            "world_llm_timeout": {
-                "description": "记录员 / 补写超时（秒）",
-                "type": "int",
-                "hint": "记录员和幕间补写调用模型的超时；网络不稳就调大。",
-                "default": 120
-            },
-            "recorder_batch": {
-                "description": "记录员批量条数",
-                "type": "int",
-                "hint": "记录员一次最多处理多少条新消息。",
-                "default": 60
-            },
-            "edit_tool_enabled": {
-                "description": "世界线修改工具",
-                "type": "bool",
-                "hint": "给模型一个修改自己世界线条目的工具；默认关。",
-                "default": true
-            },
-            "abilities_enabled": {
-                "description": "能力清单",
-                "type": "bool",
-                "hint": "角色在主人训练下后来学会的事（例如能摸到东西了）：AI 可用 record_ability 工具记下，也可在「上下文」页面的「能力与约定」里编辑。普通聊天、主动对话和日程生成都会注入。",
-                "default": true
-            },
-            "promise_enabled": {
-                "description": "约定",
-                "type": "bool",
-                "hint": "AI 答应下来的事用 make_promise 记下：今天的直接改写那一段日程并在约定时间主动提起，以后的到那天生成日程时必须排进去；点名的另一个角色那边同时记上。普通聊天与主动对话都会注入接下来 7 天的约定。",
-                "default": true
-            },
-            "raw_log_enabled": {
-                "description": "原始消息副本（供记录员读原文）",
-                "type": "bool",
-                "hint": "把配置会话里的双方消息另存一份（保留今天+昨天两个自然日）：记录员读它来记世界线，主动对话到点判断也用；不参与上下文注入。",
+                "hint": "NapCat 只有私聊支持输入状态。",
+                "condition": {
+                    "enabled": true
+                },
                 "default": true
             },
             "debug": {
                 "description": "调试日志",
                 "type": "bool",
-                "default": false
-            },
-            "proactive_enable": {
-                "description": "启用主动对话",
-                "type": "bool",
-                "hint": "状态生成完成后安排主动找主人说话：起床后几分钟（早安）、睡前几分钟（晚安）、约定到点，白天再随机挑几个时段，时刻都带点随机。到点先判断：这个会话 5 分钟内有人说过话就顺延到最后一句话 5 分钟之后；提示词到点现场生成（此刻的打算、是早安 / 晚安 / 约定还是白天随口聊），发不发、怎么接话由模型自己判断；主人回没回、隔了多久不写进提示词，由模型看带时间的最近 24 小时聊天记录自己判断。",
-                "default": true
-            },
-            "proactive_targets": {
-                "description": "主动对话目标会话",
-                "type": "list",
-                "hint": "需填写完整 UMO（如 napcat:FriendMessage:123456），只对该 UMO 所属机器人生效；留空时回退使用上面的名单里同机器人的条目。某个机器人在配置里找不到目标会话时，不给它排主动对话。",
-                "items": {
-                    "type": "string"
+                "condition": {
+                    "enabled": true
                 },
-                "default": []
-            },
-            "proactive_done_min_importance": {
-                "description": "做完一件事要多重要才主动说",
-                "type": "int",
-                "hint": "世界线 live：补写给每段事打 1–5 分（1 洗碗走路这类小事，3 逛街泡脚，4 修好东西、碰上新鲜事，5 练成一招、碰上意外）。做完的事够这个分数才叫她发主动消息；闲着、睡觉、没打分的（聊天里记的）都不叫。另外出门、到家、开饭那一刻总会叫她一次；早安、晚安、约定、改口不受影响。",
-                "slider": {
-                    "min": 1,
-                    "max": 5,
-                    "step": 1
-                },
-                "default": 4
-            },
-            "proactive_extra_requirements": {
-                "description": "主动对话额外要求",
-                "type": "text",
-                "hint": "附加到每条主动对话提示词末尾的要求，留空则不追加。",
-                "default": ""
-            }
-        }
-    },
-    "reply_guard": {
-        "description": "⑦ 新消息优先（回复没发出去时又收到消息）",
-        "type": "object",
-        "hint": "上一轮回复还没发出去时你又发了消息时：丢掉上一轮（不发、也不写进历史），把上一条消息单独补进新一轮请求，让模型看到两条独立、各自带时间戳的用户消息。",
-        "items": {
-            "enabled": {
-                "description": "启用",
-                "type": "bool",
-                "hint": "关闭则保持 AstrBot 原生行为（新消息另起一轮，或折叠进当前轮）。",
                 "default": false
             }
         }
     },
-    "cron_context": {
-        "description": "⑧ 主动对话上下文裁剪",
+    "stay_silent": {
+        "description": "⑪ 不回话工具",
         "type": "object",
-        "hint": "定时主动对话触发时，只把最近一段时间的对话正文喂给模型（不含思考、工具调用、工具结果），大幅降低 token；普通聊天不受影响，数据库里的历史也不会被改动。出错时会把原因发到会话窗口。",
+        "hint": "给她一个 stay_silent 工具：觉得这句不用回时调它，这一轮一个字都不发。",
         "items": {
             "enabled": {
                 "description": "启用",
                 "type": "bool",
-                "hint": "关闭则主动对话仍加载全量历史（AstrBot 原生行为）。",
-                "default": false
-            },
-            "window_hours": {
-                "description": "时间窗口（小时）",
-                "type": "int",
-                "hint": "只保留最近这么多小时内的消息，默认 24。",
-                "slider": {
-                    "min": 1,
-                    "max": 168,
-                    "step": 1
-                },
-                "default": 24
-            },
-            "max_messages": {
-                "description": "消息条数上限",
-                "type": "int",
-                "hint": "裁剪后最多保留多少条消息（含时间窗口之外的兜底），默认 200。",
-                "slider": {
-                    "min": 10,
-                    "max": 1000,
-                    "step": 10
-                },
-                "default": 200
-            },
-            "notify_errors": {
-                "description": "出错时通知到窗口",
-                "type": "bool",
-                "hint": "裁剪失败或口径失效（例如找不到时间戳）时，在会话窗口说一声，不静默处理。说的话用「上下文工具」里「主动消息前整理上下文出错时说的话」，没配句子才发原因；原因都会写日志。",
+                "hint": "关了她调这个工具也照样会说话。",
                 "default": true
-            }
-        }
-    },
-    "history_transcript": {
-        "description": "⑧-2 历史写成聊天记录",
-        "type": "object",
-        "hint": "发给模型时，不再把会话历史当成她自己说过的消息一条条发，而是写成系统提示里的一段「最近的聊天记录」（带时间），只放最近几条；思考、工具调用不写进去。模型会照着自己最近几条回复的样子往下接，这样她就不会被自己之前平淡的回复带平。只改发出去的那一份，数据库里的历史一个字不动；普通聊天和主动对话都管。",
-        "items": {
-            "enabled": {
-                "description": "启用",
-                "type": "bool",
-                "hint": "关掉就回到 AstrBot 原来的发法（历史全量当消息发）。",
-                "default": false
-            },
-            "recent_messages": {
-                "description": "原样放最近几条",
-                "type": "int",
-                "hint": "只算有正文的主人 / 她的消息。0 = 不限：备忘之后的原话全放（配合每天 0 点自动压缩，就是昨晚最后几句加今天的）。填数字就只放最近这么多条。",
-                "slider": {
-                    "min": 0,
-                    "max": 200,
-                    "step": 1
-                },
-                "default": 0
-            },
-            "include_memo": {
-                "description": "带上压缩备忘",
-                "type": "bool",
-                "hint": "会话开头有 /compact v2 写的前情备忘时，一并放进去（放在聊天记录前面）。",
-                "default": true
-            },
-            "sessions": {
-                "description": "只管这些会话",
-                "type": "list",
-                "hint": "填会话号（如 napcat2:FriendMessage:QQ号），一行一个；不填 = 开了生活状态的机器人的所有私聊。",
-                "default": []
-            }
-        }
-    },
-    "zero_think_retry": {
-        "description": "⑧-3 没思考就重来",
-        "type": "object",
-        "hint": "DeepSeek 偶尔一个字不想就回话，这种回复明显发飘。打开后，和主人聊天、主动消息时拿到的回复要是思考是空的，这次就不发、不存，同样的请求再要一次；重试够了次数还是没想，就用最后那次。记录员、补写、记忆总结不受影响。",
-        "items": {
-            "enabled": {
-                "description": "启用",
-                "type": "bool",
-                "hint": "关掉就跟原来一样，没想也照发。",
-                "default": true
-            },
-            "max_retries": {
-                "description": "最多重来几次",
-                "type": "int",
-                "hint": "一次没想就再要一次，最多这么多次；都没想就用最后那次。",
-                "slider": {
-                    "min": 0,
-                    "max": 5,
-                    "step": 1
-                },
-                "default": 2
-            },
-            "providers": {
-                "description": "只管这些模型源",
-                "type": "list",
-                "hint": "源的编号或模型名里带这些字的才管，一行一个；默认 deepseek。",
-                "default": [
-                    "deepseek"
-                ]
             }
         }
     },
     "image_gen": {
-        "description": "⑧-4 画图工具 draw_image / send_image",
+        "description": "⑫ 画图",
         "type": "object",
-        "hint": "给她两个工具：draw_image 调图像生成模型画一张，画好先放进她这一轮的上下文给她看（不发、不存进会话历史）；她觉得好了再用 send_image 按编号发给对方，不满意就接着画。模型只认提示词、参考图（主人发的图、她上一次画的图）和分辨率，不思考。原图存在插件数据目录 images/ 下，编号记在 images/index.json。",
+        "hint": "给她 draw_image、send_image 两个工具：画好先给她自己看（不发、不进历史），满意了按编号发出去，不满意接着改。原图存在插件数据目录 images/ 下。",
         "items": {
             "enabled": {
                 "description": "启用",
                 "type": "bool",
-                "hint": "关掉就不给她这个工具。",
+                "hint": "关了就不给这两个工具。",
                 "default": true
             },
             "provider_id": {
-                "description": "用哪个图像模型",
+                "description": "图像模型",
                 "type": "string",
                 "_special": "select_provider",
-                "hint": "必须是 OpenAI 兼容 chat 接口的源；出来的图夹在回复里（![…](data:image/…;base64,…)）。分辨率写在请求的 size 里（宽x高）。",
+                "hint": "要 OpenAI 兼容接口、把图夹在回复里返回的模型。",
+                "condition": {
+                    "enabled": true
+                },
                 "default": "gemini/gemini-3.1-flash-image"
             },
             "timeout": {
                 "description": "最多等几秒",
                 "type": "int",
-                "hint": "AstrBot 调一个工具默认 120 秒就掐断，这里别超过它。实测 1K 约 19 秒、2K 约 24 秒，图越大越慢。",
+                "obvious_hint": true,
+                "hint": "AstrBot 调一个工具 120 秒就掐断，这里要比它小。1K 图约 20 秒，2K 约 25 秒。",
                 "slider": {
                     "min": 30,
                     "max": 115,
                     "step": 5
+                },
+                "condition": {
+                    "enabled": true
                 },
                 "default": 100
             }
         }
     },
     "bot_dialog": {
-        "description": "⑩ 多机器人对话节奏（bot↔bot）",
+        "description": "⑬ 两个机器人互相聊",
         "type": "object",
-        "hint": "两个机器人互相聊起来时会无限接话。这里按“第几次来回”给提示：第 1..N 次注入轮次提示，超过上限（默认第 4 次）直接静默，本轮不输出。只有“对方是另一个机器人”时才生效。",
+        "hint": "丛雨和亚托莉互相发消息会接个没完：每个来回告诉她们第几轮了，超过上限就不再回。只在对面是另一个机器人时起作用。最后四项（谁是谁）别的功能也要用，不管开没开都要填。",
         "items": {
             "enabled": {
                 "description": "启用",
                 "type": "bool",
                 "default": true
             },
-            "bot_ids": {
-                "description": "机器人 QQ 号名单",
-                "type": "list",
-                "hint": "哪些号算“另一个机器人”。默认 3810794928（从雨）、3036624768（亚托莉）。",
-                "items": {
-                    "type": "string"
-                },
-                "default": [
-                    "3810794928",
-                    "3036624768"
-                ]
-            },
-            "master_ids": {
-                "description": "主人 QQ 号名单",
-                "type": "list",
-                "hint": "主人开口就重新计数（这条链重新开始）。",
-                "items": {
-                    "type": "string"
-                },
-                "default": [
-                    "1706737553"
-                ]
-            },
-            "bot_accounts": {
-                "description": "各角色的 QQ 号（每行 平台id=QQ号）",
-                "type": "list",
-                "hint": "发消息工具（send_message_to_user）的说明照这里写出「找另一个角色 session 填什么」，例如亚托莉找丛雨填 napcat2:FriendMessage:3810794928。平台 id 就是机器人实例名（napcat=丛雨，napcat2=亚托莉）。",
-                "items": {
-                    "type": "string"
-                },
-                "default": [
-                    "napcat=3810794928",
-                    "napcat2=3036624768"
-                ]
-            },
             "max_rounds": {
                 "description": "最多几个来回",
                 "type": "int",
-                "hint": "第 1..N 次来回给提示；第 N+1 次起直接静默。默认 3。",
+                "hint": "第 1 到 N 个来回给提示，再往后不回。",
                 "slider": {
                     "min": 1,
                     "max": 10,
                     "step": 1
                 },
+                "condition": {
+                    "enabled": true
+                },
                 "default": 3
             },
             "window_minutes": {
-                "description": "连续窗口（分钟）",
+                "description": "多久算重新开始（分钟）",
                 "type": "int",
-                "hint": "超过这么久没有新的机器人消息，就重新从第 1 次算起。默认 30。",
+                "hint": "这么久没有新的机器人消息，就从第 1 个来回重新算；主人一开口也重新算。",
                 "slider": {
                     "min": 1,
                     "max": 240,
                     "step": 1
                 },
+                "condition": {
+                    "enabled": true
+                },
                 "default": 30
             },
             "record_to_master_history": {
-                "description": "把来回写回主人会话",
+                "description": "她们聊的写进和主人的会话",
                 "type": "bool",
-                "hint": "开启后，每次 bot↔bot 来回都会写成一条纯文本记录（不含思考链、不含工具结果），追加到“主人 ↔ 本机器人”的历史里，并写明对方是另一个机器人、带时间。",
+                "hint": "每个来回写成一条纯文字记录（写明对面是谁、带时间），补进她和主人的会话历史。",
+                "condition": {
+                    "enabled": true
+                },
                 "default": true
             },
-            "bot_names": {
-                "description": "机器人名字（用于记录里写清对方是谁）",
-                "type": "string",
-                "hint": "用「QQ号=名字」写，多个用逗号分隔，例如 3036624768=亚托莉,3810794928=从雨；没配到的会写成“另一个机器人”。",
-                "default": "3036624768=亚托莉,3810794928=丛雨"
-            },
             "delegation_report": {
-                "description": "委托回报",
+                "description": "替主人传完话回来报告",
                 "type": "bool",
-                "hint": "主人派她去问/告诉另一个机器人时，等她们把话说完了（来回满 3 轮，或者停住 120 秒没有新往来）她才回到“主人和她的会话”里把结果报给主人；对方一句都没回，到点也会说一声。",
+                "hint": "主人叫她去问、去告诉另一个机器人时，等她们聊完了，回到和主人的会话报告结果；对方一直没回也说一声。",
+                "condition": {
+                    "enabled": true
+                },
                 "default": true
             },
             "fallback_seconds": {
-                "description": "聊完判定 / 没回话兜底（秒）",
+                "description": "停多久算聊完（秒）",
                 "type": "int",
-                "hint": "对方每回一次话，这个计时器就重置。停住这么久没有新的往来，就认为她们聊完了，回来报告主人；如果对方从头到尾一句没回，到点也会说一声“他还没回我”。",
+                "hint": "对方每回一次就重新计时，停住这么久就算聊完；来回满了上限也算。",
                 "slider": {
                     "min": 30,
                     "max": 900,
                     "step": 30
                 },
+                "condition": {
+                    "enabled": true,
+                    "delegation_report": true
+                },
                 "default": 120
+            },
+            "bot_ids": {
+                "description": "机器人的 QQ 号",
+                "type": "list",
+                "hint": "哪些号算「另一个机器人」，一行一个。",
+                "items": {
+                    "type": "string"
+                },
+                "default": []
+            },
+            "master_ids": {
+                "description": "主人的 QQ 号",
+                "type": "list",
+                "hint": "一行一个。",
+                "items": {
+                    "type": "string"
+                },
+                "default": []
+            },
+            "bot_accounts": {
+                "description": "机器人 id 对 QQ 号",
+                "type": "list",
+                "hint": "每行「机器人id=QQ号」（napcat=丛雨的号）。发消息工具的说明照这里写，找另一个机器人该填哪个会话号。",
+                "items": {
+                    "type": "string"
+                },
+                "default": []
+            },
+            "bot_names": {
+                "description": "QQ 号对名字",
+                "type": "string",
+                "hint": "写成「QQ号=名字」，逗号隔开。记录里用它写清对面是谁，没配的写「另一个机器人」。",
+                "default": ""
             }
         }
     },
-    "request_snapshot": {
-        "description": "⑪ 真实请求快照（上下文页面用）",
+    "cross_session": {
+        "description": "⑭ 发出去的话补进历史",
         "type": "object",
-        "hint": "把「模型这一次实际收到了什么」整份存下来：系统提示、临时注入、工具定义、完整消息数组。用于在「上下文」页面切到「真实请求」查看；默认每轮存一份，只留最近 20 份。",
+        "hint": "她给别的会话发的消息、主动消息里发的话，补进对应会话的历史，不然她不知道自己说过；主动消息那一轮的思考也存在她发的第一条上。",
         "items": {
             "enabled": {
                 "description": "启用",
                 "type": "bool",
-                "hint": "关掉后不再记录任何快照（页面里「真实请求」会变空）。",
                 "default": true
+            },
+            "debug": {
+                "description": "调试日志",
+                "type": "bool",
+                "condition": {
+                    "enabled": true
+                },
+                "default": false
             }
         }
     }
