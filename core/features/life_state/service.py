@@ -275,7 +275,7 @@ class LifeStateService:
         self.recorder.things = self.things
         self.life_step.things = self.things
         # 世界线 live 时，主动消息提示词里不再出「原本打算」那一行
-        self.planner.live_fn = lambda: self.world_mode == "live"
+        self.planner.live_fn = lambda: True
         self._world_task: asyncio.Task | None = None
         self._world_day = None
 
@@ -283,7 +283,6 @@ class LifeStateService:
 
     @property
     def world_mode(self) -> str:
-        """兼容旧调用：现在只剩世界线。"""
         return "live"
 
     # 网页「世界线」页里填的补写注意事项（只进补写的提示词）
@@ -329,8 +328,6 @@ class LifeStateService:
         另一个人补写排的、写着和她一起的段也跟着处理（见 _release_partners），不等记录员去猜。
         返回给模型看的结果（只写事实）。
         """
-        if self.world_mode != "live":
-            return "世界线没开，没写进去。"
         bot = bot_of_umo(umo)
         what = " ".join(str(what or "").split())
         if not bot or not what:
@@ -445,8 +442,6 @@ class LifeStateService:
 
     def tool_recall(self, umo: str, keyword: str = "", date: str = "", time: str = "", entry: str = "") -> str:
         """回想工具：按关键词 / 日期 / 时间搜世界线（只列简短的几条）；填了 entry 就看那一条当时准确的世界线。"""
-        if self.world_mode != "live":
-            return "世界线没开，翻不到。"
         bot = bot_of_umo(umo)
         if not bot:
             return "认不出你是谁，翻不到。"
@@ -469,8 +464,6 @@ class LifeStateService:
 
     def tool_look_things(self, umo: str, kind: str = "food", thing_id: str = "") -> str:
         """看家里的东西：kind=food 列出家里现有的吃的，kind=item 列出吃的以外的东西；填了编号看那一件的来龙去脉。这一刻现算。"""
-        if self.world_mode != "live":
-            return "世界线没开，看不到。"
         now = self._now().replace(tzinfo=None)
         shelf = self.things.view(now)
         key = str(thing_id or "").strip()
@@ -488,8 +481,6 @@ class LifeStateService:
 
     def world_text(self, bot: str, now: datetime.datetime) -> str:
         """live 时给模型的【世界线】块：线 + 约定 + 在练的事 + 能力清单。"""
-        if self.world_mode != "live":
-            return ""
         try:
             recent = int(self.cfg.get("world_inject_recent", 12) or 12)
         except Exception:
@@ -533,8 +524,6 @@ class LifeStateService:
 
     def state_for_planner(self, bot: str, date_text: str):
         """主动对话读状态：live 下由世界线合成，其余读日程。"""
-        if self.world_mode != "live":
-            return self.store.get(bot, date_text)
         try:
             return self._world_state(bot, date_text)
         except Exception:
@@ -625,38 +614,31 @@ class LifeStateService:
                 logger.error("[super_enhance/life] outbox 发送失败", exc_info=True)
 
     async def _world_loop(self) -> None:
-        """世界线后台循环：记录员（按会话防抖）+ 幕间补写 + 每日维护。"""
+        """世界线后台循环：记录员、补写和每日维护。"""
         await asyncio.sleep(20.0)
         while True:
             try:
                 await self._flush_outbox()
-                if self.world_mode != "off":
-                    now = self._now()
-                    today = now.date()
-                    if self._world_day != today:
-                        await self._world_daily(today)
-                        self._world_day = today
-                    else:
-                        await self._review_if_due(now)
-                    for umo in self.recorder.sessions():
-                        items = self.recorder.pending(umo, now)
-                        if items:
-                            logger.info(
-                                "[super_enhance/life] 世界线：%s 待处理 %d 条，可跑=%s",
-                                umo, len(items), self.recorder.ready(umo, now),
-                            )
-                    done = await self.recorder.run_all(now)
-                    if done and self.world_mode == "live":
-                        # 记录员可能记了新约定：补排约定到点的那条
-                        await self._sync_live_jobs(now.date().isoformat())
-                    if self.life_step.due(now):
-                        await self.life_step.run(now)
-                    if self.world_mode == "live":
-                        await self._settle_live(now)
-                        # 补写可能跑了好几分钟：做完没做完按此刻算
-                        await self._notify_done(self._now())
-                    if done:
-                        self._debug("世界线：记录员处理了 %d 个会话", done)
+                now = self._now()
+                today = now.date()
+                if self._world_day != today:
+                    await self._world_daily(today)
+                    self._world_day = today
+                else:
+                    await self._review_if_due(now)
+                for umo in self.recorder.sessions():
+                    items = self.recorder.pending(umo, now)
+                    if items:
+                        logger.info("[super_enhance/life] 世界线：%s 待处理 %d 条，可跑=%s", umo, len(items), self.recorder.ready(umo, now))
+                done = await self.recorder.run_all(now)
+                if done:
+                    await self._sync_live_jobs(today.isoformat())
+                if self.life_step.due(now):
+                    await self.life_step.run(now)
+                await self._settle_live(now)
+                await self._notify_done(self._now())
+                if done:
+                    self._debug("世界线：记录员处理了 %d 个会话", done)
                 self.world.clear_error("loop")
             except asyncio.CancelledError:
                 raise
