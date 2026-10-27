@@ -43,7 +43,6 @@ from .core.features.overflow_guard import OverflowGuard
 from .core.features import error_voice
 from .core.features.cron_context import CronContextFeature
 from .core.features.cross_session import CrossSessionFeature
-from .core.features.laya_bridge import LayaBridge
 from .core.features.life_state import LifeStateService
 from .core.features.msg_time import MsgTimeFeature
 from .core.features.proactive_think import ProactiveThinkFilter
@@ -114,7 +113,6 @@ class SuperEnhance(Star):
             set_timezone(str((context.get_config() or {}).get("timezone") or ""))
         except Exception:
             pass
-        self.laya = LayaBridge(context, {"base_url": "", "timeout": 8.0})
         self.life = LifeStateService(
             context, SectionConfig(raw, "life_state"), data_dir
         )
@@ -186,16 +184,6 @@ class SuperEnhance(Star):
         live = getattr(self.life, "world_mode", "off") == "live"
         for name, enabled in (
             ("stay_silent", self.silence.enabled),
-            ("get_full_dynamic_life_state", self.life.enabled and not live),
-            ("revise_life_state", self.life.edit_tool_enabled and not live),
-            ("update_my_scene", self.life.enabled and self.life.scene.enabled and not live),
-            (
-                "record_master_scene",
-                self.life.enabled
-                and self.life.scene.enabled
-                and not self.life.scene.master_locked
-                and not live,
-            ),
             ("record_ability", self.life.abilities_enabled and not live),
             ("training", self.life.training_enabled and not live),
             ("make_promise", self.life.promise_enabled and not live),
@@ -352,86 +340,6 @@ class SuperEnhance(Star):
         """把当前时段的生活状态注入本次请求。"""
         await self.life.on_llm_request(event, req)
 
-    @filter.on_agent_done()
-    async def on_agent_done_scene(
-        self, event: AstrMessageEvent, run_context, response
-    ) -> None:
-        """把历史里残留的旧场景尾标剥掉（尾标已废弃，改成工具记录）。"""
-        await self.life.scene.on_agent_done(event, run_context, response)
-
-    @filter.on_decorating_result()
-    async def on_decorating_scene(self, event: AstrMessageEvent) -> None:
-        """发送前把场景尾标从正文里去掉（主人看不到）。"""
-        await self.life.scene.clean_outgoing(event)
-
-    @filter.llm_tool(name="get_full_dynamic_life_state")
-    async def get_full_dynamic_life_state(
-        self, event: AstrMessageEvent, date: str = ""
-    ) -> str:
-        """获取 Bot 当前或指定日期的完整生活状态。
-
-        date 参数为可选，格式 YYYY-MM-DD。不传则默认返回今天的状态。
-        仅在用户明确询问"今天一整天在做什么""全天状态""完整日程""其他时间段的安排""回顾某天的状态"或类似问题时调用。
-
-        Args:
-            date (string): 可选的 YYYY-MM-DD 日期。
-
-        Returns:
-           完整状态或查询错误信息。
-       """
-        return await self.life.query_state(event, date)
-
-    @filter.llm_tool(name="revise_life_state")
-    async def revise_life_state(
-        self,
-        event: AstrMessageEvent,
-        time_slot: str = "",
-        schedule: str = "",
-        outfit: str = "",
-    ) -> str:
-        """修改你自己今天的日程安排（只能改你自己这一份）。
-
-        什么时候用：主人告诉你他刚做了什么，或者你发现日程里某一段跟实际对不上
-        （比如主人说他去上课了、出门了、回来了、改去别的地方了），就用这个工具把那一段改成符合实际的样子。
-        限制：
-        - 只能改你**自己这一天**的日程；改不了别的角色，也改不了别的日期。
-        - 只能从今天日程里**已经存在的固定时段**里挑一段来改，不能自己编时间。
-        - 一次只改一段，其它时段保持不动。
-        - 别为了自我表现而频繁调用；确实是"日程跟现实不符"时才用。
-
-        Args:
-            time_slot (string): 要改的时段，必须原样照抄今天日程里的时段（例如 "13:49-15:33"）；留空表示"当前所在的时段"。
-            schedule (string): 这一段新的安排，一句话即可。
-            outfit (string): 可选，这一段的新穿搭；留空表示不改穿搭。
-
-        Returns:
-            修改结果，包含原安排与新安排。
-        """
-        return await self.life.revise_my_state(event, time_slot, schedule, outfit)
-
-    @filter.llm_tool(name="update_my_scene")
-    async def update_my_scene(
-        self, event: AstrMessageEvent, place: str, doing: str = ""
-    ) -> str:
-        """记录你自己此刻在哪、在做什么（共享场景）。
-
-        什么时候用：你换了地方、或者一直在做的事变了（例如从神社走到点心铺、
-        从吃饭变成睡觉），就用这个工具记一条。
-        这是「更新式」的记录：记一次就一直有效，直到你下次再改；所以只在真的变了时记，
-        没变化不要重复记，也不要每轮都记一次。
-        地点写具体一点（例如「穗织·建实神社的庭院」），在做什么写你正在做的那件事
-        （例如「扫石阶」）。不用写「和谁在一起」，也不要写时长或几点离开。
-        记完不要在回复里提到这个工具。
-
-        Args:
-            place (string): 你现在所在的具体地点。
-            doing (string): 你正在做的事，一句话即可。
-
-        Returns:
-            记录结果。
-        """
-        return self.life.scene.tool_update_my_scene(event, place, doing)
-
     @filter.llm_tool(name="tell")
     async def tell(self, event: AstrMessageEvent, content: str) -> str:
         """告诉另一个角色一件事，只是让她知道、不用她回（你是亚托莉就告诉丛雨，你是丛雨就告诉亚托莉）。
@@ -450,44 +358,6 @@ class SuperEnhance(Star):
         return await self.bot_dialog.tool_tell(
             event, content, self.life.enabled_bots(), self.life.scene.label_for
         )
-
-    @filter.llm_tool(name="record_master_scene")
-    async def record_master_scene(
-        self, event: AstrMessageEvent, place: str, doing: str = ""
-    ) -> str:
-        """记录主人亲口说的位置 / 动静（共享场景，所有角色共享这一份）。
-
-        只填主人**亲口说过**的内容：他说了他去了哪、在干什么，就照着填。
-        他没提到的地方不要自己猜，也不要拿日程或别人的话去补；他确实没说在干什么就把
-        doing 留空。主人没说他的位置时不要调用本工具。
-        同样只在信息有变化时调用，不要每轮都记；记完不要在回复里提到这个工具。
-
-        Args:
-            place (string): 主人说他所在的地点。
-            doing (string): 主人在做什么（主人没说就留空）。
-
-        Returns:
-            记录结果。
-        """
-        return self.life.scene.tool_record_master_scene(event, place, doing)
-
-    @filter.llm_tool(name="record_ability")
-    async def record_ability(self, event: AstrMessageEvent, content: str) -> str:
-        """记下你在主人的训练 / 教导下真正学会的本领，或会一直保持下去的改变（能力清单）。
-
-        什么时候用：你确实练成了一件以前做不到的事，或者身体 / 能力发生了长期的变化
-        （例如：以前摸不到东西，现在能凝实手指拿起小物件）。
-        不要记：心情、一次性的事、约定、只是「打算去学」的事。
-        写成一句完整的话，说清楚现在能做到什么程度。同一件事进步了就记一条新的、写清楚新的程度。
-        记完不要在回复里提到这个工具。
-
-        Args:
-            content (string): 学会了什么 / 有什么长期变化，一句话，说清楚现在能做到什么程度。
-
-        Returns:
-            记录结果。
-        """
-        return self.life.tool_record_ability(event, content)
 
     @filter.llm_tool(name="training")
     async def training(
@@ -586,44 +456,6 @@ class SuperEnhance(Star):
             修改结果。
         """
         return await self.life.tool_close_promise(event, promise_id, status, note)
-
-    @filter.command_group("dls")
-    def dls(self) -> None:
-        """动态生活状态命令组。"""
-
-    @dls.command("show")
-    @filter.permission_type(filter.PermissionType.ADMIN)
-    async def dls_show(self, event: AstrMessageEvent, time_query: str = ""):
-        """显示当前或指定查询时间的时段状态。"""
-        async for result in self.life.cmd_show(event, time_query):
-            yield result
-
-    @dls.command("full")
-    @filter.permission_type(filter.PermissionType.ADMIN)
-    async def dls_full(self, event: AstrMessageEvent, date: str = ""):
-        """显示今天或某个归档日期的完整状态。"""
-        async for result in self.life.cmd_full(event, date):
-            yield result
-
-    @dls.command("regen")
-    @filter.permission_type(filter.PermissionType.ADMIN)
-    async def dls_regen(self, event: AstrMessageEvent):
-        """强制重新生成今日状态。"""
-        async for result in self.life.cmd_regen(event):
-            yield result
-
-    @dls.command("delete")
-    @filter.permission_type(filter.PermissionType.ADMIN)
-    async def dls_delete(self, event: AstrMessageEvent):
-        """删除当天的日程，并取消当天已排的主动对话（当天不再自动生成）。"""
-        async for result in self.life.cmd_delete(event):
-            yield result
-
-    @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("site")
-    async def site_cmd(self, event: AstrMessageEvent):
-        """查看/设置主人此刻在哪（共享场景）。"""
-        yield event.plain_result(self.life.scene.handle_command(event.get_message_str()))
 
     # ------------------------------------------------------------------
     # 7. 新消息优先：回复还没发出去时又收到消息
@@ -875,12 +707,3 @@ class SuperEnhance(Star):
         """
         return await self.image_gen.send(event, id)
 
-    # ------------------------------------------------------------------
-    # 10. Laya 判定服务（本机容器，调试命令）
-    # ------------------------------------------------------------------
-    @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("laya")
-    async def laya_cmd(self, event: AstrMessageEvent, text: str = ""):
-        """测试本地 Laya 判定服务：/laya [文本] 或 /laya health"""
-        async for result in self.laya.cmd(event, text):
-            yield result
