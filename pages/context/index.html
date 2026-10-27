@@ -3026,6 +3026,7 @@
     var keepId = S.req.list[S.req.idx] ? S.req.list[S.req.idx].id : "";
     api("ctx/requests", { umo: c.umo, limit: 30 }).then(function (d) {
       if (!curConv() || curConv().umo !== c.umo) { return; }
+      S.requestVersion = d && d.version || 0;
       S.req.list = (d && d.items) || [];
       S.req.disabled = !!(d && d.disabled);
       var idx = 0;
