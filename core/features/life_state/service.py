@@ -281,10 +281,6 @@ class LifeStateService:
 
     # ---------- 世界线 ----------
 
-    @property
-    def world_mode(self) -> str:
-        return "live"
-
     # 网页「世界线」页里填的补写注意事项（只进补写的提示词）
     STEP_NOTES_NAME = "step_notes.json"
 
@@ -795,7 +791,7 @@ class LifeStateService:
 
     async def _on_early(self, bot: str, umo: str, entry: dict, said: str, now) -> None:
         """记录员发现她把日程里后面才做的事说早了：live 下叫她给主人改口。"""
-        if self.world_mode != "live" or not self.planner.enabled:
+        if not self.planner.enabled:
             return
         await self.planner.fire_correct(bot, umo, entry, said, now)
 
@@ -844,14 +840,6 @@ class LifeStateService:
                 await self.settle_trainings(bot)
             except Exception:
                 logger.warning("[super_enhance/life] 结算在练的事失败", exc_info=True)
-            # 主动消息排期：live 只排早安 / 晚安 / 约定（做完一件事的现排）；shadow 照旧
-            if self.world_mode != "live":
-                try:
-                    state = self._world_state(bot, date_text)
-                    if state is not None and self.planner.enabled:
-                        await self.planner.sync(bot, state, self._now())
-                except Exception:
-                    logger.warning("[super_enhance/life] 主动对话排期失败", exc_info=True)
         try:
             if date_text not in (self.seed_log.load() or {}):
                 from .variety import draw_seed
@@ -862,8 +850,7 @@ class LifeStateService:
                 self._debug("世界线：已抽今天的随机起点")
         except Exception:
             logger.warning("[super_enhance/life] 抽今天的随机起点失败", exc_info=True)
-        if self.world_mode == "live":
-            await self._sync_live_jobs(date_text)
+        await self._sync_live_jobs(date_text)
         await self._review_if_due(self._now())
 
     async def _review_if_due(self, now: datetime.datetime) -> None:
@@ -1221,13 +1208,7 @@ class LifeStateService:
         return kind
 
     async def on_cron_request(self, event, req) -> None:
-        """主动对话（cron）专用注入：能力清单 + 约定 + 共享场景。
-
-        AstrBot 的 cron 路径不触发 on_llm_request 钩子，平时那份注入一样都到不了，
-        所以由 cron_context 的 build_main_agent 钩子转调这里补上。
-        只用 extra_user_content_parts：cron 的 contexts 随后会被裁成纯对话，
-        伪造的工具调用会被一起裁掉。
-        """
+        """主动对话请求补上世界线；cron 的上下文随后会被裁成纯对话。"""
         if not self.enabled or req is None:
             return
         bot = bot_of_umo(getattr(event, "unified_msg_origin", ""))
@@ -1237,56 +1218,28 @@ class LifeStateService:
             self.planner.prepare_request(event, req)
         except Exception:
             logger.error("[super_enhance/life] 主动对话换提示词失败", exc_info=True)
-        now = self._now()
-        if self.world_mode == "live":
-            text = self.world_text(bot, now)
-            if not text:
-                return
-            if self.cfg.get("world_voice_note", True) and self._cron_kind(event) not in REPORT_KINDS:
-                text += "\n" + PROACTIVE_VOICE_NOTE
-            parts = getattr(req, "extra_user_content_parts", None)
-            if not isinstance(parts, list):
-                parts = []
-                req.extra_user_content_parts = parts
-            parts.append(as_context_part(text))
-            logger.info("[super_enhance/life] [%s] 主动对话已注入世界线", bot)
-            return
-        await self.settle_trainings(bot)
-        blocks = [
-            "\n".join(x for x in (self._ability_text(bot), self._training_text(bot, now)) if x),
-            self._promise_text(bot, now),
-            self._scene_block(bot, now.date().isoformat(), now),
-        ]
-        text = "\n\n".join(b for b in blocks if b)
+        text = self.world_text(bot, self._now())
         if not text:
             return
+        if self.cfg.get("world_voice_note", True) and self._cron_kind(event) not in REPORT_KINDS:
+            text += chr(10) + PROACTIVE_VOICE_NOTE
         parts = getattr(req, "extra_user_content_parts", None)
         if not isinstance(parts, list):
             parts = []
             req.extra_user_content_parts = parts
         parts.append(as_context_part(text))
-        logger.info(
-            "[super_enhance/life] [%s] 主动对话已补注入：%s",
-            bot,
-            "、".join(
-                name
-                for name, block in zip(("能力清单", "约定", "共享场景"), blocks)
-                if block
-            ),
-        )
+        logger.info("[super_enhance/life] [%s] 主动对话已注入世界线", bot)
 
     # ---------- 在练的事 ----------
 
     def training_progress(self, item: dict, now: datetime.datetime | None = None):
         moment = now or self._now()
         bot = str(item.get("bot"))
-        if self.world_mode == "live":
-            tid = str(item.get("id"))
-            return training_calc.compute(
-                item, self.store.get, bot, moment,
-                spans_fn=lambda date_text: self._training_spans(bot, tid, date_text),
-            )
-        return training_calc.compute(item, self.store.get, bot, moment)
+        tid = str(item.get("id"))
+        return training_calc.compute(
+            item, None, bot, moment,
+            spans_fn=lambda date_text: self._training_spans(bot, tid, date_text),
+        )
 
     def _training_spans(self, bot: str, tid: str, date_text: str) -> list:
         """世界线里标了这件事的时段（分钟区间）。开口的一条算到现在。"""
@@ -1402,7 +1355,7 @@ class LifeStateService:
         lines = []
         for item in self.trainings.open_for(bot):
             prog = self.training_progress(item, now)
-            if self.world_mode == "live":
+            if True:
                 # 世界线没有往后的日程，只说练了多少、还差多少
                 when = ""
             elif prog.eta is not None:
@@ -1434,7 +1387,7 @@ class LifeStateService:
                 (
                     "【在练的事】还没练成的本事。练了多久按%s里真去练了的时段算，够数那一刻就算练成，"
                     "练成后自动记进「后来学会的」；主人改了要求或要练多久、或者说算你练成了，用 training 工具改：\n"
-                    % ("世界线" if self.world_mode == "live" else "日程")
+                    % ("世界线")
                 )
                 + "\n".join(lines)
             )
@@ -1504,307 +1457,5 @@ class LifeStateService:
         return out
 
     async def _resync_today(self, bot: str) -> None:
-        state = self.store.get(bot, self._today())
-        if state is None or state.status != "ok":
-            return
-        try:
-            await self._on_state_ready(bot, state)
-        except Exception:
-            logger.error("[super_enhance/life] 在练的事变了，重排主动对话失败", exc_info=True)
-
-    async def tool_training(
-        self,
-        event,
-        action: str,
-        content: str = "",
-        standard: str = "",
-        hours: str = "",
-        training_id: str = "",
-        arrangement: str = "",
-        already_hours: str = "",
-        ability_after: str = "",
-        replaces: str = "",
-    ) -> str:
-        if not self.training_enabled:
-            return "能力清单没有开启，在练的事也记不了。"
-        bot = bot_of_umo(getattr(event, "unified_msg_origin", ""))
-        if not self._bot_enabled(bot):
-            return "本机器人没有启用动态生活状态，这次没有记录。"
-        if self.bots.sender_is_bot(event):
-            return "这是和另一个角色的对话；练什么、练没练成只在和主人的对话里记，这次没有记录。"
-        act = str(action or "").strip().lower()
-        act = {
-            "开始": "start", "新开": "start", "记": "start", "add": "start", "new": "start",
-            "修改": "update", "改": "update", "edit": "update",
-            "练成": "done", "完成": "done", "finish": "done",
-            "取消": "cancel", "放弃": "cancel", "不练了": "cancel", "cancelled": "cancel",
-        }.get(act, act)
-        now = self._now()
-        try:
-            if act == "start":
-                need = parse_hours(hours, "要练多久")
-                if need <= 0:
-                    return "没有记录：要练多久（hours）没填，按难度估一个小时数。"
-                item = self.trainings.add(
-                    bot,
-                    content,
-                    standard,
-                    need,
-                    arrangement=arrangement,
-                    base_hours=parse_hours(already_hours, "已经练了多久"),
-                    ability_after=ability_after,
-                    replaces=replaces,
-                    source="tool",
-                    created=now.strftime("%Y-%m-%d %H:%M"),
-                )
-                head = "已记下在练的事 #%s：%s" % (item["id"], item["what"])
-            else:
-                item = self.trainings.get(training_id)
-                if item is None or item.get("bot") != bot:
-                    return "找不到你在练的 #%s。" % str(training_id or "").lstrip("#＃")
-                if act == "update":
-                    item = self.trainings.update(
-                        item["id"],
-                        what=content or None,
-                        standard=standard or None,
-                        arrangement=arrangement or None,
-                        need_hours=parse_hours(hours, "要练多久") if str(hours or "").strip() else None,
-                        base_hours=parse_hours(already_hours, "已经练了多久") if str(already_hours or "").strip() else None,
-                        ability_after=ability_after or None,
-                        replaces=replaces if str(replaces or "").strip() else None,
-                    )
-                    head = "已改好 #%s：%s" % (item["id"], item["what"])
-                elif act == "done":
-                    if item.get("status") != "open":
-                        return "#%s 已经不在练了。" % item["id"]
-                    ability_id = self._finish_training(bot, item, now, "她自己标的练成")
-                    await self._resync_today(bot)
-                    return "#%s %s 已标为练成，能力清单 #%s 记下了。" % (item["id"], item["what"], ability_id or "?")
-                elif act == "cancel":
-                    self.trainings.set_status(item["id"], "cancelled", note="不练了")
-                    await self._resync_today(bot)
-                    return "#%s %s 不练了，已取消。" % (item["id"], item["what"])
-                else:
-                    return "action 只能是 start（开始）、update（修改）、done（练成）、cancel（取消）。"
-        except ValueError as e:
-            return "没有记录：%s" % e
-        logger.info("[super_enhance/life] [%s] 在练的事 %s #%s：%s", bot, act, item.get("id"), item.get("what"))
-        done = await self.settle_trainings(bot)
-        if item in done:
-            return head + "。算上已经练的，已经够数，算是练成了，能力清单记下了。"
-        prog = self.training_progress(item, now)
-        await self._resync_today(bot)
-        return head + "。一共要练约 %s 小时，已经练了 %s 小时；之后日程会把练的时段排进去，够数就算练成。" % (
-            training_calc.fmt_hours(prog.need_minutes),
-            training_calc.fmt_hours(prog.done_minutes),
-        )
-
-    # ---------- 能力 / 约定：工具 ----------
-
-    def tool_record_ability(self, event, content: str) -> str:
-        if not self.abilities_enabled:
-            return "能力清单没有开启，这次没有记录。"
-        bot = bot_of_umo(getattr(event, "unified_msg_origin", ""))
-        if not self._bot_enabled(bot):
-            return "本机器人没有启用动态生活状态，这次没有记录。"
-        if self.bots.sender_is_bot(event):
-            return "这是和另一个角色的对话，能力只在主人面前学会时才记，这次没有记录。"
-        try:
-            item, created = self.abilities.add(bot, content, "tool", self._today())
-        except ValueError as e:
-            return "没有记录：%s" % e
-        if not created:
-            return "这一条早就记着了（%s 起），不用再记。" % item.get("since")
-        logger.info("[super_enhance/life] [%s] 记下能力：%s", bot, item.get("text"))
-        return "已记下：%s。现在能力清单里一共 %d 条。" % (
-            item.get("text"),
-            len(self.abilities.entries(bot)),
-        )
-
-    def _bots_mentioned(self, bot: str, *texts: str) -> list[str]:
-        """约定涉及哪些角色：自己 + 文本里点了名的其他角色。"""
-        out = [bot]
-        joined = " ".join(str(t or "") for t in texts)
-        for other in self.enabled_bots():
-            if other == bot or other in out:
-                continue
-            label = self.bots.label_for(other)
-            names = {label, label.replace("莉", "利"), label.replace("丛", "从")}
-            if any(name and name in joined for name in names):
-                out.append(other)
-        return out
-
-    async def tool_make_promise(
-        self, event, content: str, date: str = "", time: str = "", with_whom: str = ""
-    ) -> str:
-        if not self.promise_enabled:
-            return "约定功能没有开启，这次没有记录。"
-        bot = bot_of_umo(getattr(event, "unified_msg_origin", ""))
-        if not self._bot_enabled(bot):
-            return "本机器人没有启用动态生活状态，这次没有记录。"
-        today = self._now().date()
-        try:
-            day = parse_promise_date(date)
-            clock = parse_promise_time(time)
-        except ValueError as e:
-            return "没有记录：%s" % e
-        if day < today:
-            return "没有记录：%s 已经过去了。" % day.isoformat()
-        bots = self._bots_mentioned(bot, with_whom, content)
-        try:
-            item = self.promises.add(
-                bots, day.isoformat(), clock, content, with_whom, bot, "tool"
-            )
-        except ValueError as e:
-            return "没有记录：%s" % e
-        logger.info(
-            "[super_enhance/life] [%s] 记下约定 #%s：%s %s %s（涉及 %s）",
-            bot, item["id"], item["date"], item["time"] or "-", item["what"], "、".join(bots),
-        )
-        notes = []
-        if day == today:
-            notes.extend(await self._apply_promise_today(item))
-        lines = [
-            "已记下约定 #%s：%s %s %s%s"
-            % (
-                item["id"],
-                self._day_word(item["date"], today),
-                item["time"] or "（没定具体时间）",
-                item["what"],
-                "（和%s）" % item["with"] if item.get("with") else "",
-            )
-        ]
-        others = [self.bots.label_for(b) for b in item["bots"] if b != bot]
-        if others:
-            lines.append("%s那边也记上了。" % "、".join(others))
-        if day > today:
-            lines.append("到那天生成日程时会把它排进去。")
-        lines.extend(notes)
-        return "\n".join(lines)
-
-    # 当天约定切进日程时，约定那一段默认占多久（分钟）；所在时段剩下的不够就到时段结束为止
-    PROMISE_SLOT_MINUTES = 60
-
-    async def _apply_promise_today(self, item: dict) -> list[str]:
-        """当天、有具体时间的约定：在约定时刻切出一小段写成这件事，并重排主动对话。
-
-        只切约定那一小段（默认 1 小时，不超出原来那个时段），原时段前后两截保持原样；
-        「和谁」按每个角色自己的视角写。
-        """
-        minute = clock_to_minute(item.get("time"))
-        date_text = str(item.get("date"))
-        notes: list[str] = []
-        for bot in item.get("bots") or []:
-            state = self.store.get(bot, date_text)
-            if state is None or state.status != "ok":
-                continue
-            if minute is not None:
-                with_text = promise_with_for(item, bot, self.bots.label_for)
-                text = "按约定：%s%s" % (
-                    item.get("what"),
-                    "（和%s）" % with_text if with_text else "",
-                )
-                piece = self._split_for_promise(state, minute, text)
-                if piece:
-                    if self.reviewer is not None:
-                        try:
-                            self.reviewer._backup(bot, piece[1], date_text)
-                        except Exception:
-                            logger.warning("[super_enhance/life] 约定改日程前备份失败", exc_info=True)
-                    self.store.save(bot, piece[2])
-                    state = piece[2]
-                    notes.append(
-                        "%s今天 %s 这一段排成了这件事。" % (self.bots.label_for(bot), piece[0])
-                    )
-            try:
-                await self._on_state_ready(bot, state)
-            except Exception:
-                logger.error("[super_enhance/life] 约定后重排主动对话失败", exc_info=True)
-        return notes
-
-    def _split_for_promise(self, state: LifeState, minute: int, text: str):
-        """把覆盖 minute 的时段切成「前一截 / 约定 / 后一截」。
-
-        返回 (约定那段的时间, 改动前的副本, 改动后的状态)；不在任何时段里、或已经排过就返回 None。
-        """
-        entry = state.find_entry_strict(minute)
-        if entry is None or str(entry.schedule).startswith(text):
-            return None
-        ranges = entry.ranges()
-        if not ranges:
-            return None
-        seg_start, seg_end = ranges[0]
-        end = min(seg_end, minute + self.PROMISE_SLOT_MINUTES)
-
-        def clock(value: int) -> str:
-            return "24:00" if value >= 1440 else minute_to_clock(value)
-
-        def part(a: int, b: int, schedule: str) -> TimelineEntry:
-            return TimelineEntry(
-                time="%s-%s" % (clock(a), clock(b)),
-                schedule=schedule,
-                outfit=entry.outfit,
-                extras=dict(entry.extras or {}),
-            )
-
-        pieces = []
-        if minute > seg_start:
-            pieces.append(part(seg_start, minute, entry.schedule))
-        pieces.append(part(minute, end, text))
-        if end < seg_end:
-            pieces.append(part(end, seg_end, entry.schedule))
-        before = LifeState.from_dict(state.to_dict())
-        after = LifeState.from_dict(state.to_dict())
-        index = state.timeline.index(entry)
-        after.timeline[index : index + 1] = pieces
-        return pieces[1 if minute > seg_start else 0].time, before, after
-
-    async def tool_close_promise(
-        self, event, promise_id: str, status: str = "done", note: str = ""
-    ) -> str:
-        if not self.promise_enabled:
-            return "约定功能没有开启。"
-        bot = bot_of_umo(getattr(event, "unified_msg_origin", ""))
-        item = self.promises.get(promise_id)
-        if item is None:
-            return "找不到约定 #%s。" % str(promise_id).lstrip("#＃")
-        if bot not in (item.get("bots") or []):
-            return "约定 #%s 不是你的约定，改不了。" % item.get("id")
-        value = str(status or "").strip().lower()
-        if value in ("cancel", "cancelled", "canceled", "取消", "作废"):
-            value = "cancelled"
-        else:
-            value = "done"
-        self.promises.set_status(item["id"], value, note)
-        logger.info(
-            "[super_enhance/life] [%s] 约定 #%s → %s：%s", bot, item["id"], value, item.get("what")
-        )
-        # 取消了当天的约定：重排主动对话，免得到点还去提一件不做了的事
-        if value == "cancelled" and item.get("date") == self._today():
-            for one in item.get("bots") or []:
-                state = self.store.get(one, item["date"])
-                if state is not None and state.status == "ok":
-                    try:
-                        await self._on_state_ready(one, state)
-                    except Exception:
-                        logger.error("[super_enhance/life] 取消约定后重排失败", exc_info=True)
-        return "约定 #%s 已标为%s。" % (item["id"], "取消" if value == "cancelled" else "完成")
-
-    # ---------- 共享场景注入 ----------
-
-    def _seg_key(self, bot: str, date_text: str, minute: int) -> str:
-        """该机器人当前日程时段的 key（空串 = 没有日程或不在任何时段）。"""
-        try:
-            state = self.store.get(bot, date_text)
-            if state is None or state.status != "ok":
-                return ""
-            entry = state.find_entry_strict(minute)
-            return entry.time if entry is not None else ""
-        except Exception:
-            return ""
-
-    def _seg_key_now(self, bot: str) -> str:
-        """给 scene.py 回调用：某机器人此刻所在的时段 key。"""
-        now = self._now()
-        return self._seg_key(bot, now.date().isoformat(), now.hour * 60 + now.minute)
+        await self._sync_live_jobs(self._today())
 

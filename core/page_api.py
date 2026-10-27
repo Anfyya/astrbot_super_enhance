@@ -487,7 +487,7 @@ class ContextPageApi:
                     {"key": bot, "label": self._world_label(life, bot)} for bot in bots
                 ],
                 "status": {
-                    "mode": life.world_mode,
+                    "mode": "live",
                     "last_step": world.last_step(),
                     "next_step": next_step.strftime("%Y-%m-%d %H:%M") if next_step else "",
                     "last_step_attempt": world.last_step_attempt(),
