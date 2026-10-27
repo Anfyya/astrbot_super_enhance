@@ -1967,7 +1967,6 @@ class ContextPageApi:
                     "bots": bots,
                     "promises": promises,
                     "trainings": trainings,
-                    "events": life.events.items(),
                 }
             )
         except Exception as exc:
