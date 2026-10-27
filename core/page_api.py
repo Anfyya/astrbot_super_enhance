@@ -11,10 +11,12 @@ import base64
 import datetime
 import io
 import json
+import hashlib
 import random
 import re
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from astrbot.api import logger
@@ -370,6 +372,9 @@ class ContextPageApi:
         self.context = plugin.context
         self.data_dir = self._resolve_data_dir()
         self.backup_dir = self.data_dir / "context_backups"
+        self._pic_cache = {}
+        self._pulse_cache = {}
+        self._token_cache = {}
         self._sched_job: dict[str, Any] | None = None
 
     # ------------------------------------------------------------------ 基础
@@ -381,6 +386,43 @@ class ContextPageApi:
             return Path(StarTools.get_data_dir(PLUGIN_NAME))
         except Exception:
             return Path("data") / PLUGIN_NAME
+
+    def _picture_refs(self, urls: list[str]) -> list[dict]:
+        if not hasattr(self, "_pic_cache"):
+            self._pic_cache = {}
+        out = []
+        for url in urls:
+            text = str(url or "")
+            if not text:
+                continue
+            pic_id = "pic_" + hashlib.sha256(text.encode("utf-8")).hexdigest()[:20]
+            self._pic_cache[pic_id] = text
+            mime = "image/*"
+            if text.startswith("data:") and ";" in text:
+                mime = text[5:text.index(";")]
+            out.append({"id": pic_id, "type": mime, "size": len(text)})
+        return out
+    def _resolve_images(self, values) -> list[str]:
+        if not hasattr(self, "_pic_cache"):
+            self._pic_cache = {}
+        out = []
+        for raw in values or []:
+            if isinstance(raw, dict):
+                key = str(raw.get("id") or "")
+                url = self._pic_cache.get(key)
+                if url:
+                    out.append(url)
+            else:
+                text = str(raw or "")
+                out.append(self._pic_cache.get(text, text))
+        return out
+    async def get_picture(self):
+        args = request.args if request is not None else {}
+        pic_id = str(args.get("id") or "").strip()
+        url = self._pic_cache.get(pic_id, "")
+        if not url:
+            return _err("图片不存在，刷新页面后重试")
+        return _ok({"id": pic_id, "url": url})
 
     @property
     def manager(self):
@@ -411,7 +453,7 @@ class ContextPageApi:
                 date_text = life._today()
             base = datetime.date.fromisoformat(date_text)
             days = []
-            for offset in range(0, 3):
+            for offset in (0,):
                 day = (base - datetime.timedelta(days=offset)).isoformat()
                 rows = []
                 for item in world.entries(day, ""):
@@ -423,7 +465,7 @@ class ContextPageApi:
                     rows.append(row)
                 days.append({"date": day, "entries": rows})
             constraints = []
-            for item in world.constraints(active_only=False):
+            for item in world.constraints(active_only=True):
                 row = dict(item)
                 row["who_label"] = self._world_label(life, item.get("who"))
                 constraints.append(row)
@@ -455,15 +497,17 @@ class ContextPageApi:
             store = getattr(life, "things", None)
             if store is not None:
                 try:
-                    shelf = store.view(now)
-                    thing_names = {key: str(item.get("name") or "") for key, item in shelf.items()}
-                    for old_id, real in shelf.alias.items():
-                        if real in thing_names:
-                            thing_names[old_id] = thing_names[real]
-                    for row in store.future(now):
-                        thing_names.setdefault(row["id"], str(row["step"].get("name") or ""))
+                    for thing in store._load().get("items") or []:
+                        if thing.get("id"):
+                            thing_names[str(thing["id"])] = str(thing.get("name") or "")
                 except Exception:
-                    logger.warning("[super_enhance/ctx] 世界线页算吃的名字失败", exc_info=True)
+                    logger.warning("[super_enhance/ctx] 读取存货名称失败", exc_info=True)
+            for day in days:
+                for row in day.get("entries") or []:
+                    for step in row.get("things") or []:
+                        key = str(step.get("id") or step.get("new") or "")
+                        if key and step.get("name"):
+                            thing_names[key] = str(step.get("name"))
             return _ok({
                 "date": date_text,
                 "today": life._today(),
@@ -1224,6 +1268,24 @@ class ContextPageApi:
             "立刻发一条主动消息",
         )
         register(
+            f"{PAGE_API_PREFIX}/boot",
+            self.boot,
+            ["GET"],
+            "上下文页面：首屏一次取完",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/pulse",
+            self.pulse,
+            ["GET"],
+            "上下文页面：低成本轮询",
+        )
+        register(
+            f"{PAGE_API_PREFIX}/pic",
+            self.get_picture,
+            ["GET"],
+            "上下文页面：按需读取历史图片",
+        )
+        register(
             f"{PAGE_API_PREFIX}/conversations",
             self.list_conversations,
             ["GET"],
@@ -1367,6 +1429,89 @@ class ContextPageApi:
                 limit = 128000
         return limit
 
+    async def boot(self):
+        """首屏一次取回会话、机器人、世界线摘要和第一页历史。"""
+        global request
+        old = request
+        try:
+            request = SimpleNamespace(args={}, get_json=lambda *a, **k: None)
+            conv_resp = await self.list_conversations()
+            if conv_resp.get("status") != "ok":
+                return conv_resp
+            conversations = (conv_resp.get("data") or {}).get("conversations") or []
+            history = None
+            if conversations:
+                request = SimpleNamespace(args={"cid": conversations[0]["cid"], "limit": "200"}, get_json=lambda *a, **k: None)
+                hist_resp = await self.get_history()
+                if hist_resp.get("status") == "ok":
+                    history = hist_resp.get("data")
+            life = self.plugin.life
+            bots = [{"id": b, "label": life.bots.label_for(b)} for b in life.enabled_bots()]
+            now = life._now().replace(tzinfo=None)
+            current = {b: str((life.world.current(b, now) or {}).get("doing") or "") for b in life.enabled_bots()}
+            return _ok({
+                "conversations": conversations,
+                "history": history,
+                "bots": bots,
+                "current": current,
+                "world": life.world_text(life.enabled_bots()[0], now) if life.enabled_bots() else "",
+                "counts": {
+                    "constraints": len(life.world.constraints(active_only=True)),
+                    "intentions": len(life.world.intentions()),
+                },
+            })
+        except Exception as exc:
+            logger.error("[super_enhance/ctx] 首屏读取失败", exc_info=True)
+            return _err(exc)
+        finally:
+            request = old
+
+    async def pulse(self):
+        args = request.args if request is not None else {}
+        cid = str(args.get("cid") or "").strip()
+        if not cid:
+            return _err("缺少 cid")
+        conv = await self.manager.get_conversation("", cid)
+        if conv is None:
+            return _err("会话不存在")
+        key = (int(conv.updated_at or 0), _as_int(conv.token_usage))
+        life = self.plugin.life
+        data_dir = life.data_dir
+        def stamp(path):
+            try:
+                return path.stat().st_mtime_ns
+            except Exception:
+                return 0
+        today = life._today()
+        versions = {
+            "world": stamp(data_dir / "world" / (today + ".json")),
+            "state": stamp(data_dir / "world_state.json"),
+            "things": stamp(data_dir / "things.json"),
+            "pools": stamp(data_dir / "pools.json"),
+            "seeds": stamp(data_dir / "daily_seeds.json"),
+            "requests": stamp(data_dir / "request_snapshots" / "index.json"),
+        }
+        convs = await self.manager.get_conversations()
+        conv_sig = "|".join("%s:%s" % (c.cid, c.updated_at) for c in convs)
+        conversations_changed = getattr(self, "_conv_sig", None) != conv_sig
+        self._conv_sig = conv_sig
+        old = self._pulse_cache.get(cid)
+        if old is not None and old.get("key") == key:
+            return _ok({**old, "versions": versions, "changed": False, "conversations_changed": conversations_changed})
+        history = _history_of(conv.history)
+        last = history[-1] if history else None
+        sig = ""
+        if last is not None:
+            sig = hashlib.sha1(json.dumps(last, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+        state = {
+            "key": key,
+            "total": len(history),
+            "last": {"i": len(history) - 1, "sig": sig} if last is not None else None,
+            "versions": versions,
+        }
+        self._pulse_cache[cid] = state
+        return _ok({**state, "changed": True, "conversations_changed": conversations_changed})
+
     # ------------------------------------------------------------------ 路由
     async def list_conversations(self):
         try:
@@ -1485,7 +1630,7 @@ class ContextPageApi:
                     or isinstance(item.get("reasoning_content"), str)
                     or str(item.get("role") or "") == "assistant",
                     "images": images,
-                    "pictures": pictures,
+                    "pictures": self._picture_refs(pictures),
                     "drawn": drawn,
                     "tool_calls": calls,
                     "tool_call_id": tool_id,
@@ -1508,6 +1653,7 @@ class ContextPageApi:
                 "has_more": start > 0,
                 "estimate_tokens": _estimate_tokens(history),
                 "token_usage": _as_int(conv.token_usage),
+                "last_sig": hashlib.sha1(json.dumps(history[-1], ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")).hexdigest() if history else "",
                 "content_max": self._limit_tokens(conv.user_id),
                 "open_tool_calls": _open_tool_calls(history),
                 "items": items,
@@ -1632,7 +1778,7 @@ class ContextPageApi:
         if has_think:
             changed = _apply_think(item, think) or changed
         if has_images:
-            changed = _apply_images(item, images) or changed
+            changed = _apply_images(item, self._resolve_images(images)) or changed
         if not changed:
             return _err("这条没有可改的内容")
 
@@ -1906,7 +2052,9 @@ class ContextPageApi:
         except Exception as exc:
             logger.error("[super_enhance/ctx] 读取快照列表失败", exc_info=True)
             return _err(exc)
-        return _ok({"items": items, "disabled": False})
+        path = self.data_dir / "request_snapshots" / "index.json"
+        version = path.stat().st_mtime_ns if path.exists() else 0
+        return _ok({"items": items, "disabled": False, "version": version})
 
     async def get_request(self):
         args = request.args if request is not None else {}
@@ -1923,7 +2071,9 @@ class ContextPageApi:
             return _err(exc)
         if data is None:
             return _err("快照不存在或已被清理（只保留最近 20 份）")
-        return _ok(data)
+        out = dict(data)
+        out.pop("contexts", None)
+        return _ok(out)
 
     # ------------------------------------------------------------------ 共享场景
     async def get_ledger(self):

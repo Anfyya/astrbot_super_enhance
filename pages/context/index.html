@@ -4,6 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>上下文</title>
+<script src="bridge-sdk.js"></script>
 <style>
   /* ==========================================================
      版式约定（改样式前先看这里）
@@ -1686,7 +1687,7 @@
     });
   }
 
-  function selectConv(cid) {
+  function selectConv(cid, initialHistory) {
     guardDirty().then(function (ok) {
       if (!ok) { return; }
       setSideOpen(false);
@@ -1701,7 +1702,7 @@
       }
       closeInsp(true);
       showView();
-      if (S.tab === "history") { if (!same || !S.items.length) { loadHistory("fresh"); } }
+      if (S.tab === "history") { if (!same || !S.items.length) { loadHistory("fresh", 0, initialHistory); } }
       else { loadRequests(); }
     });
   }
@@ -1890,7 +1891,7 @@
 
   /* ================= 历史：加载 ================= */
   // mode：fresh 首次加载 / older 加载更早 / keep 改完后重读 / poll 自动刷新发现有新内容
-  function loadHistory(mode, added) {
+  function loadHistory(mode, added, preloaded) {
     var cid = S.cid;
     if (!cid) { return Promise.resolve(); }
     var params = { cid: cid, limit: PAGE };
@@ -1899,7 +1900,8 @@
     if (mode === "fresh") { S.histLoading = true; S.histErr = ""; hideNewPill(); renderStream(); }
     var sc = $("histScroll");
     var oldH = sc.scrollHeight, oldTop = sc.scrollTop, wasBottom = nearBottom();
-    return api("ctx/history", params).then(function (d) {
+    var pending = preloaded ? Promise.resolve(preloaded) : api("ctx/history", params);
+    return pending.then(function (d) {
       if (cid !== S.cid) { return; }
       S.histLoading = false;
       var items = (d && d.items) || [];
@@ -1911,6 +1913,8 @@
         S.items = items;
         S.range = d;
       }
+      S.lastSig = d.last_sig || "";
+      S.total = d.total;
       var c = curConv();
       if (c) { c.items = d.total; c.estimate_tokens = d.estimate_tokens; c.token_usage = d.token_usage; }
       // 选中的条目在新数据里不在了就丢掉
@@ -2083,6 +2087,36 @@
     return wireRow(row, it, opt);
   }
 
+  var PIC_CACHE = {};
+  function loadPic(img) {
+    var id = img.getAttribute("data-pic-id") || "";
+    if (!id) { return; }
+    var src = PIC_CACHE[id];
+    if (src) { img.src = src; img.removeAttribute("data-pic-id"); return; }
+    api("ctx/pic", { id: id }).then(function (d) {
+      var url = d && d.url;
+      if (!url) { return; }
+      PIC_CACHE[id] = url;
+      img.src = url;
+      img.removeAttribute("data-pic-id");
+    }).catch(function () {});
+  }
+  var picObserver = typeof IntersectionObserver === "function" ? new IntersectionObserver(function (rows) {
+    rows.forEach(function (row) {
+      if (!row.isIntersecting) { return; }
+      picObserver.unobserve(row.target);
+      loadPic(row.target);
+    });
+  }, { rootMargin: "300px" }) : null;
+  function paintPic(img, ref) {
+    if (typeof ref === "string") { img.src = ref; return; }
+    var id = ref && ref.id;
+    if (!id) { return; }
+    if (PIC_CACHE[id]) { img.src = PIC_CACHE[id]; return; }
+    img.setAttribute("data-pic-id", id);
+    if (picObserver) { picObserver.observe(img); } else { loadPic(img); }
+  }
+
   // 这条带的图：消息里存着的（主人发的、网页上放的）、她画的（画好那条回包下面，存着的小图）；点一下放大 / 缩回
   function picsEl(it) {
     var drawn = it.drawn || [];
@@ -2090,7 +2124,7 @@
     var gone = drawn.filter(function (d) { return d.deleted; });
     if (!pics.length && !gone.length) { return null; }
     var w = h("div", { class: "pics" });
-    pics.forEach(function (src) { w.appendChild(h("img", { src: src, alt: "图片", loading: "lazy" })); });
+    pics.forEach(function (ref) { var img = h("img", { alt: "图片", loading: "lazy" }); paintPic(img, ref); w.appendChild(img); });
     gone.forEach(function (d) { w.appendChild(h("span", { class: "tag", text: d.id + " 已删掉" })); });
     return w;
   }
@@ -2352,7 +2386,7 @@
     // 她画的图（画好那条回包下面）：每张记下要换成哪张 / 删掉，点保存才走 ctx/drawn
     var draws = { list: (it.drawn || []).map(function (d) { return { id: d.id, url: d.url, deleted: !!d.deleted, change: null }; }) };
     var markDirty = function () {
-      var d = (taText && taText.value !== parts.body) || (taThink && taThink.value !== (it.think || "")) || imgs.list.join("\n") !== imgs.orig.join("\n")
+      var d = (taText && taText.value !== parts.body) || (taThink && taThink.value !== (it.think || "")) || JSON.stringify(imgs.list) !== JSON.stringify(imgs.orig)
         || draws.list.some(function (x) { return !!x.change; });
       st.dirty = !!d;
       save.disabled = !d;
@@ -2437,7 +2471,7 @@
         if (imgs.list.length) {
           var row = h("div", { class: "imged" });
           imgs.list.forEach(function (src, n) {
-            var img = h("img", { src: src, alt: "图片" });
+            var img = h("img", { alt: "图片" }); paintPic(img, src);
             var rm = h("button", { class: "rm", type: "button", title: "去掉这张（保存后生效）", text: "×" });
             rm.addEventListener("click", function () { imgs.list.splice(n, 1); drawImgs(); markDirty(); });
             row.appendChild(h("div", { class: "one" }, img, rm));
@@ -7046,8 +7080,19 @@
 
   function pollTick() {
     if (pollBusy || document.hidden || S.view !== "conv" || !S.cid) { return; }
-    if (S.tab === "history") { pollHistory(); } else { pollRequests(); }
+    var cid = S.cid;
+    pollBusy = true;
+    api("ctx/pulse", { cid: cid }).then(function (d) {
+      if (cid !== S.cid) { return; }
+      if (d.conversations_changed) { loadConvs(); }
+      var sig = d.last && d.last.sig || "";
+      if (d.total !== S.total || sig !== S.lastSig) {
+        return loadHistory("poll", Math.max(0, (d.total || 0) - (S.total || 0)));
+      }
+      if (S.tab === "requests" && d.versions && d.versions.requests !== S.requestVersion) { loadRequests(); }
+    }).catch(function () {}).then(function () { pollBusy = false; });
   }
+
   setInterval(pollTick, POLL_MS);
   // 切回面板时立刻补一次，不用等下一轮
   document.addEventListener("visibilitychange", function () {
@@ -7055,17 +7100,11 @@
     pollTick();
     // if (S.view === "scene" && S.auto && !Object.keys(S.edits).length && !S.drawer) { loadScene(true); }
   });
-  // 侧栏里的会话大小、主人行踪：30 秒一次
   setInterval(function () {
     if (document.hidden) { return; }
-    loadConvs();
-    // if (S.view !== "scene") { loadScene(true); }
-    // 停在「能力与约定」页时不自动重读，免得打断正在输入的内容（右上角有刷新）
-    if (S.view !== "ledger") { loadLedger(true); }
-    // // 日程：右侧面板里的修改不受重读影响；后台任务进行中由任务轮询负责刷新
-    // if (!schJobTimer) { loadSchedule(true); }
-    // 世界线不跟着 30 秒轮询：打开、刷新、改动后各读一次，进度条在前端自己走
+    if (S.view === "ledger") { loadLedger(true); }
   }, 30000);
+
 
   /* ================= 启动 ================= */
   function loadConvs() {
@@ -7087,21 +7126,24 @@
       el.insertBefore(icon(el.getAttribute("data-icon")), el.firstChild);
     });
     var b = bridge();
-    Promise.resolve(typeof b.ready === "function" ? b.ready() : null).catch(function () {}).then(function () {
-      loadLedger(true);
-      loadPools(true);
-      loadThings(true);
-      // loadSchedule(true);
-      // loadWorld(true);
-      // return Promise.all([loadScene(true), loadConvs()]);
-      // 角色名（侧栏会话名、头像颜色）改从世界线拿，以前是共享场景顺带给的
-      return Promise.all([loadWorld(true), loadConvs()]);
-    }).then(function () {
+    Promise.resolve(typeof b.ready === "function" ? b.ready() : null).then(function () {
+      return api("ctx/boot");
+    }).then(function (d) {
+      var list = (d && d.conversations) || [];
+      list.sort(function (a, b) { return (b.updated_at || 0) - (a.updated_at || 0); });
+      S.convs = list;
+      S.convErr = "";
+      S.labels = {};
+      (d.bots || []).forEach(function (x) { S.labels[x.id] = x.label; });
+      S.counts = d.counts || {};
+      S.worldHead = d.world || "";
+      renderSide();
       showView();
-      if (!S.convs.length) { renderStream(); return; }
+      if (!list.length) { renderStream(); return; }
       var saved = store.get("cid", "");
-      var has = S.convs.some(function (c) { return c.cid === saved; });
-      selectConv(has ? saved : S.convs[0].cid);
+      var has = list.some(function (c) { return c.cid === saved; });
+      var cid = has ? saved : list[0].cid;
+      selectConv(cid, cid === list[0].cid ? d.history : null);
     }).catch(function (e) {
       toast("初始化失败：" + errMsg(e), { err: true });
     });
