@@ -15,7 +15,7 @@ import json
 
 from astrbot.api import logger
 
-from .models import extract_json
+from .models import extract_json, profile_umo_for_bot
 from .recorder import norm_time
 from .things import (CAT_ITEM, END_STEPS, ITEM_END_STEPS, ITEM_MID_STEPS, ITEM_START_STEPS, KEEPS, KINDS, MEASURED_KINDS, MID_STEPS,
                      SPOTS, START_STEPS, had_before, norm_kind, norm_state, norm_step, split_keep, step_no)
@@ -585,16 +585,39 @@ class LifeStep:
 
     # ---------- 提示词 ----------
 
+    async def _persona_text(self, bot: str = "") -> str:
+        manager = getattr(self.context, "persona_manager", None)
+        if manager is None:
+            return ""
+        persona_id = str(self.cfg.get("persona_id") or "").strip()
+        try:
+            persona = await manager.get_persona(persona_id) if persona_id else None
+            if persona is None:
+                try:
+                    persona = await manager.get_default_persona_v3(profile_umo_for_bot(bot))
+                except TypeError:
+                    persona = await manager.get_default_persona_v3()
+        except Exception as exc:
+            logger.warning("[super_enhance/world] 读取人格失败：%s", exc)
+            return ""
+        if isinstance(persona, dict):
+            return str(persona.get("system_prompt") or persona.get("prompt") or "")
+        return str(getattr(persona, "system_prompt", None) or getattr(persona, "prompt", "") or "")
+    def _with_abilities(self, bot: str, persona: str) -> str:
+        if self.abilities is None:
+            return persona
+        try:
+            text = self.abilities.render(bot)
+        except Exception:
+            return persona
+        if not text:
+            return persona
+        return (persona or "（未配置人格）") + chr(10) * 2 + "【后来的变化】下面是她在主人的训练下后来学会、或长期改变的事；和上面设定冲突时以这里为准：" + chr(10) + text
+
     async def _personas(self, bots: list) -> str:
         blocks = []
         for bot in bots:
-            text = ""
-            if self.generator is not None:
-                try:
-                    text = await self.generator._persona_text(bot)
-                    text = self.generator._with_abilities(bot, text)
-                except Exception:
-                    text = ""
+            text = self._with_abilities(bot, await self._persona_text(bot))
             blocks.append("### key = %s\n%s" % (bot, text or "（未配置人格）"))
         return "\n\n".join(blocks)
 
