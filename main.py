@@ -179,18 +179,12 @@ class SuperEnhance(Star):
             logger.error("[super_enhance] 页面 API 注册失败", exc_info=True)
 
     async def sync_tool_visibility(self) -> None:
-        """按开关决定 LLM 工具是否暴露给模型：关掉就不暴露，避免 AI 以为能用。"""
-        # 世界线 live 之后，状态由程序维护，下面这些"让模型自己维护状态"的工具全部收起
-        live = getattr(self.life, "world_mode", "off") == "live"
+        """按开关同步当前提供给模型的工具。"""
         for name, enabled in (
             ("stay_silent", self.silence.enabled),
-            ("record_ability", self.life.abilities_enabled and not live),
-            ("training", self.life.training_enabled and not live),
-            ("make_promise", self.life.promise_enabled and not live),
-            ("close_promise", self.life.promise_enabled and not live),
-            ("start_doing", self.life.enabled and live),
-            ("recall", self.life.enabled and live),
-            ("look_things", self.life.enabled and live),
+            ("start_doing", self.life.enabled),
+            ("recall", self.life.enabled),
+            ("look_things", self.life.enabled),
             ("tell", self.life.enabled),
             ("draw_image", self.image_gen.enabled),
             ("send_image", self.image_gen.enabled),
@@ -200,16 +194,9 @@ class SuperEnhance(Star):
                     await self.context.activate_llm_tool_async(name)
                 else:
                     await self.context.deactivate_llm_tool_async(name)
-                logger.info(
-                    "[super_enhance] 工具 %s %s",
-                    name,
-                    "已暴露给模型" if enabled else "已从模型隐藏（对应开关未开）",
-                )
+                logger.info("[super_enhance] 工具 %s %s", name, "已暴露" if enabled else "已隐藏")
             except Exception:
-                logger.error(
-                    "[super_enhance] 同步工具 %s 可见性失败", name, exc_info=True
-                )
-
+                logger.error("[super_enhance] 同步工具 %s 失败", name, exc_info=True)
     async def terminate(self) -> None:
         """插件卸载/停用时收尾。"""
         self.lm_edits.stop()

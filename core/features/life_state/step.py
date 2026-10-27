@@ -569,7 +569,7 @@ class LifeStep:
         return best
 
     def due(self, now: datetime.datetime) -> bool:
-        if self.running:
+        if not self.enabled or self.running:
             return False
         flat = now.replace(tzinfo=None)
         touched = self.world.manual_at()

@@ -10,25 +10,6 @@
                 "hint": "总开关，关了这一组都不起作用。",
                 "default": true
             },
-            "world_mode": {
-                "description": "模式",
-                "type": "string",
-                "hint": "平时用「开启」。另外两种是旧的每日日程架构，只为退回去留着。",
-                "options": [
-                    "live",
-                    "shadow",
-                    "off"
-                ],
-                "labels": [
-                    "开启",
-                    "只记录，聊天还用旧日程",
-                    "关闭，用旧的每日日程"
-                ],
-                "condition": {
-                    "enabled": true
-                },
-                "default": "live"
-            },
             "bot_labels": {
                 "description": "机器人名字",
                 "type": "string",

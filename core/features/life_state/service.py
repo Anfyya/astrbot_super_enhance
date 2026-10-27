@@ -43,7 +43,6 @@ from .ledger import (
 )
 from . import training as training_calc
 from .proactive import ProactivePlanner, is_proactive_event
-from .prompts import place_description
 from .raw_log import RawMessageLog
 from .scene import SharedScene, build_injection
 from .variety import PoolStore, SeedLog
