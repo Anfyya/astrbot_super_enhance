@@ -1,46 +1,9 @@
 """把当前时段状态注入 LLM 请求，并提供清理手段。"""
 
-import datetime
-
 from astrbot.core.agent.message import TextPart
 
-from .models import OPTIONAL_FIELDS, LifeState, TimelineEntry, format_datetime
-
-INJECT_TAG = "【动态生活状态】"
 FAKE_TOOL_NAME = "life_state_snapshot"
 FAKE_TOOL_ID = "super_enhance_life_fake_call"
-
-
-def build_text(
-    state: LifeState,
-    entry: TimelineEntry | None,
-    now: datetime.datetime,
-    training_line: str = "",
-) -> str:
-    """拼出注入用的状态文本。training_line：这段标着在练的事时，换成一句人话（不露编号字段）。"""
-    lines = [
-        INJECT_TAG,
-        "当前时间：%s" % format_datetime(now),
-        "日期：%s%s" % (state.date, "（%s）" % state.holiday if state.holiday else ""),
-    ]
-    if state.schedule_summary:
-        lines.append("今天原本的打算：%s" % state.schedule_summary)
-    if state.style_summary:
-        lines.append("今日氛围：%s" % state.style_summary)
-    if entry is not None:
-        lines.append("这个时段：%s（%s）" % (entry.time, entry.format_range()))
-        lines.append("原本打算：%s" % entry.schedule)
-        lines.append("穿搭：%s" % entry.outfit)
-        for key, value in (entry.extras or {}).items():
-            if key == "training":
-                continue
-            spec = OPTIONAL_FIELDS.get(key)
-            label = spec["label"] if spec else key
-            lines.append("%s：%s" % (label, value))
-        if training_line:
-            lines.append(training_line)
-    lines.append(PLAN_NOTE)
-    return "\n".join(lines)
 
 
 # 日程只是打算：对话里实际发生的、约好的事优先，别让模型在思考里纠结「以哪个为准」

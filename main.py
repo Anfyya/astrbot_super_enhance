@@ -134,7 +134,7 @@ class SuperEnhance(Star):
         self.tool_guide = ToolGuideFeature(
             SectionConfig(raw, "bot_dialog"),
             lambda: self.life.enabled_bots(),
-            lambda bot: self.life.scene.label_for(bot),
+            lambda bot: self.life.bots.label_for(bot),
         )
         self.page_api = None
         self.snapshot = RequestSnapshotFeature(
@@ -343,7 +343,7 @@ class SuperEnhance(Star):
             传话结果。
         """
         return await self.bot_dialog.tool_tell(
-            event, content, self.life.enabled_bots(), self.life.scene.label_for
+            event, content, self.life.enabled_bots(), self.life.bots.label_for
         )
 
     @filter.llm_tool(name="training")

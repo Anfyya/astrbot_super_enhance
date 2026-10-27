@@ -16,7 +16,6 @@ from astrbot.core.platform.message_type import MessageType
 from .injector import (
     as_context_part,
     build_fake_messages,
-    build_text,
     strip_fake_messages,
 )
 from .models import (
@@ -44,7 +43,7 @@ from .ledger import (
 from . import training as training_calc
 from .proactive import ProactivePlanner, is_proactive_event
 from .raw_log import RawMessageLog
-from .scene import SharedScene, build_injection
+from .bots import BotRegistry
 from .variety import PoolStore, SeedLog
 from .world import WorldStore, fmt_time, is_event, is_sleep, parse_time
 from .recorder import Recorder
@@ -215,10 +214,7 @@ class LifeStateService:
         self.data_dir = Path(data_dir)
         self.planner = ProactivePlanner(context, cfg)
         self.raw_log = RawMessageLog(context, cfg, self.data_dir)
-        # 共享场景：交叉注入对方此刻 + 主人行踪（见 scene.py）
-        self.scene = SharedScene(
-            cfg, self.data_dir, now_fn=self._now, seg_fn=self._seg_key_now
-        )
+        self.bots = BotRegistry(cfg)
         # 三本小账（见 ledger.py）
         self.abilities = AbilityBook(self.data_dir / ABILITY_FILE_NAME)
         self.promises = PromiseBook(self.data_dir / PROMISE_FILE_NAME)
@@ -226,7 +222,7 @@ class LifeStateService:
         self.trainings = TrainingBook(self.data_dir / TRAINING_FILE_NAME)
         if self.promise_enabled:
             self.planner.promises = self.promises
-        self.planner.label_fn = self.scene.label_for
+        self.planner.label_fn = self.bots.label_for
         self.planner.trainings_fn = self.training_slots
         self.planner.training_done_fn = self.training_finished
         # 主动对话到点判断要用：日程、这个会话最近的往来、最近一次有人说话 / 主动消息发出的时刻
@@ -251,7 +247,7 @@ class LifeStateService:
         self.pool_store = PoolStore(self.data_dir / "pools.json")
         self.recorder = Recorder(
             context, cfg, self.world, self.raw_log,
-            label_fn=self.scene.label_for, now_fn=self._now, tz=self.timezone,
+            label_fn=self.bots.label_for, now_fn=self._now, tz=self.timezone,
         )
         # 原始消息清理旧文件时，记录员还没处理完的那几天先留着
         self.raw_log.keep_from_fn = lambda: self.recorder.unprocessed_from(self._now())
@@ -266,7 +262,7 @@ class LifeStateService:
         set_ledger_timezone(self.timezone)
         self.life_step = LifeStep(
             context, cfg, self.world, self.raw_log, None,
-            self.seed_log, self.scene.label_for, self._now,
+            self.seed_log, self.bots.label_for, self._now,
         )
         self.life_step.promises = self.promises
         self.life_step.trainings = self.trainings
@@ -438,7 +434,7 @@ class LifeStateService:
                     if start is None or (stop is not None and stop <= now):
                         continue
                     if start < now:
-                        name = self.scene.label_for(bot) or bot
+                        name = self.bots.label_for(bot) or bot
                         self.world.update_entry(date_text, str(item.get("id")), end=fmt_time(now), intent="", stopped=True,
                                                 stop_by="%s改去%s了" % (name, what[:30]) if what else "%s被叫去做别的了" % name)
                         out.append("%s %s 到此刻为止" % (item.get("id"), str(item.get("doing") or "")[:20]))
@@ -458,10 +454,10 @@ class LifeStateService:
 
         now = self._now()
         if str(entry or "").strip():
-            return recall.detail(self.world, bot, self.scene.label_for, now, entry, date)
+            return recall.detail(self.world, bot, self.bots.label_for, now, entry, date)
         if not any(str(x or "").strip() for x in (keyword, date, time)):
             return "关键词、日期、时间至少填一样。"
-        return recall.search(self.world, bot, self.scene.label_for, now, keyword, date, time)
+        return recall.search(self.world, bot, self.bots.label_for, now, keyword, date, time)
 
     def _weathers(self) -> dict:
         """每天抽到的天气：{日期: 天气原文}（算吃的放了多久坏用）。"""
@@ -482,13 +478,13 @@ class LifeStateService:
             item = shelf.find(key)
             if item is None:
                 return "没有 %s 这一件。先不填编号看一遍清单。" % key
-            return self.things.history(item, now, shelf, self.scene.label_for)
+            return self.things.history(item, now, shelf, self.bots.label_for)
         word = str(kind or "food").strip().lower()
         if word in ("item", "items", "东西", "物品", "物件"):
-            return "家里的东西（吃的以外，%s）：\n%s" % (fmt_time(now), self.things.item_list(now, shelf, self.scene.label_for))
+            return "家里的东西（吃的以外，%s）：\n%s" % (fmt_time(now), self.things.item_list(now, shelf, self.bots.label_for))
         if word not in ("food", "foods", "食物", "吃的", ""):
             return "kind 填 food（吃的）或 item（吃的以外的东西）。"
-        return "家里的吃的（%s）：\n%s" % (fmt_time(now), self.things.food_list(now, shelf, self.scene.label_for))
+        return "家里的吃的（%s）：\n%s" % (fmt_time(now), self.things.food_list(now, shelf, self.bots.label_for))
 
     def world_text(self, bot: str, now: datetime.datetime) -> str:
         """live 时给模型的【世界线】块：线 + 约定 + 在练的事 + 能力清单。"""
@@ -499,7 +495,7 @@ class LifeStateService:
         except Exception:
             recent = 12
         try:
-            head = build_world_text(self.world, bot, now, self.scene.label_for, recent=recent)
+            head = build_world_text(self.world, bot, now, self.bots.label_for, recent=recent)
         except Exception:
             logger.warning("[super_enhance/life] 世界线渲染失败", exc_info=True)
             head = ""
@@ -521,7 +517,7 @@ class LifeStateService:
             blocks.append(NO_REPEAT_NOTE)
         if head:
             # 紧挨着上一句、放在世界线块最末：压一压 AI 腔（2026-10-16）；丛雨用不带嘴硬的那份（2026-10-22）
-            blocks.append(AI_VOICE_NOTES.get(self.scene.label_for(bot) or "", AI_VOICE_NOTE))
+            blocks.append(AI_VOICE_NOTES.get(self.bots.label_for(bot) or "", AI_VOICE_NOTE))
             # 说话新鲜点：别老同一个开头、同一个收尾，别原样复读前面说过的句子（2026-10-16；10-23 例子补上「诶？！」「等、等等」「呜……」，
             # 起因是亚托莉被骂那一串条条「诶？！等、等等！」起头；同天再管结尾：条条拿「脑袋要冒烟了」「还不行嘛」讨饶收尾，
             # 只点这两个词她会换成「……好不好」接着讨饶，所以点的是讨饶、撒娇的尾巴这种收法）
@@ -532,7 +528,7 @@ class LifeStateService:
             blocks.append(SLEEP_NOTE)
             # 不当管家厨娘，照她自己的性子说（2026-10-19）
             if self.cfg.get("world_voice_note", True):
-                blocks.append(VOICE_NOTES.get(self.scene.label_for(bot) or "", ""))
+                blocks.append(VOICE_NOTES.get(self.bots.label_for(bot) or "", ""))
         return "\n".join(x for x in blocks if x)
 
     def state_for_planner(self, bot: str, date_text: str):
@@ -878,7 +874,7 @@ class LifeStateService:
             if date_text not in (self.seed_log.load() or {}):
                 from .variety import draw_seed
 
-                labels = {b: (self.scene.label_for(b) or b) for b in self.enabled_bots()}
+                labels = {b: (self.bots.label_for(b) or b) for b in self.enabled_bots()}
                 seed = draw_seed(date_text, labels=labels, history=self.seed_log.load(), pools=self.pool_store.load())
                 self.seed_log.save(date_text, seed)
                 self._debug("世界线：已抽今天的随机起点")
@@ -1188,9 +1184,9 @@ class LifeStateService:
         ]
         for item in items:
             others = [
-                self.scene.label_for(b) for b in item.get("bots") or [] if b != bot
+                self.bots.label_for(b) for b in item.get("bots") or [] if b != bot
             ]
-            with_text = promise_with_for(item, bot, self.scene.label_for)
+            with_text = promise_with_for(item, bot, self.bots.label_for)
             flags = []
             minute = clock_to_minute(item.get("time"))
             if (
@@ -1496,7 +1492,7 @@ class LifeStateService:
                 lines.append(
                     "- [%s] #%s %s｜练成的标准：%s｜怎么练：%s｜还差约 %s 小时"
                     % (
-                        self.scene.label_for(bot),
+                        self.bots.label_for(bot),
                         item.get("id"),
                         item.get("what"),
                         item.get("standard") or "（没写）",
@@ -1552,7 +1548,7 @@ class LifeStateService:
         bot = bot_of_umo(getattr(event, "unified_msg_origin", ""))
         if not self._bot_enabled(bot):
             return "本机器人没有启用动态生活状态，这次没有记录。"
-        if self.scene.sender_is_bot(event):
+        if self.bots.sender_is_bot(event):
             return "这是和另一个角色的对话；练什么、练没练成只在和主人的对话里记，这次没有记录。"
         act = str(action or "").strip().lower()
         act = {
@@ -1629,7 +1625,7 @@ class LifeStateService:
         bot = bot_of_umo(getattr(event, "unified_msg_origin", ""))
         if not self._bot_enabled(bot):
             return "本机器人没有启用动态生活状态，这次没有记录。"
-        if self.scene.sender_is_bot(event):
+        if self.bots.sender_is_bot(event):
             return "这是和另一个角色的对话，能力只在主人面前学会时才记，这次没有记录。"
         try:
             item, created = self.abilities.add(bot, content, "tool", self._today())
@@ -1650,7 +1646,7 @@ class LifeStateService:
         for other in self.enabled_bots():
             if other == bot or other in out:
                 continue
-            label = self.scene.label_for(other)
+            label = self.bots.label_for(other)
             names = {label, label.replace("莉", "利"), label.replace("丛", "从")}
             if any(name and name in joined for name in names):
                 out.append(other)
@@ -1696,7 +1692,7 @@ class LifeStateService:
                 "（和%s）" % item["with"] if item.get("with") else "",
             )
         ]
-        others = [self.scene.label_for(b) for b in item["bots"] if b != bot]
+        others = [self.bots.label_for(b) for b in item["bots"] if b != bot]
         if others:
             lines.append("%s那边也记上了。" % "、".join(others))
         if day > today:
@@ -1721,7 +1717,7 @@ class LifeStateService:
             if state is None or state.status != "ok":
                 continue
             if minute is not None:
-                with_text = promise_with_for(item, bot, self.scene.label_for)
+                with_text = promise_with_for(item, bot, self.bots.label_for)
                 text = "按约定：%s%s" % (
                     item.get("what"),
                     "（和%s）" % with_text if with_text else "",
@@ -1736,7 +1732,7 @@ class LifeStateService:
                     self.store.save(bot, piece[2])
                     state = piece[2]
                     notes.append(
-                        "%s今天 %s 这一段排成了这件事。" % (self.scene.label_for(bot), piece[0])
+                        "%s今天 %s 这一段排成了这件事。" % (self.bots.label_for(bot), piece[0])
                     )
             try:
                 await self._on_state_ready(bot, state)

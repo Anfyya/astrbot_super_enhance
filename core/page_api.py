@@ -393,7 +393,7 @@ class ContextPageApi:
         if str(who) == "master":
             return "主人"
         try:
-            return life.scene.label_for(who) or str(who)
+            return life.bots.label_for(who) or str(who)
         except Exception:
             return str(who)
 
@@ -703,7 +703,7 @@ class ContextPageApi:
             if not text:
                 continue
             try:
-                names.append("主人" if text == "master" else life.scene.label_for(text) or text)
+                names.append("主人" if text == "master" else life.bots.label_for(text) or text)
             except Exception:
                 names.append(text)
         return "、".join(names)
@@ -1060,7 +1060,7 @@ class ContextPageApi:
             today = life._today()
             pools = life.pool_store.load()
             history = life.seed_log.load() or {}
-            bots = [{"id": bot, "label": life.scene.label_for(bot) or bot} for bot in life.enabled_bots() or []]
+            bots = [{"id": bot, "label": life.bots.label_for(bot) or bot} for bot in life.enabled_bots() or []]
             labels = {b["id"]: b["label"] for b in bots}
             # 模拟几百次抽签要零点几秒，放到线程里，别卡住收发消息
             outlook = await asyncio.to_thread(variety.pool_outlook, pools, history, today, labels, _POOL_SIMS)
@@ -1938,7 +1938,7 @@ class ContextPageApi:
                 bots.append(
                     {
                         "id": bot,
-                        "label": life.scene.label_for(bot),
+                        "label": life.bots.label_for(bot),
                         "abilities": life.abilities.entries(bot),
                     }
                 )
@@ -1951,7 +1951,7 @@ class ContextPageApi:
                 await life.settle_trainings(bot)
             for item in life.trainings.items():
                 row = dict(item)
-                row["label"] = life.scene.label_for(item.get("bot"))
+                row["label"] = life.bots.label_for(item.get("bot"))
                 try:
                     row["progress"] = life.training_progress(item).to_dict()
                 except Exception:
