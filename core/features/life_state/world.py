@@ -105,6 +105,7 @@ class WorldStore:
         self._days = {}
         self._defer_depth = 0
         self._dirty_days: set[str] = set()
+        self._revision = 1
 
     # ---------- 通用 ----------
 
@@ -148,6 +149,7 @@ class WorldStore:
 
     def _save_day(self, date_text: str) -> None:
         key = str(date_text).strip()
+        self._revision += 1
         if self._defer_depth:
             self._dirty_days.add(key)
             return
@@ -169,6 +171,10 @@ class WorldStore:
                 self._dirty_days.clear()
                 for key in dirty:
                     self._write_json(self._day_path(key), self._load_day(key))
+
+    def revision(self) -> int:
+        """本进程内世界线改动计数，给存货 / 网页缓存用。"""
+        return int(self._revision)
 
     # ---------- 条目 ----------
 

@@ -687,6 +687,9 @@ class ThingStore:
         self.world = None
         self.bots_fn = None
         self._data = None
+        self._revision = 1
+        self._view_cache: tuple | None = None
+        self._weather_cache: tuple | None = None
 
     # ---------- 读写 ----------
 
@@ -701,6 +704,8 @@ class ThingStore:
 
     def _save(self) -> None:
         jsonio.save(self.path, self._load(), indent=1)
+        self._revision += 1
+        self._view_cache = None
 
     def get(self, thing_id) -> dict | None:
         """存下来的那件（不算世界线现算的）。"""
@@ -1163,6 +1168,10 @@ class ThingStore:
         """此刻的存货：存下来的（记录员记的、沉下来的世界线）+ 世界线里做完了、还没沉下来的段现算进去。
         只在要用的时候算（补写开跑、她查 look_things、记录员开跑），世界线改了下次一算就跟着变。"""
         flat = now.replace(tzinfo=None)
+        world_revision = self.world.revision() if self.world is not None and hasattr(self.world, "revision") else 0
+        quick_key = (fmt_time(flat), world_revision, self._revision)
+        if self._view_cache is not None and self._view_cache[0] == quick_key:
+            return self._view_cache[1]
         try:
             self.settle(flat)
         except Exception:
@@ -1177,7 +1186,10 @@ class ThingStore:
         for seg in self.segments(flat):
             if seg["ref"] not in settled:
                 self._apply_segment(items, alias, seg)
-        return View(items, alias)
+        result = View(items, alias)
+        current_revision = self.world.revision() if self.world is not None and hasattr(self.world, "revision") else 0
+        self._view_cache = ((fmt_time(flat), current_revision, self._revision), result)
+        return result
 
     def future(self, now: datetime.datetime) -> list:
         """世界线里还没做完的段要新添的（要买回来、要做好的……）：编号是补写 / 网页先发好的，那段做完才算进存货（view），
@@ -1357,38 +1369,66 @@ class ThingStore:
 
     # ---------- 新鲜度 ----------
 
-    def _weathers(self) -> dict:
+    def _weathers(self, now: datetime.datetime | None = None) -> dict:
+        key = fmt_time(now) if now is not None else ""
+        if self._weather_cache is not None and self._weather_cache[0] == key:
+            return self._weather_cache[1]
         try:
             data = self.weather_fn() if self.weather_fn else {}
         except Exception:
             data = {}
-        return data if isinstance(data, dict) else {}
+        data = data if isinstance(data, dict) else {}
+        self._weather_cache = (key, data)
+        return data
 
     def _weather_fn(self, flat: datetime.datetime):
         """日子 → 那天的天气（没抽到的日子照最近抽到的那天）。"""
-        weathers = self._weathers()
+        weathers = self._weathers(flat)
         known = [weathers[k] for k in sorted(weathers) if k <= flat.date().isoformat()]
         fallback = known[-1] if known else "多云"
         return lambda day: str(weathers.get(day.isoformat()) or fallback)
+
+    def profile(self, item: dict, now: datetime.datetime, view=None) -> dict:
+        """一次模拟同时得到新鲜度和口感；同一个 view 里同一件只算一次。"""
+        flat = now.replace(tzinfo=None)
+        cache = getattr(view, "_food_profiles", None) if view is not None else None
+        if cache is None:
+            cache = {}
+            if view is not None:
+                view._food_profiles = cache
+        key = (fmt_time(flat), str(item.get("id") or id(item)), id(item), self._revision)
+        if key in cache:
+            return cache[key]
+        hours, word = KINDS.get(str(item.get("kind") or ""), KINDS[DEFAULT_KIND])
+        sim = simulate(
+            item, hours, flat, self._weather_fn(flat), index=self._index(view, flat),
+            quality=True, lookahead_days=LOOKAHEAD_DAYS,
+        )
+        fresh = {
+            "x": round(sim["frac"], 3), "level": "还新鲜", "word": word,
+            "bad_since": sim["bad_since"], "hurry_at": sim["hurry_at"],
+            "bad_at": sim["bad_at"], "events": sim["events"],
+        }
+        if is_ended(item):
+            fresh["level"] = "没了"
+        elif sim["alive"]:
+            fresh["level"] = "活养着"
+        elif sim["frac"] >= 1.0:
+            fresh["level"] = "坏了"
+        else:
+            fresh["level"] = "还新鲜" if fresh["x"] < SOON_AT else ("还行" if fresh["x"] < HURRY_AT else "快不行了")
+        taste = {"rows": [], "left": None}
+        if cat_of(item) == CAT_FOOD and not is_ended(item):
+            taste = {"rows": sim.get("quality") or [], "left": sim.get("texture")}
+        value = {"fresh": fresh, "taste": taste}
+        cache[key] = value
+        return value
 
     def freshness(self, item: dict, now: datetime.datetime) -> dict:
         """按每一步现算（food.simulate）：x = 坏到了这一类能放多久的几成（腌、晒、熏好了能放多久跟着变）。
         返回 x、level（还新鲜 / 还行 / 快不行了 / 坏了 / 活养着 / 没了）、坏了从什么时候起、照现在的放法撑到几点、
         加工做完的时刻（events）。"""
-        flat = now.replace(tzinfo=None)
-        hours, word = KINDS.get(str(item.get("kind") or ""), KINDS[DEFAULT_KIND])
-        sim = simulate(item, hours, flat, self._weather_fn(flat), lookahead_days=LOOKAHEAD_DAYS)
-        out = {"x": round(sim["frac"], 3), "level": "还新鲜", "word": word, "bad_since": sim["bad_since"],
-               "hurry_at": sim["hurry_at"], "bad_at": sim["bad_at"], "events": sim["events"]}
-        if is_ended(item):
-            out["level"] = "没了"
-        elif sim["alive"]:
-            out["level"] = "活养着"
-        elif sim["frac"] >= 1.0:
-            out["level"] = "坏了"
-        else:
-            out["level"] = "还新鲜" if out["x"] < SOON_AT else ("还行" if out["x"] < HURRY_AT else "快不行了")
-        return out
+        return self.profile(item, now)["fresh"]
 
     def _index(self, view, flat: datetime.datetime):
         """东西之间的影响（串味、催熟……）要知道谁跟谁放一块：按此刻的存货建一次，同一个 view 里复用。"""
@@ -1403,12 +1443,7 @@ class ThingStore:
     def taste(self, item: dict, now: datetime.datetime, view=None) -> dict:
         """此刻的口感：rows（food.Sim.report：[{key, level（2 很 / 1 有点 / 0 变了 / -1 变好了）, text, fix, danger}]）
         和 left（口感还剩几成，0～1，网页上的口感条）。给了 view 才算东西之间的影响。没了的、不是吃的不算（left 是 None）。"""
-        if cat_of(item) != CAT_FOOD or is_ended(item):
-            return {"rows": [], "left": None}
-        flat = now.replace(tzinfo=None)
-        hours, _word = KINDS.get(str(item.get("kind") or ""), KINDS[DEFAULT_KIND])
-        sim = simulate(item, hours, flat, self._weather_fn(flat), index=self._index(view, flat), quality=True, lookahead_days=0)
-        return {"rows": sim.get("quality") or [], "left": sim.get("texture")}
+        return self.profile(item, now, view)["taste"]
 
     def quality(self, item: dict, now: datetime.datetime, view=None) -> list:
         """此刻的口感（taste 的 rows）。"""
@@ -1425,9 +1460,9 @@ class ThingStore:
             bits.append(text)
         return "；".join(bits)
 
-    def fresh_text(self, item: dict, now: datetime.datetime) -> str:
+    def fresh_text(self, item: dict, now: datetime.datetime, info: dict | None = None) -> str:
         """新鲜度的人话（不带该怎么办）。"""
-        info = self.freshness(item, now)
+        info = info or self.freshness(item, now)
         level, word = info["level"], info["word"]
         if level == "没了":
             end = is_ended(item) or {}

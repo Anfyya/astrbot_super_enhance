@@ -900,13 +900,14 @@ class ContextPageApi:
                 for stage, used, left in (info or {}).get("rows") or []:
                     counted[id(stage)] = (used, left, info["unit"])
                 stored = store.get(item.get("id"))
-                fresh = store.freshness(item, now)
+                profile = store.profile(item, now, shelf)
+                fresh = profile["fresh"]
                 stages = item.get("stages") or []
                 last = stages[-1] if stages else {}
                 keep, spot = things_mod.split_keep(last.get("keep"), last.get("spot"), last.get("place"))
                 end = things_mod.is_ended(item)
                 share = things_mod.share_left(item)  # 还剩一开始的几成（余量条）；说不准是 None
-                taste = store.taste(item, now, shelf)
+                taste = profile["taste"]
                 items.append({
                     "id": item.get("id"),
                     "name": item.get("name"),
@@ -934,7 +935,7 @@ class ContextPageApi:
                     "texture": taste["left"],
                     "fresh": {
                         "level": fresh["level"], "x": fresh["x"], "word": fresh["word"],
-                        "text": store.fresh_text(item, now),
+                        "text": store.fresh_text(item, now, fresh),
                         "bad_since": things_mod.fmt_time(fresh["bad_since"]) if fresh["bad_since"] else "",
                         "hurry_at": things_mod.fmt_time(fresh["hurry_at"]) if fresh["hurry_at"] else "",
                         "bad_at": things_mod.fmt_time(fresh["bad_at"]) if fresh["bad_at"] else "",
