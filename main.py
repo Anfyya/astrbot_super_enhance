@@ -33,7 +33,7 @@ from mcp.types import CallToolResult
 
 from .core.config_view import SectionConfig
 from .core.common.bots import identify_event
-from .core.features.context_tools import ContextToolsFeature
+from .core.features.context import ContextToolsFeature
 from .core.features.history_merge import HistoryMergeFeature
 from .core.features.history_transcript import HistoryTranscriptFeature
 from .core.features.zero_think import ZeroThinkRetryFeature

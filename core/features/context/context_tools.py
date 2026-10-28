@@ -7,7 +7,7 @@ import time
 from astrbot.api import logger
 from astrbot.core.agent.context.token_counter import EstimateTokenCounter
 
-from ..common import history_io, text as text_utils
+from ...common import history_io, text as text_utils
 from .compact_v2 import CompactV2
 from .daily_compact import DailyCompact
 from .overflow_guard import OverflowGuard

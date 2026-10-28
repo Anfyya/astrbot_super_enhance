@@ -14,8 +14,8 @@ from astrbot.api import logger
 from astrbot.core.message.components import Plain
 from astrbot.core.message.message_event_result import MessageChain
 
-from ..common.patching import PatchSet
-from .life_state.models import bot_of_umo
+from ...common.patching import PatchSet
+from ..life_state.models import bot_of_umo
 
 DEFAULT_REPLY = "（上下文满了，请主人手动 /compact v2）"
 

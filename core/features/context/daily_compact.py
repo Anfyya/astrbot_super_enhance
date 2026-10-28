@@ -14,7 +14,7 @@ from pathlib import Path
 
 from astrbot.api import logger
 
-from ..common import jsonio, timeutil
+from ...common import jsonio, timeutil
 
 START_DELAY_SECONDS = 90
 RETRY_SECONDS = 15 * 60
