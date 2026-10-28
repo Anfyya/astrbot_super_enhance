@@ -77,7 +77,7 @@ def start_now(service, umo: str, what: str, minutes, place: str = "", result: st
         for item in removed:
             service.world.add_entry(str(item.get("start"))[:10], item)
         return "没写进去：这段时间世界线上是主人手动排的事，补写和对话都改不动。"
-    released = service._release_partners(bot, now, what)
+    released = _release_partners(service, bot, now, what)
     logger.info(
         "[super_enhance/world] [%s] 现在去做：%s %s–%s%s%s",
         bot, what[:30], fmt_time(now)[11:], fmt_time(end)[11:],
@@ -132,7 +132,7 @@ def tool_recall(service, umo: str, keyword: str = "", date: str = "", time: str 
         return "关键词、日期、时间至少填一样。"
     return recall.search(service.world, bot, service.bots.label_for, now, keyword, date, time)
 
-def _weathers(service) -> dict:
+def weathers(service) -> dict:
     """每天抽到的天气：{日期: 天气原文}（算吃的放了多久坏用）。"""
     try:
         seeds = service.seed_log.load() or {}

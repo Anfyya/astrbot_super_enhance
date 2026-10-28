@@ -23,6 +23,7 @@ from astrbot.api import logger
 
 from .common import history_io, text as text_utils
 from .common.text import clean_message, text_of, time_of
+from .features.life_state import loop as life_loop
 
 try:  # AstrBot 面板为插件页面提供的 quart 兼容层
     from quart import request  # type: ignore
@@ -2280,4 +2281,4 @@ class ContextPageApi:
     async def _resync_promise_day(life, item) -> None:
         if not isinstance(item, dict) or item.get("date") != life._today():
             return
-        await life._sync_live_jobs(item["date"])
+        await life_loop.sync_live_jobs(life, item["date"])

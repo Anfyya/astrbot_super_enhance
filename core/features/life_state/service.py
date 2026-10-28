@@ -2,6 +2,7 @@
 
 import asyncio
 import datetime
+import functools
 import time
 from pathlib import Path
 
@@ -77,8 +78,8 @@ class LifeStateService:
         self.planner.label_fn = self.bots.label_for
         self.planner.training_done_fn = self.training_finished
         # 主动对话到点判断要用：这个会话最近的往来、最近一次有人说话 / 主动消息发出的时刻
-        self.planner.recent_fn = self.recent_messages
-        self.planner.activity_fn = self.last_activity
+        self.planner.recent_fn = functools.partial(raw_log_mod.recent_messages, self)
+        self.planner.activity_fn = functools.partial(raw_log_mod.last_activity, self)
         self.planner.sent_fn = lambda umo: self._proactive_sent.get(str(umo), 0.0)
         # 会话 → 最近一次有人说话（主人发来或 Bot 发出）的时刻；主动消息真正发出的时刻
         self._activity: dict[str, float] = {}
@@ -107,7 +108,7 @@ class LifeStateService:
         # 记录员看到对话里「练成了」也走同一条路：标练成、写进能力清单
         self.recorder.finish_fn = self._finish_training
         # 她把日程里后面才做的事说早了：叫她给主人改口
-        self.recorder.on_early = self._on_early
+        self.recorder.on_early = functools.partial(loop_mod.on_early, self)
         # 账本里的时间用本地时间（容器系统时区是 UTC）
         set_ledger_timezone(self.timezone)
         self.life_step = LifeStep(
@@ -120,7 +121,7 @@ class LifeStateService:
         self.life_step.abilities = self.abilities if self.abilities_enabled else None
         self.life_step.recorder = self.recorder
         # 家里的吃的（存货）：记录员记聊天里说的，补写在世界线每段上标；只在要用的时候现算（见 things.py）
-        self.things = ThingStore(self.data_dir / THINGS_FILE_NAME, weather_fn=self._weathers)
+        self.things = ThingStore(self.data_dir / THINGS_FILE_NAME, weather_fn=functools.partial(operations_mod.weathers, self))
         self.things.world = self.world
         self.things.bots_fn = self.raw_log.enabled_bots
         self.recorder.things = self.things
@@ -163,46 +164,6 @@ class LifeStateService:
         except Exception:
             return []
 
-    def start_now(self, umo: str, what: str, minutes, place: str = "", result: str = "") -> str:
-        return operations_mod.start_now(self, umo, what, minutes, place, result)
-
-    def _release_partners(self, bot: str, now: datetime.datetime, what: str = "") -> list:
-        return operations_mod._release_partners(self, bot, now, what)
-
-    def tool_recall(self, umo: str, keyword: str = "", date: str = "", time: str = "", entry: str = "") -> str:
-        return operations_mod.tool_recall(self, umo, keyword, date, time, entry)
-
-    def _weathers(self) -> dict:
-        return operations_mod._weathers(self)
-
-    def tool_look_things(self, umo: str, kind: str = "food", thing_id: str = "") -> str:
-        return operations_mod.tool_look_things(self, umo, kind, thing_id)
-    def world_text(self, bot: str, now: datetime.datetime) -> str:
-        return view_mod.world_text(self, bot, now)
-
-    async def _flush_outbox(self) -> None:
-        return await loop_mod.flush_outbox(self)
-
-    async def _world_loop(self) -> None:
-        return await loop_mod.world_loop(self)
-
-    async def _sync_live_jobs(self, date_text: str) -> None:
-        return await loop_mod.sync_live_jobs(self, date_text)
-
-    async def _notify_done(self, now: datetime.datetime) -> None:
-        return await loop_mod.notify_done_for_service(self, now)
-
-    async def _on_early(self, bot: str, umo: str, entry: dict, said: str, now) -> None:
-        return await loop_mod.on_early(self, bot, umo, entry, said, now)
-
-    async def _settle_live(self, now: datetime.datetime) -> None:
-        return await loop_mod.settle_live(self, now)
-
-    async def _world_daily(self, today: datetime.date) -> None:
-        return await loop_mod.world_daily(self, today)
-
-    async def _review_if_due(self, now: datetime.datetime) -> None:
-        return await loop_mod.review_if_due(self, now)
     @property
     def enabled(self) -> bool:
         return bool(self.cfg.get("enabled", False))
@@ -251,7 +212,7 @@ class LifeStateService:
         if self.planner.enabled and not self.planner.install_gate():
             logger.warning("[super_enhance/life] cron_manager 还不可用，主动对话到点判断等排期时再接管")
         self.life_step.abilities_txt = self._ability_text
-        self._world_task = asyncio.create_task(self._world_loop())
+        self._world_task = asyncio.create_task(loop_mod.world_loop(self))
         logger.info("[super_enhance/life] 已启用（时区 %s，世界线）", self.timezone)
 
     async def terminate(self) -> None:
@@ -264,25 +225,6 @@ class LifeStateService:
                 pass
             self._world_task = None
 
-    # ---------- 原始消息副本（日程回查、主动对话到点判断用） ----------
-
-    def _touch(self, umo: str) -> None:
-        return raw_log_mod._touch(self, umo)
-
-    def last_activity(self, umo: str) -> float:
-        return raw_log_mod.last_activity(self, umo)
-
-    def recent_messages(self, umo: str) -> list[dict]:
-        return raw_log_mod.recent_messages(self, umo)
-
-    def record_incoming(self, event) -> None:
-        return raw_log_mod.record_incoming(self, event)
-
-    def record_reply(self, event) -> None:
-        return raw_log_mod.record_reply(self, event)
-
-    def record_tool_message(self, event, tool, tool_args) -> None:
-        return raw_log_mod.record_tool_message(self, event, tool, tool_args)
     def _bot_enabled(self, bot: str) -> bool:
         """该机器人（平台实例）是否启用动态生活状态。"""
         mode = str(self.cfg.get("session_list_mode") or "whitelist").strip()
@@ -305,7 +247,7 @@ class LifeStateService:
         bot = platform_of(getattr(event, "unified_msg_origin", ""))
         if not self._bot_enabled(bot):
             return
-        text = self.world_text(bot, self._now())
+        text = view_mod.world_text(self, bot, self._now())
         strip_fake_messages(getattr(req, "contexts", None) or [])
         if not text:
             return
@@ -410,7 +352,7 @@ class LifeStateService:
             self.planner.prepare_request(event, req)
         except Exception:
             logger.error("[super_enhance/life] 主动对话换提示词失败", exc_info=True)
-        text = self.world_text(bot, self._now())
+        text = view_mod.world_text(self, bot, self._now())
         if not text:
             return
         if self.cfg.get("world_voice_note", True) and self._cron_kind(event) not in REPORT_KINDS:

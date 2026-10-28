@@ -296,7 +296,7 @@ def last_activity(service, umo: str) -> float:
     """这个会话最近一次有人说话（主人发来或 Bot 发出）的时刻；重启后从原始消息副本里补。"""
     best = service._activity.get(str(umo), 0.0)
     now = time.time()
-    for item in service.recent_messages(umo):
+    for item in recent_messages(service, umo):
         try:
             ts = float(item.get("ts") or 0.0)
         except Exception:
@@ -320,7 +320,7 @@ def recent_messages(service, umo: str) -> list[dict]:
 
 def record_incoming(service, event) -> None:
     """记录用户发来的原始消息。"""
-    service._touch(getattr(event, "unified_msg_origin", ""))
+    _touch(service, getattr(event, "unified_msg_origin", ""))
     try:
         service.raw_log.record(
             event.unified_msg_origin, "user", event.get_message_str() or ""
@@ -343,7 +343,7 @@ def record_reply(service, event) -> None:
             texts.append(text.strip())
     if not texts:
         return
-    service._touch(getattr(event, "unified_msg_origin", ""))
+    _touch(service, getattr(event, "unified_msg_origin", ""))
     try:
         service.raw_log.record(
             event.unified_msg_origin, "assistant", "\n".join(texts)
@@ -385,7 +385,7 @@ def record_tool_message(service, event, tool, tool_args) -> None:
                 )
             except Exception:
                 pass
-    service._touch(umo)
+    _touch(service, umo)
     # 本插件排的主动对话发给主人的消息：打上标记，下次到点好判断「上一条主人回没回」
     src = ""
     if is_proactive_event(event) and umo == str(getattr(event, "unified_msg_origin", "") or ""):

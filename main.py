@@ -43,6 +43,7 @@ from .core.features import error_voice
 from .core.features.cron_context import CronContextFeature
 from .core.features.cross_session import CrossSessionFeature
 from .core.features.life_state import LifeStateService
+from .core.features.life_state import operations as life_ops, raw_log
 from .core.features.life_state.proactive import is_proactive_event
 from .core.features.msg_time import MsgTimeFeature
 from .core.features.proactive_think import ProactiveThinkFilter
@@ -307,7 +308,7 @@ class SuperEnhance(Star):
             # 另一个机器人「正在输入」推过来的空消息：不计来回、不写记录、不触发回复
             event.stop_event()
             return
-        self.life.record_incoming(event)
+        raw_log.record_incoming(self.life, event)
         self.image_gen.note_incoming(event)
         self.silence.note_incoming(event)
         self.bot_dialog.note_incoming(event)
@@ -366,7 +367,7 @@ class SuperEnhance(Star):
         await run_steps(event, (
             ("新消息优先", lambda: self.reply_guard.after_message_sent(event)),
             ("模型报错补历史", lambda: error_voice.write_model_error(self.context, event, self.msg_time.marker())),
-            ("原始消息副本", lambda: self.life.record_reply(event)),
+            ("原始消息副本", lambda: raw_log.record_reply(self.life, event)),
         ), "发送后钩子")
 
     @filter.on_llm_tool_respond()
@@ -379,7 +380,7 @@ class SuperEnhance(Star):
     ) -> None:
         """工具结果同优先级的两项：原始消息副本、bot↔bot 委托回报。"""
         await run_steps(event, (
-            ("原始消息副本", lambda: self.life.record_tool_message(event, tool, tool_args)),
+            ("原始消息副本", lambda: raw_log.record_tool_message(self.life, event, tool, tool_args)),
             ("委托回报", lambda: self.bot_dialog.note_delegation(event, tool, tool_args)),
         ), "工具结果钩子")
 
@@ -406,8 +407,8 @@ class SuperEnhance(Star):
         Returns:
             写进世界线的结果。
         """
-        return self.life.start_now(
-            getattr(event, "unified_msg_origin", "") or "", what, minutes, place, result
+        return life_ops.start_now(
+            self.life, getattr(event, "unified_msg_origin", "") or "", what, minutes, place, result
         )
 
     @filter.llm_tool(name="recall")
@@ -430,7 +431,7 @@ class SuperEnhance(Star):
         Returns:
             翻到的世界线。
         """
-        return self.life.tool_recall(getattr(event, "unified_msg_origin", "") or "", keyword, date, time, entry)
+        return life_ops.tool_recall(self.life, getattr(event, "unified_msg_origin", "") or "", keyword, date, time, entry)
 
     @filter.llm_tool(name="look_things")
     async def look_things(self, event: AstrMessageEvent, kind: str = "food", id: str = "") -> str:
@@ -448,7 +449,7 @@ class SuperEnhance(Star):
         Returns:
             家里的东西。
         """
-        return self.life.tool_look_things(getattr(event, "unified_msg_origin", "") or "", kind, id)
+        return life_ops.tool_look_things(self.life, getattr(event, "unified_msg_origin", "") or "", kind, id)
 
     # 10-24：画的是她眼前看到的、她自己不在画里；说明里不写「相机」「拍照」这类字：她会照抄进 prompt，画图模型就真画出一台相机。
     # 同天又补「也没有你的手、东西摆着画」「不写第一人称、POV」：「从你站的地方看过去」让她写成第一人称、两只手举着东西

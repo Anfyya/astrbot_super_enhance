@@ -10,6 +10,7 @@ import datetime
 
 from astrbot.api import logger
 
+from . import loop, raw_log
 from .ledger import parse_id_list
 from .world import is_event, parse_time
 
@@ -215,7 +216,7 @@ def _told_master(service, bot: str, since: datetime.datetime) -> bool:
     """练成以后她有没有在主人的私聊里说过话。"""
     stamp = since.timestamp()
     for umo in service._master_targets(bot):
-        for row in service.recent_messages(umo):
+        for row in raw_log.recent_messages(service, umo):
             try:
                 ts = float(row.get("ts") or 0)
             except Exception:
@@ -307,4 +308,4 @@ async def training_finished(service, bot: str, tid: str) -> bool:
     return item is not None and item.get("status") == "done"
 
 async def _resync_today(service, bot: str) -> None:
-    await service._sync_live_jobs(service._today())
+    await loop.sync_live_jobs(service, service._today())
