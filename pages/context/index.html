@@ -1983,7 +1983,7 @@
   // 这条带的图：消息里存着的（主人发的、网页上放的）、她画的（画好那条回包下面，存着的小图）；点一下放大 / 缩回
   function picsEl(it) {
     var drawn = it.drawn || [];
-    var pics = (it.pictures || []).concat(drawn.filter(function (d) { return d.url; }).map(function (d) { return d.url; }));
+    var pics = (it.pictures || []).concat(drawn.filter(function (d) { return !d.deleted; }).map(function (d) { return d.url || { id: d.pic || "drawn:" + d.id }; }));
     var gone = drawn.filter(function (d) { return d.deleted; });
     if (!pics.length && !gone.length) { return null; }
     var w = h("div", { class: "pics" });
@@ -2244,7 +2244,7 @@
     // 这条要留下的图：一开始是存着的那几张，网页上加、删只改这份，点保存才写回
     var imgs = { orig: (it.pictures || []).slice(), list: (it.pictures || []).slice() };
     // 她画的图（画好那条回包下面）：每张记下要换成哪张 / 删掉，点保存才走 ctx/drawn
-    var draws = { list: (it.drawn || []).map(function (d) { return { id: d.id, url: d.url, deleted: !!d.deleted, change: null }; }) };
+    var draws = { list: (it.drawn || []).map(function (d) { return { id: d.id, url: d.url || "", pic: d.pic || "drawn:" + d.id, deleted: !!d.deleted, change: null }; }) };
     var markDirty = function () {
       var d = (taText && taText.value !== parts.body) || (taThink && taThink.value !== (it.think || "")) || JSON.stringify(imgs.list) !== JSON.stringify(imgs.orig)
         || draws.list.some(function (x) { return !!x.change; });
@@ -2260,10 +2260,12 @@
         var row = h("div", { class: "imged" });
         draws.list.forEach(function (d) {
           var gone = d.change ? !!d.change.delete : d.deleted;
-          var src = d.change && d.change.image ? d.change.image : d.url;
+          var src = d.change && d.change.image ? d.change.image : (d.url || { id: d.pic });
           var cell = h("div", { class: "one" });
           if (!gone && src) {
-            cell.appendChild(h("img", { src: src, alt: d.id }));
+            var shown = h("img", { alt: d.id });
+            paintPic(shown, src);
+            cell.appendChild(shown);
           } else {
             cell.appendChild(h("div", { class: "ph-img", text: "已删掉" }));
           }
@@ -2440,6 +2442,7 @@
       editResult = saved;
       return changes.length ? post("ctx/drawn", { changes: changes }) : null;
     }).then(function (r) {
+      changes.forEach(function (c) { delete PIC_CACHE["drawn:" + c.id]; });
       if (S.insp) { S.insp.dirty = false; }
       var failed = r && r.failed && r.failed.length ? "；没改成：" + r.failed.join("；") : "";
       // 撤销只管存档里的改动；她画的图换了 / 删了，原图在图片文件夹的 old/ 里

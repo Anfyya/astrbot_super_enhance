@@ -61,6 +61,8 @@ _ROUTE_SPECS = (
 )
 
 _MAX_BACKUP_FILES = 30
+# 她画的图在网页上的取图编号：drawn:img2（ctx/pic 按这个现取小图）
+DRAWN_PIC_PREFIX = "drawn:"
 _POOL_SIMS = 400  # 插曲与消遣页：「明天抽中」按这么多次模拟算
 _DEFAULT_PAGE_SIZE = 200
 # 网页给消息放的图：不超过这么大、最长边也不超过 _IMAGE_SIDE 的原样存，不然缩成最长边 _IMAGE_SIDE 的 JPEG
@@ -422,6 +424,12 @@ class ContextPageApi:
         args = request.args if request is not None else {}
         pic_id = str(args.get("id") or "").strip()
         url = self._pic_cache.get(pic_id, "")
+        if not url and pic_id.startswith(DRAWN_PIC_PREFIX):
+            # 她画的图：按编号现取存着的小图（不进缓存，换过图下次取的就是新的）
+            drawer = getattr(self.plugin, "image_gen", None)
+            image_id = pic_id[len(DRAWN_PIC_PREFIX):]
+            if drawer is not None and not drawer.is_deleted(image_id):
+                url = drawer.view_uri(image_id) or ""
         if not url:
             return _err("图片不存在，刷新页面后重试")
         return _ok({"id": pic_id, "url": url})
@@ -1508,11 +1516,9 @@ class ContextPageApi:
             # 她画的图不在历史里（存成文件了）：画好那条回包下面按编号显示存着的小图，换图、删图走 ctx/drawn
             for image_id in dict.fromkeys(re.findall(r"img\d+", text.split("。", 1)[0])):
                 if drawer.is_deleted(image_id):
-                    drawn.append({"id": image_id, "url": "", "deleted": True})
-                    continue
-                uri = drawer.view_uri(image_id)
-                if uri:
-                    drawn.append({"id": image_id, "url": uri})
+                    drawn.append({"id": image_id, "deleted": True})
+                else:
+                    drawn.append({"id": image_id, "pic": DRAWN_PIC_PREFIX + image_id})
         content = item.get("content")
         if isinstance(content, str):
             editable = True
