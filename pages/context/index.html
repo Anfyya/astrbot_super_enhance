@@ -5978,60 +5978,77 @@
 
   // 整页重画。opt.toTop：回到最上面（换到吃的 / 东西时）；opt.anchor：放回离开前记下的位置；
   // 都不给就停在原来的位置（按视口里最上面那一件对）
-  function renderThings(opt) {
-    if (S.thingsCat === "item") { return renderObjects(opt); }
-    thingsHead("家里的吃的", "bowl");
+  function renderDataPage(opt) {
+    var objectMode = S.thingsCat === "item";
+    thingsHead(objectMode ? "家里的东西" : "家里的吃的", objectMode ? "box" : "bowl");
     opt = opt || {};
     var anchor = opt.toTop ? null : opt.anchor !== undefined ? opt.anchor : thingsAnchor();
     var box = clear($("thingsBody"));
     var d = S.things;
     if (!d) {
       if (S.thingsErr) {
-        box.appendChild(h("div", { class: "empty-state" }, h("div", { class: "big", text: "家里的吃的读取失败" }), h("div", { text: S.thingsErr }),
+        box.appendChild(h("div", { class: "empty-state" }, h("div", { class: "big", text: (objectMode ? "家里的东西" : "家里的吃的") + "读取失败" }), h("div", { text: S.thingsErr }),
           h("button", { class: "btn sm", type: "button", text: "重试", onclick: function () { loadThings(); } })));
       } else {
         box.appendChild(h("div", { class: "people" }, h("div", { class: "sk", style: "height:120px" }), h("div", { class: "sk", style: "height:260px" })));
       }
       return;
     }
-    $("thingsSub").textContent = "此刻 " + String(d.now || "").slice(11, 16) + " 现算 · 记录员记的 + 世界线里做完的段标的";
-    var items = d.items || [];
+    $("thingsSub").textContent = "此刻 " + String(d.now || "").slice(11, 16) + " 现算 · " + (objectMode
+      ? "吃的以外的东西，记录员记的 + 世界线里做完的段标的"
+      : "记录员记的 + 世界线里做完的段标的");
+    var items = (objectMode ? d.objects : d.items) || [];
     var live = items.filter(function (x) { return !x.ended; });
-    var counts = { future: futureList("food", "").length, now: live.length, gone: items.length - live.length, all: items.length };
+    var counts = { future: futureList(objectMode ? "item" : "food", "").length, now: live.length, gone: items.length - live.length, all: items.length };
+    var filter = objectMode ? S.objFilter : S.thingsFilter;
+    var setFilter = function (value) { if (objectMode) { S.objFilter = value; } else { S.thingsFilter = value; } };
+    var setQuery = function (value) { if (objectMode) { S.objQ = value; } else { S.thingsQ = value; } };
     var bar = h("div", { class: "tbar" });
     var seg = h("div", { class: "seg" });
     [["future", "未来"], ["now", "现有的"], ["gone", "没了的"], ["all", "全部"]].forEach(function (x) {
-      seg.appendChild(h("button", { type: "button", class: S.thingsFilter === x[0] ? "on" : "", onclick: function () {
-        if (S.thingsFilter === x[0]) { return; }
-        S.thingsFilter = x[0];
-        renderThings();
+      seg.appendChild(h("button", { type: "button", class: filter === x[0] ? "on" : "", onclick: function () {
+        if (filter === x[0]) { return; }
+        setFilter(x[0]);
+        renderDataPage();
       } }, x[1], h("span", { class: "wcount", text: String(counts[x[0]]) })));
     });
     bar.appendChild(seg);
-    var q = h("input", { class: "inp", type: "text", placeholder: "搜名字、编号、哪来的", value: S.thingsQ });
-    q.addEventListener("input", function () { S.thingsQ = q.value; drawThingList(); });
-    bar.appendChild(h("label", { class: "search" },
-      (function () { var w = document.createElement("span"); w.innerHTML = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg>'; return w.firstChild; })(), q));
+    var q = h("input", { class: "inp", type: "text", placeholder: objectMode ? "搜名字、编号、样子、在哪" : "搜名字、编号、哪来的", value: objectMode ? S.objQ : S.thingsQ });
+    q.addEventListener("input", function () { setQuery(q.value); (objectMode ? drawObjList : drawThingList)(); });
+    bar.appendChild(h("label", { class: "search" }, thingSearchIcon(), q));
     bar.appendChild(h("div", { class: "grow" }));
     bar.appendChild(h("button", { class: "btn sm", type: "button", onclick: function () {
-      thingOpenForm("new", { name: "", kind: "", origin: "", from: [], what: d.steps.start[0], at: thingAt(d.now), left: "",
-        amount: "", place: "", keep: d.keeps[0], spot: (d.spots || [])[0] || "", state: d.states[0], by: [], note: "" });
+      var draft = objectMode
+        ? { name: "", kind: "", look: "", owner: "", origin: "", from: [], what: d.item_steps.start[0], at: thingAt(d.now), place: "", holder: "", state: "", by: [], note: "" }
+        : { name: "", kind: "", origin: "", from: [], what: d.steps.start[0], at: thingAt(d.now), left: "", amount: "",
+            place: "", keep: d.keeps[0], spot: (d.spots || [])[0] || "", state: d.states[0], by: [], note: "" };
+      thingOpenForm(objectMode ? "onew" : "new", draft);
     } }, icon("plus"), "加一件"));
     box.appendChild(bar);
 
-    var nHurry = live.filter(function (x) { return x.fresh.level === "快不行了"; }).length;
-    var nBad = live.filter(function (x) { return x.fresh.level === "坏了"; }).length;
-    var nLow = live.filter(function (x) { return x.low; }).length;
     var sum = h("div", { class: "tsum" });
-    if (nHurry) { sum.appendChild(h("span", { class: "tag warn", text: "快不行了 " + nHurry })); }
-    if (nLow) { sum.appendChild(h("span", { class: "tag warn", title: "米面油盐、调料快用完了的（该买了），和剩得不多的", text: "余量不多 " + nLow })); }
-    if (nBad) { sum.appendChild(h("span", { class: "tag bad", title: "按时间算已经坏了，聊天里还没说扔", text: "按时间算坏了 " + nBad })); }
-    sum.appendChild(h("span", { text: "保鲜：还能放多久，按每一步怎么放、放在哪（冷热）、切没切、腌晒熏到哪了、当天天气和钟点现算。余量：还剩一开始的几成，米面油盐、调料干货、腌菜按克 / 毫升记、用一次扣一次。口感：跟刚有的时候比还剩几成，蔫了、回软、串味、凉了、熟过头……都往下扣，凉了热一热、发硬蒸一蒸这种缓回来就又满了。快不行了、余量不多的排在前面" }));
+    if (objectMode) {
+      var kinds = {};
+      live.forEach(function (x) { kinds[objKind(x)] = (kinds[objKind(x)] || 0) + 1; });
+      var nSame = Object.keys(kinds).filter(function (k) { return kinds[k] > 1; }).length;
+      if (nSame) { sum.appendChild(h("span", { class: "tag warn", title: "同一种东西有好几件，排在一起，认准编号", text: "长得像的 " + nSame + " 组" })); }
+      sum.appendChild(h("span", { text: "每件一个编号，记哪来的、经过谁手、搁在哪、变成什么样；同一种东西排在一起，模型查的也是这一份" }));
+    } else {
+      var nHurry = live.filter(function (x) { return x.fresh.level === "快不行了"; }).length;
+      var nBad = live.filter(function (x) { return x.fresh.level === "坏了"; }).length;
+      var nLow = live.filter(function (x) { return x.low; }).length;
+      if (nHurry) { sum.appendChild(h("span", { class: "tag warn", text: "快不行了 " + nHurry })); }
+      if (nLow) { sum.appendChild(h("span", { class: "tag warn", title: "米面油盐、调料快用完了的（该买了），和剩得不多的", text: "余量不多 " + nLow })); }
+      if (nBad) { sum.appendChild(h("span", { class: "tag bad", title: "按时间算已经坏了，聊天里还没说扔", text: "按时间算坏了 " + nBad })); }
+      sum.appendChild(h("span", { text: "保鲜：还能放多久，按每一步怎么放、放在哪（冷热）、切没切、腌晒熏到哪了、当天天气和钟点现算。余量：还剩一开始的几成，米面油盐、调料干货、腌菜按克 / 毫升记、用一次扣一次。口感：跟刚有的时候比还剩几成，蔫了、回软、串味、凉了、熟过头……都往下扣，凉了热一热、发硬蒸一蒸这种缓回来就又满了。快不行了、余量不多的排在前面" }));
+    }
     box.appendChild(sum);
-    box.appendChild(h("div", { class: "tlist" }, h("div", { class: "pc", id: "thingsList" })));
-    drawThingList();
+    box.appendChild(h("div", { class: "tlist" }, h("div", { class: "pc", id: objectMode ? "objList" : "thingsList" })));
+    (objectMode ? drawObjList : drawThingList)();
     thingsAfterDraw(anchor, opt);
   }
+
+  function renderThings(opt) { return renderDataPage(opt); }
 
   // 画完以后：放回原来的位置；有要跳到的那一件就把它露出来、闪一下
   function thingsAfterDraw(anchor, opt) {
@@ -6685,57 +6702,6 @@
     var w = document.createElement("span");
     w.innerHTML = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg>';
     return w.firstChild;
-  }
-
-  function renderObjects(opt) {
-    thingsHead("家里的东西", "box");
-    opt = opt || {};
-    var anchor = opt.toTop ? null : opt.anchor !== undefined ? opt.anchor : thingsAnchor();
-    var box = clear($("thingsBody"));
-    var d = S.things;
-    if (!d) {
-      if (S.thingsErr) {
-        box.appendChild(h("div", { class: "empty-state" }, h("div", { class: "big", text: "家里的东西读取失败" }), h("div", { text: S.thingsErr }),
-          h("button", { class: "btn sm", type: "button", text: "重试", onclick: function () { loadThings(); } })));
-      } else {
-        box.appendChild(h("div", { class: "people" }, h("div", { class: "sk", style: "height:120px" }), h("div", { class: "sk", style: "height:260px" })));
-      }
-      return;
-    }
-    $("thingsSub").textContent = "此刻 " + String(d.now || "").slice(11, 16) + " 现算 · 吃的以外的东西，记录员记的 + 世界线里做完的段标的";
-    var objs = d.objects || [];
-    var live = objs.filter(function (x) { return !x.ended; });
-    var counts = { future: futureList("item", "").length, now: live.length, gone: objs.length - live.length, all: objs.length };
-    var bar = h("div", { class: "tbar" });
-    var seg = h("div", { class: "seg" });
-    [["future", "未来"], ["now", "现有的"], ["gone", "没了的"], ["all", "全部"]].forEach(function (x) {
-      seg.appendChild(h("button", { type: "button", class: S.objFilter === x[0] ? "on" : "", onclick: function () {
-        if (S.objFilter === x[0]) { return; }
-        S.objFilter = x[0];
-        renderThings();
-      } }, x[1], h("span", { class: "wcount", text: String(counts[x[0]]) })));
-    });
-    bar.appendChild(seg);
-    var q = h("input", { class: "inp", type: "text", placeholder: "搜名字、编号、样子、在哪", value: S.objQ });
-    q.addEventListener("input", function () { S.objQ = q.value; drawObjList(); });
-    bar.appendChild(h("label", { class: "search" }, thingSearchIcon(), q));
-    bar.appendChild(h("div", { class: "grow" }));
-    bar.appendChild(h("button", { class: "btn sm", type: "button", onclick: function () {
-      thingOpenForm("onew", { name: "", kind: "", look: "", owner: "", origin: "", from: [], what: d.item_steps.start[0],
-        at: thingAt(d.now), place: "", holder: "", state: "", by: [], note: "" });
-    } }, icon("plus"), "加一件"));
-    box.appendChild(bar);
-
-    var kinds = {};
-    live.forEach(function (x) { kinds[objKind(x)] = (kinds[objKind(x)] || 0) + 1; });
-    var nSame = Object.keys(kinds).filter(function (k) { return kinds[k] > 1; }).length;
-    var sum = h("div", { class: "tsum" });
-    if (nSame) { sum.appendChild(h("span", { class: "tag warn", title: "同一种东西有好几件，排在一起，认准编号", text: "长得像的 " + nSame + " 组" })); }
-    sum.appendChild(h("span", { text: "每件一个编号，记哪来的、经过谁手、搁在哪、变成什么样；同一种东西排在一起，模型查的也是这一份" }));
-    box.appendChild(sum);
-    box.appendChild(h("div", { class: "tlist" }, h("div", { class: "pc", id: "objList" })));
-    drawObjList();
-    thingsAfterDraw(anchor, opt);
   }
 
   // 同一种东西（kind 一样）有好几件的先列，组头提醒认准编号；只有一件的列在后面
