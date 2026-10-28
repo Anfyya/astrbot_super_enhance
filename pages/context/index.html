@@ -6491,12 +6491,12 @@
     }, function () { return worldDirty(f); });
   }
 
-  function thingStageForm(it, st, pos) {
+  function dataStageForm(it, st, pos, objectMode) {
     var wl = !!st && thingWlStep(st);
-    var key = st ? thingStageKey(it, st, pos) : "s:" + it.id;
+    var key = st ? thingStageKey(it, st, pos, objectMode) : (objectMode ? "os:" : "s:") + it.id;
     var f = S.tEdit[key];
     var first = !!st && (wl ? pos === 0 : st.idx === 0);
-    var measured = !!it.measured;
+    var measured = !objectMode && !!it.measured;
     var box = edBox(null, st ? "改这一步" : "加一步", it.id + " " + it.name + (st ? " · " + thingAt(st.at) + " " + st.what : ""),
       wl ? "改的是世界线那一段，时间跟着那一段" : "存成网页手动");
     box.setAttribute("data-tf", key);
@@ -6505,41 +6505,59 @@
     var ui = edState(f);
     function draw() {
       dyn.textContent = "";
-      var c = { first: first, measured: measured, perUse: measured ? it.measured.per_use_text : "", exceptId: it.id, af: true };
-      var qty = first || f.what === "清点" ? (measured ? "amount" : "left") : (measured ? "used" : "left");
-      var all = first ? [qty, "place", "keep", "spot", "state"] : (measured ? ["used", "amount"] : ["left"]).concat(["place", "keep", "spot", "state"]);
-      var main = (first ? ["qty", "place", "keep", "spot", "state"] : THING_MAIN[f.what] || []).map(function (k) { return k === "qty" ? qty : k; });
-      var steps = first ? edOpts(S.things.steps.start)
-        : edOpts(S.things.steps.mid).concat(S.things.steps.end.map(function (x, i) { return { key: x, label: x, end: true, br: i === 0 }; }));
+      var c, all, main, steps;
+      if (objectMode) {
+        c = { first: first, exceptId: it.id, af: true };
+        all = first ? ["place", "holder", "state"] : ["place", "holder", "state", "owner"];
+        main = first ? all : OBJ_MAIN[f.what] || [];
+        steps = first ? edOpts(S.things.item_steps.start)
+          : edOpts(S.things.item_steps.mid).concat(S.things.item_steps.end.map(function (x, i) { return { key: x, label: x, end: true, br: i === 0 }; }));
+      } else {
+        c = { first: first, measured: measured, perUse: measured ? it.measured.per_use_text : "", exceptId: it.id, af: true };
+        var qty = first || f.what === "清点" ? (measured ? "amount" : "left") : (measured ? "used" : "left");
+        all = first ? [qty, "place", "keep", "spot", "state"] : (measured ? ["used", "amount"] : ["left"]).concat(["place", "keep", "spot", "state"]);
+        main = (first ? ["qty", "place", "keep", "spot", "state"] : THING_MAIN[f.what] || []).map(function (k) { return k === "qty" ? qty : k; });
+        steps = first ? edOpts(S.things.steps.start)
+          : edOpts(S.things.steps.mid).concat(S.things.steps.end.map(function (x, i) { return { key: x, label: x, end: true, br: i === 0 }; }));
+      }
       var p = edProps();
       edRow(p, "这一步", edChips(steps, f.what, function (v) { if (v !== f.what) { f.what = v; draw(); } }));
       if (!wl) {
         edRow(p, "什么时候", edInput(f.at, "现在", function (v) { f.at = v; }, { cls: "ed-num", auto: true }), THING_AT_TIP);
         edRow(p, "谁", edMulti(edWho(), f.by, function (v) { f.by = v; }), "可以多选；都不选就是没说");
       }
-      main.forEach(function (k) { thingFieldRow(p, f, k, c); });
+      main.forEach(function (k) { objectMode ? objFieldRow(p, f, k, c) : thingFieldRow(p, f, k, c); });
       if (!wl) { edRow(p, "备注", edInput(f.note, "可空", function (v) { f.note = v; })); }
       var sec = edSec(p);
       var rest = all.filter(function (k) { return main.indexOf(k) < 0; });
       if (rest.length) {
         var c2 = { first: first, measured: measured, perUse: c.perUse, exceptId: it.id };
-        sec.appendChild(edFold(ui, "more", "更多", rest.map(function (k) { return THING_FIELDS[k]; }).join("、"),
-          function () { return dataFieldSum(f, rest, false); },
-          function () { var q = edProps(); rest.forEach(function (k) { thingFieldRow(q, f, k, c2); }); return q; }));
+        var labels = objectMode ? OBJ_FIELDS : THING_FIELDS;
+        sec.appendChild(edFold(ui, "more", "更多", rest.map(function (k) { return labels[k]; }).join("、"),
+          function () { return dataFieldSum(f, rest, objectMode); },
+          function () { var q = edProps(); rest.forEach(function (k) { objectMode ? objFieldRow(q, f, k, c2) : thingFieldRow(q, f, k, c2); }); return q; }));
       }
       dyn.appendChild(sec);
     }
     draw();
     return worldFormFoot(box, function () { thingCloseForm(key); }, st ? "保存" : "添加", function () {
       if (wl) {
-        return thingPost({ action: "wl_stage", ref: st.wl, id: it.id, guard: { what: st.what, into: st.into ? st.into.id : "", nth: thingWlNth(it, st, pos) },
-          fields: { what: f.what, left: f.left, amount: f.amount, used: f.used, place: f.place, keep: f.keep, spot: f.spot, state: f.state } },
+        var fields = objectMode
+          ? { what: f.what, place: f.place, holder: f.holder, state: f.state, owner: f.owner }
+          : { what: f.what, left: f.left, amount: f.amount, used: f.used, place: f.place, keep: f.keep, spot: f.spot, state: f.state };
+        return thingPost({ action: "wl_stage", ref: st.wl, id: it.id, guard: objectMode
+            ? { what: st.what, nth: thingWlNth(it, st, pos) }
+            : { what: st.what, into: st.into ? st.into.id : "", nth: thingWlNth(it, st, pos) },
+          fields: fields },
           "已保存", function () { delete S.tEdit[key]; }, it.id);
       }
       var at = fullTime(f.at, thingToday());
       if (at === null) { toast("时间写成 08:30、昨天 08:30 或 10-18 08:30", { err: true }); return null; }
-      var stage = { what: f.what, at: at || (st ? String(st.at || "").slice(0, 16) : ""), left: f.left, amount: f.amount, used: f.used,
-        place: f.place, keep: f.keep, spot: f.spot, state: f.state, by: (f.by || []).join(","), into: f.into, note: f.note };
+      var stage = objectMode
+        ? { what: f.what, at: at || (st ? String(st.at || "").slice(0, 16) : ""), place: f.place, holder: f.holder, state: f.state,
+            owner: f.owner, by: (f.by || []).join(","), into: f.into, note: f.note }
+        : { what: f.what, at: at || (st ? String(st.at || "").slice(0, 16) : ""), left: f.left, amount: f.amount, used: f.used,
+            place: f.place, keep: f.keep, spot: f.spot, state: f.state, by: (f.by || []).join(","), into: f.into, note: f.note };
       if (st) {
         return thingPost({ action: "update_stage", id: it.id, index: st.idx, guard: { at: st.at, what: st.what }, fields: stage },
           "已保存", function () { delete S.tEdit[key]; }, it.id);
@@ -6547,6 +6565,10 @@
       return thingPost({ action: "stage", id: it.id, stage: stage }, "已添加", function () { delete S.tEdit[key]; }, it.id);
     }, function () { return worldDirty(f); });
   }
+
+  function thingStageForm(it, st, pos) { return dataStageForm(it, st, pos, false); }
+
+  function objStageForm(it, st, pos) { return dataStageForm(it, st, pos, true); }
 
   function dataItemForm(it, objectMode) {
     var key = (objectMode ? "oi:" : "i:") + it.id;
@@ -6692,60 +6714,6 @@
       return thingPost({ action: "add", cat: "item", name: f.name, kind: f.kind, look: f.look, owner: f.owner, origin: f.origin, from: f.from,
         stage: { what: f.what, at: at, place: f.place, holder: f.holder, state: f.state, by: (f.by || []).join(","), note: f.note } },
         "已添加", function () { delete S.tEdit[key]; });
-    }, function () { return worldDirty(f); });
-  }
-
-  function objStageForm(it, st, pos) {
-    var wl = !!st && thingWlStep(st);
-    var key = st ? thingStageKey(it, st, pos, true) : "os:" + it.id;
-    var f = S.tEdit[key];
-    var first = !!st && (wl ? pos === 0 : st.idx === 0);
-    var box = edBox(null, st ? "改这一步" : "加一步", it.id + " " + it.name + (st ? " · " + thingAt(st.at) + " " + st.what : ""),
-      wl ? "改的是世界线那一段，时间跟着那一段" : "存成网页手动");
-    box.setAttribute("data-tf", key);
-    var dyn = h("div", { class: "ed-dyn" });
-    box.appendChild(dyn);
-    var ui = edState(f);
-    function draw() {
-      dyn.textContent = "";
-      var c = { first: first, exceptId: it.id, af: true };
-      var all = first ? ["place", "holder", "state"] : ["place", "holder", "state", "owner"];
-      var main = first ? all : OBJ_MAIN[f.what] || [];
-      var steps = first ? edOpts(S.things.item_steps.start)
-        : edOpts(S.things.item_steps.mid).concat(S.things.item_steps.end.map(function (x, i) { return { key: x, label: x, end: true, br: i === 0 }; }));
-      var p = edProps();
-      edRow(p, "这一步", edChips(steps, f.what, function (v) { if (v !== f.what) { f.what = v; draw(); } }));
-      if (!wl) {
-        edRow(p, "什么时候", edInput(f.at, "现在", function (v) { f.at = v; }, { cls: "ed-num", auto: true }), THING_AT_TIP);
-        edRow(p, "谁", edMulti(edWho(), f.by, function (v) { f.by = v; }), "可以多选；都不选就是没说");
-      }
-      main.forEach(function (k) { objFieldRow(p, f, k, c); });
-      if (!wl) { edRow(p, "备注", edInput(f.note, "可空", function (v) { f.note = v; })); }
-      var sec = edSec(p);
-      var rest = all.filter(function (k) { return main.indexOf(k) < 0; });
-      if (rest.length) {
-        sec.appendChild(edFold(ui, "more", "更多", rest.map(function (k) { return OBJ_FIELDS[k]; }).join("、"),
-          function () { return dataFieldSum(f, rest, true); },
-          function () { var q = edProps(); rest.forEach(function (k) { objFieldRow(q, f, k, { first: first, exceptId: it.id }); }); return q; }));
-      }
-      dyn.appendChild(sec);
-    }
-    draw();
-    return worldFormFoot(box, function () { thingCloseForm(key); }, st ? "保存" : "添加", function () {
-      if (wl) {
-        return thingPost({ action: "wl_stage", ref: st.wl, id: it.id, guard: { what: st.what, nth: thingWlNth(it, st, pos) },
-          fields: { what: f.what, place: f.place, holder: f.holder, state: f.state, owner: f.owner } },
-          "已保存", function () { delete S.tEdit[key]; }, it.id);
-      }
-      var at = fullTime(f.at, thingToday());
-      if (at === null) { toast("时间写成 08:30、昨天 08:30 或 10-18 08:30", { err: true }); return null; }
-      var stage = { what: f.what, at: at || (st ? String(st.at || "").slice(0, 16) : ""), place: f.place, holder: f.holder, state: f.state,
-        owner: f.owner, by: (f.by || []).join(","), into: f.into, note: f.note };
-      if (st) {
-        return thingPost({ action: "update_stage", id: it.id, index: st.idx, guard: { at: st.at, what: st.what }, fields: stage },
-          "已保存", function () { delete S.tEdit[key]; }, it.id);
-      }
-      return thingPost({ action: "stage", id: it.id, stage: stage }, "已添加", function () { delete S.tEdit[key]; }, it.id);
     }, function () { return worldDirty(f); });
   }
 
