@@ -10,6 +10,7 @@ import datetime
 import hashlib
 import json
 import re
+from dataclasses import dataclass, field
 
 from astrbot.api import logger
 
@@ -208,6 +209,17 @@ FREE_SHIFT_MINUTES = 10
 PAIR_NEAR_MINUTES = 15
 
 
+@dataclass
+class RecorderBatch:
+    """一次记录员落库期间共享的临时标记，不再散挂到 Recorder 自己身上。"""
+
+    touched: dict[str, datetime.datetime] = field(default_factory=dict)
+    mentioned: set[str] = field(default_factory=set)
+    keep: set[str] = field(default_factory=set)
+    fresh: set[str] = field(default_factory=set)
+    free_at: dict[str, datetime.datetime] = field(default_factory=dict)
+
+
 class Recorder:
     """按会话防抖的对话→世界线整理。"""
 
@@ -226,6 +238,17 @@ class Recorder:
         self._early_seen: set[str] = set()
 
     # ---------- 配置 ----------
+
+    @property
+    def batch(self) -> RecorderBatch:
+        state = self.__dict__.get("_batch")
+        if state is None:
+            state = self._batch = RecorderBatch()
+        return state
+
+    @batch.setter
+    def batch(self, value: RecorderBatch) -> None:
+        self._batch = value
 
     @property
     def quiet_seconds(self) -> float:
@@ -651,17 +674,21 @@ class Recorder:
         return ""
 
     def apply(self, umo: str, data: dict, now: datetime.datetime, items=None) -> None:
+        """一次批改只把涉及到的世界线文件各写一遍。"""
+        with self.world.day_transaction():
+            self._apply(umo, data, now, items)
+
+    def _apply(self, umo: str, data: dict, now: datetime.datetime, items=None) -> None:
         batch = list(items or [])
         flat_now = now.replace(tzinfo=None)
         bots = set(self.raw_log.enabled_bots())
-        # 这次改到了谁的现在（谁 → 从几点起）：最后把她后面补写排的段全撤掉，由补写按新的情况从头排
-        self._touched, self._mentioned, self._fresh = {}, set(), set()
-        # 说早了的那段要留着叫她改口，不跟着撤
-        self._keep = {str(x.get("entry") or "").strip() for x in data.get("early") or [] if isinstance(x, dict)}
+        state = self.batch = RecorderBatch(
+            keep={str(x.get("entry") or "").strip() for x in data.get("early") or [] if isinstance(x, dict)}
+        )
         records = []
         # 先定对不上的那几段怎么收场（收尾、做完、交接要几分钟），再记这次的新条目：免得新条目先把手上的事一刀截断
         self._collect_early(data.get("early") or [], umo, items, now)
-        free_at = self._apply_stale(data.get("stale") or [], data.get("early") or [], now)
+        free_at = state.free_at = self._apply_stale(data.get("stale") or [], data.get("early") or [], now)
         for raw in data.get("entries") or []:
             if not isinstance(raw, dict):
                 continue
@@ -793,7 +820,7 @@ class Recorder:
         self._apply_things(data.get("things") or [], umo, batch, now)
         self._apply_things(data.get("items") or [], umo, batch, now, cat=CAT_ITEM)
         # 改到了谁的现在：她后面补写排的全撤掉，补写从头排；最后核对两人「一起」对得上
-        for who, since in sorted(self._touched.items()):
+        for who, since in sorted(state.touched.items()):
             self._redo_after(who, since, now)
         self._unpair(now)
 
@@ -888,7 +915,7 @@ class Recorder:
         """记下这次改到了她的现在、从几点起（取最早的）：apply 最后据此把她后面补写排的段撤掉重排。"""
         if moment is None or who not in set(self.raw_log.enabled_bots()):
             return
-        touched = self.__dict__.setdefault("_touched", {})
+        touched = self.batch.touched
         old = touched.get(who)
         touched[who] = moment if old is None else min(old, moment)
 
@@ -903,7 +930,7 @@ class Recorder:
             return
         cur = self.world.current(who, at)
         if cur is not None and not is_event(cur) and str(cur.get("source") or "") == "step" \
-                and str(cur.get("id")) not in self._mentioned:
+                and str(cur.get("id")) not in self.batch.mentioned:
             entry_id = str(cur.get("id"))
             self.world.interrupt(cur, at, by="改去%s" % clean_text(intention.get("text"), 30))
             logger.info("[super_enhance/world] %s答应现在就去做「%s」：手上补写排的 %s %s 到 %s 为止",
@@ -961,7 +988,7 @@ class Recorder:
                     continue  # 对方已经有一条和她一起的；或者对方自己那边记着别的事（照对方的，最后由 _unpair 去掉「一起」）
                 before = self.world.current(other, start - datetime.timedelta(minutes=1))
                 if before is None or is_event(before) or who not in (before.get("with") or []) \
-                        or str(before.get("source") or "") not in ("step", "chat") or str(before.get("id")) in self._mentioned:
+                        or str(before.get("source") or "") not in ("step", "chat") or str(before.get("id")) in self.batch.mentioned:
                     continue
                 name, mine = self.label(who) or who, self.label(other) or other
                 doing = str(record.get("doing") or "")
@@ -1004,7 +1031,7 @@ class Recorder:
         写一句她中途走了，对方照旧接着做。手动写的、聊天里记的、这次刚记的、说早了要留着改口的、已经睡下的觉都不动。"""
         flat = now.replace(tzinfo=None)
         bots = set(self.raw_log.enabled_bots())
-        fresh = self.__dict__.get("_fresh") or set()
+        fresh = self.batch.fresh
         name = self.label(who) or who
         removed, freed = [], []
         days = sorted({since.date().isoformat(), flat.date().isoformat(), (flat.date() + datetime.timedelta(days=1)).isoformat()})
@@ -1016,7 +1043,7 @@ class Recorder:
                     owner, iid = str(item.get("who") or ""), str(item.get("id") or "")
                     if owner not in bots or str(item.get("source") or "") != "step" or is_event(item):
                         continue
-                    if iid in self._mentioned or iid in self._keep or iid in fresh:
+                    if iid in self.batch.mentioned or iid in self.batch.keep or iid in fresh:
                         continue
                     start = parse_time(item.get("start"))
                     if start is None or (is_sleep(item) and start <= flat):
@@ -1194,7 +1221,7 @@ class Recorder:
         # 同一段又被说成「说早了」的：要叫她改口，那段得留着
         keep = {str(x.get("entry") or "").strip() for x in early if isinstance(x, dict)}
         mentioned = {str(x.get("entry") or "").strip() for x in raws if isinstance(x, dict)}
-        self._mentioned = getattr(self, "_mentioned", set()) | mentioned
+        self.batch.mentioned |= mentioned
         free_at, pending, orphans = {}, [], []
         later = [x for x in raws if isinstance(x, dict) and self._how(x) == "接着做"]
         for raw in [x for x in raws if isinstance(x, dict) and self._how(x) != "接着做"] + later:
@@ -1318,7 +1345,7 @@ class Recorder:
         })
         if record is not None:
             # 这次刚交过去的那段：撤后面补写排的段时不算在里面
-            self.__dict__.setdefault("_fresh", set()).add(str(record.get("id")))
+            self.batch.fresh.add(str(record.get("id")))
             logger.info("[super_enhance/world] %s交给%s接着做：%s %s–%s", name, self.label(to) or to, record.get("id"),
                         str(record.get("start"))[11:16], str(record.get("end"))[11:16])
 
