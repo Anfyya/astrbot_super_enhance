@@ -627,7 +627,7 @@ class ContextPageApi:
                         fields["things"] = self._entry_things(life, body["things"], (old or {}).get("things") or [])
                     # 改完算手动，撞上的前后条目让开
                     ok = bool(
-                        world.manual_update(date_text, str(body.get("id") or ""), **fields)
+                        world.update(date_text, str(body.get("id") or ""), mode="manual", **fields)
                     )
                 else:
                     things = self._entry_things(life, body.get("things"), []) if isinstance(body.get("things"), list) else []
@@ -821,14 +821,18 @@ class ContextPageApi:
         return out
 
     @staticmethod
-    def _plan_update(life, store, ref: str, tid: str, fields: dict, now) -> str:
-        """改「未来」里的一件：找到世界线那一段（ref = 日期/编号）里添它的那一步，改完整段交给 entry_steps 规整，
-        照网页手改存（manual_update：那段算手动，补写、记录员不再动它）。返回不收的原因。"""
+    def _entry_ref(life, ref: str, tid: str):
         m = re.fullmatch(r"(\d{4}-\d{2}-\d{2})/(.+)", ref)
         if not m or not tid:
-            return "找不到世界线里那一段"
+            return "", None
         date_text, entry_id = m.group(1), m.group(2)
-        entry = next((x for x in life.world.entries(date_text, "") if str(x.get("id")) == entry_id), None)
+        return date_text, life.world.find(entry_id, date_text=date_text)
+
+    @classmethod
+    def _plan_update(cls, life, store, ref: str, tid: str, fields: dict, now) -> str:
+        """改「未来」里的一件：找到世界线那一段（ref = 日期/编号）里添它的那一步，改完整段交给 entry_steps 规整，
+        照网页手改存（manual_update：那段算手动，补写、记录员不再动它）。返回不收的原因。"""
+        date_text, entry = cls._entry_ref(life, ref, tid)
         if entry is None:
             return "世界线里那一段已经不在了"
         steps = [dict(x) for x in entry.get("things") or [] if isinstance(x, dict)]
@@ -843,24 +847,20 @@ class ContextPageApi:
         new_steps = store.entry_steps(steps, entry.get("things") or [], now)
         if not any(str(x.get("new") or "") == tid for x in new_steps):
             return "这样改对不上（比如怎么来的不是买回来、收到、做好了）"
-        return "" if life.world.manual_update(date_text, entry_id, things=new_steps) else "没存上：世界线那一段改不动"
+        return "" if life.world.update(date_text, str(entry.get("id")), mode="manual", things=new_steps) else "没存上：世界线那一段改不动"
 
-    @staticmethod
-    def _wl_stage_update(life, store, ref: str, tid: str, guard, fields, now) -> str:
+    @classmethod
+    def _wl_stage_update(cls, life, store, ref: str, tid: str, guard, fields, now) -> str:
         """改世界线那一段里标的某一步（家里的吃的、东西「每一步」里改）：ThingStore.edit_entry_step 认出那一步改好，
         照网页手改存（manual_update：那段算手动，补写、记录员不再动它）。返回不收的原因。"""
-        m = re.fullmatch(r"(\d{4}-\d{2}-\d{2})/(.+)", ref)
-        if not m or not tid:
-            return "找不到世界线里那一段"
-        date_text, entry_id = m.group(1), m.group(2)
-        entry = next((x for x in life.world.entries(date_text, "") if str(x.get("id")) == entry_id), None)
+        date_text, entry = cls._entry_ref(life, ref, tid)
         if entry is None:
             return "世界线里那一段已经不在了"
         steps, why = store.edit_entry_step(entry.get("things") or [], tid, guard if isinstance(guard, dict) else {},
                                            fields if isinstance(fields, dict) else {}, now)
         if why:
             return why
-        return "" if life.world.manual_update(date_text, entry_id, things=steps) else "没存上：世界线那一段改不动"
+        return "" if life.world.update(date_text, str(entry.get("id")), mode="manual", things=steps) else "没存上：世界线那一段改不动"
 
     async def things_view(self):
         """家里的吃的：此刻现算的每一件（存下来的 + 世界线里做完的段标的），每一步、新鲜度、用料和用它做的；
