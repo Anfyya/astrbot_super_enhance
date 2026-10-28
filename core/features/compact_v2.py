@@ -25,6 +25,8 @@ import time
 from pathlib import Path
 
 from astrbot.api import logger
+
+from ..common import timeutil
 from astrbot.core.message.components import Node, Plain
 
 from .message_text import strip_inline_system
@@ -150,14 +152,7 @@ class CompactV2:
 
     def _now(self) -> datetime.datetime:
         """本地时间（不带时区）：容器里是 UTC，消息里的时间戳是本地时间。"""
-        from zoneinfo import ZoneInfo
-
-        from . import turn_state
-
-        try:
-            return datetime.datetime.now(ZoneInfo(turn_state._TZ_NAME)).replace(tzinfo=None)  # noqa: SLF001
-        except Exception:
-            return datetime.datetime.now()
+        return timeutil.now(naive=True)
 
     # ---------- 入口 ----------
 

@@ -10,6 +10,8 @@
 import re
 import time
 
+from ..common import timeutil
+
 # 消息到达时间（time.time()），on_any_message 里打
 ARRIVED_FLAG = "_super_enhance_arrived_at"
 # 这一轮的 agent 已经跑完（之后只剩装饰 / 发送）
@@ -25,28 +27,13 @@ INTERRUPTION_ASSISTANT = "Output stopped."
 
 _REMINDER_RE = re.compile(r"<system[-_\s]*reminder>.*?</system[-_\s]*reminder>", re.I | re.S)
 
-# 容器里是 UTC：补进请求的用户消息时间必须换成本地时区（main 启动时按 AstrBot 配置设置）
-_TZ_NAME = "Asia/Shanghai"
-_WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
-
-
 def set_timezone(name: str) -> None:
-    global _TZ_NAME
-    if str(name or "").strip():
-        _TZ_NAME = str(name).strip()
+    timeutil.set_timezone(name)
 
 
 def local_stamp(ts: float | None = None) -> str:
     """和 AstrBot 自己的格式一致：2026-10-03 05:14 (CST), Weekday: Saturday。"""
-    import datetime
-    from zoneinfo import ZoneInfo
-
-    try:
-        tz = ZoneInfo(_TZ_NAME)
-    except Exception:
-        tz = ZoneInfo("Asia/Shanghai")
-    moment = datetime.datetime.fromtimestamp(ts if ts else time.time(), tz)
-    return "%s, Weekday: %s" % (moment.strftime("%Y-%m-%d %H:%M (%Z)"), _WEEKDAYS[moment.weekday()])
+    return timeutil.local_stamp(ts)
 
 
 def mark_arrived(event) -> None:

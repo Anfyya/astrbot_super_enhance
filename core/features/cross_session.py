@@ -11,11 +11,12 @@
 
 import datetime
 import json
-from zoneinfo import ZoneInfo
 
 from astrbot.api import logger
 from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.platform.message_type import MessageType
+
+from ..common import timeutil
 
 from . import cron_history
 from .history_merge import ORIG_HISTORY_ATTR
@@ -60,17 +61,6 @@ def _run_start(event, messages: list) -> int:
         if _role(messages[index]) == "user":
             return index + 1
     return 0
-
-WEEKDAYS = (
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
-    "Sunday",
-)
-
 
 class CrossSessionFeature:
     """监听 send_message_to_user 工具，把跨会话发出去的内容写进目标会话历史。"""
@@ -345,19 +335,5 @@ class CrossSessionFeature:
             logger.error("[super_enhance/cross_session] 主动消息的思考存进历史失败", exc_info=True)
 
     def _stamp_text(self) -> str:
-        tz_name = ""
-        try:
-            cfg = self.context.get_config()
-            if isinstance(cfg, dict):
-                tz_name = str(cfg.get("timezone") or "")
-        except Exception:
-            tz_name = ""
-        try:
-            tz = ZoneInfo(tz_name or "Asia/Shanghai")
-        except Exception:
-            tz = None
-        now = datetime.datetime.now(tz) if tz else datetime.datetime.now().astimezone()
-        return "<system_reminder>Sent at: %s, Weekday: %s</system_reminder>" % (
-            now.strftime("%Y-%m-%d %H:%M (%Z)"),
-            WEEKDAYS[now.weekday()],
-        )
+        stamp = timeutil.local_stamp(tz=timeutil.timezone(context=self.context))
+        return "<system_reminder>Sent at: %s</system_reminder>" % stamp

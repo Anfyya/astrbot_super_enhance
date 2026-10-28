@@ -31,9 +31,9 @@ import os
 import random
 import re
 from pathlib import Path
-from zoneinfo import ZoneInfo
-
 from astrbot.api import logger
+
+from ...common import timeutil
 
 FOLDER = "world"
 STATE_NAME = "world_state.json"
@@ -57,7 +57,7 @@ MAX_STOP_WHY = 80
 MAX_STEP = 80
 MAX_RESULT = 80
 
-TIME_FMT = "%Y-%m-%d %H:%M"
+TIME_FMT = timeutil.TIME_FMT
 
 
 def clean_text(value, limit: int) -> str:
@@ -67,21 +67,15 @@ def clean_text(value, limit: int) -> str:
 
 def parse_time(value) -> datetime.datetime | None:
     """2026-10-11 09:00 这种字符串 → datetime；解析不了返回 None。"""
-    text = str(value or "").strip().replace("T", " ")
-    if len(text) >= 16:
-        text = text[:16]
-    try:
-        return datetime.datetime.strptime(text, TIME_FMT)
-    except Exception:
-        return None
+    return timeutil.parse_time(value)
 
 
 def fmt_time(moment: datetime.datetime) -> str:
-    return moment.strftime(TIME_FMT)
+    return timeutil.fmt_time(moment)
 
 
 def clock_text(moment: datetime.datetime) -> str:
-    return moment.strftime("%H:%M")
+    return timeutil.hm(moment)
 
 
 def is_event(entry: dict) -> bool:
@@ -115,13 +109,7 @@ class WorldStore:
 
     def now_local(self) -> datetime.datetime:
         """当前本地时间（不带时区），跟世界线里的时间同口径。"""
-        if self.tz is not None:
-            try:
-                return datetime.datetime.now(self.tz).replace(tzinfo=None)
-            except Exception:
-                pass
-        # 没注入时区时按东八区算（容器系统时区是 UTC，直接 now() 会慢 8 小时）
-        return datetime.datetime.now(ZoneInfo("Asia/Shanghai")).replace(tzinfo=None)
+        return timeutil.now(self.tz, naive=True)
 
     @staticmethod
     def _write_json(path: Path, data: dict) -> None:

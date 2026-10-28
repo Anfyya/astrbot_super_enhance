@@ -5,6 +5,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from ...common import timeutil
+
 # 自然时段 → 当天的分钟区间（左闭右开）
 NATURAL_SLOTS: dict[str, tuple[int, int]] = {
     "凌晨": (0, 360),
@@ -17,7 +19,7 @@ NATURAL_SLOTS: dict[str, tuple[int, int]] = {
     "深夜": (1380, 1440),
 }
 
-WEEKDAYS_CN = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+WEEKDAYS_CN = timeutil.WEEKDAYS_CN
 
 
 def bot_of_umo(umo: str) -> str:
@@ -47,7 +49,6 @@ OPTIONAL_FIELDS: dict[str, dict[str, str]] = {
 REQUIRED_ENTRY_FIELDS = ("time", "schedule", "outfit")
 MIN_TIMELINE_ENTRIES = 2
 
-_CLOCK_RE = re.compile(r"^\s*(\d{1,2})\s*[:：]\s*(\d{1,2})\s*$")
 # 时段结尾写成「24:00」= 当天结束（跨午夜的日程按提示词要求这样写最后一段）
 _DAY_END_RE = re.compile(r"^\s*24\s*[:：]\s*0{1,2}\s*$")
 _RANGE_SPLIT_RE = re.compile(r"\s*(?:-|~|—|–|－|至|到)\s*")
@@ -56,31 +57,20 @@ _FENCE_RE = re.compile(r"^\s*```(?:json)?\s*|\s*```\s*$", re.IGNORECASE)
 
 def clock_to_minute(text: Any) -> int | None:
     """把 ``08:30`` / ``8：30`` 解析成当天分钟数；解析不了返回 None。"""
-    match = _CLOCK_RE.match(str(text or ""))
-    if not match:
-        return None
-    hour, minute = int(match.group(1)), int(match.group(2))
-    if not (0 <= hour <= 23 and 0 <= minute <= 59):
-        return None
-    return hour * 60 + minute
+    return timeutil.clock_to_minute(text)
 
 
 def minute_to_clock(minute: int) -> str:
     """分钟数 → ``HH:MM``（自动夹到 00:00-23:59）。"""
-    minute = max(0, min(1439, int(minute)))
-    return "%02d:%02d" % divmod(minute, 60)
+    return timeutil.minute_to_clock(minute)
 
 
 def format_datetime(value: datetime.datetime) -> str:
-    return value.strftime("%Y-%m-%d %H:%M") + " " + WEEKDAYS_CN[value.weekday()]
+    return timeutil.format_datetime(value)
 
 
 def weekday_cn(date_text: str) -> str:
-    try:
-        day = datetime.date.fromisoformat(str(date_text))
-    except Exception:
-        return ""
-    return WEEKDAYS_CN[day.weekday()]
+    return timeutil.weekday_cn(date_text)
 
 
 @dataclass
@@ -310,7 +300,7 @@ def parse_state(raw: dict[str, Any], date_text: str) -> LifeState:
         style_summary=str(raw.get("style_summary") or "").strip(),
         timeline=entries,
         status="ok",
-        generated_at=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        generated_at=timeutil.now(naive=True).strftime("%Y-%m-%d %H:%M:%S"),
     )
     wake = str(raw.get("wake_time") or "").strip()
     sleep = str(raw.get("sleep_time") or "").strip()

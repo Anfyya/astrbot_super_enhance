@@ -6,12 +6,13 @@ import json
 import re
 import time
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from astrbot.api import logger
 from astrbot.core.message.components import Node, Plain
 from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.platform.message_type import MessageType
+
+from ...common import timeutil
 
 from .injector import (
     as_context_part,
@@ -910,23 +911,11 @@ class LifeStateService:
         return event.chain_result([node])
 
     @property
-    def timezone(self) -> ZoneInfo:
-        global_tz = ""
-        try:
-            global_tz = str((self.context.get_config() or {}).get("timezone") or "")
-        except Exception:
-            global_tz = ""
-        for name in (str(self.cfg.get("timezone") or ""), global_tz, DEFAULT_TZ):
-            if not name:
-                continue
-            try:
-                return ZoneInfo(name)
-            except Exception:
-                continue
-        return ZoneInfo(DEFAULT_TZ)
+    def timezone(self):
+        return timeutil.timezone(self.cfg, self.context, DEFAULT_TZ)
 
     def _now(self) -> datetime.datetime:
-        return datetime.datetime.now(self.timezone)
+        return timeutil.now(self.timezone)
 
     def _today(self) -> str:
         return self._now().date().isoformat()

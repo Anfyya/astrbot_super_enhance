@@ -5,23 +5,15 @@
 
 import datetime
 
+from ...common import timeutil
 from .world import WorldStore, detail_of, doing_text, is_event, parse_time, progress_of, public_of, real_stop, result_text, staged_of, visible_to
 
-WEEKDAYS_CN = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+WEEKDAYS_CN = timeutil.WEEKDAYS_CN
 TAG = "【世界线】"
 
 
 def _span(item: dict) -> str:
-    start = str(item.get("start") or "")
-    end = str(item.get("end") or "")
-    if len(start) < 16:
-        return start
-    head = start[5:16]  # "10-12 06:55"：带上日期，免得昨天的被当成今天的
-    if end and len(end) >= 16:
-        if end[:10] == start[:10]:
-            return "%s–%s" % (head, end[11:])
-        return "%s–%s" % (head, end[5:16])
-    return "%s 起" % head
+    return timeutil.span_text(item.get("start"), item.get("end"), date_prefix=True)
 
 
 # 碎条目：记录员把一句话记成一条，常常只有一两分钟。只把这种碎条连成一段，
@@ -121,13 +113,7 @@ def _day_word(date_text: str, today: datetime.date) -> str:
 
 def _when(item: dict) -> str:
     """「09:00–10:40」或「10:40 起」。"""
-    start = str(item.get("start") or "")
-    end = str(item.get("end") or "")
-    if len(start) < 16:
-        return start
-    if end and len(end) >= 16:
-        return "%s–%s" % (start[11:16], end[11:16] if end[:10] == start[:10] else end[5:16])
-    return "%s 起" % start[11:16]
+    return timeutil.span_text(item.get("start"), item.get("end"))
 
 
 def _latest_visible(items: list, viewer: str, now: datetime.datetime):

@@ -9,9 +9,10 @@
 import datetime
 import re
 
+from ...common import timeutil
 from .world import WorldStore, detail_of, is_event, parse_time, public_of, result_text, steps_text, visible_to
 
-WEEKDAYS_CN = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+WEEKDAYS_CN = timeutil.WEEKDAYS_CN
 # 一次最多列几条（再多就让她加日期 / 时间缩小）
 MAX_ROWS = 12
 # 看一条时，同一时候每个人最多列几段
@@ -97,11 +98,9 @@ def _minutes(moment: datetime.datetime, day: datetime.date) -> int:
 
 
 def _span_text(item: dict, day: datetime.date) -> str:
-    start, end = str(item.get("start") or ""), str(item.get("end") or "")
-    head = start[11:16] if start[:10] == day.isoformat() else start[5:16]
-    if not end:
-        return head if is_event(item) else head + " 起"
-    return "%s–%s" % (head, end[11:16] if end[:10] == start[:10] else end[5:16])
+    return timeutil.span_text(
+        item.get("start"), item.get("end"), ongoing="" if is_event(item) else " 起"
+    )
 
 
 def _who(item: dict, viewer: str, label) -> str:

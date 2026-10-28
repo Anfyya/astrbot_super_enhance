@@ -16,9 +16,9 @@ import json
 import os
 import re
 from pathlib import Path
-from zoneinfo import ZoneInfo
-
 from astrbot.api import logger
+
+from ...common import timeutil
 
 MAX_ABILITIES = 40
 MAX_ABILITY_LEN = 120
@@ -31,17 +31,17 @@ EVENT_KEEP_DAYS = 30
 
 
 # 记账时间用本地时间（容器系统时区是 UTC）；service 启动时按配置的时区改
-_TZ = ZoneInfo("Asia/Shanghai")
+_TZ = timeutil.zone()
 
 
 def set_timezone(tz) -> None:
     global _TZ
     if tz is not None:
-        _TZ = tz
+        _TZ = tz if hasattr(tz, "utcoffset") else timeutil.zone(str(tz))
 
 
 def _now_text() -> str:
-    return datetime.datetime.now(_TZ).strftime("%Y-%m-%d %H:%M")
+    return timeutil.fmt_time(timeutil.now(_TZ))
 
 
 def _clean(text, limit: int) -> str:

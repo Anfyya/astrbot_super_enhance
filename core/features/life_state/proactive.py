@@ -20,9 +20,9 @@ import datetime
 import math
 import random
 import time
-from zoneinfo import ZoneInfo
-
 from astrbot.api import logger
+
+from ...common import timeutil
 
 from .injector import PLAN_NOTE
 from .ledger import promise_with_for
@@ -125,7 +125,7 @@ def clean_line(text, limit: int) -> str:
     return value if len(value) <= limit else value[:limit] + "…"
 
 
-def _parse_iso(text, tz: ZoneInfo) -> datetime.datetime | None:
+def _parse_iso(text, tz) -> datetime.datetime | None:
     try:
         value = datetime.datetime.fromisoformat(str(text))
     except Exception:
@@ -177,11 +177,8 @@ class ProactivePlanner:
         )
 
     @property
-    def timezone(self) -> ZoneInfo:
-        try:
-            return ZoneInfo(str(self.cfg.get("timezone") or DEFAULT_TZ))
-        except Exception:
-            return ZoneInfo(DEFAULT_TZ)
+    def timezone(self):
+        return timeutil.timezone(self.cfg, getattr(self, "context", None), DEFAULT_TZ)
 
     def _cron(self):
         return getattr(self.context, "cron_manager", None)
@@ -234,7 +231,7 @@ class ProactivePlanner:
             return 0
         self.install_gate()
 
-        local_now = (now or datetime.datetime.now(self.timezone)).astimezone(self.timezone)
+        local_now = (now or timeutil.now(self.timezone)).astimezone(self.timezone)
         await self._delete_same_date(cron, state.date, bot)
         created = 0
         for slot in self._plan(state, local_now, bot):
@@ -318,7 +315,7 @@ class ProactivePlanner:
         targets = self._targets(bot)
         if not targets:
             return "没配这个机器人的目标会话"
-        now = datetime.datetime.now(self.timezone)
+        now = timeutil.now(self.timezone)
         at = now + datetime.timedelta(seconds=3)
         meta = {
             "kind": "manual", "bot": bot, "date": now.date().isoformat(),
@@ -338,7 +335,7 @@ class ProactivePlanner:
         if not targets or cron is None:
             return 0
         self.install_gate()
-        local_now = (now or datetime.datetime.now(self.timezone)).astimezone(self.timezone)
+        local_now = (now or timeutil.now(self.timezone)).astimezone(self.timezone)
         day = datetime.date.fromisoformat(str(date_text))
         # 时刻的随机偏移按（角色, 日期）定死：同一天怎么重算都一样
         rng = random.Random("%s|%s" % (bot, date_text))
@@ -402,7 +399,7 @@ class ProactivePlanner:
             return 0
         self.install_gate()
         # 传进来的时刻可能是补写开始前取的（补写一跑好几分钟）：比现在早就用现在，免得排进过去、永远不发
-        real_now = datetime.datetime.now(self.timezone)
+        real_now = timeutil.now(self.timezone)
         local_now = max((now or real_now).astimezone(self.timezone), real_now)
         at = (local_now + datetime.timedelta(seconds=DONE_DELAY_SECONDS)).replace(microsecond=0)
         created = 0
@@ -455,7 +452,7 @@ class ProactivePlanner:
         if cron is None:
             return False
         self.install_gate()
-        real_now = datetime.datetime.now(self.timezone)
+        real_now = timeutil.now(self.timezone)
         local_now = max((now or real_now).astimezone(self.timezone), real_now)
         at = (local_now + datetime.timedelta(seconds=DONE_DELAY_SECONDS)).replace(microsecond=0)
         meta = {
@@ -865,7 +862,7 @@ class ProactivePlanner:
                     meta["bot"], label, self._planned_text(meta), TIMELY_STALE_MINUTES,
                 )
                 return None
-            if meta["kind"] == "correct" and not self._correct_pending(meta, datetime.datetime.now(self.timezone)):
+            if meta["kind"] == "correct" and not self._correct_pending(meta, timeutil.now(self.timezone)):
                 logger.info(
                     "[super_enhance/life] [%s] 主动对话（%s，原定 %s）：那件事已经轮到她做了，用不着改口，不发了",
                     meta["bot"], label, self._planned_text(meta),
@@ -912,7 +909,7 @@ class ProactivePlanner:
                     return None
             self._inflight[target] = now_ts
 
-        now = datetime.datetime.now(self.timezone)
+        now = timeutil.now(self.timezone)
         chat = self._chat(target)
         payload["note"] = self.build_note(meta, now, chat)
         logger.info(

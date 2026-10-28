@@ -1,22 +1,12 @@
 """AI 消息时间戳：给 Bot 自己的消息盖发送时间，并阻止模型模仿。"""
 
-import datetime
 import re
 
 from astrbot.api import logger
 from astrbot.core.agent.message import TextPart
 
+from ..common import timeutil
 from .silence import SILENT_FLAG
-
-WEEKDAYS = (
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
-    "Sunday",
-)
 
 # 模型会模仿历史里我们自己盖的戳，而且写法五花八门：连字符、下划线、冒号、
 # 全角标点、大小写、Markdown 加粗、漏写闭合标签、甚至中文措辞。
@@ -86,26 +76,7 @@ class MsgTimeFeature:
         return bool(self.config.get("enabled", False))
 
     def _now_text(self) -> str:
-        tz_name = self.config.get("timezone")
-        if not tz_name:
-            try:
-                tz_name = (self.context.get_config() or {}).get("timezone")
-            except Exception:
-                tz_name = None
-        now = None
-        if tz_name:
-            try:
-                from zoneinfo import ZoneInfo
-
-                now = datetime.datetime.now(ZoneInfo(str(tz_name)))
-            except Exception:
-                now = None
-        if now is None:
-            now = datetime.datetime.now().astimezone()
-        return "Sent at: %s, Weekday: %s" % (
-            now.strftime("%Y-%m-%d %H:%M (%Z)"),
-            WEEKDAYS[now.weekday()],
-        )
+        return "Sent at: " + timeutil.local_stamp(tz=timeutil.timezone(self.config, self.context))
 
     def marker(self) -> str:
         """自己往历史里写 assistant 消息时用的发送时间戳；没开返回空串。"""

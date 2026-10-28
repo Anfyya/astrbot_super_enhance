@@ -15,19 +15,14 @@ from pathlib import Path
 
 from astrbot.api import logger
 
-from . import turn_state
+from ..common import timeutil
 
 START_DELAY_SECONDS = 90
 RETRY_SECONDS = 15 * 60
 
 
 def _today() -> datetime.datetime:
-    from zoneinfo import ZoneInfo
-
-    try:
-        return datetime.datetime.now(ZoneInfo(turn_state._TZ_NAME)).replace(tzinfo=None)  # noqa: SLF001
-    except Exception:
-        return datetime.datetime.now()
+    return timeutil.now(naive=True)
 
 
 class DailyCompact:

@@ -14,9 +14,9 @@ AstrBot 的会话历史会被 ``/compact`` 压成摘要，回查前一天日程�
 import datetime
 import json
 from pathlib import Path
-from zoneinfo import ZoneInfo
-
 from astrbot.api import logger
+
+from ...common import timeutil
 
 from ..message_text import clean_message, text_of, time_of
 from .models import bot_of_umo
@@ -46,27 +46,8 @@ class RawMessageLog:
     def enabled(self) -> bool:
         return bool(self.cfg.get("raw_log_enabled", True))
 
-    def _tz(self) -> ZoneInfo:
-        names = []
-        try:
-            names.append(str(self.cfg.get("timezone") or ""))
-        except Exception:
-            pass
-        try:
-            global_cfg = self.context.get_config() or {}
-            if isinstance(global_cfg, dict):
-                names.append(str(global_cfg.get("timezone") or ""))
-        except Exception:
-            pass
-        names.append(DEFAULT_TZ)
-        for name in names:
-            if not name:
-                continue
-            try:
-                return ZoneInfo(name)
-            except Exception:
-                continue
-        return ZoneInfo(DEFAULT_TZ)
+    def _tz(self):
+        return timeutil.timezone(self.cfg, self.context, DEFAULT_TZ)
 
     def target_sessions(self) -> list[str]:
         """配置里明确写出来的完整会话（启动回补历史时用）。"""

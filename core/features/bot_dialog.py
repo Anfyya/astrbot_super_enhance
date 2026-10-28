@@ -15,10 +15,11 @@ import datetime
 import json
 import re
 import time
-from zoneinfo import ZoneInfo
 
 from astrbot.api import logger
 from astrbot.core.agent.message import TextPart
+
+from ..common import timeutil
 
 ROUND_FLAG = "_super_enhance_bot_dialog_round"
 HINT_HEAD = "【对话节奏】"
@@ -485,21 +486,8 @@ class BotDialogFeature:
     def _cron(self):
         return getattr(self.context, "cron_manager", None)
 
-    def _zone(self) -> ZoneInfo:
-        name = ""
-        try:
-            name = str(self.config.get("timezone") or "").strip()
-        except Exception:
-            name = ""
-        if not name and self.context is not None:
-            try:
-                name = str((self.context.get_config() or {}).get("timezone") or "").strip()
-            except Exception:
-                name = ""
-        try:
-            return ZoneInfo(name) if name else ZoneInfo("Asia/Shanghai")
-        except Exception:
-            return ZoneInfo("Asia/Shanghai")
+    def _zone(self):
+        return timeutil.timezone(self.config, self.context)
 
     async def _schedule_job(
         self, delay_seconds: int, session_umo: str, note: str, kind: str
@@ -508,7 +496,7 @@ class BotDialogFeature:
         if cron is None or not session_umo:
             return None
         zone = self._zone()
-        run_at = datetime.datetime.now(zone) + datetime.timedelta(
+        run_at = timeutil.now(zone) + datetime.timedelta(
             seconds=max(1, int(delay_seconds))
         )
         try:
@@ -612,21 +600,7 @@ class BotDialogFeature:
         return str(sender_id)
 
     def _now_text(self) -> str:
-        name = ""
-        try:
-            name = str(self.config.get("timezone") or "").strip()
-        except Exception:
-            name = ""
-        if not name:
-            try:
-                name = str((self.context.get_config() or {}).get("timezone") or "").strip()
-            except Exception:
-                name = ""
-        try:
-            zone = ZoneInfo(name) if name else ZoneInfo("Asia/Shanghai")
-        except Exception:
-            zone = ZoneInfo("Asia/Shanghai")
-        return datetime.datetime.now(zone).strftime("%m-%d %H:%M")
+        return timeutil.now(self._zone()).strftime("%m-%d %H:%M")
 
     @staticmethod
     def _clip(text: str, limit: int = 120) -> str:
@@ -637,7 +611,7 @@ class BotDialogFeature:
         """这句是不是这次来回里说的：带着时间、离现在不超过 window_minutes。"""
         if moment is None:
             return False
-        now = datetime.datetime.now(self._zone()).replace(tzinfo=None)
+        now = timeutil.now(self._zone(), naive=True)
         return (now - moment).total_seconds() <= self.window_minutes * 60
 
     async def _recorded(self, conv_mgr, umo: str, line: str, since) -> bool:
