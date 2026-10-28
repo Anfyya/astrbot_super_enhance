@@ -2051,7 +2051,7 @@ class ContextPageApi:
         out.pop("contexts", None)
         return _ok(out)
 
-    # ------------------------------------------------------------------ 共享场景
+    # ------------------------------------------------------------ 能力与约定
     async def get_ledger(self):
         """能力清单（每个角色一份）+ 最近的约定 + 事件。"""
         life = getattr(self.plugin, "life", None)

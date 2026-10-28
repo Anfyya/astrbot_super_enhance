@@ -66,13 +66,13 @@ core/
   config_view.py            按分组读配置
   page_api.py               面板页面的后端接口
   features/
-    turn_state.py           一轮对话的生命周期标记、「没发出去的话不进历史」
+    turn_state.py           一轮对话的生命周期标记、补发上下文与「没发出去的话不进历史」
     history_merge.py        会话历史保存时合并并发写入、清理系统噪声
-    typing.py  silence.py  msg_time.py  message_text.py
-    context_tools.py  compact_v2.py  overflow_guard.py  error_voice.py
-    cross_session.py  cron_history.py  cron_context.py  proactive_think.py
-    reply_guard.py  bot_dialog.py  request_snapshot.py  laya_bridge.py
-    tool_guide.py  lm_edits.py
+    typing.py  silence.py  reply_guard.py  msg_time.py  error_voice.py
+    context_tools.py  compact_v2.py  daily_compact.py  overflow_guard.py
+    history_transcript.py  cross_session.py  cron_context.py  proactive_think.py
+    bot_dialog.py  request_snapshot.py  image_gen.py  lm_edits.py
+    feature_group.py  request_pipeline.py  runner_hooks.py
     life_state/
       world.py              世界线的存储与读写（条目 / 约束 / 打算 / 作息骨架）
       recorder.py           记录员：对话原文 → 世界线
@@ -82,7 +82,7 @@ core/
       training.py           在练的事：进度怎么算
       proactive.py          主动对话排期与到点判断
       variety.py            插曲 / 消遣 / 闲着的样子：每天抽的随机起点与冷却
-      ledger.py             能力清单 / 约定 / 事件 / 在练的事
+      ledger.py             能力清单 / 约定 / 在练的事
       raw_log.py            原始消息副本（记录员读它，不受压缩影响）
       service.py            服务层：开关、注入、命令、每日维护
       models.py             共用的数据结构
@@ -306,7 +306,7 @@ AI 调用后本轮不发任何消息。本轮开始后又来了新消息时，�
 - 每个来回写一条【跨会话记录】到「主人 ↔ 本机器人」的历史（「我上一句」已经记过的不重复写）；
 - 委托回报：主人让她去问另一个角色，聊完（或对方迟迟不回）后自动回报主人；
 - `tell`：把一句话直接写进另一个角色和主人的会话历史，不发 QQ 消息。
-- 发消息 / tell 的说明（`tool_guide.py`）：AstrBot 自带的 `send_message_to_user` 说明只有一句英文，
+- 发消息 / tell 的说明（并入 `bot_dialog.apply_tool_guide`）：AstrBot 自带的 `send_message_to_user` 说明只有一句英文，
   没说另一个角色在哪个会话，角色就乱填 session。每次请求（含主动对话）把这两个工具换成只给这一轮用的副本：
   `send_message_to_user` 写明是真发 QQ、用来问问题 / 要对方回话，session 只列能填的几个
   （另一个角色、主人、留空 = 当前会话）；`tell` 写明只是让对方知道、不发 QQ、对方不会马上回。
