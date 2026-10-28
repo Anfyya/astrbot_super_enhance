@@ -32,6 +32,34 @@ except Exception:  # pragma: no cover - 理论上不会发生
 PLUGIN_NAME = "astrbot_plugin_super_enhance"
 PAGE_API_PREFIX = f"/{PLUGIN_NAME}/ctx"
 
+_ROUTE_SPECS = (
+    ("pools", "pools_view", ("GET",), "插曲与消遣池：每条的权重、组、最近抽到"),
+    ("pools/edit", "pools_edit", ("POST",), "插曲与消遣池：增删改、挪池子、恢复默认"),
+    ("world", "world_view", ("GET",), "世界线：某天的条目 / 约束 / 打算 / 骨架 / 状态"),
+    ("world/edit", "world_edit", ("POST",), "世界线：条目 / 约束 / 打算 / 骨架的增删改"),
+    ("things", "things_view", ("GET",), "家里的吃的：此刻现算的每一件、每一步、新鲜度"),
+    ("things/edit", "things_edit", ("POST",), "家里的吃的：加一件、加一步、改、作废（什么都不真删）"),
+    ("world/run", "world_run", ("POST",), "世界线：手动跑一次记录员或幕间补写"),
+    ("manual_send", "manual_send", ("POST",), "手动以 bot 身份发一条消息（运维）"),
+    ("fire_proactive", "fire_proactive", ("POST",), "立刻发一条主动消息"),
+    ("boot", "boot", ("GET",), "上下文页面：首屏一次取完"),
+    ("pulse", "pulse", ("GET",), "上下文页面：低成本轮询"),
+    ("pic", "get_picture", ("GET",), "上下文页面：按需读取历史图片"),
+    ("conversations", "list_conversations", ("GET",), "上下文页面：会话列表"),
+    ("history", "get_history", ("GET",), "上下文页面：某个会话的历史"),
+    ("delete", "delete_items", ("POST",), "上下文页面：删除历史条目"),
+    ("edit", "edit_item", ("POST",), "上下文页面：编辑条目正文 / 思考链"),
+    ("drawn", "edit_drawn", ("POST",), "上下文页面：她画的图换一张 / 删掉"),
+    ("append", "append_item", ("POST",), "上下文页面：新增条目（消息 / toolcall）"),
+    ("clear_think", "clear_think", ("POST",), "上下文页面：一键清空整段对话的思考链"),
+    ("undo", "undo_last", ("POST",), "上下文页面：撤销上一次删除"),
+    ("requests", "list_requests", ("GET",), "上下文页面：真实请求快照列表"),
+    ("request_tools", "request_tools", ("GET",), "上下文页面：请求里的工具定义"),
+    ("request", "get_request", ("GET",), "上下文页面：某一份真实请求快照"),
+    ("ledger", "get_ledger", ("GET",), "上下文页面：能力清单 / 约定 / 事件"),
+    ("ledger/edit", "edit_ledger", ("POST",), "上下文页面：编辑能力清单 / 约定"),
+)
+
 _MAX_BACKUP_FILES = 30
 _POOL_SIMS = 400  # 插曲与消遣页：「明天抽中」按这么多次模拟算
 _DEFAULT_PAGE_SIZE = 200
@@ -1261,152 +1289,14 @@ class ContextPageApi:
 
     def register_routes(self) -> None:
         register = self.context.register_web_api
-        register(
-            f"{PAGE_API_PREFIX}/pools",
-            self.pools_view,
-            ["GET"],
-            "插曲与消遣池：每条的权重、组、最近抽到",
-        )
-        register(
-            f"{PAGE_API_PREFIX}/pools/edit",
-            self.pools_edit,
-            ["POST"],
-            "插曲与消遣池：增删改、挪池子、恢复默认",
-        )
-        register(
-            f"{PAGE_API_PREFIX}/world",
-            self.world_view,
-            ["GET"],
-            "世界线：某天的条目 / 约束 / 打算 / 骨架 / 状态",
-        )
-        register(
-            f"{PAGE_API_PREFIX}/world/edit",
-            self.world_edit,
-            ["POST"],
-            "世界线：条目 / 约束 / 打算 / 骨架的增删改",
-        )
-        register(
-            f"{PAGE_API_PREFIX}/things",
-            self.things_view,
-            ["GET"],
-            "家里的吃的：此刻现算的每一件、每一步、新鲜度",
-        )
-        register(
-            f"{PAGE_API_PREFIX}/things/edit",
-            self.things_edit,
-            ["POST"],
-            "家里的吃的：加一件、加一步、改、作废（什么都不真删）",
-        )
-        register(
-            f"{PAGE_API_PREFIX}/world/run",
-            self.world_run,
-            ["POST"],
-            "世界线：手动跑一次记录员或幕间补写",
-        )
-        register(
-            f"{PAGE_API_PREFIX}/manual_send",
-            self.manual_send,
-            ["POST"],
-            "手动以 bot 身份发一条消息（运维）",
-        )
-        register(
-            f"{PAGE_API_PREFIX}/fire_proactive",
-            self.fire_proactive,
-            ["POST"],
-            "立刻发一条主动消息",
-        )
-        register(
-            f"{PAGE_API_PREFIX}/boot",
-            self.boot,
-            ["GET"],
-            "上下文页面：首屏一次取完",
-        )
-        register(
-            f"{PAGE_API_PREFIX}/pulse",
-            self.pulse,
-            ["GET"],
-            "上下文页面：低成本轮询",
-        )
-        register(
-            f"{PAGE_API_PREFIX}/pic",
-            self.get_picture,
-            ["GET"],
-            "上下文页面：按需读取历史图片",
-        )
-        register(
-            f"{PAGE_API_PREFIX}/conversations",
-            self.list_conversations,
-            ["GET"],
-            "上下文页面：会话列表",
-        )
-        register(
-            f"{PAGE_API_PREFIX}/history",
-            self.get_history,
-            ["GET"],
-            "上下文页面：某个会话的历史",
-        )
-        register(
-            f"{PAGE_API_PREFIX}/delete",
-            self.delete_items,
-            ["POST"],
-            "上下文页面：删除历史条目",
-        )
-        register(
-            f"{PAGE_API_PREFIX}/edit",
-            self.edit_item,
-            ["POST"],
-            "上下文页面：编辑条目正文 / 思考链",
-        )
-        register(
-            f"{PAGE_API_PREFIX}/drawn",
-            self.edit_drawn,
-            ["POST"],
-            "上下文页面：她画的图换一张 / 删掉",
-        )
-        register(
-            f"{PAGE_API_PREFIX}/append",
-            self.append_item,
-            ["POST"],
-            "上下文页面：新增条目（消息 / toolcall）",
-        )
-        register(
-            f"{PAGE_API_PREFIX}/clear_think",
-            self.clear_think,
-            ["POST"],
-            "上下文页面：一键清空整段对话的思考链",
-        )
-        register(
-            f"{PAGE_API_PREFIX}/undo",
-            self.undo_last,
-            ["POST"],
-            "上下文页面：撤销上一次删除",
-        )
-        register(
-            f"{PAGE_API_PREFIX}/requests",
-            self.list_requests,
-            ["GET"],
-            "上下文页面：真实请求快照列表",
-        )
-        register(
-            f"{PAGE_API_PREFIX}/request",
-            self.get_request,
-            ["GET"],
-            "上下文页面：某一份真实请求快照",
-        )
-        register(
-            f"{PAGE_API_PREFIX}/ledger",
-            self.get_ledger,
-            ["GET"],
-            "上下文页面：能力清单 / 约定 / 事件",
-        )
-        register(
-            f"{PAGE_API_PREFIX}/ledger/edit",
-            self.edit_ledger,
-            ["POST"],
-            "上下文页面：编辑能力清单 / 约定",
-        )
-        logger.info("[super_enhance/ctx] 上下文页面 API 已注册")
-
+        for route, handler, methods, description in _ROUTE_SPECS:
+            register(
+                f"{PAGE_API_PREFIX}/{route}",
+                getattr(self, handler),
+                list(methods),
+                description,
+            )
+        logger.info("[super_enhance/ctx] 上下文页面 API 已注册（%d 个）", len(_ROUTE_SPECS))
     # -------------------------------------------------------------- 读写底层
     async def _load(self, cid: str):
         conv = await self.manager.get_conversation("", cid)
