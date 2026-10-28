@@ -169,7 +169,6 @@ class RawMessageLog:
                 and str(item.get("umo") or umo) == str(umo)
                 and str(item.get("text") or "")[:60] == head
             ):
-                self._fix_ts(item)
                 try:
                     close = abs(float(item.get("ts") or 0) - ts) <= DUP_SECONDS
                 except Exception:
@@ -237,7 +236,6 @@ class RawMessageLog:
                 except Exception:
                     continue
                 if isinstance(item, dict):
-                    self._fix_ts(item)
                     items.append(item)
         except Exception as e:
             logger.error("[super_enhance/raw_log] 读取 %s 失败：%s", date_text, e)
@@ -245,22 +243,6 @@ class RawMessageLog:
         items.sort(key=lambda item: item.get("ts") or 0)
         self._day_cache[str(date_text)] = (version, items)
         return items
-
-    def _fix_ts(self, item: dict) -> None:
-        """旧版启动回补写进去的 ts 偏了时区：和 date + time（本地时间）差一小时以上就以后者为准。"""
-        try:
-            clock = datetime.datetime.strptime(
-                "%s %s" % (item.get("date"), str(item.get("time") or "")[:5]), "%Y-%m-%d %H:%M"
-            ).replace(tzinfo=self._tz())
-        except Exception:
-            return
-        expected = clock.timestamp()
-        try:
-            ts = float(item.get("ts") or 0)
-        except Exception:
-            ts = 0.0
-        if abs(ts - expected) > 3600:
-            item["ts"] = expected
 
     # ---------- 启动回补 ----------
 

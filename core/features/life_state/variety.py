@@ -722,12 +722,10 @@ def last_drawn(history: dict, date_text: str, bot: str, groups: dict | None = No
 
 
 def twists_of(seed: dict, night: bool = False) -> tuple[dict, list]:
-    """当天抽到的插曲：({机器人: [...]}, [两人一起的])。老格式（一份共用的列表）放在 "" 名下。"""
+    """当天抽到的插曲：({机器人: [...]}, [两人一起的])。"""
     value = (seed or {}).get("night_twists" if night else "twists")
     together = [] if night else list((seed or {}).get("together") or [])
-    if isinstance(value, dict):
-        return {bot: list(items or []) for bot, items in value.items()}, together
-    return ({"": list(value)} if value else {}), together
+    return ({bot: list(items or []) for bot, items in value.items()} if isinstance(value, dict) else {}), together
 
 
 def _pick(pool, used: set, count: int, rng: random.Random, weights: dict | None = None) -> list:

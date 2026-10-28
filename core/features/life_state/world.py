@@ -775,13 +775,6 @@ class WorldStore:
     def intentions(self, who: str = "") -> list:
         state = self._load_state()
         items = list(state.get("intentions") or [])
-        # 读的时候只在内存里规整；统一由 tick() 落盘，避免每轮读一次就写一次。
-        seq = self._intention_seq(state)
-        for item in items:
-            if not str(item.get("id") or "").strip():
-                item["id"] = "i%d" % seq
-                state["intention_seq"] = seq
-                seq += 1
         today = self.now_local().date()
         kept = [x for x in items if not _master_plan_expired(x, today)]
         if len(kept) != len(items):
