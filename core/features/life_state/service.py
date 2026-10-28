@@ -8,7 +8,6 @@ import time
 from pathlib import Path
 
 from astrbot.api import logger
-from astrbot.core.message.components import Node, Plain
 from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.platform.message_type import MessageType
 
@@ -28,7 +27,6 @@ from .models import (
     TimelineEntry,
     clock_to_minute,
     format_datetime,
-    minute_to_clock,
     weekday_cn,
 )
 from .ledger import set_timezone as set_ledger_timezone
@@ -267,12 +265,6 @@ class LifeStateService:
         """在练的事跟着能力清单走：练成要写进能力清单。"""
         return self.abilities_enabled
 
-    @staticmethod
-    def _forward_result(event, text: str):
-        """把状态文本包成一个合并转发节点（永远走卡片样式，不直接发长消息）。"""
-        node = Node(uin=event.get_self_id(), name="AstrBot", content=[Plain(text)])
-        return event.chain_result([node])
-
     @property
     def timezone(self):
         return timeutil.timezone(self.cfg, self.context, DEFAULT_TZ)
@@ -349,10 +341,6 @@ class LifeStateService:
     def enabled_bots(self) -> list[str]:
         """按会话名单取启用的机器人，保持配置顺序且去重。"""
         return self.bots.enabled_bots()
-
-    def _profile_umo(self, bot: str) -> str:
-        """解析该机器人的配置档（人格 / 模型）用的代表 UMO。"""
-        return self.bots.representative_umo(bot)
 
     # ---------- 请求注入 ----------
 

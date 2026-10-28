@@ -40,7 +40,6 @@ OPTIONAL_FIELDS: dict[str, dict[str, str]] = {
     "note": {"label": "备注", "icon": "📝"},
 }
 
-REQUIRED_ENTRY_FIELDS = ("time", "schedule", "outfit")
 MIN_TIMELINE_ENTRIES = 2
 
 # 时段结尾写成「24:00」= 当天结束（跨午夜的日程按提示词要求这样写最后一段）
@@ -54,7 +53,6 @@ def clock_to_minute(text: Any) -> int | None:
 
 
 def minute_to_clock(minute: int) -> str:
-    """分钟数 → ``HH:MM``（自动夹到 00:00-23:59）。"""
     return timeutil.minute_to_clock(minute)
 
 
@@ -104,15 +102,6 @@ class TimelineEntry:
         ranges = self.ranges()
         return ranges[-1][1] if ranges else None
 
-    def format_range(self) -> str:
-        ranges = self.ranges()
-        if not ranges:
-            return self.time
-        return "、".join(
-            "%s-%s" % (minute_to_clock(a), minute_to_clock(b if b < 1440 else 1439))
-            for a, b in ranges
-        )
-
 
 @dataclass
 class LifeState:
@@ -151,38 +140,6 @@ class LifeState:
             ],
         }
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "LifeState":
-        timeline: list[TimelineEntry] = []
-        for raw in data.get("timeline") or []:
-            if not isinstance(raw, dict):
-                continue
-            extras = {
-                str(k): str(v)
-                for k, v in raw.items()
-                if k not in REQUIRED_ENTRY_FIELDS and v not in (None, "")
-            }
-            timeline.append(
-                TimelineEntry(
-                    time=str(raw.get("time") or "").strip(),
-                    schedule=str(raw.get("schedule") or "").strip(),
-                    outfit=str(raw.get("outfit") or "").strip(),
-                    extras=extras,
-                )
-            )
-        return cls(
-            date=str(data.get("date") or ""),
-            holiday=str(data.get("holiday") or ""),
-            schedule_summary=str(data.get("schedule_summary") or ""),
-            style_summary=str(data.get("style_summary") or ""),
-            timeline=timeline,
-            wake_time=str(data.get("wake_time") or "") or "07:00",
-            sleep_time=str(data.get("sleep_time") or "") or "23:00",
-            status=str(data.get("status") or "ok"),
-            generated_at=str(data.get("generated_at") or ""),
-            error=str(data.get("error") or ""),
-        )
-
     def find_entry(self, minute: int) -> TimelineEntry | None:
         """取覆盖该分钟的时段；没有覆盖则回退到它之前最近的一个时段。"""
         if not self.timeline:
@@ -197,16 +154,6 @@ class LifeState:
                 previous = entry
         return previous or self.timeline[0]
 
-    def find_entry_by_time_text(self, text: str) -> TimelineEntry | None:
-        wanted = str(text or "").strip()
-        for entry in self.timeline:
-            if entry.time.strip() == wanted:
-                return entry
-        minute = clock_to_minute(wanted)
-        if minute is not None:
-            return self.find_entry(minute)
-        return None
-
     def find_entry_strict(self, minute: int) -> TimelineEntry | None:
         """只取真正覆盖该分钟的时段；落在时间线外（多为睡眠）返回 None，不回退。"""
         for entry in self.timeline:
@@ -214,16 +161,6 @@ class LifeState:
                 if start <= minute < end:
                     return entry
         return None
-
-    def derive_wake_sleep(self) -> tuple[str, str]:
-        """没给起床/入睡时间时，用时间线首尾推出来。"""
-        starts = [e.start_minute() for e in self.timeline]
-        ends = [e.end_minute() for e in self.timeline]
-        starts = [s for s in starts if s is not None]
-        ends = [e for e in ends if e is not None]
-        wake = minute_to_clock(min(starts)) if starts else "07:00"
-        sleep = minute_to_clock(max(ends)) if ends else "23:00"
-        return wake, sleep
 
 
 def extract_json(text: str) -> dict[str, Any] | None:

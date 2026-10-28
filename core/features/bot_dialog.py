@@ -138,9 +138,6 @@ class BotDialogFeature:
         except Exception:
             return 120
 
-    def _names(self) -> dict:
-        return dict(self.bots.names)
-
     def _other_name(self, sender_id: str) -> str:
         return self.bots.other_name(sender_id) or "另一个机器人"
 

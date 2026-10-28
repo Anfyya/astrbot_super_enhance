@@ -147,13 +147,6 @@ class BotRegistry:
     def master_ids(self) -> list[str]:
         return list_of(self._identity_get("master_ids"))
 
-    def sender_is_bot(self, event) -> bool:
-        try:
-            sender = str(event.get_sender_id() or "").strip()
-        except Exception:
-            return False
-        return bool(sender) and sender in self.bot_ids()
-
     def target_sessions(self) -> list[str]:
         """配置里明确写出的完整会话，保持 proactive、session 两组的原有顺序。"""
         out: list[str] = []
