@@ -75,22 +75,6 @@ def list_of(value: Any) -> list[str]:
     return [str(item).strip() for item in parts if str(item).strip()]
 
 
-def mapping_lines(value: Any) -> dict[str, str]:
-    """把 ``平台id=值`` 的 dict / list / 文本读成映射。"""
-    if isinstance(value, Mapping):
-        return {
-            str(key).strip(): str(item).strip()
-            for key, item in value.items()
-            if str(key).strip() and str(item).strip()
-        }
-    out: dict[str, str] = {}
-    for line in list_of(value):
-        key, sep, item = line.partition("=")
-        if sep and key.strip() and item.strip():
-            out[key.strip()] = item.strip()
-    return out
-
-
 class BotRegistry:
     """插件各功能共用的机器人配置视图。
 
@@ -109,12 +93,9 @@ class BotRegistry:
             section = cfg
         self.identity_cfg = section if isinstance(section, Mapping) else cfg
 
-        names = mapping_lines(self._identity_get("bot_names"))
-        labels = dict(names)
-        labels.update(mapping_lines(self._life_get("bot_labels")))
-        self.labels = labels
-        self.names = names
-        self.accounts = mapping_lines(self._identity_get("bot_accounts"))
+        self.labels: dict[str, str] = {}
+        self.names: dict[str, str] = {}
+        self.accounts: dict[str, str] = {}
         self.identities: dict[str, tuple[str, str]] = {}
         for row in list_of(self._identity_get("bot_identities")):
             parts = [part.strip() for part in row.split("=", 2)]
@@ -152,13 +133,13 @@ class BotRegistry:
         return self.names.get(str(value or "").strip(), "")
 
     def bot_ids(self) -> set[str]:
-        """所有配置里认得的机器人 QQ；bot_ids 为主，账号表和名字表补齐。"""
-        return set(list_of(self._identity_get("bot_ids"))) | set(self.accounts) | set(self.names)
+        """身份表里所有机器人 QQ。"""
+        return set(self.accounts.values()) | set(self.names)
 
     def bot_id_list(self) -> list[str]:
         """保持配置顺序的机器人 QQ；账号表、名字表只补缺。"""
-        out = list_of(self._identity_get("bot_ids"))
-        for value in (*self.accounts.keys(), *self.names.keys()):
+        out = []
+        for value in (*self.accounts.values(), *self.names.keys()):
             if value not in out:
                 out.append(value)
         return out
