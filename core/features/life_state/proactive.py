@@ -28,7 +28,6 @@ from ...common import timeutil
 from .injector import PLAN_NOTE
 from .ledger import promise_with_for
 from .models import (
-    LifeState,
     TimelineEntry,
     bot_of_umo,
     clock_to_minute,
@@ -349,45 +348,6 @@ class ProactivePlanner:
             logger.info("[super_enhance/life] 清理了 %d 个过期主动对话任务", removed)
         return removed
 
-    async def sync(
-        self, bot: str, state: LifeState, now: datetime.datetime | None = None
-    ) -> int:
-        """按该机器人自己的日程重建当天的主动对话任务，返回新建数量。"""
-        if not self.enabled:
-            return 0
-        bot = str(bot or "").strip()
-        if not bot:
-            return 0
-        targets = self._targets(bot)
-        if not targets:
-            logger.warning(
-                "[super_enhance/life] [%s] 没有配置属于它的主动对话目标会话，跳过排期",
-                bot,
-            )
-            return 0
-        cron = self._cron()
-        if cron is None:
-            logger.warning("[super_enhance/life] cron_manager 不可用，跳过主动对话排期")
-            return 0
-        self.install_gate()
-
-        local_now = (now or timeutil.now(self.timezone)).astimezone(self.timezone)
-        await self._delete_same_date(cron, state.date, bot)
-        created = 0
-        for slot in self._plan(state, local_now, bot):
-            meta = self._slot_meta(state, slot, bot)
-            for target in targets:
-                if await self._add_job(cron, meta, target, slot["at"]):
-                    created += 1
-        if created:
-            logger.info(
-                "[super_enhance/life] [%s] 已为 %s 安排 %d 条主动对话",
-                bot,
-                state.date,
-                created,
-            )
-        return created
-
     async def _list_jobs(self, cron, *, bot: str = "", date_text: str = "", target: str = "", exclude: str = "") -> list:
         """按机器人 / 日期 / 目标会话筛已排任务；全空就是本插件的全部任务。"""
         try:
@@ -620,60 +580,6 @@ class ProactivePlanner:
                 break
         return out
 
-    async def _delete_same_date(self, cron, date_text: str, bot: str) -> None:
-        """删掉该机器人当天已有的任务；旧版（不带目标会话）的同日任务一并清掉。"""
-        try:
-            jobs = await cron.list_jobs("active_agent")
-        except Exception:
-            return
-        for job in jobs or []:
-            name = str(getattr(job, "name", "") or "")
-            if not name.startswith(JOB_PREFIX) or _job_date(name) != str(date_text):
-                continue
-            tail = name.split(str(date_text), 1)[-1].split()
-            # 新格式：… <HH:MM> <完整 UMO>；旧格式：… <HH:MM>
-            target = tail[1] if len(tail) > 1 else ""
-            if target and bot_of_umo(target) != bot:
-                # 属于别的会话的任务，不动
-                continue
-            try:
-                await cron.delete_job(job.job_id)
-            except Exception:
-                pass
-
-    async def clear_date(self, bot: str, date_text: str) -> int:
-        """删掉该机器人某天已排的主动对话任务（供 /dls delete 用），返回删除条数。"""
-        cron = self._cron()
-        if cron is None:
-            return 0
-        try:
-            jobs = await cron.list_jobs("active_agent")
-        except Exception as e:
-            logger.warning("[super_enhance/life] 列出 cron 任务失败：%s", e)
-            return 0
-        removed = 0
-        for job in jobs or []:
-            name = str(getattr(job, "name", "") or "")
-            if not name.startswith(JOB_PREFIX) or _job_date(name) != str(date_text):
-                continue
-            tail = name.split(str(date_text), 1)[-1].split()
-            target = tail[1] if len(tail) > 1 else ""
-            if target and bot_of_umo(target) != bot:
-                continue
-            try:
-                await cron.delete_job(job.job_id)
-                removed += 1
-            except Exception as e:
-                logger.warning("[super_enhance/life] 删除主动对话任务失败：%s", e)
-        if removed:
-            logger.info(
-                "[super_enhance/life] [%s] 已取消 %s 的 %d 条主动对话",
-                bot,
-                date_text,
-                removed,
-            )
-        return removed
-
     def _promise_slots(self, bot: str, date_text: str) -> list[tuple[int, dict]]:
         """当天有具体时间的约定：(分钟, 约定)。"""
         if self.promises is None:
@@ -689,122 +595,6 @@ class ProactivePlanner:
                 out.append((minute, item))
         return out
 
-    def _plan(
-        self,
-        state: LifeState,
-        now: datetime.datetime,
-        bot: str = "",
-        rng: random.Random | None = None,
-    ) -> list[dict]:
-        rng = rng or random.Random()
-        wake = clock_to_minute(state.wake_time)
-        sleep = clock_to_minute(state.sleep_time)
-        wake = wake if wake is not None else 7 * 60
-        sleep = sleep if sleep is not None else 23 * 60
-        if sleep <= wake:
-            # 入睡时间早于起床：是第二天凌晨睡，晚安排到次日那个时刻（分钟数 +1440）
-            sleep += 1440
-        now_minute = now.hour * 60 + now.minute
-
-        slots: dict[int, dict] = {}
-
-        def add(minute, kind, entry: TimelineEntry | None, promise=None, gap=0, training=None) -> bool:
-            if minute is None or minute <= now_minute or minute in slots:
-                return False
-            if gap and any(abs(minute - other) < gap for other in slots):
-                return False
-            slots[minute] = {
-                "minute": minute, "kind": kind, "entry": entry, "promise": promise, "training": training,
-            }
-            return True
-
-        # 练够的那一刻（练完过两分钟再说）最先占位
-        if self.trainings_fn is not None:
-            try:
-                due = list(self.trainings_fn(bot, state, now) or [])
-            except Exception:
-                logger.warning("[super_enhance/life] 读取在练的事失败", exc_info=True)
-                due = []
-            for minute, item in due:
-                add(minute + 2, "training", state.find_entry(minute), training=item)
-
-        # 约定先占位（准点）：同一分钟撞上早安/晚安时以约定为准
-        for minute, item in self._promise_slots(bot, state.date):
-            add(minute, "promise", state.find_entry(minute), item)
-
-        timeline = list(state.timeline or [])
-        # 早安：起床后过几分钟，不超出第一段
-        morning = wake + rng.randint(*MORNING_DELAY)
-        first_end = timeline[0].end_minute() if timeline else None
-        if first_end is not None and first_end > wake:
-            morning = min(morning, max(wake, first_end - 1))
-        add(morning, "morning", state.find_entry(wake))
-        # 晚安：睡前几分钟，不早于最后一段开始
-        night = sleep - rng.randint(*NIGHT_LEAD)
-        last_start = timeline[-1].start_minute() if timeline else None
-        if last_start is not None and wake <= last_start < sleep:
-            night = max(night, last_start + 1)
-        add(night, "night", state.find_entry(sleep))
-
-        # 白天：随机挑几个时段，在时段开始后过一会儿说，彼此隔开
-        boundaries: list[tuple[int, TimelineEntry]] = []
-        for entry in timeline:
-            start = entry.start_minute()
-            if start is not None and wake < start < sleep:
-                boundaries.append((start, entry))
-        try:
-            count = max(0, int(self.cfg.get("proactive_middle_count", 0) or 0))
-        except Exception:
-            count = 0
-        rng.shuffle(boundaries)
-        picked = 0
-        for start, entry in boundaries:
-            if picked >= count:
-                break
-            end = entry.end_minute() or start + 60
-            low = start + MIDDLE_DELAY[0]
-            high = min(start + MIDDLE_DELAY[1], end - 3)
-            minute = rng.randint(low, high) if high > low else start + max(1, (end - start) // 2)
-            if add(minute, "middle", entry, gap=MIN_GAP_MINUTES):
-                picked += 1
-
-        result = [slots[key] for key in sorted(slots)]
-        for slot in result:
-            minute = slot["minute"]
-            slot["at"] = now.replace(
-                hour=(minute % 1440) // 60,
-                minute=minute % 60,
-                second=0,
-                microsecond=0,
-            ) + datetime.timedelta(days=minute // 1440)
-        return result
-
-    # ---------- 任务里带的信息 ----------
-
-    def _slot_meta(self, state: LifeState, slot: dict, bot: str) -> dict:
-        meta = {
-            "kind": slot["kind"],
-            "bot": bot,
-            "date": state.date,
-            "minute": slot["minute"],
-            "postponed": 0,
-        }
-        promise = slot.get("promise")
-        if promise:
-            meta["promise"] = {
-                "what": str(promise.get("what") or ""),
-                "with": promise_with_for(promise, bot, self.label_fn),
-            }
-        training = slot.get("training")
-        if training:
-            meta["training"] = {
-                "id": str(training.get("id") or ""),
-                "what": str(training.get("what") or ""),
-                "standard": str(training.get("standard") or ""),
-            }
-        return meta
-
-    @staticmethod
     def _meta_payload(meta: dict) -> dict:
         out = {
             "se_kind": meta.get("kind") or "middle",
@@ -864,21 +654,6 @@ class ProactivePlanner:
             "postponed": postponed,
             "job_id": str(getattr(job, "job_id", "") or ""),
         }
-
-    def _find_promise(self, bot: str, date_text: str, minute) -> dict | None:
-        if self.promises is None or minute is None:
-            return None
-        try:
-            items = self.promises.open_for(bot, date_text, days=1)
-        except Exception:
-            return None
-        for item in items:
-            if clock_to_minute(item.get("time")) == minute % 1440:
-                return {
-                    "what": str(item.get("what") or ""),
-                    "with": promise_with_for(item, bot, self.label_fn),
-                }
-        return None
 
     def _stale(self, meta: dict, at_ts: float) -> bool:
         """出门、回来、开饭、做完一件事：到 at_ts 时离原定时刻是不是已经超过 TIMELY_STALE_MINUTES。"""
