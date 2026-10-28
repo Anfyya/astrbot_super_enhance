@@ -526,8 +526,8 @@ SPOT_SOGGY = {"冰箱": 1.6, "地窖": 2.0, "井里": 3.0, "屋外": 1.3, "灶�
 COVER_SOGGY = {"收着放": 0.12, "罩着放": 0.8, "敞着放": 1.0, "挂着通风": 0.4, "活养着": 1.0}
 
 
-def profile(name, kind) -> dict:
-    """这件吃的会有哪几种口感变化、各自的门槛和说法（按名字、分类定，跟放法无关）。"""
+def _base_profile(name, kind) -> dict:
+    """基础变坏方式：发干、出水、受潮、串味、回锅等。"""
     name = _clean(name)
     p: dict = {}
     if kind in DRY_TABLE and not (kind in FRUIT + ("茄果瓜豆菜",) and _has(name, THICK_SKIN)):
@@ -604,7 +604,11 @@ def profile(name, kind) -> dict:
             p["frozen_bad"] = {"text": "冻上了，化开就软烂出水"}
     if kind in RAW_MEAT:
         p["thawed"] = {"text": "化开了，出了点血水"}
-    fresh = kind in PRODUCE or kind == "别的吃的"
+    return p
+
+
+def _produce_profile(name, kind, p: dict, fresh: bool) -> None:
+    """生鲜再叠成熟度、发芽、发黄、碰伤等按名字识别的变化。"""
     for words, below, t1, t2 in CHILL_INJURY if fresh else ():
         if _has(name, words):
             p["chill_inj"] = {"h": (12, 48), "below": below, "text": (t1, t2), "fix": ""}
@@ -688,6 +692,13 @@ def profile(name, kind) -> dict:
         p["marinate"] = {"h": 0.3, "until": 1.5, "text": "拌好一会儿，入味了"}
     if _has(name, AGED_WORDS) or kind == "腊肉腊肠咸鱼":
         p["aged"] = {"h": 720.0, "text": "放了一阵，越放越香"}
+
+
+def profile(name, kind) -> dict:
+    """这件吃的会有哪几种口感变化、各自的门槛和说法（按名字、分类定，跟放法无关）。"""
+    name = _clean(name)
+    p = _base_profile(name, kind)
+    _produce_profile(name, kind, p, kind in PRODUCE or kind == "别的吃的")
     return p
 
 
