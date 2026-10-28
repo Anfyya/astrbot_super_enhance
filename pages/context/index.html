@@ -6334,17 +6334,23 @@
     return it.stages.slice(0, pos).filter(function (x) { return thingWlStep(x) && x.wl === st.wl && x.what === st.what; }).length;
   }
 
-  function thingStageRow(it, st, vidx, pos) {
+  function dataStageRow(it, st, objectMode, vidx, isFirst, pos) {
     var isVoid = vidx !== undefined;
-    var kind = thingIsStart(st.what) ? "start" : thingIsEnd(st.what) ? "end" : "";
-    var bits = [];
-    if (st.left_shown) { bits.push(st.left_shown); }
-    else if (st.left) { var lv2 = String(st.left); bits.push(((kind === "start" || lv2.indexOf("剩") === 0 || lv2.indexOf("还剩") === 0) ? "" : "剩") + lv2); }
-    if (kind === "start" || st.what === "挪地方" || st.what === "切开了" || WT_PROC.indexOf(st.what) >= 0) {
-      var w = [st.place, st.keep, thingSpotShown(st.spot), st.state].filter(Boolean).join("，");
-      if (w) { bits.push(w); }
-    } else if (st.what === "热了一下" && thingSpotShown(st.spot)) {
-      bits.push("搁在" + st.spot);
+    var kind, bits;
+    if (objectMode) {
+      kind = isFirst ? "start" : objIsEnd(st.what) ? "end" : "";
+      bits = [objWhere(st), st.state, st.owner ? "归" + (st.owner_label || st.owner) : ""].filter(Boolean);
+    } else {
+      kind = thingIsStart(st.what) ? "start" : thingIsEnd(st.what) ? "end" : "";
+      bits = [];
+      if (st.left_shown) { bits.push(st.left_shown); }
+      else if (st.left) { var lv2 = String(st.left); bits.push(((kind === "start" || lv2.indexOf("剩") === 0 || lv2.indexOf("还剩") === 0) ? "" : "剩") + lv2); }
+      if (kind === "start" || st.what === "挪地方" || st.what === "切开了" || WT_PROC.indexOf(st.what) >= 0) {
+        var w = [st.place, st.keep, thingSpotShown(st.spot), st.state].filter(Boolean).join("，");
+        if (w) { bits.push(w); }
+      } else if (st.what === "热了一下" && thingSpotShown(st.spot)) {
+        bits.push("搁在" + st.spot);
+      }
     }
     var row = h("li", { class: "tstep" + (isVoid ? " void" : "") });
     row.appendChild(h("span", { class: "ts-at", text: String(st.at || "").slice(5, 16) }));
@@ -6356,6 +6362,7 @@
         bits.length ? h("span", { text: "　" + bits.join(" · ") }) : null),
       h("div", { class: "ts-m" },
         thingSrc(st),
+        objectMode && st.src && st.src.entry && !st.wl ? objEntryLink(st) : null,
         st.note ? h("span", { text: "备注：" + st.note }) : null,
         st.edited ? h("span", { text: "网页改过 " + String(st.edited).slice(5, 16) }) : null,
         isVoid ? h("span", { text: "作废于 " + String(st.void_at || "").slice(5, 16) + (st.void_why ? "：" + st.void_why : "") }) : null)));
@@ -6366,9 +6373,13 @@
       } }, icon("undo")));
     } else if (st.idx !== null && st.idx !== undefined) {
       acts.appendChild(h("button", { class: "btn quiet sm", type: "button", title: "改这一步", onclick: function () {
-        thingOpenForm("e:" + it.id + ":" + st.idx, { what: st.what, at: thingAt(st.at), left: st.left || "",
-          amount: st.amount || "", used: st.used || "", place: st.place || "",
-          keep: st.keep || "", spot: st.spot || "", state: st.state || "", by: byList(st.by), into: st.into ? st.into.id : "", note: st.note || "" });
+        var draft = objectMode
+          ? { what: st.what, at: thingAt(st.at), place: st.place || "", holder: st.holder || "", state: st.state || "",
+              owner: st.owner || "", by: byList(st.by), into: st.into ? st.into.id : "", note: st.note || "" }
+          : { what: st.what, at: thingAt(st.at), left: st.left || "", amount: st.amount || "", used: st.used || "",
+              place: st.place || "", keep: st.keep || "", spot: st.spot || "", state: st.state || "",
+              by: byList(st.by), into: st.into ? st.into.id : "", note: st.note || "" };
+        thingOpenForm((objectMode ? "oe:" : "e:") + it.id + ":" + st.idx, draft);
       } }, icon("edit")));
       if (st.idx > 0) {
         var del = h("button", { class: "btn quiet sm danger", type: "button", title: "作废这一步（留着，不再算）" }, icon("trash"));
@@ -6379,19 +6390,36 @@
       }
     } else if (thingWlStep(st)) {
       acts.appendChild(h("button", { class: "btn quiet sm", type: "button", title: "改这一步（改的是世界线那一段里标的）", onclick: function () {
-        thingOpenForm(thingStageKey(it, st, pos), { what: st.what, left: st.left || "", amount: st.amount || "", used: st.used || "",
-          place: st.place || "", keep: st.keep || "", spot: st.spot || "", state: st.state || "" });
+        var draft = objectMode
+          ? { what: st.what, place: st.place || "", holder: st.holder || "", state: st.state || "", owner: st.owner || "" }
+          : { what: st.what, left: st.left || "", amount: st.amount || "", used: st.used || "",
+              place: st.place || "", keep: st.keep || "", spot: st.spot || "", state: st.state || "" };
+        thingOpenForm(thingStageKey(it, st, pos, objectMode), draft);
       } }, icon("edit")));
     }
     row.appendChild(acts);
     return row;
   }
 
-  function thingDetail(it) {
+  function thingStageRow(it, st, vidx, pos) {
+    return dataStageRow(it, st, false, vidx, undefined, pos);
+  }
+
+  function objStageRow(it, st, vidx, isFirst, pos) {
+    return dataStageRow(it, st, true, vidx, isFirst, pos);
+  }
+
+  function dataDetail(it, objectMode) {
     var box = h("div", { class: "tdetail" });
+    if (objectMode && it.note) { box.appendChild(h("div", { class: "muted", style: "font-size:12.5px", text: it.note })); }
     var list = h("ol", { class: "tsteps" });
     it.stages.forEach(function (st, i) {
-      list.appendChild(S.tEdit[thingStageKey(it, st, i)] ? h("li", null, thingStageForm(it, st, i)) : thingStageRow(it, st, undefined, i));
+      var key = thingStageKey(it, st, i, objectMode);
+      if (S.tEdit[key]) {
+        list.appendChild(h("li", null, objectMode ? objStageForm(it, st, i) : thingStageForm(it, st, i)));
+      } else {
+        list.appendChild(objectMode ? objStageRow(it, st, undefined, i === 0, i) : thingStageRow(it, st, undefined, i));
+      }
     });
     box.appendChild(list);
     if (it.voided.length) {
@@ -6401,24 +6429,31 @@
       } }, open ? "收起作废的" : "作废的 " + it.voided.length + " 步"));
       if (open) {
         var vl = h("ol", { class: "tsteps" });
-        it.voided.forEach(function (st) { vl.appendChild(thingStageRow(it, st, st.vidx)); });
+        it.voided.forEach(function (st) { vl.appendChild(objectMode ? objStageRow(it, st, st.vidx, false) : thingStageRow(it, st, st.vidx)); });
         box.appendChild(vl);
       }
     }
-    if (S.tEdit["s:" + it.id]) { box.appendChild(thingStageForm(it, null)); }
-    if (S.tEdit["i:" + it.id]) { box.appendChild(thingItemForm(it)); }
+    var stageKey = (objectMode ? "os:" : "s:") + it.id;
+    var itemKey = (objectMode ? "oi:" : "i:") + it.id;
+    if (S.tEdit[stageKey]) { box.appendChild(objectMode ? objStageForm(it, null) : thingStageForm(it, null)); }
+    if (S.tEdit[itemKey]) { box.appendChild(objectMode ? objItemForm(it) : thingItemForm(it)); }
     var foot = h("div", { class: "tfoot" });
-    if (!it.ended && !S.tEdit["s:" + it.id]) {
+    if (!it.ended && !S.tEdit[stageKey]) {
       foot.appendChild(h("button", { class: "btn sm", type: "button", onclick: function () {
-        thingOpenForm("s:" + it.id, { what: it.measured ? "用掉一部分" : "吃了一部分",
-          at: thingAt(S.things.now), left: "", amount: "", used: "",
-          place: "", keep: "", spot: "", state: "", by: [], into: "", note: "" });
+        var draft = objectMode
+          ? { what: S.things.item_steps.mid[0], at: thingAt(S.things.now), place: "", holder: "", state: "", owner: "", by: [], into: "", note: "" }
+          : { what: it.measured ? "用掉一部分" : "吃了一部分", at: thingAt(S.things.now), left: "", amount: "", used: "",
+              place: "", keep: "", spot: "", state: "", by: [], into: "", note: "" };
+        thingOpenForm(stageKey, draft);
       } }, icon("plus"), "加一步"));
     }
-    if (!S.tEdit["i:" + it.id]) {
+    if (!S.tEdit[itemKey]) {
       foot.appendChild(h("button", { class: "btn sm", type: "button", onclick: function () {
-        thingOpenForm("i:" + it.id, { name: it.name, kind: it.kind, origin: it.origin || "", from: it.from.map(function (y) { return y.id; }) });
-      } }, icon("edit"), "改名字和来历"));
+        var draft = objectMode
+          ? { name: it.name, kind: it.kind, look: it.look || "", owner: it.owner || "", origin: it.origin || "", from: it.from.map(function (y) { return y.id; }) }
+          : { name: it.name, kind: it.kind, origin: it.origin || "", from: it.from.map(function (y) { return y.id; }) };
+        thingOpenForm(itemKey, draft);
+      } }, icon("edit"), objectMode ? "改名字和样子" : "改名字和来历"));
     }
     if (!it.ended) {
       var wrong = h("button", { class: "btn sm danger", type: "button", title: "整件都是记错的：加一步「记错了」收尾（编号留着）" }, "记错了");
@@ -6428,6 +6463,8 @@
     box.appendChild(foot);
     return box;
   }
+
+  function thingDetail(it) { return dataDetail(it, false); }
 
   /* ---------- 表单 ---------- */
   // 时间：今天的只写钟点，昨天、前天写成字，别的写「10-18 08:30」；存的时候补全
@@ -6469,10 +6506,14 @@
     }
   }
   // 收在「更多」里的几格：收着时写出填了的值
-  function thingFieldSum(f, keys) {
+  function dataFieldSum(f, keys, objectMode) {
+    var people = {};
+    ((S.things && S.things.people) || []).forEach(function (x) { people[x.key] = x.label; });
     return keys.map(function (k) {
       var v = String(f[k] || "").trim();
       if (!v) { return ""; }
+      if (objectMode && k === "holder") { return "在" + (people[v] || v) + "手上"; }
+      if (objectMode && k === "owner") { return "归" + (people[v] || v); }
       return k === "left" ? "剩" + v.replace(/^还?剩/, "") : k === "used" ? "用了 " + v : k === "amount" ? "清点出 " + v : v;
     }).filter(Boolean).join(" · ");
   }
@@ -6566,7 +6607,7 @@
       if (rest.length) {
         var c2 = { first: first, measured: measured, perUse: c.perUse, exceptId: it.id };
         sec.appendChild(edFold(ui, "more", "更多", rest.map(function (k) { return THING_FIELDS[k]; }).join("、"),
-          function () { return thingFieldSum(f, rest); },
+          function () { return dataFieldSum(f, rest, false); },
           function () { var q = edProps(); rest.forEach(function (k) { thingFieldRow(q, f, k, c2); }); return q; }));
       }
       dyn.appendChild(sec);
@@ -6762,93 +6803,7 @@
       body: null, fromLabel: "用什么做的", detail: objDetail
     });
   }
-  function objStageRow(it, st, vidx, isFirst, pos) {
-    var isVoid = vidx !== undefined;
-    var kind = isFirst ? "start" : objIsEnd(st.what) ? "end" : "";
-    var bits = [objWhere(st), st.state, st.owner ? "归" + (st.owner_label || st.owner) : ""].filter(Boolean);
-    var row = h("li", { class: "tstep" + (isVoid ? " void" : "") });
-    row.appendChild(h("span", { class: "ts-at", text: String(st.at || "").slice(5, 16) }));
-    row.appendChild(h("div", { class: "ts-b" },
-      h("div", null,
-        h("span", { class: "ts-w " + kind, text: st.what }),
-        st.by_label ? h("span", { class: "muted", text: "（" + st.by_label + "）" }) : null,
-        st.into ? [" → ", thingLink(st.into)] : null,
-        bits.length ? h("span", { text: "　" + bits.join(" · ") }) : null),
-      h("div", { class: "ts-m" },
-        thingSrc(st),
-        st.src && st.src.entry && !st.wl ? objEntryLink(st) : null,
-        st.note ? h("span", { text: "备注：" + st.note }) : null,
-        st.edited ? h("span", { text: "网页改过 " + String(st.edited).slice(5, 16) }) : null,
-        isVoid ? h("span", { text: "作废于 " + String(st.void_at || "").slice(5, 16) + (st.void_why ? "：" + st.void_why : "") }) : null)));
-    var acts = h("span", { class: "ts-a" });
-    if (isVoid) {
-      acts.appendChild(h("button", { class: "btn quiet sm", type: "button", title: "恢复这一步", onclick: function () {
-        thingPost({ action: "unvoid_stage", id: it.id, index: vidx, guard: { at: st.at, what: st.what } }, "已恢复", null, it.id);
-      } }, icon("undo")));
-    } else if (st.idx !== null && st.idx !== undefined) {
-      acts.appendChild(h("button", { class: "btn quiet sm", type: "button", title: "改这一步", onclick: function () {
-        thingOpenForm("oe:" + it.id + ":" + st.idx, { what: st.what, at: thingAt(st.at), place: st.place || "",
-          holder: st.holder || "", state: st.state || "", owner: st.owner || "", by: byList(st.by), into: st.into ? st.into.id : "", note: st.note || "" });
-      } }, icon("edit")));
-      if (st.idx > 0) {
-        var del = h("button", { class: "btn quiet sm danger", type: "button", title: "作废这一步（留着，不再算）" }, icon("trash"));
-        armed(del, "确认作废", function () {
-          thingPost({ action: "void_stage", id: it.id, index: st.idx, guard: { at: st.at, what: st.what }, why: "网页上作废" }, "已作废（在「作废的」里能恢复）", null, it.id);
-        });
-        acts.appendChild(del);
-      }
-    } else if (thingWlStep(st)) {
-      acts.appendChild(h("button", { class: "btn quiet sm", type: "button", title: "改这一步（改的是世界线那一段里标的）", onclick: function () {
-        thingOpenForm(thingStageKey(it, st, pos, true), { what: st.what, place: st.place || "", holder: st.holder || "", state: st.state || "",
-          owner: st.owner || "" });
-      } }, icon("edit")));
-    }
-    row.appendChild(acts);
-    return row;
-  }
-
-  function objDetail(it) {
-    var box = h("div", { class: "tdetail" });
-    if (it.note) { box.appendChild(h("div", { class: "muted", style: "font-size:12.5px", text: it.note })); }
-    var list = h("ol", { class: "tsteps" });
-    it.stages.forEach(function (st, i) {
-      list.appendChild(S.tEdit[thingStageKey(it, st, i, true)] ? h("li", null, objStageForm(it, st, i)) : objStageRow(it, st, undefined, i === 0, i));
-    });
-    box.appendChild(list);
-    if (it.voided.length) {
-      var open = !!S.thingsVoid[it.id];
-      box.appendChild(h("button", { class: "tlink", type: "button", style: "align-self:flex-start", onclick: function () {
-        S.thingsVoid[it.id] = !open; thingRedraw(it.id);
-      } }, open ? "收起作废的" : "作废的 " + it.voided.length + " 步"));
-      if (open) {
-        var vl = h("ol", { class: "tsteps" });
-        it.voided.forEach(function (st) { vl.appendChild(objStageRow(it, st, st.vidx, false)); });
-        box.appendChild(vl);
-      }
-    }
-    if (S.tEdit["os:" + it.id]) { box.appendChild(objStageForm(it, null)); }
-    if (S.tEdit["oi:" + it.id]) { box.appendChild(objItemForm(it)); }
-    var foot = h("div", { class: "tfoot" });
-    if (!it.ended && !S.tEdit["os:" + it.id]) {
-      foot.appendChild(h("button", { class: "btn sm", type: "button", onclick: function () {
-        thingOpenForm("os:" + it.id, { what: S.things.item_steps.mid[0], at: thingAt(S.things.now), place: "", holder: "",
-          state: "", owner: "", by: [], into: "", note: "" });
-      } }, icon("plus"), "加一步"));
-    }
-    if (!S.tEdit["oi:" + it.id]) {
-      foot.appendChild(h("button", { class: "btn sm", type: "button", onclick: function () {
-        thingOpenForm("oi:" + it.id, { name: it.name, kind: it.kind, look: it.look || "", owner: it.owner || "", origin: it.origin || "",
-          from: it.from.map(function (y) { return y.id; }) });
-      } }, icon("edit"), "改名字和样子"));
-    }
-    if (!it.ended) {
-      var wrong = h("button", { class: "btn sm danger", type: "button", title: "整件都是记错的：加一步「记错了」收尾（编号留着）" }, "记错了");
-      armed(wrong, "确认：这件记错了", function () { thingPost({ action: "void_item", id: it.id, why: "网页上标的" }, "已标成记错了", null, it.id); });
-      foot.appendChild(wrong);
-    }
-    box.appendChild(foot);
-    return box;
-  }
+  function objDetail(it) { return dataDetail(it, true); }
 
   // 东西某一步要填的一格。c：{ first 第一步（怎么来的）, exceptId 它自己, af 光标先放第一格 }
   var OBJ_FIELDS = { place: "搁在哪", holder: "在谁手上", state: "什么样", owner: "归谁" };
@@ -6864,17 +6819,6 @@
     } else if (k === "owner") {
       edRow(p, "归谁", edChips(edPeople("没换"), f.owner, function (v) { f.owner = v; }), "送给谁了才选");
     }
-  }
-  function objFieldSum(f, keys) {
-    var people = {};
-    ((S.things && S.things.people) || []).forEach(function (x) { people[x.key] = x.label; });
-    return keys.map(function (k) {
-      var v = String(f[k] || "").trim();
-      if (!v) { return ""; }
-      if (k === "holder") { return "在" + (people[v] || v) + "手上"; }
-      if (k === "owner") { return "归" + (people[v] || v); }
-      return v;
-    }).filter(Boolean).join(" · ");
   }
   var OBJ_MAIN = { "挪地方": ["place", "holder"], "交给": ["holder", "place"], "做了一截": ["state"], "做好了": ["state", "place"], "变了样": ["state"], "用了": ["state"], "送人了": ["owner"] };
   var OBJ_MADE = { "开始做": 1, "做好了": 1 };
@@ -6953,7 +6897,7 @@
       var rest = all.filter(function (k) { return main.indexOf(k) < 0; });
       if (rest.length) {
         sec.appendChild(edFold(ui, "more", "更多", rest.map(function (k) { return OBJ_FIELDS[k]; }).join("、"),
-          function () { return objFieldSum(f, rest); },
+          function () { return dataFieldSum(f, rest, true); },
           function () { var q = edProps(); rest.forEach(function (k) { objFieldRow(q, f, k, { first: first, exceptId: it.id }); }); return q; }));
       }
       dyn.appendChild(sec);
