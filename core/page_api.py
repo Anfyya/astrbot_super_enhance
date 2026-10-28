@@ -21,7 +21,7 @@ from typing import Any
 
 from astrbot.api import logger
 
-from .common import text as text_utils
+from .common import history_io, text as text_utils
 from .common.text import clean_message, text_of, time_of
 
 try:  # AstrBot 面板为插件页面提供的 quart 兼容层
@@ -60,14 +60,7 @@ def _as_int(value: Any, default: int = 0) -> int:
 
 def _history_of(raw: Any) -> list[dict]:
     """把 conv.history（字符串或列表）统一成 list[dict]。"""
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw) if raw else []
-        except Exception:
-            return []
-    if not isinstance(raw, list):
-        return []
-    return [item for item in raw if isinstance(item, dict)]
+    return history_io.history_of(raw)
 
 
 def _text_parts(item: dict) -> tuple[list[str], list[str], int]:

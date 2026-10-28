@@ -7,7 +7,7 @@ import time
 from astrbot.api import logger
 from astrbot.core.agent.context.token_counter import EstimateTokenCounter
 
-from ..common import text as text_utils
+from ..common import history_io, text as text_utils
 from .compact_v2 import CompactV2
 
 COMPRESS_THRESHOLD = 0.82
@@ -44,13 +44,7 @@ class ContextToolsFeature:
 
     @staticmethod
     def _history_of(conv) -> list:
-        h = conv.history
-        if isinstance(h, str):
-            try:
-                h = json.loads(h) if h else []
-            except Exception:
-                h = []
-        return h if isinstance(h, list) else []
+        return history_io.conversation_history(conv)
 
     @staticmethod
     def _count_chars(history: list) -> int:

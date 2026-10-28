@@ -16,7 +16,7 @@ import json
 from pathlib import Path
 from astrbot.api import logger
 
-from ...common import timeutil
+from ...common import history_io, timeutil
 from ...common.bots import BotRegistry
 from ...common.text import clean_message, text_of, time_of
 
@@ -268,17 +268,8 @@ class RawMessageLog:
         conv_mgr = getattr(self.context, "conversation_manager", None)
         if conv_mgr is None:
             return 0
-        cid = await conv_mgr.get_curr_conversation_id(umo)
-        if not cid:
-            return 0
-        conv = await conv_mgr.get_conversation(umo, cid)
+        _cid, conv, history = await history_io.load(conv_mgr, umo)
         if conv is None:
-            return 0
-        try:
-            history = json.loads(getattr(conv, "history", "") or "[]")
-        except Exception:
-            return 0
-        if not isinstance(history, list):
             return 0
         count = 0
         for message in history:

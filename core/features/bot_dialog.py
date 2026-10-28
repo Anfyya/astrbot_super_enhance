@@ -19,7 +19,7 @@ import time
 from astrbot.api import logger
 from astrbot.core.agent.message import TextPart
 
-from ..common import text as text_utils, timeutil
+from ..common import history_io, text as text_utils, timeutil
 from ..common.bots import BotRegistry, platform_of
 
 ROUND_FLAG = "_super_enhance_bot_dialog_round"
@@ -561,9 +561,7 @@ class BotDialogFeature:
     async def _recorded(self, conv_mgr, umo: str, line: str, since) -> bool:
         """这句说出口以后，主人会话里写过的跨会话记录里是不是已经有这一行。"""
         try:
-            cid = await conv_mgr.get_curr_conversation_id(umo)
-            conv = await conv_mgr.get_conversation(umo, cid) if cid else None
-            history = json.loads(getattr(conv, "history", "") or "[]") if conv is not None else []
+            _cid, conv, history = await history_io.load(conv_mgr, umo)
         except Exception:
             logger.warning("[super_enhance/bot_dialog] 翻主人会话失败，照常记这句（%s）", umo, exc_info=True)
             return False
@@ -583,17 +581,8 @@ class BotDialogFeature:
     @staticmethod
     async def _last_message(conv_mgr, umo: str, role: str):
         """这个会话里最后一条有字的 role 消息：(纯文本, 它的时间)，没有就 ("", None)。"""
-        cid = await conv_mgr.get_curr_conversation_id(umo)
-        if not cid:
-            return "", None
-        conv = await conv_mgr.get_conversation(umo, cid)
+        _cid, conv, history = await history_io.load(conv_mgr, umo)
         if conv is None:
-            return "", None
-        try:
-            history = json.loads(getattr(conv, "history", "") or "[]")
-        except Exception:
-            return "", None
-        if not isinstance(history, list):
             return "", None
         for message in reversed(history):
             if not isinstance(message, dict) or message.get("role") != role:
@@ -607,18 +596,12 @@ class BotDialogFeature:
         conv_mgr = getattr(self.context, "conversation_manager", None)
         if conv_mgr is None:
             return
-        cid = await conv_mgr.get_curr_conversation_id(umo)
+        cid, conv, history = await history_io.load(conv_mgr, umo)
         if not cid:
             cid = await conv_mgr.new_conversation(umo)
-        conv = await conv_mgr.get_conversation(umo, cid)
+            conv = await conv_mgr.get_conversation(umo, cid)
         if conv is None:
             return
-        try:
-            history = json.loads(getattr(conv, "history", "") or "[]")
-        except Exception:
-            history = []
-        if not isinstance(history, list):
-            history = []
         if history:
             last = history[-1]
             if isinstance(last, dict) and _text_of(last) == text.strip():
@@ -626,10 +609,11 @@ class BotDialogFeature:
                 # 内容相似但确实是新一轮往来的，照写不误。
                 logger.info("[super_enhance/bot_dialog] 同一条记录连着写两次，跳过（%s）", umo)
                 return
-        history.append(
-            {"role": "assistant", "content": [{"type": "text", "text": text}]}
+        await history_io.append(
+            conv_mgr, umo,
+            {"role": "assistant", "content": [{"type": "text", "text": text}]},
+            cid=cid,
         )
-        await conv_mgr.update_conversation(umo, cid, history=history)
         logger.info("[super_enhance/bot_dialog] 已把跨会话记录写进 %s", umo)
 
     # ---------- tell：把话写进另一个角色的上下文 ----------

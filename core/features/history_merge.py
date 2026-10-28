@@ -31,16 +31,14 @@ bot_dialog / tell 往历史里追加了记录），后结束的那份就会把�
 
 import asyncio
 import contextvars
-import json
 
 from astrbot.api import logger
 
+from ..common.history_io import ORIG_HISTORY_ATTR, history_of
 from .turn_state import INTERRUPTION_ASSISTANT, INTERRUPTION_USER, body_text
 
 _BASE: contextvars.ContextVar = contextvars.ContextVar("super_enhance_history_base", default=None)
 
-# cross_session 往会话对象上追加之前，把原样的历史存在这个属性上
-ORIG_HISTORY_ATTR = "_super_enhance_orig_history"
 CRON_NOISE_USER = "Output your last task result below."
 CRON_NOISE_PREFIX = "[CronJob]"
 
@@ -64,14 +62,6 @@ def sanitize(history: list) -> tuple[list, int]:
         return history, 0
     kept = [item for item in history if not is_noise(item)]
     return kept, len(history) - len(kept)
-
-
-def _load(text) -> list | None:
-    try:
-        value = json.loads(text or "[]")
-    except Exception:
-        return None
-    return value if isinstance(value, list) else None
 
 
 def _roles(items: list) -> list:
@@ -199,7 +189,7 @@ class HistoryMergeFeature:
                         raw = getattr(conv, ORIG_HISTORY_ATTR, None)
                         if raw is None:
                             raw = getattr(conv, "history", None)
-                    base = _load(raw) if conv is not None else None
+                    base = history_of(raw) if conv is not None and raw is not None else None
                     if base is None:
                         return await orig(*args, **kwargs)
                     token = _BASE.set((getattr(conv, "cid", None), base))

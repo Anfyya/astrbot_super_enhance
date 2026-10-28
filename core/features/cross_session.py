@@ -16,10 +16,9 @@ from astrbot.api import logger
 from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.platform.message_type import MessageType
 
-from ..common import timeutil
+from ..common import history_io, timeutil
 
 from . import cron_history
-from .history_merge import ORIG_HISTORY_ATTR
 from .proactive_think import tag_think
 from .turn_state import START_IDX_FLAG, _content, _role
 
@@ -142,26 +141,12 @@ class CrossSessionFeature:
             return
 
         try:
-            cid = await conv_mgr.get_curr_conversation_id(target_umo)
-            if not cid:
-                cid = await conv_mgr.new_conversation(target_umo)
-                self._debug(f"new conversation {cid} for {target_umo}")
-            conv = await conv_mgr.get_conversation(target_umo, cid)
-            if not conv:
-                self._debug(f"no conv for {target_umo} {cid}")
-                return
-            history = conv.history
-            if isinstance(history, str):
-                try:
-                    history = json.loads(history) if history else []
-                except Exception:
-                    history = []
-            if not isinstance(history, list):
-                history = []
-
             # 带上发送时间，不然之后压缩、聊天记录会借前一条（可能是几天前）的时间
-            history.append({"role": "assistant", "content": list(content_parts) + [{"type": "text", "text": self._stamp_text()}]})
-            await conv_mgr.update_conversation(target_umo, cid, history=history)
+            message = {"role": "assistant", "content": list(content_parts) + [{"type": "text", "text": self._stamp_text()}]}
+            cid, history = await history_io.append(conv_mgr, target_umo, message, create=True)
+            if not cid:
+                self._debug(f"no conv for {target_umo}")
+                return
             self._debug(
                 f"inserted to {target_umo} cid={cid} "
                 f"text={' '.join(plain_texts)[:80]} len={len(history)}"
@@ -256,23 +241,7 @@ class CrossSessionFeature:
             return
         content_parts.append({"type": "text", "text": self._stamp_text()})
         try:
-            if getattr(conv, ORIG_HISTORY_ATTR, None) is None:
-                # 记下追加之前的原样历史：保存时拿它当「这一轮开始时的基准」，
-                # 否则这句会被并发合并当成「期间被别人删掉了」而丢掉
-                try:
-                    setattr(conv, ORIG_HISTORY_ATTR, getattr(conv, "history", "") or "[]")
-                except Exception:
-                    logger.warning("[super_enhance/cross_session] 记录原始历史失败", exc_info=True)
-            history = getattr(conv, "history", "")
-            if isinstance(history, str):
-                try:
-                    history = json.loads(history) if history.strip() else []
-                except Exception:
-                    history = []
-            if not isinstance(history, list):
-                history = []
-            history.append({"role": "assistant", "content": content_parts})
-            conv.history = json.dumps(history, ensure_ascii=False)
+            history_io.append_live(conv, {"role": "assistant", "content": content_parts})
             logger.info(
                 "[super_enhance/cross_session] 主动消息已并入会话历史：%s（%s）",
                 " ".join(plain_texts)[:60],
@@ -311,11 +280,7 @@ class CrossSessionFeature:
         if not think:
             return
         try:
-            history = getattr(conv, "history", "")
-            if isinstance(history, str):
-                history = json.loads(history) if history.strip() else []
-            if not isinstance(history, list):
-                return
+            history = history_io.conversation_history(conv)
             for item in reversed(history):
                 if (
                     isinstance(item, dict)
@@ -328,7 +293,7 @@ class CrossSessionFeature:
             else:
                 logger.warning("[super_enhance/cross_session] 主动消息的思考没存上：历史里找不到她这一轮发的那条（%s）", umo)
                 return
-            conv.history = json.dumps(history, ensure_ascii=False)
+            history_io.set_conversation_history(conv, history)
             setattr(conv, CRON_APPENDED_ATTR, [])
             logger.info("[super_enhance/cross_session] 主动消息的思考已存进历史（%d 字，%s）", len(think), umo)
         except Exception:

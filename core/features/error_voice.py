@@ -18,15 +18,14 @@
 ``model`` 还会补上主人那条原话。发给主人的照旧是那句，标记只在历史里。
 """
 
-import json
 import random
 import sys
 from collections.abc import Mapping
 
 from astrbot.api import logger
 
+from ..common import history_io
 from . import cron_history
-from .history_merge import ORIG_HISTORY_ATTR
 from .life_state.models import bot_of_umo
 from .turn_state import local_stamp
 
@@ -161,12 +160,6 @@ def _note_text(sent: str, what: str, stamp: str) -> str:
     return "\n".join(line for line in lines if line)
 
 
-def _load_history(raw) -> list:
-    if isinstance(raw, str):
-        raw = json.loads(raw) if raw.strip() else []
-    return raw if isinstance(raw, list) else []
-
-
 async def write_model_error(context, event, stamp: str = "") -> None:
     """after_message_sent：把失败的这一轮补进会话历史（AstrBot 已经存了主人原话的就不重复存）。"""
     note = event.get_extra(NOTE_FLAG)
@@ -178,27 +171,24 @@ async def write_model_error(context, event, stamp: str = "") -> None:
     if not umo or conv_mgr is None:
         return
     try:
-        cid = await conv_mgr.get_curr_conversation_id(umo)
-        conv = await conv_mgr.get_conversation(umo, cid) if cid else None
+        cid, conv, history = await history_io.load(conv_mgr, umo)
         if conv is None:
             logger.warning("[super_enhance/error_voice] %s 没有当前会话，模型失败没补进历史", umo)
             return
-        history = _load_history(conv.history)
         user = note.get("user")
         last_user = next(
             (m for m in reversed(history) if isinstance(m, dict) and m.get("role") == "user"),
             None,
         )
-        added = 0
+        messages = []
         if isinstance(user, dict) and (
             last_user is None or last_user.get("content") != user.get("content")
         ):
-            history.append(user)
-            added += 1
+            messages.append(user)
         what = "这一轮模型请求失败（%s），你没有回复成。" % (note.get("reason") or "原因未知")
-        history.append({"role": "assistant", "content": _note_text(note.get("sent"), what, stamp)})
-        added += 1
-        await conv_mgr.update_conversation(umo, cid, history=history)
+        messages.append({"role": "assistant", "content": _note_text(note.get("sent"), what, stamp)})
+        await history_io.append(conv_mgr, umo, *messages, cid=cid)
+        added = len(messages)
         logger.info(
             "[super_enhance/error_voice] 模型失败已补进历史 %s：%d 条（%s）",
             umo, added, note.get("reason") or "原因未知",
@@ -226,22 +216,16 @@ async def note_sent_error(context, config, umo: str, sent: str, reason: str, liv
     }
     try:
         if live_conv is not None:
-            if getattr(live_conv, ORIG_HISTORY_ATTR, None) is None:
-                # 和 cross_session 一样：记下追加之前的历史，并发合并才不会把这条当成被删掉
-                setattr(live_conv, ORIG_HISTORY_ATTR, getattr(live_conv, "history", "") or "[]")
-            history = _load_history(getattr(live_conv, "history", ""))
-            history.append(message)
-            live_conv.history = json.dumps(history, ensure_ascii=False)
+            history_io.append_live(live_conv, message)
         else:
             conv_mgr = getattr(context, "conversation_manager", None)
-            cid = await conv_mgr.get_curr_conversation_id(umo) if conv_mgr is not None else None
-            conv = await conv_mgr.get_conversation(umo, cid) if cid else None
+            if conv_mgr is None:
+                return
+            _cid, conv, _history = await history_io.load(conv_mgr, umo)
             if conv is None:
                 logger.warning("[super_enhance/error_voice] %s 没有当前会话，报错没补进历史", umo)
                 return
-            history = _load_history(conv.history)
-            history.append(message)
-            await conv_mgr.update_conversation(umo, cid, history=history)
+            await history_io.append(conv_mgr, umo, message)
         logger.info("[super_enhance/error_voice] 报错已补进历史 %s（%s）", umo, _flat(reason))
     except Exception:
         logger.error("[super_enhance/error_voice] 报错补进历史出错", exc_info=True)
