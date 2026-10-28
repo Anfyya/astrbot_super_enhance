@@ -9,6 +9,8 @@ from astrbot.core.agent.context.token_counter import EstimateTokenCounter
 
 from ..common import history_io, text as text_utils
 from .compact_v2 import CompactV2
+from .daily_compact import DailyCompact
+from .overflow_guard import OverflowGuard
 
 COMPRESS_THRESHOLD = 0.82
 
@@ -23,6 +25,16 @@ class ContextToolsFeature:
         self.context = context
         self.config = config
         self.v2 = CompactV2(context, config, data_dir)
+        self.daily = DailyCompact(config, self.v2, data_dir)
+        self.overflow = OverflowGuard(context, config, self)
+
+    def start(self) -> None:
+        self.overflow.install()
+        self.daily.start()
+
+    def stop(self) -> None:
+        self.daily.stop()
+        self.overflow.uninstall()
 
     @property
     def enabled(self) -> bool:

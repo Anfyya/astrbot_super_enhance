@@ -39,8 +39,6 @@ from .core.features.history_merge import HistoryMergeFeature
 from .core.features.history_transcript import HistoryTranscriptFeature
 from .core.features.zero_think import ZeroThinkRetryFeature
 from .core.features.image_gen import ImageGenFeature
-from .core.features.daily_compact import DailyCompact
-from .core.features.overflow_guard import OverflowGuard
 from .core.features.feature_group import FeatureGroup, FeatureHandle
 from .core.features import error_voice
 from .core.features.cron_context import CronContextFeature
@@ -94,13 +92,6 @@ class SuperEnhance(Star):
             context, SectionConfig(raw, "context_tools"), data_dir
         )
         self.history_merge = HistoryMergeFeature()
-        # 每天 0 点自动 /compact v2（停机错过了就启动后补跑）
-        self.daily_compact = DailyCompact(
-            SectionConfig(raw, "context_tools"), self.context_tools.v2, data_dir
-        )
-        self.overflow = OverflowGuard(
-            context, SectionConfig(raw, "context_tools"), self.context_tools
-        )
         self.cron_context = CronContextFeature(
             context, SectionConfig(raw, "cron_context")
         )
@@ -152,8 +143,7 @@ class SuperEnhance(Star):
         self.features = FeatureGroup(
             FeatureHandle("cron_context", self.cron_context),
             FeatureHandle("runner_hooks", self.runner_hooks),
-            FeatureHandle("daily_compact", self.daily_compact, "start", "stop"),
-            FeatureHandle("overflow", self.overflow),
+            FeatureHandle("context_tools", self.context_tools, "start", "stop"),
             FeatureHandle("history_merge", self.history_merge),
             FeatureHandle("proactive_think", self.proactive_think),
             FeatureHandle("lm_edits", self.lm_edits, "start", "stop"),
@@ -249,7 +239,7 @@ class SuperEnhance(Star):
         self, event: AstrMessageEvent, req: ProviderRequest
     ) -> None:
         """上下文超限：不调模型，只发一句固定提醒（不进历史），等主人 /compact v2。"""
-        await self.overflow.on_llm_request(event, req)
+        await self.context_tools.overflow.on_llm_request(event, req)
 
     @filter.on_llm_request()
     async def on_llm_request_main(self, event: AstrMessageEvent, req: ProviderRequest) -> None:
