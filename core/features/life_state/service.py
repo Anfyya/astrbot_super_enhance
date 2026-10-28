@@ -57,7 +57,6 @@ DEFAULT_TZ = "Asia/Shanghai"
 # 每日约束复核失败后隔多久重试、一天最多试几回
 REVIEW_RETRY_MINUTES = 10
 REVIEW_TRIES = 3
-STATE_FILE_NAME = "life_states.json"
 ABILITY_FILE_NAME = "abilities.json"
 PROMISE_FILE_NAME = "promises.json"
 TRAINING_FILE_NAME = "trainings.json"
@@ -151,7 +150,7 @@ class LifeStateService:
         # 账本里的时间用本地时间（容器系统时区是 UTC）
         set_ledger_timezone(self.timezone)
         self.life_step = LifeStep(
-            context, cfg, self.world, self.raw_log, None,
+            context, cfg, self.world, self.raw_log,
             self.seed_log, self.bots.label_for, self._now,
         )
         self.life_step.promises = self.promises

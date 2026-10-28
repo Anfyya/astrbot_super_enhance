@@ -192,13 +192,12 @@ def state_of(raw: dict) -> str:
 class LifeStep:
     """补写。"""
 
-    def __init__(self, context, cfg, world: WorldStore, raw_log, generator,
+    def __init__(self, context, cfg, world: WorldStore, raw_log,
                  seed_log, label_fn, now_fn, abilities_txt=None) -> None:
         self.context = context
         self.cfg = cfg
         self.world = world
         self.raw_log = raw_log
-        self.generator = generator
         self.seed_log = seed_log
         self.label = label_fn
         self._now = now_fn
