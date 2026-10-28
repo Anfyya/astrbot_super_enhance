@@ -20,6 +20,7 @@ import datetime
 import math
 import random
 import time
+from dataclasses import dataclass
 from astrbot.api import logger
 
 from ...common import timeutil
@@ -34,6 +35,7 @@ from .models import (
     format_datetime,
     minute_to_clock,
 )
+from .world import fmt_time, is_event, is_sleep, parse_time
 
 JOB_PREFIX = "超级增强·主动对话"
 DEFAULT_TZ = "Asia/Shanghai"
@@ -48,28 +50,47 @@ MIN_DELAY_SECONDS = 30
 MAX_POSTPONES = 72
 # 顺延后和同一会话的另一条相差不到这么久，就并成一条（秒）
 MERGE_SECONDS = 120
-# 并成一条时留哪条：练成 > 约定 > 晚安 > 早安 > 中段
-KIND_RANK = {"correct": 5, "asked": 5, "intent": 5, "training": 4, "manual": 4, "promise": 3, "night": 2, "morning": 1, "middle": 0, "done": 0,
-             "out": 0, "back": 0, "meal": 0}
-KIND_LABEL = {"correct": "改口", "training": "练成", "promise": "约定", "night": "晚安", "morning": "早安", "middle": "中段",
-              "done": "做完一件事", "out": "出门", "back": "回来", "meal": "开饭", "asked": "接下的事做完",
-              "intent": "打算做完", "manual": "手动触发"}
-# 随手叫她的几种（做完一件事、出门、回来、开饭）：彼此不挡，只让早安晚安、约定、改口、练成这些挡住
-CASUAL_KINDS = ("done", "out", "back", "meal", "middle")
-# 出门、回来、开饭、做完一件事：只在那几分钟有意义，原定时刻过了这么久还没发出去（一直在聊、顺延了）就不发了（分钟）
-TIMELY_KINDS = ("done", "out", "back", "meal")
+@dataclass(frozen=True)
+class Kind:
+    rank: int
+    label: str
+    casual: bool = False
+    timely: bool = False
+    must_send: bool = False
+    hush: bool = False
+
+
+# 并成一条时留哪条、怎么叫她、哪些必须发 / 容易被主人没回挡住，都在一处定。
+KINDS = {
+    "correct": Kind(5, "改口", must_send=True),
+    "asked": Kind(5, "接下的事做完"),
+    "intent": Kind(5, "打算做完", must_send=True),
+    "training": Kind(4, "练成", must_send=True),
+    "manual": Kind(4, "手动触发"),
+    "promise": Kind(3, "约定", must_send=True),
+    "night": Kind(2, "晚安", hush=True),
+    "morning": Kind(1, "早安", hush=True),
+    "middle": Kind(0, "中段", casual=True, hush=True),
+    "done": Kind(0, "做完一件事", casual=True, timely=True, hush=True),
+    "out": Kind(0, "出门", casual=True, timely=True, hush=True),
+    "back": Kind(0, "回来", casual=True, timely=True, hush=True),
+    "meal": Kind(0, "开饭", casual=True, timely=True, hush=True),
+}
+KIND_RANK = {kind: info.rank for kind, info in KINDS.items()}
+KIND_LABEL = {kind: info.label for kind, info in KINDS.items()}
+CASUAL_KINDS = tuple(kind for kind, info in KINDS.items() if info.casual)
+TIMELY_KINDS = tuple(kind for kind, info in KINDS.items() if info.timely)
+MUST_SEND = tuple(kind for kind, info in KINDS.items() if info.must_send)
+HUSH_KINDS = tuple(kind for kind, info in KINDS.items() if info.hush)
 TIMELY_STALE_MINUTES = 10
-# 必须发的几种（主人定的规矩不许开口时除外）
-MUST_SEND = ("correct", "promise", "training", "intent")
-# 主人一直没回时先收着的几种：今天没回的主动消息，这个号够 UNREPLIED_LIMIT 条、或几个号加起来够
-# UNREPLIED_TOTAL_LIMIT 条，就先不发；他回了话就恢复。必须发的、接下的事做完、网页手动的照发
-HUSH_KINDS = CASUAL_KINDS + ("morning", "night")
 UNREPLIED_LIMIT = 2
 UNREPLIED_TOTAL_LIMIT = 3
 # 世界线 live：做完一件事时，前后这么久里已经排着早安 / 晚安 / 约定，就不再另发（分钟）
 DONE_SKIP_MINUTES = 15
 # 做完一件事后过多久发（秒）
 DONE_DELAY_SECONDS = 20
+# 同一顿饭截停又重排时，这么久内只叫一次
+MEAL_NOTIFY_GAP_MINUTES = 90
 # 排期时刻的随机偏移（分钟）：起床后、睡前、时段开始后
 MORNING_DELAY = (3, 15)
 NIGHT_LEAD = (5, 20)
@@ -123,6 +144,125 @@ def clean_line(text, limit: int) -> str:
     """压成一行，太长截断加省略号。"""
     value = " ".join(str(text or "").split())
     return value if len(value) <= limit else value[:limit] + "…"
+
+
+async def notify_done(planner, world, bots: list[str], now: datetime.datetime, meal_notified: dict) -> None:
+    """检查新开始 / 刚做完的段；由生活服务定期调用，具体怎么叫她仍交给 planner。"""
+    if not planner.enabled:
+        return
+    flat = now.replace(tzinfo=None)
+    flat_text = fmt_time(flat)
+    config = getattr(planner, "cfg", {}) or {}
+    try:
+        min_importance = max(1, min(int(config.get("proactive_done_min_importance", 4) or 4), 5))
+    except Exception:
+        min_importance = 4
+
+    def moment_kind(items: list, index: int) -> str:
+        item = items[index]
+        prev = items[index - 1] if index > 0 else None
+        here = item.get("at_home")
+        before = prev.get("at_home") if prev is not None else None
+        if before is True and here is False:
+            return "out"
+        if before is False and here is True:
+            return "back"
+        return "meal" if item.get("meal") and not item.get("idle") else ""
+
+    def worth_telling(bot: str, item: dict) -> bool:
+        if is_sleep(item) or item.get("idle"):
+            return False
+        score = int(item.get("importance") or 0)
+        if score < min_importance:
+            logger.info(
+                "[super_enhance/life] [%s] 做完「%s」：重要程度 %s，不到 %d，不叫她",
+                bot, str(item.get("doing") or "")[:20], score or "没打分", min_importance,
+            )
+            return False
+        return True
+
+    def intent_goes_on(bot: str, items: list, index: int, intent_id: str) -> bool:
+        later = list(items[index + 1:])
+        tomorrow = (flat.date() + datetime.timedelta(days=1)).isoformat()
+        later += [x for x in world.entries(tomorrow, bot) if not is_event(x)]
+        return any(
+            str(other.get("intent") or "") == intent_id and not other.get("stopped")
+            and ((parse_time(other.get("end")) if other.get("end") else None) is None
+                 or parse_time(other.get("end")) > flat)
+            for other in later
+        )
+
+    for bot in bots:
+        mark = parse_time(world.done_mark(bot))
+        if mark is None:
+            world.set_done_mark(bot, flat_text)
+            continue
+        finished = started = asked = intent = None
+        items = world.activities(bot, flat)
+        for index, item in enumerate(items):
+            start = parse_time(item.get("start"))
+            end = parse_time(item.get("end")) if item.get("end") else None
+            if start is not None and mark < start <= flat and (flat - start).total_seconds() <= 600:
+                kind = moment_kind(items, index)
+                if kind:
+                    started = (kind, item)
+            if start is None or end is None or not (mark < end <= flat):
+                continue
+            if item.get("stopped"):
+                continue
+            if item.get("intent") and intent_goes_on(bot, items, index, str(item.get("intent"))):
+                item = dict(item, intent="")
+            if item.get("intent"):
+                if world.drop_intention(str(item.get("intent")), bot):
+                    logger.info("[super_enhance/world] [%s] 打算 %s 做完了（%s），撤掉", bot, item.get("intent"),
+                                str(item.get("doing") or "")[:20])
+                else:
+                    item = dict(item, intent="")
+            if (flat - end).total_seconds() > 600:
+                continue
+            if item.get("asked"):
+                asked = item
+                continue
+            if item.get("intent"):
+                intent = item
+                continue
+            if (end - start).total_seconds() >= 600:
+                finished = item
+        if world.done_mark(bot) != flat_text:
+            world.set_done_mark(bot, flat_text)
+        if finished is not None and not worth_telling(bot, finished):
+            finished = None
+        if asked is not None:
+            try:
+                await planner.fire_done(bot, asked, now, kind="asked")
+            except Exception:
+                logger.warning("[super_enhance/life] 接下的事做完的主动对话没排上", exc_info=True)
+            continue
+        if intent is not None:
+            try:
+                await planner.fire_done(bot, intent, now, kind="intent")
+            except Exception:
+                logger.warning("[super_enhance/life] 打算做完的主动对话没排上", exc_info=True)
+            continue
+        if started is not None and started[0] == "meal":
+            last_meal = meal_notified.get(bot)
+            if last_meal is not None and flat - last_meal < datetime.timedelta(minutes=MEAL_NOTIFY_GAP_MINUTES):
+                logger.info("[super_enhance/life] [%s] 开饭「%s」：%s 已经叫过一次开饭，这次不叫",
+                            bot, str(started[1].get("doing") or "")[:20], last_meal.strftime("%H:%M"))
+                started = None
+            else:
+                meal_notified[bot] = flat
+        if started is not None:
+            try:
+                await planner.fire_done(bot, started[1], now, kind=started[0], prev=finished)
+            except Exception:
+                logger.warning("[super_enhance/life] 出门 / 到家 / 开饭的主动对话没排上", exc_info=True)
+            continue
+        if finished is not None:
+            try:
+                await planner.fire_done(bot, finished, now)
+            except Exception:
+                logger.warning("[super_enhance/life] 做完一件事的主动对话没排上", exc_info=True)
 
 
 def _parse_iso(text, tz) -> datetime.datetime | None:
@@ -237,27 +377,8 @@ class ProactivePlanner:
         for slot in self._plan(state, local_now, bot):
             meta = self._slot_meta(state, slot, bot)
             for target in targets:
-                name = "%s %s %s %s" % (
-                    JOB_PREFIX,
-                    state.date,
-                    minute_to_clock(slot["minute"] % 1440),
-                    target,
-                )
-                payload = {"session": target, "note": self.build_note(meta, slot["at"])}
-                payload.update(self._meta_payload(meta))
-                try:
-                    await cron.add_active_job(
-                        name=name,
-                        cron_expression=None,
-                        payload=payload,
-                        description="%s｜%s" % (slot["kind"], target),
-                        timezone=str(self.timezone),
-                        run_once=True,
-                        run_at=slot["at"],
-                    )
+                if await self._add_job(cron, meta, target, slot["at"]):
                     created += 1
-                except Exception as e:
-                    logger.warning("[super_enhance/life] 建立主动对话任务失败：%s", e)
         if created:
             logger.info(
                 "[super_enhance/life] [%s] 已为 %s 安排 %d 条主动对话",
@@ -267,35 +388,47 @@ class ProactivePlanner:
             )
         return created
 
-    async def _jobs_of(self, cron, bot: str, date_text: str = "") -> list:
-        """该机器人（某天）已排的任务。"""
+    async def _list_jobs(self, cron, *, bot: str = "", date_text: str = "", target: str = "", exclude: str = "") -> list:
+        """按机器人 / 日期 / 目标会话筛已排任务；全空就是本插件的全部任务。"""
         try:
             jobs = await cron.list_jobs("active_agent")
         except Exception:
             return []
         out = []
         for job in jobs or []:
+            if exclude and str(getattr(job, "job_id", "") or "") == exclude:
+                continue
             name = str(getattr(job, "name", "") or "")
             if not name.startswith(JOB_PREFIX):
                 continue
             if date_text and _job_date(name) != str(date_text):
                 continue
             payload = getattr(job, "payload", None) or {}
-            if bot_of_umo(str(payload.get("session") or "")) != bot:
+            session = str(payload.get("session") or "")
+            if bot and bot_of_umo(session) != bot:
+                continue
+            if target and session != target:
                 continue
             out.append(job)
         return out
 
-    async def _add_job(self, cron, meta: dict, target: str, at: datetime.datetime) -> bool:
+    async def _jobs_of(self, cron, bot: str, date_text: str = "") -> list:
+        """该机器人（某天）已排的任务。"""
+        return await self._list_jobs(cron, bot=bot, date_text=date_text)
+
+    async def _add_job(
+        self, cron, meta: dict, target: str, at: datetime.datetime, *,
+        payload: dict | None = None, description: str | None = None,
+    ) -> bool:
         name = "%s %s %s %s" % (JOB_PREFIX, meta["date"], at.strftime("%H:%M"), target)
-        payload = {"session": target, "note": self.build_note(meta, at)}
-        payload.update(self._meta_payload(meta))
+        body = dict(payload or {"session": target, "note": self.build_note(meta, at)})
+        body.update(self._meta_payload(meta))
         try:
             await cron.add_active_job(
                 name=name,
                 cron_expression=None,
-                payload=payload,
-                description="%s｜%s" % (meta["kind"], target),
+                payload=body,
+                description=description or "%s｜%s" % (meta["kind"], target),
                 timezone=str(self.timezone),
                 run_once=True,
                 run_at=at,
@@ -970,20 +1103,7 @@ class ProactivePlanner:
         return None
 
     async def _pending_jobs(self, cron, target: str, exclude: str) -> list:
-        try:
-            jobs = await cron.list_jobs("active_agent")
-        except Exception:
-            return []
-        out = []
-        for job in jobs or []:
-            if str(getattr(job, "job_id", "") or "") == exclude:
-                continue
-            if not str(getattr(job, "name", "") or "").startswith(JOB_PREFIX):
-                continue
-            payload = getattr(job, "payload", None) or {}
-            if str(payload.get("session") or "") == target:
-                out.append(job)
-        return out
+        return await self._list_jobs(cron, target=target, exclude=exclude)
 
     async def _postpone(self, cron, job, payload: dict, meta: dict, at_ts: float, busy_since: float) -> None:
         tz = self.timezone
@@ -1016,15 +1136,10 @@ class ProactivePlanner:
         new_payload = {k: v for k, v in payload.items() if k != "run_at"}
         meta = dict(meta, postponed=meta["postponed"] + 1)
         new_payload.update(self._meta_payload(meta))
-        name = "%s %s %s %s" % (JOB_PREFIX, meta["date"], at.strftime("%H:%M"), target)
-        await cron.add_active_job(
-            name=name,
-            cron_expression=None,
+        await self._add_job(
+            cron, meta, target, at,
             payload=new_payload,
             description=getattr(job, "description", None),
-            timezone=str(tz),
-            run_once=True,
-            run_at=at,
         )
         logger.info(
             "[super_enhance/life] [%s] 主动对话（%s，原定 %s）：%s 刚聊过，顺延到 %s",

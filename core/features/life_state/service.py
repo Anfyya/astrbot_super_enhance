@@ -41,7 +41,7 @@ from .ledger import (
     promise_with_for,
 )
 from . import training as training_calc
-from .proactive import ProactivePlanner, is_proactive_event
+from .proactive import ProactivePlanner, is_proactive_event, notify_done
 from .raw_log import RawMessageLog
 from .bots import BotRegistry
 from .variety import PoolStore, SeedLog
@@ -644,152 +644,16 @@ class LifeStateService:
             except Exception:
                 logger.warning("[super_enhance/life] 主动对话排期失败", exc_info=True)
 
-    @staticmethod
-    def _moment_kind(items: list, index: int) -> str:
-        """新的一段刚开始时算不算出门 / 到家 / 开饭：出门、到家看前后两段在不在宿舍；同时是开饭，算出门到家。"""
-        item = items[index]
-        prev = items[index - 1] if index > 0 else None
-        here = item.get("at_home")
-        before = prev.get("at_home") if prev is not None else None
-        if before is True and here is False:
-            return "out"
-        if before is False and here is True:
-            return "back"
-        if item.get("meal") and not item.get("idle"):
-            return "meal"
-        return ""
-
     async def _notify_done(self, now: datetime.datetime) -> None:
-        """世界线 live：到点叫她一次。新一段刚开始是出门、到家、开饭时叫；做完一件够分的事时叫（发不发她自己定）；
-        做完打算里的那件事时叫（一定发），并撤掉那条打算。"""
-        if not self.planner.enabled:
-            return
-        flat = now.replace(tzinfo=None)
-        for bot in self.enabled_bots():
-            mark = parse_time(self.world.done_mark(bot))
-            if mark is None:
-                # 头一回：从现在开始算，之前做完的不补发
-                self.world.set_done_mark(bot, fmt_time(flat))
-                continue
-            finished = None
-            started = None
-            asked = None
-            intent = None
-            items = self.world.activities(bot, flat)
-            for index, item in enumerate(items):
-                start = parse_time(item.get("start"))
-                end = parse_time(item.get("end")) if item.get("end") else None
-                if start is not None and mark < start <= flat and (flat - start).total_seconds() <= 600:
-                    moment = self._moment_kind(items, index)
-                    if moment:
-                        started = (moment, item)
-                if start is None or end is None or not (mark < end <= flat):
-                    continue
-                if item.get("stopped"):
-                    continue  # 做到一半被打断、到此为止的：不算做完
-                if item.get("intent") and self._intent_goes_on(bot, items, index, str(item.get("intent")), flat):
-                    # 同一件打算后面还有没做完的段：这一截只是其中一部分，先不撤、不叫
-                    item = dict(item, intent="")
-                if item.get("intent"):
-                    if self.world.drop_intention(str(item.get("intent")), bot):
-                        # 打算里的那件事做完了：这条打算撤掉
-                        logger.info("[super_enhance/world] [%s] 打算 %s 做完了（%s），撤掉", bot, item.get("intent"),
-                                    str(item.get("doing") or "")[:20])
-                    else:
-                        item = dict(item, intent="")  # 打算已经撤了（对话里说过做完了）：不再另叫
-                if (flat - end).total_seconds() > 600:
-                    continue  # 停机期间做完的，过了就过了
-                if item.get("asked"):
-                    asked = item  # 「现在去做」接下的事：多短都算，不看重要程度
-                    continue
-                if item.get("intent"):
-                    intent = item  # 打算里的那件事：多短都算，不看重要程度
-                    continue
-                if (end - start).total_seconds() < 600:
-                    continue  # 几分钟的小事不算「做完一件事」
-                finished = item
-            if parse_time(self.world.done_mark(bot)) != flat:
-                self.world.set_done_mark(bot, fmt_time(flat))
-            if finished is not None and not self._worth_telling(bot, finished):
-                finished = None
-            if asked is not None:
-                # 接下的事做完了：先叫这个，同一刻开始的出门、开饭就不另叫了
-                try:
-                    await self.planner.fire_done(bot, asked, now, kind="asked")
-                except Exception:
-                    logger.warning("[super_enhance/life] 接下的事做完的主动对话没排上", exc_info=True)
-                continue
-            if intent is not None:
-                # 打算做完了：一定跟主人说一声，同一刻开始的出门、开饭就不另叫了
-                try:
-                    await self.planner.fire_done(bot, intent, now, kind="intent")
-                except Exception:
-                    logger.warning("[super_enhance/life] 打算做完的主动对话没排上", exc_info=True)
-                continue
-            if started is not None and started[0] == "meal":
-                last_meal = self._meal_notified.get(bot)
-                if last_meal is not None and flat - last_meal < datetime.timedelta(minutes=MEAL_NOTIFY_GAP_MINUTES):
-                    logger.info("[super_enhance/life] [%s] 开饭「%s」：%s 已经叫过一次开饭，这次不叫",
-                                bot, str(started[1].get("doing") or "")[:20], last_meal.strftime("%H:%M"))
-                    started = None
-                else:
-                    self._meal_notified[bot] = flat
-            if started is not None:
-                # 出门、到家、开饭优先；同一刻做完的那件一起带上，不另叫
-                try:
-                    await self.planner.fire_done(bot, started[1], now, kind=started[0], prev=finished)
-                except Exception:
-                    logger.warning("[super_enhance/life] 出门 / 到家 / 开饭的主动对话没排上", exc_info=True)
-                continue
-            if finished is None:
-                continue
-            try:
-                await self.planner.fire_done(bot, finished, now)
-            except Exception:
-                logger.warning("[super_enhance/life] 做完一件事的主动对话没排上", exc_info=True)
+        """世界线 live：到点叫她一次；检测逻辑由主动消息模块负责。"""
+        await notify_done(self.planner, self.world, self.enabled_bots(), now, self._meal_notified)
 
-    def _intent_goes_on(self, bot: str, items: list, index: int, intent_id: str, flat: datetime.datetime) -> bool:
-        """同一件打算后面（今天、明天）还有没做完、没停下的段：做完的这一截只是其中一部分。"""
-        later = list(items[index + 1:])
-        tomorrow = (flat.date() + datetime.timedelta(days=1)).isoformat()
-        later += [x for x in self.world.entries(tomorrow, bot) if not is_event(x)]
-        for other in later:
-            if str(other.get("intent") or "") != intent_id or other.get("stopped"):
-                continue
-            end = parse_time(other.get("end")) if other.get("end") else None
-            if end is None or end > flat:
-                return True
-        return False
-
-    def _worth_telling(self, bot: str, item: dict) -> bool:
-        """做完的这件值不值得叫她跟主人说：睡觉、闲着不算；重要程度要够设置里的线。"""
-        if is_sleep(item):
-            return False  # 睡醒由早安那条管
-        if item.get("idle"):
-            return False  # 闲着到头不算做完一件事
-        need = self._done_min_importance()
-        score = int(item.get("importance") or 0)
-        if score < need:
-            logger.info(
-                "[super_enhance/life] [%s] 做完「%s」：重要程度 %s，不到 %d，不叫她",
-                bot, str(item.get("doing") or "")[:20], score or "没打分", need,
-            )
-            return False
-        return True
 
     async def _on_early(self, bot: str, umo: str, entry: dict, said: str, now) -> None:
         """记录员发现她把日程里后面才做的事说早了：live 下叫她给主人改口。"""
         if not self.planner.enabled:
             return
         await self.planner.fire_correct(bot, umo, entry, said, now)
-
-    def _done_min_importance(self) -> int:
-        """做完一件事要多重要（1–5）才叫她发主动消息。"""
-        try:
-            value = int(self.cfg.get("proactive_done_min_importance", 4) or 4)
-        except Exception:
-            value = 4
-        return max(1, min(value, 5))
 
     async def _settle_live(self, now: datetime.datetime) -> None:
         """世界线模式：每隔几分钟结一次账，练够时长当场算练成（不用等到 0 点）。"""
