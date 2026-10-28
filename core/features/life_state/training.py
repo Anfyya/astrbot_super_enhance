@@ -256,22 +256,6 @@ def _told_master(service, bot: str, since: datetime.datetime) -> bool:
                 return True
     return False
 
-def _training_label(service, entry) -> str:
-    """当前时段标着在练的事：给注入用的一行（已练成的说一声这段不用练了）。"""
-    if entry is None:
-        return ""
-    tid = tag_id(entry)
-    if not tid:
-        return ""
-    item = service.trainings.get(tid)
-    if item is None:
-        return ""
-    if item.get("status") == "done":
-        return "这段原本是练「%s」，这件事已经练成了。" % item.get("what")
-    if item.get("status") == "open":
-        return "这段在练：#%s %s" % (tid, item.get("what"))
-    return ""
-
 def _training_text(service, bot: str, now: datetime.datetime) -> str:
     """「【在练的事】」+「【刚练成】」两块。"""
     if not service.training_enabled:
@@ -280,30 +264,17 @@ def _training_text(service, bot: str, now: datetime.datetime) -> str:
     lines = []
     for item in service.trainings.open_for(bot):
         prog = service.training_progress(item, now)
-        if True:
-            # 世界线没有往后的日程，只说练了多少、还差多少
-            when = ""
-        elif prog.eta is not None:
-            when = "照今天的安排 %s 前后练够" % prog.eta.strftime("%H:%M")
-        elif prog.today_planned > 0:
-            when = "今天日程里还排着 %s 小时，练完还差 %s 小时" % (
-                fmt_hours(prog.today_planned),
-                fmt_hours(prog.left_minutes - prog.today_planned),
-            )
-        else:
-            when = "今天日程里没再排练这件事"
         parts = ["#%s %s" % (item.get("id"), item.get("what"))]
         if item.get("standard"):
             parts.append("练成的标准：%s" % item["standard"])
         if item.get("arrangement"):
             parts.append("怎么练：%s" % item["arrangement"])
         parts.append(
-            "一共要练约 %s 小时，已经练了 %s 小时，还差 %s 小时%s"
+            "一共要练约 %s 小时，已经练了 %s 小时，还差 %s 小时"
             % (
                 fmt_hours(prog.need_minutes),
                 fmt_hours(prog.done_minutes),
                 fmt_hours(prog.left_minutes),
-                "；" + when if when else "",
             )
         )
         lines.append("- " + "｜".join(parts))
