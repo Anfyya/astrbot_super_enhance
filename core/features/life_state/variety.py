@@ -18,22 +18,6 @@ from pathlib import Path
 
 from ...common import jsonio
 
-DAY_TOO_SIMILAR = 0.30
-SLOT_REPEAT = 0.35
-MAX_REPEAT_LINES = 8
-REPEAT_LINE_LEN = 50
-
-# 比较时剔除的高频词：名字、称呼和虚词，不剔除的话天天都「相似」
-_STOP_WORDS = sorted(
-    (
-        "本座", "吾辈", "主人", "亚托莉", "亚托利", "丛雨", "从雨", "她", "我", "自己", "一起",
-        "的", "了", "和", "在", "把", "去", "着", "又", "便", "后", "并", "也", "就",
-        "里", "到", "再", "说", "向", "给", "被", "让", "跟", "与",
-    ),
-    key=len,
-    reverse=True,
-)
-
 WEATHER_BY_SEASON = {
     "spring": ("晴", "多云", "春雨绵绵", "起风", "阴天", "回暖的大晴天"),
     "summer": ("晴热", "闷热", "雷阵雨", "午后暴雨", "多云", "傍晚起了凉风"),
@@ -567,95 +551,6 @@ SEED_KEEP_DAYS = 40
 WEATHER_KEEP = 0.5
 
 
-def _grams(text: str) -> set[str]:
-    value = str(text or "")
-    for word in _STOP_WORDS:
-        value = value.replace(word, " ")
-    out: set[str] = set()
-    for seg in re.sub(r"[^一-鿿]", " ", value).split():
-        for i in range(len(seg) - 1):
-            out.add(seg[i : i + 2])
-    return out
-
-
-def _jaccard(a: set[str], b: set[str]) -> float:
-    if not a or not b:
-        return 0.0
-    return len(a & b) / len(a | b)
-
-
-def _counts(entry) -> bool:
-    """练「在练的事」的时段每天都可以有，不算进防重复。"""
-    return not str((getattr(entry, "extras", None) or {}).get("training") or "").strip()
-
-
-def day_text(state) -> str:
-    return " ".join(str(e.schedule or "") for e in (state.timeline or []) if _counts(e))
-
-
-def day_similarity(a_state, b_state) -> float:
-    return _jaccard(_grams(day_text(a_state)), _grams(day_text(b_state)))
-
-
-def too_similar(new_state, recent_states) -> tuple[float, str]:
-    """新日程和最近几天里最像的那一天：(相似度, 日期)。"""
-    best, best_date = 0.0, ""
-    for old in recent_states or []:
-        value = day_similarity(new_state, old)
-        if value > best:
-            best, best_date = value, str(old.date)
-    return best, best_date
-
-
-def overlapping_slots(new_state, old_state, limit: int = 5) -> list[str]:
-    """新日程里和旧的那天某段很像的时段原句（重写时告诉模型哪些重复了）。"""
-    old = [_grams(e.schedule) for e in (old_state.timeline or [])[1:-1] if _counts(e)]
-    out = []
-    for entry in (new_state.timeline or [])[1:-1]:
-        if not _counts(entry):
-            continue
-        grams = _grams(entry.schedule)
-        if any(_jaccard(grams, g) >= SLOT_REPEAT for g in old):
-            text = str(entry.schedule or "").strip()
-            out.append(text if len(text) <= REPEAT_LINE_LEN else text[:REPEAT_LINE_LEN] + "…")
-        if len(out) >= limit:
-            break
-    return out
-
-
-def repeated_slots(states) -> list[str]:
-    """最近几天里反复出现的安排（和别的日子某段很像的时段），去重后返回原句。
-
-    第一段（起床道早安）和最后一段（睡前道晚安）是规定动作，不算重复。
-    """
-    slots = []
-    for state in states or []:
-        timeline = list(state.timeline or [])
-        for entry in timeline[1:-1]:
-            text = str(entry.schedule or "").strip()
-            if text and _counts(entry):
-                slots.append((str(state.date), text, _grams(text)))
-    hits = []
-    for date_text, text, grams in slots:
-        best = 0.0
-        for other_date, _other, other_grams in slots:
-            if other_date == date_text:
-                continue
-            best = max(best, _jaccard(grams, other_grams))
-        if best >= SLOT_REPEAT:
-            hits.append((best, text, grams))
-    picked: list[tuple[str, set]] = []
-    for _score, text, grams in sorted(hits, key=lambda x: -x[0]):
-        if any(_jaccard(grams, g) >= SLOT_REPEAT for _t, g in picked):
-            continue
-        picked.append((text, grams))
-        if len(picked) >= MAX_REPEAT_LINES:
-            break
-    return [
-        t if len(t) <= REPEAT_LINE_LEN else t[:REPEAT_LINE_LEN] + "…" for t, _g in picked
-    ]
-
-
 def _season(month: int) -> str:
     if month in (3, 4, 5):
         return "spring"
@@ -837,48 +732,6 @@ def draw_seed(
         "when": {t: w for t, w in when_map(pools).items()
                  if any(t in items for items in (*twists.values(), *night_twists.values(), together))},
     }
-
-
-def seed_text(seed: dict, labels: dict | None = None) -> str:
-    """把抽到的起点写成给模型看的那段「今日变化」。"""
-    labels = labels or {}
-    lines = [
-        "今日变化（系统随机给的起点，用来让每天不一样）：",
-        "- 天气：%s（几位角色在同一个镇子时天气一致）" % seed.get("weather"),
-        "- 今天的基调：%s" % seed.get("tone"),
-    ]
-    moods = seed.get("moods") or {}
-    if moods:
-        lines.append(
-            "- 各人今天的心情（自然地透在她今天的安排和状态里，时段的 mood 跟着它走、可以随当天的事起伏，"
-            "不用每段都点明）：%s"
-            % "；".join("%s：%s" % (labels.get(bot) or bot, mood) for bot, mood in moods.items())
-        )
-    names = [name for name in labels.values() if name]
-    if len(names) >= 2:
-        lines.append(
-            "- %s感情很好：不安排她们之间吵架、闹别扭、冷战或互相误会；心情不好、有小脾气，是冲着事情，不冲着对方。"
-            % "和".join(names)
-        )
-    per_bot, together = twists_of(seed)
-    flat = [x for items in per_bot.values() for x in items] + together
-    lines.append(
-        "- 可以用上的小插曲（挑一两件自然地融进去，不必全用）：%s" % "；".join(flat)
-    )
-    if seed.get("accident"):
-        lines.append(
-            "- 今天的意外（难得碰上一回，一定要写进去）：%s。落在谁身上、怎么收场由你定，"
-            "当天能收场，别写成大灾难" % seed["accident"]
-        )
-    return "\n".join(lines)
-
-
-def daily_seed(
-    date_text: str, rng: random.Random | None = None, prev_weather: str = ""
-) -> str:
-    """当天的随机起点（不带心情、不防重复的简单版）。"""
-    return seed_text(draw_seed(date_text, prev_weather=prev_weather, rng=rng))
-
 
 class SeedLog:
     """每天抽到的起点存一份（``daily_seeds.json``），之后几天抽的时候避开。"""

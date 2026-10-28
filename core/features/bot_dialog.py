@@ -81,13 +81,6 @@ def _record_moment(text: str, near: datetime.datetime) -> datetime.datetime | No
     return best
 
 
-def _body(text: str) -> str:
-    """去掉首行（带时间的那行），用于去重比较。"""
-    lines = str(text or "").split("\n")
-    if len(lines) > 1:
-        return "\n".join(lines[1:]).strip()
-    return str(text or "").strip()
-
 
 class BotDialogFeature:
     """给 bot↔bot 的连续来回加轮次提示、超限静默，并把来回写回主人会话。"""

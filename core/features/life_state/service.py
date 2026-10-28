@@ -85,50 +85,6 @@ PROACTIVE_VOICE_NOTE = "（主动找主人的时候，说你这会儿想跟他�
 REPORT_KINDS = ("asked", "intent")
 # 当天约定过了这么多分钟还没关，就在注入里标「时间已过」
 PROMISE_OVERDUE_MINUTES = 120
-
-def parse_promise_date(text: str) -> datetime.date:
-    """约定日期只收绝对日期 YYYY-MM-DD；今天/明天/周五这类相对说法一律拒收。"""
-    raw = re.sub(r"\s+", "", str(text or ""))
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
-        raise ValueError(
-            "日期要写成 2026-10-05 这样的绝对日期（年-月-日），按对话里的当前日期自己算好再填，"
-            "不要写今天、明天、周五这类说法：%s" % (text or "（空）")
-        )
-    try:
-        return datetime.date.fromisoformat(raw)
-    except ValueError:
-        raise ValueError("没有这一天：%s" % text) from None
-
-
-def parse_promise_time(text: str) -> str:
-    """约定时间只收 24 小时制 HH:MM；没定具体时间传空串。"""
-    raw = re.sub(r"\s+", "", str(text or "")).replace("：", ":")
-    if not raw:
-        return ""
-    m = re.fullmatch(r"(\d{1,2}):(\d{2})", raw)
-    if not m or not (0 <= int(m.group(1)) <= 23 and 0 <= int(m.group(2)) <= 59):
-        raise ValueError(
-            "时间要写成 24 小时制的 14:00、20:30 这样，不要写下午、傍晚这类说法；"
-            "没定具体时间就留空：%s" % text
-        )
-    return "%02d:%02d" % (int(m.group(1)), int(m.group(2)))
-DAILY_HOUR = 0
-DAILY_MINUTE = 0
-
-
-def _command_tail(message: str, command: str) -> str | None:
-    """取命令后面的完整尾随文本（用于 /dls regen 的附加要求）。"""
-    text = re.sub(r"\s+", " ", str(message or "").lstrip("/").strip())
-    for prefix in (command + " ", command):
-        idx = text.find(prefix)
-        if idx == -1:
-            continue
-        tail = text[idx + len(prefix) :].strip()
-        if tail:
-            return tail
-    return None
-
-
 class _PlannerStateView:
     """主动对话读状态用：live 下从世界线合成一份，其余照旧读日程。"""
 

@@ -200,19 +200,6 @@ def promise_with_for(item: dict, bot: str, label_fn) -> str:
     return "、".join(dict.fromkeys(n for n in names if n))
 
 
-def promise_participants(item: dict, label_fn) -> str:
-    """约定里所有参与的人：几位角色 + 点了名的主人（不分视角，给生成日程的提示词用）。"""
-    names = []
-    for bot in item.get("bots") or []:
-        try:
-            names.append(str(label_fn(bot)) if label_fn else str(bot))
-        except Exception:
-            names.append(str(bot))
-    if "主人" in str(item.get("with") or ""):
-        names.append("主人")
-    return "、".join(dict.fromkeys(n for n in names if n))
-
-
 class PromiseBook(_JsonBook):
     """对话里答应下来的事。一条约定可以同时属于几个角色（bots）。"""
 
