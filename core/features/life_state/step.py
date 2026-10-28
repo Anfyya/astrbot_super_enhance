@@ -11,9 +11,10 @@
 
 import asyncio
 import datetime
-import json
 
 from astrbot.api import logger
+
+from ...common import jsonio
 
 from .models import extract_json, profile_umo_for_bot
 from .recorder import norm_time
@@ -258,7 +259,7 @@ class LifeStep:
         """网页「世界线」页里填的补写注意事项，一行一条；只有补写的提示词会带。"""
         text = ""
         try:
-            data = json.loads((self.world.root / "step_notes.json").read_text(encoding="utf-8"))
+            data = jsonio.load(self.world.root / "step_notes.json", {})
             text = str((data or {}).get("text") or "").strip()
         except Exception:
             text = ""
@@ -1010,7 +1011,7 @@ class LifeStep:
             path = self.world.root / "step_thoughts.json"
             items = []
             if path.exists():
-                data = json.loads(path.read_text(encoding="utf-8"))
+                data = jsonio.load(path, [])
                 if isinstance(data, list):
                     items = data
             items.append({
@@ -1019,7 +1020,7 @@ class LifeStep:
                 "note": str(note or "")[:120],
                 "thought": str(thought or "")[:8000],
             })
-            path.write_text(json.dumps(items[-8:], ensure_ascii=False, indent=1), encoding="utf-8")
+            jsonio.save(path, items[-8:], indent=1)
         except Exception:
             logger.warning("[super_enhance/world] 补写思考存档失败", exc_info=True)
 

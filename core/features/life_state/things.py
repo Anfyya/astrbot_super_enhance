@@ -29,11 +29,12 @@ import copy
 import datetime
 import json
 import math
-import os
 import re
 from pathlib import Path
 
 from astrbot.api import logger
+
+from ...common import jsonio
 
 from .food import (DEFAULT_KEEP, DEFAULT_SHIFT, DEFAULT_SPOT, DEFAULT_STATE, KEEPS, MONTH_TEMP, PROCESS_STEPS, SLICE_MINUTES,
                    SPOTS, STATES, WEATHER_SHIFT, SpaceIndex, month_temp, norm_keep, norm_spot, norm_state, room_temp,
@@ -692,21 +693,14 @@ class ThingStore:
     def _load(self) -> dict:
         if self._data is None:
             data = {"version": 1, "seq": 0, "items": [], "settled": {}, "alias": {}}
-            if self.path.exists():
-                try:
-                    raw = json.loads(self.path.read_text(encoding="utf-8"))
-                    if isinstance(raw, dict):
-                        data.update(raw)
-                except Exception as e:
-                    logger.error("[super_enhance/things] 读取 %s 失败：%s", self.path.name, e)
+            raw = jsonio.load(self.path, None)
+            if isinstance(raw, dict):
+                data.update(raw)
             self._data = data
         return self._data
 
     def _save(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        temp = self.path.with_name(self.path.name + ".tmp")
-        temp.write_text(json.dumps(self._load(), ensure_ascii=False, indent=1), encoding="utf-8")
-        os.replace(temp, self.path)
+        jsonio.save(self.path, self._load(), indent=1)
 
     def get(self, thing_id) -> dict | None:
         """存下来的那件（不算世界线现算的）。"""

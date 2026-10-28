@@ -26,7 +26,7 @@ from pathlib import Path
 
 from astrbot.api import logger
 
-from ..common import timeutil
+from ..common import jsonio, timeutil
 from astrbot.core.message.components import Node, Plain
 
 from .message_text import strip_inline_system
@@ -619,18 +619,15 @@ class CompactV2:
         stamp = self._now().strftime("%Y%m%d-%H%M%S")
         backup = backup_dir / ("%s.json" % stamp)
         try:
-            backup.write_text(
-                json.dumps(
-                    {
-                        "umo": umo, "cid": cid, "created": stamp,
-                        "history": history,
-                        "token_usage": int(getattr(conv, "token_usage", 0) or 0),
-                        "written_len": len(new_history),
-                        "written_fp": _fingerprint(new_history),
-                    },
-                    ensure_ascii=False,
-                ),
-                encoding="utf-8",
+            jsonio.save(
+                backup,
+                {
+                    "umo": umo, "cid": cid, "created": stamp,
+                    "history": history,
+                    "token_usage": int(getattr(conv, "token_usage", 0) or 0),
+                    "written_len": len(new_history),
+                    "written_fp": _fingerprint(new_history),
+                },
             )
         except Exception as e:
             logger.error("[super_enhance/compact_v2] 备份失败", exc_info=True)
@@ -697,7 +694,7 @@ class CompactV2:
             return
         path = files[-1]
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = jsonio.load(path, {})
         except Exception as e:
             yield event.plain_result("备份 %s 读不出来：%s" % (path.name, e))
             return

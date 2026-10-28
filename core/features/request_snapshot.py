@@ -16,6 +16,8 @@ from typing import Any
 
 from astrbot.api import logger
 
+from ..common import jsonio
+
 SNAPSHOT_DIR_NAME = "request_snapshots"
 INDEX_NAME = "index.json"
 
@@ -132,10 +134,7 @@ class RequestSnapshotStore:
 
     # ------------------------------------------------------------------ 读
     def _load_index(self) -> list[dict]:
-        try:
-            raw = json.loads(self.index_path.read_text(encoding="utf-8"))
-        except Exception:
-            return []
+        raw = jsonio.load(self.index_path, None)
         items = raw.get("items") if isinstance(raw, dict) else raw
         return [it for it in (items or []) if isinstance(it, dict)]
 
@@ -156,7 +155,7 @@ class RequestSnapshotStore:
         if not path.is_file():
             return None
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
+            return jsonio.load(path, None)
         except Exception as exc:  # noqa: BLE001
             logger.warning("[super_enhance/snap] 读取快照失败 %s: %s", name, exc)
             return None
@@ -168,7 +167,7 @@ class RequestSnapshotStore:
         umo = _SAFE_RE.sub("_", str(snapshot.get("umo") or "unknown"))[:60]
         name = "req_%d__%s.json" % (ts_ms, umo)
         body = json.dumps(snapshot, ensure_ascii=False, default=str)
-        (self.dir / name).write_text(body, encoding="utf-8")
+        jsonio.save(self.dir / name, snapshot, default=str)
 
         items = self._load_index()
         items = [it for it in items if it.get("id") != name]
@@ -202,9 +201,7 @@ class RequestSnapshotStore:
             keep.append(item)
             total += size
         try:
-            self.index_path.write_text(
-                json.dumps({"items": keep}, ensure_ascii=False), encoding="utf-8"
-            )
+            jsonio.save(self.index_path, {"items": keep})
         except Exception as exc:  # noqa: BLE001
             logger.warning("[super_enhance/snap] 写索引失败: %s", exc)
         # 兜底：清掉不在索引里的旧文件

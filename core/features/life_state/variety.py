@@ -12,11 +12,11 @@
 
 import collections
 import datetime
-import json
-import os
 import random
 import re
 from pathlib import Path
+
+from ...common import jsonio
 
 DAY_TOO_SIMILAR = 0.30
 SLOT_REPEAT = 0.35
@@ -485,16 +485,13 @@ class PoolStore:
         if not self.path.exists():
             return default_pools()
         try:
-            return normalize_pools(json.loads(self.path.read_text(encoding="utf-8")))
+            return normalize_pools(jsonio.load(self.path, {}))
         except Exception:
             return default_pools()
 
     def save(self, pools: dict) -> None:
         data = {kind: list(pools.get(kind) or []) for kind in POOL_KINDS}
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        temp = self.path.with_name(self.path.name + ".tmp")
-        temp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
-        os.replace(temp, self.path)
+        jsonio.save(self.path, data, indent=1)
 
     def reset(self) -> None:
         if self.path.exists():
@@ -885,7 +882,7 @@ class SeedLog:
     def load(self) -> dict:
         if not self.path.exists():
             return {}
-        data = json.loads(self.path.read_text(encoding="utf-8"))
+        data = jsonio.load(self.path, {})
         return data if isinstance(data, dict) else {}
 
     def save(self, date_text: str, seed: dict) -> None:
@@ -896,7 +893,4 @@ class SeedLog:
         record["moods"] = {**(old.get("moods") or {}), **(seed.get("moods") or {})}
         data[date_text] = record
         data = {day: data[day] for day in sorted(data)[-SEED_KEEP_DAYS:]}
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        temp = self.path.with_name(self.path.name + ".tmp")
-        temp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
-        os.replace(temp, self.path)
+        jsonio.save(self.path, data, indent=1)

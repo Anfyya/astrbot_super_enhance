@@ -12,7 +12,7 @@ from astrbot.core.message.components import Node, Plain
 from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.platform.message_type import MessageType
 
-from ...common import timeutil
+from ...common import jsonio, timeutil
 
 from .injector import (
     as_context_part,
@@ -288,7 +288,7 @@ class LifeStateService:
     def step_notes_text(self) -> str:
         """读补写注意事项（网页上填的）。"""
         try:
-            data = json.loads((self.data_dir / self.STEP_NOTES_NAME).read_text(encoding="utf-8"))
+            data = jsonio.load(self.data_dir / self.STEP_NOTES_NAME, {})
             return str((data or {}).get("text") or "")
         except Exception:
             return ""
@@ -296,10 +296,7 @@ class LifeStateService:
     def set_step_notes(self, text: str) -> bool:
         """写补写注意事项（网页「世界线」页保存按钮）。"""
         try:
-            (self.data_dir / self.STEP_NOTES_NAME).write_text(
-                json.dumps({"text": str(text or "")}, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
+            jsonio.save(self.data_dir / self.STEP_NOTES_NAME, {"text": str(text or "")}, indent=2)
             logger.info("[super_enhance/life] 补写注意事项已更新（%d 字）", len(str(text or "")))
             return True
         except Exception:
@@ -311,7 +308,7 @@ class LifeStateService:
     def step_thoughts(self, limit: int = 3) -> list:
         """最近几次补写的思考（网页「世界线」页展示的话）。"""
         try:
-            data = json.loads((self.data_dir / self.STEP_THOUGHTS_NAME).read_text(encoding="utf-8"))
+            data = jsonio.load(self.data_dir / self.STEP_THOUGHTS_NAME, [])
             items = data if isinstance(data, list) else []
             return [x for x in reversed(items[-max(1, int(limit or 3)):]) if isinstance(x, dict)]
         except Exception:

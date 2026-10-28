@@ -22,13 +22,14 @@ import asyncio
 import base64
 import datetime
 import io
-import json
 import re
 import time
 from pathlib import Path
 
 from astrbot.api import logger
 from astrbot.api.event import MessageChain
+
+from ..common import jsonio
 
 SIZE_RE = re.compile(r"^\s*(\d{2,5})\s*[xX*×]\s*(\d{2,5})\s*$")
 RATIO_RE = re.compile(r"^\s*(\d{1,2})\s*[:：]\s*(\d{1,2})\s*$")
@@ -158,7 +159,7 @@ class ImageGenFeature:
 
     def _load_index(self) -> dict:
         try:
-            data = json.loads((self.dir / "index.json").read_text(encoding="utf-8"))
+            data = jsonio.load(self.dir / "index.json", {})
             if isinstance(data, dict) and isinstance(data.get("items"), dict):
                 return data
         except Exception:
@@ -166,11 +167,8 @@ class ImageGenFeature:
         return {"seq": 0, "items": {}}
 
     def _save_index(self, index: dict) -> None:
-        self.dir.mkdir(parents=True, exist_ok=True)
         path = self.dir / "index.json"
-        tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(index, ensure_ascii=False, indent=1), encoding="utf-8")
-        tmp.replace(path)
+        jsonio.save(path, index, indent=1)
 
     @staticmethod
     def _latest(index: dict, bot: str) -> str:

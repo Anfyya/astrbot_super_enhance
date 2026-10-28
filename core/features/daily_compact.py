@@ -10,12 +10,11 @@
 
 import asyncio
 import datetime
-import json
 from pathlib import Path
 
 from astrbot.api import logger
 
-from ..common import timeutil
+from ..common import jsonio, timeutil
 
 START_DELAY_SECONDS = 90
 RETRY_SECONDS = 15 * 60
@@ -45,16 +44,12 @@ class DailyCompact:
         return str(self.config.get("v2_daily_keep") or "12m").strip() or "12m"
 
     def _load(self) -> dict:
-        try:
-            return json.loads(self.path.read_text(encoding="utf-8")) if self.path and self.path.exists() else {}
-        except Exception:
-            return {}
+        return jsonio.load(self.path, {}) if self.path else {}
 
     def _save(self, state: dict) -> None:
         if self.path is None:
             return
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
+        jsonio.save(self.path, state, indent=1)
 
     def start(self) -> None:
         if not self.enabled or not self.sessions:

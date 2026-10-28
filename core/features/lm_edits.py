@@ -25,6 +25,8 @@ from pathlib import Path
 
 from astrbot.api import logger
 
+from ..common import jsonio
+
 FILE_NAME = "pending_memory_edits.json"
 LM_DIR_NAME = "astrbot_plugin_livingmemory"
 WAIT_SECONDS = 600
@@ -112,7 +114,7 @@ class MemoryEditRunner:
 
     async def run(self) -> None:
         try:
-            plan = json.loads(self.path.read_text(encoding="utf-8"))
+            plan = jsonio.load(self.path, {})
         except Exception:
             logger.error("[super_enhance/lm_edits] 待改清单读不了，这次不改", exc_info=True)
             return
@@ -138,10 +140,7 @@ class MemoryEditRunner:
         stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
         done = self.path.with_name("pending_memory_edits.done-%s.json" % stamp)
         try:
-            done.write_text(
-                json.dumps({"plan": plan, "results": results}, ensure_ascii=False, indent=1),
-                encoding="utf-8",
-            )
+            jsonio.save(done, {"plan": plan, "results": results}, indent=1)
             self.path.unlink()
         except Exception:
             logger.error("[super_enhance/lm_edits] 结果写盘失败", exc_info=True)

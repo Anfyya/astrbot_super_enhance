@@ -26,14 +26,12 @@
 
 import datetime
 import hashlib
-import json
-import os
 import random
 import re
 from pathlib import Path
 from astrbot.api import logger
 
-from ...common import timeutil
+from ...common import jsonio, timeutil
 
 FOLDER = "world"
 STATE_NAME = "world_state.json"
@@ -113,22 +111,11 @@ class WorldStore:
 
     @staticmethod
     def _write_json(path: Path, data: dict) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temp = path.with_name(path.name + ".tmp")
-        temp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-        os.replace(temp, path)
+        jsonio.save(path, data, indent=2)
 
     @staticmethod
     def _read_json(path: Path, blank: dict) -> dict:
-        data = json.loads(json.dumps(blank))
-        if path.exists():
-            try:
-                raw = json.loads(path.read_text(encoding="utf-8"))
-                if isinstance(raw, dict):
-                    data.update(raw)
-            except Exception as e:
-                logger.error("[super_enhance/world] 读取 %s 失败：%s", path.name, e)
-        return data
+        return jsonio.load_object(path, blank, merge=True)
 
     def _load_state(self) -> dict:
         if self._state is None:

@@ -12,13 +12,11 @@
 """
 
 import datetime
-import json
-import os
 import re
 from pathlib import Path
 from astrbot.api import logger
 
-from ...common import timeutil
+from ...common import jsonio, timeutil
 
 MAX_ABILITIES = 40
 MAX_ABILITY_LEN = 120
@@ -72,23 +70,11 @@ class _JsonBook:
     def _load(self) -> dict:
         if self._data is not None:
             return self._data
-        data = json.loads(json.dumps(self._blank))
-        if self.path.exists():
-            try:
-                raw = json.loads(self.path.read_text(encoding="utf-8"))
-                if isinstance(raw, dict):
-                    data.update(raw)
-            except Exception as e:
-                logger.error("[super_enhance/life] 读取 %s 失败：%s", self.path.name, e)
-        self._data = data
-        return data
+        self._data = jsonio.load_object(self.path, self._blank, merge=True)
+        return self._data
 
     def _save(self) -> None:
-        data = self._load()
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        temp = self.path.with_name(self.path.name + ".tmp")
-        temp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-        os.replace(temp, self.path)
+        jsonio.save(self.path, self._load(), indent=2)
 
     def _next_id(self) -> int:
         data = self._load()
