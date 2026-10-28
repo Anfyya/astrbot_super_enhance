@@ -6076,36 +6076,68 @@
     }
   }
 
-  function drawThingList() {
-    var card = $("thingsList");
+  function drawDataList() {
+    var objectMode = S.thingsCat === "item";
+    var card = $(objectMode ? "objList" : "thingsList");
     if (!card || !S.things) { return; }
     clear(card);
-    if (S.tEdit["new"]) { card.appendChild(thingNewForm(S.things)); }
-    var q = String(S.thingsQ || "").trim().toLowerCase();
-    if (S.thingsFilter === "future") { card.appendChild(futureRows("food", q)); return; }
-    var list = (S.things.items || []).filter(function (x) {
-      if (S.thingsFilter === "now" && x.ended) { return false; }
-      if (S.thingsFilter === "gone" && !x.ended) { return false; }
+    if (S.tEdit[objectMode ? "onew" : "new"]) { card.appendChild(objectMode ? objNewForm(S.things) : thingNewForm(S.things)); }
+    var q = String((objectMode ? S.objQ : S.thingsQ) || "").trim().toLowerCase();
+    var filter = objectMode ? S.objFilter : S.thingsFilter;
+    if (filter === "future") { card.appendChild(futureRows(objectMode ? "item" : "food", q)); return; }
+    var source = (objectMode ? S.things.objects : S.things.items) || [];
+    var list = source.filter(function (x) {
+      if (filter === "now" && x.ended) { return false; }
+      if (filter === "gone" && !x.ended) { return false; }
       if (!q) { return true; }
-      return [x.id, x.name, x.kind, x.origin, x.place].join(" ").toLowerCase().indexOf(q) >= 0;
-    });
-    list.sort(function (a, b) {
-      var r = thingRank(a) - thingRank(b);
-      if (r) { return r; }
-      if (a.ended && b.ended) { return String(b.ended.at).localeCompare(String(a.ended.at)); }
-      var ba = a.fresh.bad_at || "9999", bb = b.fresh.bad_at || "9999";
-      return ba === bb ? String(a.created).localeCompare(String(b.created)) : ba.localeCompare(bb);
+      var fields = objectMode
+        ? [x.id, x.name, x.kind, x.look, x.origin, x.place, x.holder_label, x.state, x.owner_label]
+        : [x.id, x.name, x.kind, x.origin, x.place];
+      return fields.join(" ").toLowerCase().indexOf(q) >= 0;
     });
     var rows = h("div", { class: "lrows" });
     if (!list.length) {
-      var empty = !(S.things.items || []).length;
+      var empty = !source.length;
       rows.appendChild(h("div", { class: "muted", style: "font-size:13px;line-height:1.7", text: empty
-        ? "家里还没有记着的吃的。聊天里说买了、收到了、做好了，记录员会记下来；补写在世界线里排的买菜、做饭，那一段做完也会算进来。也可以点右上角「加一件」手动记。"
-        : (q ? "没有对得上的。" : S.thingsFilter === "gone" ? "还没有吃完、用完的。" : "家里现在没有了，都吃完用完了。") }));
+        ? (objectMode
+          ? "家里还没记着别的东西。聊天里说买了、收到了、做好了、挪了、交给谁了，记录员会记下来；补写在世界线里排的做手工、收拾东西，那一段做完也会算进来。也可以点右上角「加一件」手动记。"
+          : "家里还没有记着的吃的。聊天里说买了、收到了、做好了，记录员会记下来；补写在世界线里排的买菜、做饭，那一段做完也会算进来。也可以点右上角「加一件」手动记。")
+        : (q ? "没有对得上的。" : filter === "gone"
+          ? (objectMode ? "还没有送走、丢掉、用完的。" : "还没有吃完、用完的。")
+          : (objectMode ? "家里现在没有了。" : "家里现在没有了，都吃完用完了。")) }));
+      card.appendChild(rows);
+      return;
     }
-    list.forEach(function (it) { rows.appendChild(thingRow(it)); });
+    if (objectMode) {
+      var groups = {}, order = [];
+      list.forEach(function (x) {
+        var k = objKind(x);
+        if (!groups[k]) { groups[k] = []; order.push(k); }
+        groups[k].push(x);
+      });
+      var multi = order.filter(function (k) { return groups[k].length > 1; }).sort();
+      var single = order.filter(function (k) { return groups[k].length === 1; });
+      multi.forEach(function (k) {
+        rows.appendChild(h("div", { class: "ogroup" }, h("span", { class: "tag warn", text: "长得像" }),
+          h("span", { text: "「" + k + "」" + groups[k].length + " 件，认准编号" })));
+        groups[k].forEach(function (it) { rows.appendChild(objRow(it)); });
+      });
+      if (single.length && multi.length) { rows.appendChild(h("div", { class: "ogroup", text: "别的" })); }
+      single.forEach(function (k) { rows.appendChild(objRow(groups[k][0])); });
+    } else {
+      list.sort(function (a, b) {
+        var r = thingRank(a) - thingRank(b);
+        if (r) { return r; }
+        if (a.ended && b.ended) { return String(b.ended.at).localeCompare(String(a.ended.at)); }
+        var ba = a.fresh.bad_at || "9999", bb = b.fresh.bad_at || "9999";
+        return ba === bb ? String(a.created).localeCompare(String(b.created)) : ba.localeCompare(bb);
+      });
+      list.forEach(function (it) { rows.appendChild(thingRow(it)); });
+    }
     card.appendChild(rows);
   }
+
+  function drawThingList() { return drawDataList(); }
 
   /* ---------- 未来：世界线里还没做完的段要添的（要买回来、要做好的……） ---------- */
   // 编号是补写 / 网页先发好的，那一段做完才算进下面的清单。吃的在这里能改：改的就是世界线那一段（两边同一份），存了那段算手动
@@ -6705,45 +6737,7 @@
   }
 
   // 同一种东西（kind 一样）有好几件的先列，组头提醒认准编号；只有一件的列在后面
-  function drawObjList() {
-    var card = $("objList");
-    if (!card || !S.things) { return; }
-    clear(card);
-    if (S.tEdit["onew"]) { card.appendChild(objNewForm(S.things)); }
-    var q = String(S.objQ || "").trim().toLowerCase();
-    if (S.objFilter === "future") { card.appendChild(futureRows("item", q)); return; }
-    var list = (S.things.objects || []).filter(function (x) {
-      if (S.objFilter === "now" && x.ended) { return false; }
-      if (S.objFilter === "gone" && !x.ended) { return false; }
-      if (!q) { return true; }
-      return [x.id, x.name, x.kind, x.look, x.origin, x.place, x.holder_label, x.state, x.owner_label].join(" ").toLowerCase().indexOf(q) >= 0;
-    });
-    var rows = h("div", { class: "lrows" });
-    if (!list.length) {
-      var empty = !(S.things.objects || []).length;
-      rows.appendChild(h("div", { class: "muted", style: "font-size:13px;line-height:1.7", text: empty
-        ? "家里还没记着别的东西。聊天里说买了、收到了、做好了、挪了、交给谁了，记录员会记下来；补写在世界线里排的做手工、收拾东西，那一段做完也会算进来。也可以点右上角「加一件」手动记。"
-        : (q ? "没有对得上的。" : S.objFilter === "gone" ? "还没有送走、丢掉、用完的。" : "家里现在没有了。") }));
-      card.appendChild(rows);
-      return;
-    }
-    var groups = {}, order = [];
-    list.forEach(function (x) {
-      var k = objKind(x);
-      if (!groups[k]) { groups[k] = []; order.push(k); }
-      groups[k].push(x);
-    });
-    var multi = order.filter(function (k) { return groups[k].length > 1; }).sort();
-    var single = order.filter(function (k) { return groups[k].length === 1; });
-    multi.forEach(function (k) {
-      rows.appendChild(h("div", { class: "ogroup" }, h("span", { class: "tag warn", text: "长得像" }),
-        h("span", { text: "「" + k + "」" + groups[k].length + " 件，认准编号" })));
-      groups[k].forEach(function (it) { rows.appendChild(objRow(it)); });
-    });
-    if (single.length && multi.length) { rows.appendChild(h("div", { class: "ogroup", text: "别的" })); }
-    single.forEach(function (k) { rows.appendChild(objRow(groups[k][0])); });
-    card.appendChild(rows);
-  }
+  function drawObjList() { return drawDataList(); }
 
   function thingRow(it) {
     var tone = thingTone(it);
