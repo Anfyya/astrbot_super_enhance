@@ -684,11 +684,32 @@ class Recorder:
         state = self.batch = RecorderBatch(
             keep={str(x.get("entry") or "").strip() for x in data.get("early") or [] if isinstance(x, dict)}
         )
-        records = []
         # 先定对不上的那几段怎么收场（收尾、做完、交接要几分钟），再记这次的新条目：免得新条目先把手上的事一刀截断
         self._collect_early(data.get("early") or [], umo, items, now)
-        free_at = state.free_at = self._apply_stale(data.get("stale") or [], data.get("early") or [], now)
-        for raw in data.get("entries") or []:
+        state.free_at = self._apply_stale(data.get("stale") or [], data.get("early") or [], now)
+        self._apply_entries(data.get("entries") or [], umo, now, items, bots, state.free_at, flat_now)
+        if batch and not any(str(x.get("role") or "") == "user" for x in batch):
+            # 这批全是她主动发的、主人一句没说：规矩和打算都不可能从这里来（主动消息里的不记）
+            if data.get("constraints") or data.get("intentions"):
+                logger.info("[super_enhance/world] 这批只有她主动发的消息，丢掉记录员给的 %d 条规矩、%d 条打算",
+                            len(data.get("constraints") or []), len(data.get("intentions") or []))
+            data = dict(data, constraints=[], intentions=[])
+        self._apply_constraints(data, umo, now, batch)
+        self._apply_intentions(data, umo, now, bots, flat_now)
+        self._apply_promises(data.get("promises") or [], now, umo)
+        self._apply_trainings(data.get("trainings") or [], now)
+        self._apply_abilities(data.get("abilities") or [], now)
+        self._apply_things(data.get("things") or [], umo, batch, now)
+        self._apply_things(data.get("items") or [], umo, batch, now, cat=CAT_ITEM)
+        # 改到了谁的现在：她后面补写排的全撤掉，补写从头排；最后核对两人「一起」对得上
+        for who, since in sorted(state.touched.items()):
+            self._redo_after(who, since, now)
+        self._unpair(now)
+
+    def _apply_entries(self, raws, umo: str, now: datetime.datetime, items, bots: set,
+                       free_at: dict, flat_now: datetime.datetime) -> None:
+        records = []
+        for raw in raws:
             if not isinstance(raw, dict):
                 continue
             who = str(raw.get("who") or "").strip()
@@ -754,12 +775,8 @@ class Recorder:
                     self._touch(who, parse_time(record.get("start")))
         # 记录员写了她和对方一起、却只给她记了：两人本来就在一起的，给对方也记上
         self._pair_up(records, umo, now)
-        if batch and not any(str(x.get("role") or "") == "user" for x in batch):
-            # 这批全是她主动发的、主人一句没说：规矩和打算都不可能从这里来（主动消息里的不记）
-            if data.get("constraints") or data.get("intentions"):
-                logger.info("[super_enhance/world] 这批只有她主动发的消息，丢掉记录员给的 %d 条规矩、%d 条打算",
-                            len(data.get("constraints") or []), len(data.get("intentions") or []))
-            data = dict(data, constraints=[], intentions=[])
+
+    def _apply_constraints(self, data: dict, umo: str, now: datetime.datetime, batch: list) -> None:
         for raw in data.get("constraints") or []:
             if not isinstance(raw, dict):
                 continue
@@ -780,6 +797,9 @@ class Recorder:
             })
         for cid in data.get("lift_constraints") or []:
             self.world.lift_constraint(str(cid), note="对话里解除")
+
+    def _apply_intentions(self, data: dict, umo: str, now: datetime.datetime, bots: set,
+                          flat_now: datetime.datetime) -> None:
         # 先撤掉过时的打算（按编号），再记这次新说的
         for token in data.get("drop_intentions") or []:
             token = str(token or "").strip()
@@ -813,15 +833,6 @@ class Recorder:
                     self._go_now(record, now)
                 else:
                     self._make_room(record, now)
-        self._apply_promises(data.get("promises") or [], now, umo)
-        self._apply_trainings(data.get("trainings") or [], now)
-        self._apply_abilities(data.get("abilities") or [], now)
-        self._apply_things(data.get("things") or [], umo, batch, now)
-        self._apply_things(data.get("items") or [], umo, batch, now, cat=CAT_ITEM)
-        # 改到了谁的现在：她后面补写排的全撤掉，补写从头排；最后核对两人「一起」对得上
-        for who, since in sorted(state.touched.items()):
-            self._redo_after(who, since, now)
-        self._unpair(now)
 
     def _collect_early(self, raws, umo: str, items, now: datetime.datetime) -> None:
         """记录员标出的「说早了」：核对那段确实在这批消息之后才排着，攒起来等 run 里叫她改口。"""
