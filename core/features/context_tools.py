@@ -7,14 +7,13 @@ import time
 from astrbot.api import logger
 from astrbot.core.agent.context.token_counter import EstimateTokenCounter
 
+from ..common import text as text_utils
 from .compact_v2 import CompactV2
 
 COMPRESS_THRESHOLD = 0.82
 
-_STAMP_RE = re.compile(r"Current datetime:\s*(\d{4})-(\d{2})-(\d{2}) (\d{2}:\d{2})")
-_REMINDER_RE = re.compile(
-    r"<system[-_\s]*reminder>.*?</system[-_\s]*reminder>", re.I | re.S
-)
+_STAMP_RE = text_utils.CURRENT_TIME_RE
+_REMINDER_RE = text_utils.STAMP_TAG_RE
 
 
 class ContextToolsFeature:
@@ -119,10 +118,7 @@ class ContextToolsFeature:
 
     @staticmethod
     def _stamp_of(text: str) -> str:
-        m = _STAMP_RE.search(text or "")
-        if not m:
-            return ""
-        return "%s-%s %s" % (m.group(2), m.group(3), m.group(4))
+        return text_utils.compact_stamp(text)
 
     @classmethod
     def _strip_lossless(cls, history: list) -> list:

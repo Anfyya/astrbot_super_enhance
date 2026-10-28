@@ -26,26 +26,22 @@ from pathlib import Path
 
 from astrbot.api import logger
 
-from ..common import jsonio, timeutil
+from ..common import jsonio, text as text_utils, timeutil
 from astrbot.core.message.components import Node, Plain
 
-from .message_text import strip_inline_system
+from ..common.text import strip_inline_system
 
 DEFAULT_KEEP = "2d"
 DEFAULT_PROVIDER = "CmdCode/deepseek/deepseek-v4.1-flash"
 BACKUP_KEEP = 10
 MIN_LINES = 6
 
-_REM_RE = re.compile(r"<system[-_\s]*reminder>(.*?)</system[-_\s]*reminder>", re.S | re.I)
-_FULL_STAMP_RE = re.compile(
-    r"(?:Current datetime|Sent at)\s*[:：]\s*(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})"
-)
-_PRE_RE = re.compile(r"^\[(\d\d)-(\d\d) (\d\d):(\d\d)\]\s*")
-_JUNK_RE = re.compile(
-    r"^(Stop output\.|Output stopped\.|Output your last task result below\.|\[CronJob\])"
-)
+_REM_RE = text_utils.STAMP_TAG_RE
+_FULL_STAMP_RE = text_utils.FULL_TIME_PARTS_RE
+_PRE_RE = text_utils.PRE_STAMP_PARTS_RE
+_JUNK_RE = text_utils.SYSTEM_JUNK_RE
 _KEEP_RE = re.compile(r"^(\d{1,4})([dhm])$", re.I)
-MEMO_MARK = "（前情备忘："
+MEMO_MARK = text_utils.MEMO_PREFIX
 
 PROMPT = """你在帮一个角色扮演聊天机器人整理它和主人的旧聊天记录。角色是「{role}」（她的自称和口癖照记录里的来），主人叫 {master}。下面每条消息前有编号 #N。
 
@@ -83,16 +79,7 @@ HEAD = (
 
 
 def _text_of(m: dict) -> str:
-    c = m.get("content")
-    if isinstance(c, str):
-        return c
-    if not isinstance(c, list):
-        return ""
-    return "\n".join(
-        str(p.get("text") or "")
-        for p in c
-        if isinstance(p, dict) and str(p.get("type") or "text") in ("text", "plain")
-    )
+    return text_utils.text_of(m, plain=True)
 
 
 def _fingerprint(items: list) -> str:

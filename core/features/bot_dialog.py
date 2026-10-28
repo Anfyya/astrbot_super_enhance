@@ -19,7 +19,7 @@ import time
 from astrbot.api import logger
 from astrbot.core.agent.message import TextPart
 
-from ..common import timeutil
+from ..common import text as text_utils, timeutil
 
 ROUND_FLAG = "_super_enhance_bot_dialog_round"
 HINT_HEAD = "【对话节奏】"
@@ -41,10 +41,6 @@ FALLBACK_NOTE = (
 )
 JOB_PREFIX = "超级增强·委托回报"
 
-_TIME_PATTERNS = (
-    re.compile(r"Current datetime:\s*(\d{4}-\d{2}-\d{2} \d{2}:\d{2})"),
-    re.compile(r"Sent at:\s*(\d{4}-\d{2}-\d{2} \d{2}:\d{2})"),
-)
 _RECORD_TIME = re.compile(re.escape(RECORD_HEAD) + r"(\d{2})-(\d{2}) (\d{2}):(\d{2})")
 # 查「我上一句」记过没有时，往回翻主人会话最近这么多条
 RECORD_LOOKBACK = 40
@@ -53,43 +49,15 @@ RECORD_LOOKBACK = 40
 def _text_of(message) -> str:
     """把一条历史消息里的纯文本摘出来（忽略 think / tool 等内容）。"""
     content = message.get("content") if isinstance(message, dict) else None
-    pieces: list[str] = []
-    if isinstance(content, str):
-        pieces.append(content)
-    elif isinstance(content, list):
-        for part in content:
-            if not isinstance(part, dict):
-                continue
-            if str(part.get("type") or "text") not in ("text", "plain"):
-                continue
-            piece = str(part.get("text") or "")
-            if piece:
-                pieces.append(piece)
-    text = " ".join(pieces).strip()
-    text = re.sub(r"<system_reminder>.*?</system_reminder>", " ", text, flags=re.S)
+    text = text_utils.raw_text(content, sep=" ", any_type=False).strip()
+    text = text_utils.STAMP_TAG_RE.sub(" ", text)
     return re.sub(r"\s+", " ", text).strip()
 
 
 def _moment_of(message) -> datetime.datetime | None:
     """从 system_reminder 里取这条消息的时间（当地钟点，不带时区），取不到就 None。"""
-    raw = ""
     content = message.get("content") if isinstance(message, dict) else None
-    if isinstance(content, str):
-        raw = content
-    elif isinstance(content, list):
-        raw = " ".join(
-            str(part.get("text") or "")
-            for part in content
-            if isinstance(part, dict)
-        )
-    for pattern in _TIME_PATTERNS:
-        match = pattern.search(raw or "")
-        if match:
-            try:
-                return datetime.datetime.strptime(match.group(1), "%Y-%m-%d %H:%M")
-            except ValueError:
-                return None
-    return None
+    return text_utils.time_of(text_utils.raw_text(content, sep=" ", any_type=True))
 
 
 def _record_moment(text: str, near: datetime.datetime) -> datetime.datetime | None:

@@ -18,7 +18,7 @@ from astrbot.api import logger
 
 from ...common import timeutil
 
-from ..message_text import clean_message, text_of, time_of
+from ...common.text import clean_message, text_of, time_of
 from .models import bot_of_umo
 
 FOLDER_NAME = "raw_messages"

@@ -27,15 +27,16 @@ import re
 from astrbot.api import logger
 
 from .life_state.models import bot_of_umo
-from .message_text import strip_inline_system
+from ..common import text as text_utils
+from ..common.text import strip_inline_system
 
 MARK_ATTR = "_super_enhance_transcript"
-REMINDER_RE = re.compile(r"<system[-_\s]*reminder>(?P<body>.*?)</system[-_\s]*reminder>", re.IGNORECASE | re.DOTALL)
-TIME_RE = re.compile(r"(?:Current datetime|Sent at)\s*[:：]\s*\d{4}-(\d{2}-\d{2} \d{2}:\d{2})")
-PRE_RE = re.compile(r"^\[(\d{2}-\d{2} \d{2}:\d{2})\]\s*")
-MEMO_PREFIX = "（前情备忘："
+REMINDER_RE = text_utils.STAMP_TAG_RE
+TIME_RE = text_utils.MONTH_DAY_STAMP_RE
+PRE_RE = text_utils.PRE_STAMP_RE
+MEMO_PREFIX = text_utils.MEMO_PREFIX
 # 报错兜底时写进历史的那句说明（error_voice）：不是时间戳，要留给她看，不然她以为那句话是自己说的
-NOTE_MARK = "系统代发"
+NOTE_MARK = text_utils.NOTE_MARK
 # 本轮那条前面紧挨着、还没回的主人消息，离本轮不超过这么久的也算本轮（连发几句、上一句的回复被作废）（分钟）
 TURN_PULL_MINUTES = 5
 # 聊天记录里照样写出来的工具（画图的两个）；别的工具调用不写
@@ -57,16 +58,7 @@ def _dump(message) -> dict:
 
 
 def _text(message: dict) -> str:
-    content = message.get("content")
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return "\n".join(
-            str(part.get("text") or "")
-            for part in content
-            if isinstance(part, dict) and part.get("type") in ("text", "plain")
-        )
-    return ""
+    return text_utils.text_of(message, plain=True)
 
 
 def _tool_results(history: list) -> dict:

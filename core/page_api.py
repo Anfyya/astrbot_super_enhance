@@ -21,7 +21,8 @@ from typing import Any
 
 from astrbot.api import logger
 
-from .features.message_text import clean_message, text_of, time_of
+from .common import text as text_utils
+from .common.text import clean_message, text_of, time_of
 
 try:  # AstrBot 面板为插件页面提供的 quart 兼容层
     from quart import request  # type: ignore
@@ -41,16 +42,6 @@ _IMAGES_PER_ITEM = 8
 _DATA_URI_RE = re.compile(r"^data:(image/[\w.+-]+);base64,([A-Za-z0-9+/=\s]+)$")
 # AstrBot 存主人发的图时顺带写的一段字（「[Image 1: original path …]」）；网页改了这条的图就去掉，对不上了
 _IMAGE_NOTE_RE = re.compile(r"^\s*\[Image \d+: original path [^\]]*\]\s*$")
-
-_REMINDER_RE = re.compile(
-    r"<system[-_\s]*reminder>.*?</system[-_\s]*reminder>", re.I | re.S
-)
-_STAMP_RES = (
-    re.compile(r"Sent at:\s*(\d{4})-(\d{2})-(\d{2}) (\d{2}:\d{2})"),
-    re.compile(r"Current datetime:\s*(\d{4})-(\d{2})-(\d{2}) (\d{2}:\d{2})"),
-    re.compile(r"\[(\d{2})-(\d{2}) (\d{2}:\d{2})\]"),
-)
-
 
 def _ok(data: Any = None) -> dict[str, Any]:
     return {"status": "ok", "data": data}
@@ -169,15 +160,11 @@ def _apply_images(item: dict, images: list[str]) -> bool:
 
 
 def _stamp_of(text: str) -> str:
-    for regex in _STAMP_RES:
-        match = regex.search(text or "")
-        if not match:
-            continue
-        groups = match.groups()
-        if len(groups) == 4:
-            return "%s-%s %s" % (groups[1], groups[2], groups[3])
-        return "%s-%s %s" % (groups[0], groups[1], groups[2])
-    return ""
+    stamp = text_utils.compact_stamp(text)
+    if stamp:
+        return stamp
+    hit = text_utils.PRE_STAMP_PARTS_RE.match(str(text or ""))
+    return "%s-%s %s:%s" % hit.groups() if hit else ""
 
 
 def _estimate_tokens(history: list[dict]) -> int:

@@ -7,10 +7,9 @@
 所以收尾逻辑必须挂在最高优先级的 ``on_agent_done`` 上，否则被作废的那一轮根本轮不到它。
 """
 
-import re
 import time
 
-from ..common import timeutil
+from ..common import text as text_utils, timeutil
 
 # 消息到达时间（time.time()），on_any_message 里打
 ARRIVED_FLAG = "_super_enhance_arrived_at"
@@ -24,8 +23,6 @@ START_IDX_FLAG = "_super_enhance_reply_guard_start_idx"
 # AstrBot 中断一轮时自己塞进去的两句
 INTERRUPTION_USER = "Stop output."
 INTERRUPTION_ASSISTANT = "Output stopped."
-
-_REMINDER_RE = re.compile(r"<system[-_\s]*reminder>.*?</system[-_\s]*reminder>", re.I | re.S)
 
 def set_timezone(name: str) -> None:
     timeutil.set_timezone(name)
@@ -60,22 +57,7 @@ def is_agent_done(event) -> bool:
 
 def body_text(content) -> str:
     """消息正文（去掉 system_reminder、压掉空白），用于比对是不是同一句。"""
-    if isinstance(content, str):
-        raw = content
-    elif isinstance(content, list):
-        pieces = []
-        for part in content:
-            if isinstance(part, dict):
-                if str(part.get("type") or "text") in ("text", "plain"):
-                    pieces.append(str(part.get("text") or ""))
-            else:
-                text = getattr(part, "text", None)
-                if isinstance(text, str) and getattr(part, "type", "text") in ("text", "plain", None):
-                    pieces.append(text)
-        raw = "\n".join(pieces)
-    else:
-        raw = ""
-    return re.sub(r"\s+", " ", _REMINDER_RE.sub("", raw)).strip()
+    return text_utils.body_text(content)
 
 
 def _role(message) -> str:

@@ -14,7 +14,7 @@ import re
 
 from astrbot.api import logger
 
-from ..message_text import strip_inline_system
+from ...common.text import strip_inline_system
 from .models import bot_of_umo, extract_json
 from .things import (CAT_FOOD, CAT_ITEM, KEEPS, KINDS, SAME_NEW_MINUTES, SAME_STEP_MINUTES, SPOTS, STEPS, USE_STEPS, cat_of,
                      find_same, norm_step, usable)

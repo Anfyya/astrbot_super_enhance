@@ -24,29 +24,24 @@ from astrbot.api import logger
 from astrbot.core.message.components import Plain
 from astrbot.core.message.message_event_result import MessageChain
 
+from ..common import text as text_utils
 from ..config_view import SectionConfig
 from . import cron_history, error_voice
 
 # cron 事件在 extras 里带这两个键；用它把主动对话和普通聊天区分开
 CRON_EXTRA_KEYS = ("cron_job", "cron_payload")
 
-TIME_RES = (
-    re.compile(r"Current datetime\s*[:：]\s*(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})"),
-    re.compile(r"Sent at\s*[:：]\s*(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})"),
-)
+TIME_RES = (text_utils.CURRENT_TIME_RE, text_utils.SENT_TIME_RE)
 
 # 整块 system reminder 标签（含 User ID / Nickname / Current datetime 等元数据）
 # /compact v2 写在会话开头的前情备忘
-MEMO_PREFIX = "（前情备忘："
+MEMO_PREFIX = text_utils.MEMO_PREFIX
 
-STAMP_TAG_RE = re.compile(
-    r"<system[-_\s]*reminder>(?P<body>.*?)</system[-_\s]*reminder>",
-    re.IGNORECASE | re.DOTALL,
-)
+STAMP_TAG_RE = text_utils.STAMP_TAG_RE
 
 # AstrBot 的 cron 收尾会往历史里塞这两类系统噪声
-SYSTEM_NOISE_TEXTS = ("Output your last task result below.",)
-CRONJOB_PREFIX = "[CronJob]"
+SYSTEM_NOISE_TEXTS = text_utils.SYSTEM_NOISE_TEXTS
+CRONJOB_PREFIX = text_utils.CRONJOB_PREFIX
 CRONJOB_RESULT_MARK = "here is the result:"
 
 NOTIFY_COOLDOWN_SECONDS = 600
@@ -269,20 +264,7 @@ class CronContextFeature:
 
     @staticmethod
     def _text_of(message) -> str:
-        content = message.get("content") if isinstance(message, dict) else None
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            out = []
-            for part in content:
-                if (
-                    isinstance(part, dict)
-                    and part.get("type") == "text"
-                    and isinstance(part.get("text"), str)
-                ):
-                    out.append(part["text"])
-            return "\n".join(out)
-        return ""
+        return text_utils.text_of(message, plain=True)
 
     def _clean_text(self, role: str, raw: str) -> str:
         """清掉系统噪声与元数据，时间戳只留一个最短的标签。"""
@@ -324,22 +306,7 @@ class CronContextFeature:
 
     @staticmethod
     def _time_of(text: str):
-        if not text:
-            return None
-        for pattern in TIME_RES:
-            hit = pattern.search(text)
-            if hit:
-                try:
-                    return datetime.datetime(
-                        int(hit.group(1)),
-                        int(hit.group(2)),
-                        int(hit.group(3)),
-                        int(hit.group(4)),
-                        int(hit.group(5)),
-                    )
-                except Exception:
-                    continue
-        return None
+        return text_utils.time_of(text)
 
     # ---------- 通知 ----------
 
