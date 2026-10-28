@@ -41,6 +41,7 @@ from .core.features.zero_think import ZeroThinkRetryFeature
 from .core.features.image_gen import ImageGenFeature
 from .core.features.daily_compact import DailyCompact
 from .core.features.overflow_guard import OverflowGuard
+from .core.features.feature_group import FeatureGroup, FeatureHandle
 from .core.features import error_voice
 from .core.features.cron_context import CronContextFeature
 from .core.features.cross_session import CrossSessionFeature
@@ -142,6 +143,15 @@ class SuperEnhance(Star):
         )
         # 数据目录里放了 pending_memory_edits.json 才会动：启动后等长期记忆就绪，按清单小改记忆
         self.lm_edits = MemoryEditRunner(context, data_dir)
+        self.features = FeatureGroup(
+            FeatureHandle("cron_context", self.cron_context),
+            FeatureHandle("runner_hooks", self.runner_hooks),
+            FeatureHandle("daily_compact", self.daily_compact, "start", "stop"),
+            FeatureHandle("overflow", self.overflow),
+            FeatureHandle("history_merge", self.history_merge),
+            FeatureHandle("proactive_think", self.proactive_think),
+            FeatureHandle("lm_edits", self.lm_edits, "start", "stop"),
+        )
 
     async def initialize(self) -> None:
         """插件加载后初始化（动态生活状态需要起调度器）。"""
@@ -150,15 +160,9 @@ class SuperEnhance(Star):
         self.cron_context.cron_request_hooks.append(self.tool_guide.on_cron_request)
         self.cron_context.cron_request_hooks.append(self.transcript.on_cron_request)
         self.cron_context.cron_request_hooks.append(self.silence.on_cron_request)
-        self.cron_context.install()
-        self.runner_hooks.install()
-        self.daily_compact.start()
-        self.overflow.install()
-        self.history_merge.install()
-        self.proactive_think.install()
+        self.features.start()
         self._register_page_api()
         await self.sync_tool_visibility()
-        self.lm_edits.start()
 
     def _register_page_api(self) -> None:
         """注册面板「上下文」页面的后端 API（旧版本 AstrBot 不支持则跳过）。"""
@@ -197,13 +201,7 @@ class SuperEnhance(Star):
                 logger.error("[super_enhance] 同步工具 %s 失败", name, exc_info=True)
     async def terminate(self) -> None:
         """插件卸载/停用时收尾。"""
-        self.lm_edits.stop()
-        self.cron_context.uninstall()
-        self.runner_hooks.uninstall()
-        self.daily_compact.stop()
-        self.overflow.uninstall()
-        self.history_merge.uninstall()
-        self.proactive_think.uninstall()
+        self.features.stop()
         await self.life.terminate()
 
     # ------------------------------------------------------------------
