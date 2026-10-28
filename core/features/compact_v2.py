@@ -32,7 +32,6 @@ from astrbot.core.message.components import Node, Plain
 from ..common.text import strip_inline_system
 
 DEFAULT_KEEP = "2d"
-DEFAULT_PROVIDER = "CmdCode/deepseek/deepseek-v4.1-flash"
 BACKUP_KEEP = 10
 MIN_LINES = 6
 
@@ -329,7 +328,9 @@ class CompactV2:
     # ---------- 模型 ----------
 
     async def _call_llm(self, messages: list) -> dict:
-        pid = str(self._cfg("v2_provider_id", DEFAULT_PROVIDER)).strip()
+        pid = str(self._cfg("v2_provider_id", "")).strip()
+        if not pid:
+            raise RuntimeError("没配置 context_tools.v2_provider_id")
         provider = llm.resolve_provider(self.context, pid, fallback=False)
         if provider is None:
             raise RuntimeError("找不到模型提供商 %s（插件配置 context_tools.v2_provider_id）" % pid)

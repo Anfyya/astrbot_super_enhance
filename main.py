@@ -50,6 +50,7 @@ from .core.features.msg_time import MsgTimeFeature
 from .core.features.proactive_think import ProactiveThinkFilter
 from .core.features.reply_guard import ReplyGuardFeature
 from .core.features.request_snapshot import LAST_PRIORITY, RequestSnapshotFeature
+from .core.features.runner_hooks import RunnerHooks
 from .core.features.silence import SilenceFeature
 from .core.features.bot_dialog import BotDialogFeature
 from .core.features.typing import TypingFeature
@@ -130,6 +131,7 @@ class SuperEnhance(Star):
             context, SectionConfig(raw, "image_gen"), data_dir,
             is_bot=lambda sender: sender in self.bot_dialog.bot_ids,
         )
+        self.runner_hooks = RunnerHooks(self.transcript, self.image_gen, self.zero_think)
         # 聊天记录里的图（她发出去的、主人发来的），之后每轮放进本轮那条用户消息的副本里给她看
         self.transcript.attach = self.image_gen.attach_images
         # 发消息 / tell 的说明换成写死对象和会话号的中文版（只改这一轮的工具清单）
@@ -153,9 +155,7 @@ class SuperEnhance(Star):
         self.cron_context.cron_request_hooks.append(self.transcript.on_cron_request)
         self.cron_context.cron_request_hooks.append(self.silence.on_cron_request)
         self.cron_context.install()
-        self.transcript.install()
-        self.zero_think.install()
-        self.image_gen.install()
+        self.runner_hooks.install()
         self.daily_compact.start()
         self.overflow.install()
         self.history_merge.install()
@@ -203,9 +203,7 @@ class SuperEnhance(Star):
         """插件卸载/停用时收尾。"""
         self.lm_edits.stop()
         self.cron_context.uninstall()
-        self.transcript.uninstall()
-        self.zero_think.uninstall()
-        self.image_gen.uninstall()
+        self.runner_hooks.uninstall()
         self.daily_compact.stop()
         self.overflow.uninstall()
         self.history_merge.uninstall()
