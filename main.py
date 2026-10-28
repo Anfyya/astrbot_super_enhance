@@ -48,7 +48,7 @@ from .core.features.msg_time import MsgTimeFeature
 from .core.features.proactive_think import ProactiveThinkFilter
 from .core.features.reply_guard import ReplyGuardFeature
 from .core.features.request_snapshot import LAST_PRIORITY, RequestSnapshotFeature
-from .core.features.request_pipeline import RequestPipeline
+from .core.features.request_pipeline import RequestPipeline, run_steps
 from .core.features.runner_hooks import RunnerHooks
 from .core.features.silence import SilenceFeature
 from .core.features.bot_dialog import BotDialogFeature
@@ -213,9 +213,11 @@ class SuperEnhance(Star):
     @filter.on_decorating_result()
     async def on_decorating_main(self, event: AstrMessageEvent) -> None:
         """发送前按固定顺序处理静默、仿写时间戳和作废回复。"""
-        await self.silence.on_decorating_result(event)
-        await self.msg_time.clean_outgoing(event)
-        await self.reply_guard.on_decorating_result(event)
+        await run_steps(event, (
+            ("静默", lambda: self.silence.on_decorating_result(event)),
+            ("时间戳清理", lambda: self.msg_time.clean_outgoing(event)),
+            ("新消息优先", lambda: self.reply_guard.on_decorating_result(event)),
+        ), "发送前钩子")
 
     # ------------------------------------------------------------------
     # 3. 消息时间戳
@@ -223,8 +225,10 @@ class SuperEnhance(Star):
     @filter.on_agent_done()
     async def on_agent_done_main(self, event: AstrMessageEvent, run_context, response) -> None:
         """轮次结束后盖发送时间；主动对话再把她这轮的思考挂回历史。"""
-        await self.msg_time.on_agent_done(event, run_context, response)
-        await self.cross_session.attach_cron_thinking(event, run_context)
+        await run_steps(event, (
+            ("发送时间", lambda: self.msg_time.on_agent_done(event, run_context, response)),
+            ("主动对话思考", lambda: self.cross_session.attach_cron_thinking(event, run_context)),
+        ), "轮次结束钩子")
 
     @filter.on_llm_request(priority=100000)
     async def on_llm_request_overflow(
@@ -236,8 +240,10 @@ class SuperEnhance(Star):
     @filter.on_llm_request()
     async def on_llm_request_main(self, event: AstrMessageEvent, req: ProviderRequest) -> None:
         """同优先级的常规请求钩子，按固定顺序一次跑完。"""
-        error_voice.prepare_model_error(self.config, event)
-        await self.request_pipeline.chat(event, req)
+        await run_steps(event, (
+            ("报错台词", lambda: error_voice.prepare_model_error(self.config, event)),
+            ("常规请求", lambda: self.request_pipeline.chat(event, req)),
+        ), "请求钩子")
 
     # ------------------------------------------------------------------
     # 4. 上下文工具
@@ -455,9 +461,11 @@ class SuperEnhance(Star):
     @filter.after_message_sent()
     async def after_message_sent_main(self, event: AstrMessageEvent) -> None:
         """发送后按固定顺序收尾作废回复、模型报错和原始消息副本。"""
-        await self.reply_guard.after_message_sent(event)
-        await error_voice.write_model_error(self.context, event, self.msg_time.marker())
-        self.life.record_reply(event)
+        await run_steps(event, (
+            ("新消息优先", lambda: self.reply_guard.after_message_sent(event)),
+            ("模型报错补历史", lambda: error_voice.write_model_error(self.context, event, self.msg_time.marker())),
+            ("原始消息副本", lambda: self.life.record_reply(event)),
+        ), "发送后钩子")
 
     @filter.on_llm_tool_respond()
     async def on_tool_respond_main(
@@ -468,8 +476,10 @@ class SuperEnhance(Star):
         tool_result: CallToolResult | None,
     ) -> None:
         """工具结果同优先级的两项：原始消息副本、bot↔bot 委托回报。"""
-        self.life.record_tool_message(event, tool, tool_args)
-        await self.bot_dialog.note_delegation(event, tool, tool_args)
+        await run_steps(event, (
+            ("原始消息副本", lambda: self.life.record_tool_message(event, tool, tool_args)),
+            ("委托回报", lambda: self.bot_dialog.note_delegation(event, tool, tool_args)),
+        ), "工具结果钩子")
 
     # ------------------------------------------------------------------
     # 9. 现在去做（写进世界线）

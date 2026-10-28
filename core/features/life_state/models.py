@@ -131,15 +131,6 @@ class LifeState:
             ],
         }
 
-    def find_entry_strict(self, minute: int) -> TimelineEntry | None:
-        """只取真正覆盖该分钟的时段；落在时间线外（多为睡眠）返回 None，不回退。"""
-        for entry in self.timeline:
-            for start, end in entry.ranges():
-                if start <= minute < end:
-                    return entry
-        return None
-
-
 def extract_json(text: str) -> dict[str, Any] | None:
     """从模型输出里抠出 JSON 对象（容忍 ```json 围栏与前后废话）。"""
     return llm.extract_json(text)

@@ -17,7 +17,6 @@ from .injector import (
 )
 from . import loop as loop_mod
 from .models import (
-    LifeState,
     clock_to_minute,
     weekday_cn,
 )
@@ -62,17 +61,6 @@ PROACTIVE_VOICE_NOTE = "（主动找主人的时候，说你这会儿想跟他�
 REPORT_KINDS = ("asked", "intent")
 # 当天约定过了这么多分钟还没关，就在注入里标「时间已过」
 PROMISE_OVERDUE_MINUTES = 120
-class _PlannerStateView:
-    """主动对话读状态用：live 下从世界线合成一份，其余照旧读日程。"""
-
-    def __init__(self, service) -> None:
-        self.service = service
-
-    def get(self, bot: str, date_text: str):
-        return self.service.state_for_planner(bot, date_text)
-
-    def __getattr__(self, name):
-        return getattr(self.service.store, name)
 
 
 class LifeStateService:
@@ -92,10 +80,8 @@ class LifeStateService:
         if self.promise_enabled:
             self.planner.promises = self.promises
         self.planner.label_fn = self.bots.label_for
-        self.planner.trainings_fn = self.training_slots
         self.planner.training_done_fn = self.training_finished
-        # 主动对话到点判断要用：日程、这个会话最近的往来、最近一次有人说话 / 主动消息发出的时刻
-        self.planner.store = _PlannerStateView(self)
+        # 主动对话到点判断要用：这个会话最近的往来、最近一次有人说话 / 主动消息发出的时刻
         self.planner.recent_fn = self.recent_messages
         self.planner.activity_fn = self.last_activity
         self.planner.sent_fn = lambda umo: self._proactive_sent.get(str(umo), 0.0)
@@ -135,7 +121,8 @@ class LifeStateService:
         )
         self.life_step.promises = self.promises
         self.life_step.trainings = self.trainings
-        self.life_step.abilities = self.abilities
+        # 补写的人设后面接「后来的变化」：能力清单关着就不接
+        self.life_step.abilities = self.abilities if self.abilities_enabled else None
         self.life_step.recorder = self.recorder
         # 家里的吃的（存货）：记录员记聊天里说的，补写在世界线每段上标；只在要用的时候现算（见 things.py）
         self.things = ThingStore(self.data_dir / THINGS_FILE_NAME, weather_fn=self._weathers)
@@ -144,7 +131,6 @@ class LifeStateService:
         self.recorder.things = self.things
         self.life_step.things = self.things
         # 世界线 live 时，主动消息提示词里不再出「原本打算」那一行
-        self.planner.live_fn = lambda: True
         self._world_task: asyncio.Task | None = None
         self._world_day = None
 
@@ -199,11 +185,6 @@ class LifeStateService:
     def world_text(self, bot: str, now: datetime.datetime) -> str:
         return view_mod.world_text(self, bot, now)
 
-    def state_for_planner(self, bot: str, date_text: str):
-        return view_mod.state_for_planner(self, bot, date_text)
-
-    def _world_state(self, bot: str, date_text: str):
-        return view_mod._world_state(self, bot, date_text)
     async def _flush_outbox(self) -> None:
         return await loop_mod.flush_outbox(self)
 
@@ -438,7 +419,7 @@ class LifeStateService:
         if not text:
             return
         if self.cfg.get("world_voice_note", True) and self._cron_kind(event) not in REPORT_KINDS:
-            text += chr(10) + PROACTIVE_VOICE_NOTE
+            text += "\n" + PROACTIVE_VOICE_NOTE
         parts = getattr(req, "extra_user_content_parts", None)
         if not isinstance(parts, list):
             parts = []
@@ -477,9 +458,6 @@ class LifeStateService:
 
     async def training_finished(self, bot: str, tid: str) -> bool:
         return await training_calc.training_finished(self, bot, tid)
-
-    def training_slots(self, bot: str, state: LifeState, now: datetime.datetime) -> list[tuple[int, dict]]:
-        return training_calc.training_slots(self, bot, state, now)
 
     async def _resync_today(self, bot: str) -> None:
         return await training_calc._resync_today(self, bot)

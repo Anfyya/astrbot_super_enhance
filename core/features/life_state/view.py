@@ -8,7 +8,6 @@ import datetime
 from astrbot.api import logger
 
 from ...common import timeutil
-from .models import LifeState, TimelineEntry, clock_to_minute, minute_to_clock
 from .world import WorldStore, detail_of, doing_text, is_event, parse_time, progress_of, public_of, real_stop, result_text, staged_of, visible_to
 
 WEEKDAYS_CN = timeutil.WEEKDAYS_CN
@@ -314,65 +313,6 @@ def world_text(service, bot: str, now: datetime.datetime) -> str:
         if service.cfg.get("world_voice_note", True):
             blocks.append(VOICE_NOTES.get(service.bots.label_for(bot) or "", ""))
     return "\n".join(x for x in blocks if x)
-
-def state_for_planner(service, bot: str, date_text: str):
-    """主动对话读状态：live 下由世界线合成，其余读日程。"""
-    try:
-        return service._world_state(bot, date_text)
-    except Exception:
-        logger.warning("[super_enhance/life] 世界线合成状态失败", exc_info=True)
-        return None
-
-def _world_state(service, bot: str, date_text: str):
-    """把世界线当天的条目拼成一份 LifeState，供主动对话排期与提示词使用。"""
-    plan = service.world.day_plan(bot, date_text)
-    entries = []
-    for item in service.world.entries(date_text, bot):
-        start = str(item.get("start") or "")
-        if len(start) < 16:
-            continue
-        end = str(item.get("end") or "")
-        time_text = "%s-%s" % (start[11:], end[11:]) if len(end) >= 16 else start[11:]
-        entries.append(
-            TimelineEntry(
-                time=time_text,
-                schedule=str(item.get("doing") or item.get("place") or ""),
-                outfit="",
-                extras={},
-            )
-        )
-    # 世界线只有「已经发生」的时段，而主动消息的中段要拿未来的时段当锚点：
-    # 按骨架把清醒时段切开，补几个占位段（不含内容，只提供时间边界）
-    wake_min = clock_to_minute(plan.get("wake") or "06:30") or 390
-    sleep_min = clock_to_minute(plan.get("sleep") or "23:00") or 1380
-    if sleep_min <= wake_min:
-        sleep_min = wake_min + 60
-    cursor = wake_min
-    while cursor < sleep_min:
-        edge = min(cursor + 120, sleep_min)
-        entries.append(
-            TimelineEntry(
-                time="%s-%s" % (minute_to_clock(cursor), minute_to_clock(edge)),
-                schedule="",
-                outfit="",
-                extras={},
-            )
-        )
-        cursor = edge
-    if not entries and not plan:
-        return None
-    return LifeState(
-        date=date_text,
-        schedule_summary="（世界线：以最近条目为准）",
-        style_summary="",
-        timeline=entries,
-        wake_time=plan.get("wake") or "07:00",
-        sleep_time=plan.get("sleep") or "23:00",
-        status="ok",
-        generated_at="",
-        error="",
-    )
-
 
 # ---------- 世界线注入尾注 ----------
 

@@ -25,10 +25,8 @@ from astrbot.api import logger
 
 from ...common import timeutil
 
-from .injector import PLAN_NOTE
 from .ledger import promise_with_for
 from .models import (
-    TimelineEntry,
     bot_of_umo,
     clock_to_minute,
     format_datetime,
@@ -293,14 +291,11 @@ class ProactivePlanner:
         self.promises = None
         self.label_fn = None
         # 由 service 注入：(bot, state, now) → [(分钟, 在练的事)]，照今天的日程会练够的时刻
-        self.trainings_fn = None
         # 由 service 注入：async (bot, 编号) → 结一遍账后这件事是不是已经练成
         self.training_done_fn = None
         # 由 service 注入：() → 世界线是不是 live（live 时提示词里不写「原本打算」）
-        self.live_fn = None
         # 由 service 注入：日程（到点取此刻的打算）、原始消息副本里某会话今天 + 昨天的消息、
         # 某会话最近一次有人说话的时刻、最近一次主动消息真正发出的时刻
-        self.store = None
         self.recent_fn = None
         self.activity_fn = None
         self.sent_fn = None
@@ -1056,23 +1051,6 @@ class ProactivePlanner:
             text += "，主人还没回的主动消息 %d 条" % len(chat["unreplied"])
         return text
 
-    def _entry_at(self, meta: dict, now: datetime.datetime) -> TimelineEntry | None:
-        if self.store is None:
-            return None
-        try:
-            state = self.store.get(meta.get("bot"), meta.get("date"))
-            day = datetime.date.fromisoformat(str(meta.get("date")))
-        except Exception:
-            return None
-        if state is None or state.status != "ok" or not state.timeline:
-            return None
-        minute = (now.date() - day).days * 1440 + now.hour * 60 + now.minute
-        if minute >= 1440:
-            return state.timeline[-1]
-        if minute < 0:
-            return None
-        return state.find_entry_strict(minute)
-
     def _correct_pending(self, meta: dict, now: datetime.datetime) -> bool:
         """改口那件事是不是还没到点（到点了就不用专门改口）。"""
         start = _parse_iso(str((meta.get("correct") or {}).get("start") or "").replace(" ", "T"), self.timezone)
@@ -1166,14 +1144,8 @@ class ProactivePlanner:
             "【主动找主人说话】",
             "现在是 %s。没有人叫你，是你自己想找主人说说话。" % format_datetime(now),
         ]
-        # 世界线 live 时，她此刻在做什么看注入的【世界线】；合成状态里的时段不是「打算」，不再写这一行
-        live = bool(self.live_fn and self.live_fn())
-        entry = None if live else self._entry_at(meta, now)
-        if entry is not None and str(getattr(entry, "schedule", "") or "").strip():
-            lines.append("你这会儿原本打算：%s" % entry.schedule)
-            lines.append(PLAN_NOTE)
-        # 世界线 live 时「刚做完一件事」不再专门点出来：世界线里本来就有，点出来她就照着报行程
-        if not (live and kind == "done"):
+        # 她此刻在做什么看注入的【世界线】。「刚做完一件事」不再专门点出来：世界线里本来就有，点出来她就照着报行程
+        if kind != "done":
             lines.append(self._kind_line(meta, now, chat))
         sent = self._sent_today(chat, now)
         if sent:
@@ -1182,9 +1154,6 @@ class ProactivePlanner:
             for moment, text, replied in sent:
                 lines.append("- %s %s%s" % (moment.strftime("%H:%M"), text, "" if replied else "（主人还没回）"))
         lines.append("")
-        if not live:
-            # 老架构下场景要她自己记；世界线 live 时由记录员记，这个工具也收起来了
-            lines.append("你这会儿要是换了地方、或者在做的事变了，先用 update_my_scene 记一下再发。")
         if kind in MUST_SEND and (kind != "correct" or self._correct_pending(meta, now)):
             lines.append("调用 send_message_to_user 发出去（这次是改口、约定到点、刚练成或打算做完，必须发，除非主人定的规矩不许）。")
         else:

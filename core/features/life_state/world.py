@@ -311,7 +311,6 @@ class WorldStore:
             record["moved_from"] = entry["moved_from"]
         if not entry.get("id"):
             day["next_id"] = int(day.get("next_id") or 1) + 1
-        stamp_stop_verdict(record)
         return record
 
     def add_entry(self, date_text: str, entry: dict):
@@ -410,7 +409,6 @@ class WorldStore:
                     item.pop(key, None)
                 else:
                     item[key] = value
-            stamp_stop_verdict(item)
             self._save_day(date_text)
             return item
         return None
@@ -458,7 +456,6 @@ class WorldStore:
             if (fields.get("end") is not None or fields.get("start") is not None) and fields.get("steps") is None:
                 # 起止改了（截短 / 拉长）：分步跟着按新时长对上，别把十几分钟的分步压进一两分钟里
                 fit_steps(item)
-            stamp_stop_verdict(item)
             self._save_day(date_text)
             return item
         return None
@@ -1039,7 +1036,7 @@ def same_thing(a, b) -> bool:
     return best >= 3
 
 
-def _real_stop_calc(entry: dict) -> bool:
+def real_stop(entry: dict) -> bool:
     """真被打断、没做完的段：给她看成「做到哪先放下了、为什么、后来怎么样」。
     闲着、睡觉、主人自己的、记录员从聊天里记的（多半是同一件事说法更新了）、停在最后一步（收尾）的，
     不算，照常写那段（时段截到打断那刻就是了）。"""
@@ -1066,25 +1063,6 @@ def _real_stop_calc(entry: dict) -> bool:
     if len(planned) >= 2 and len(kept) >= len(planned):
         return False  # 停在最后一步（收尾），正事做完了
     return True
-
-
-def real_stop(entry: dict) -> bool:
-    """读写入时定下的结论；老条目没有结论时按原规则现算。"""
-    entry = entry or {}
-    if "real_stopped" in entry:
-        return bool(entry.get("real_stopped"))
-    return _real_stop_calc(entry)
-
-
-def stamp_stop_verdict(entry: dict) -> dict:
-    """条目的分步 / 起止改完以后，只在这里定一次「算不算真停下」。"""
-    if not isinstance(entry, dict):
-        return entry
-    if entry.get("stopped"):
-        entry["real_stopped"] = _real_stop_calc({key: value for key, value in entry.items() if key != "real_stopped"})
-    else:
-        entry.pop("real_stopped", None)
-    return entry
 
 
 def stop_note(entry: dict) -> str:

@@ -233,8 +233,14 @@ class LifeStep:
     def timeout(self) -> float:
         return self._timeout
 
+    def _cache(self) -> dict:
+        """这一次补写里只算一次的东西（种子、存货），run() 开头和拿到模型回复后各清一次。"""
+        if not isinstance(self.__dict__.get("_run_cache"), dict):
+            self._run_cache = {}
+        return self._run_cache
+
     def _seed_for(self, date_text: str):
-        cache = self.__dict__.get("_run_cache") or {}
+        cache = self._cache()
         if "seeds" not in cache:
             try:
                 cache["seeds"] = (self.seed_log.load() or {}) if self.seed_log is not None else {}
@@ -243,7 +249,7 @@ class LifeStep:
         return cache["seeds"].get(date_text)
 
     def _shelf_at(self, moment: datetime.datetime):
-        cache = self.__dict__.get("_run_cache") or {}
+        cache = self._cache()
         key = fmt_time(moment)
         shelves = cache.setdefault("shelves", {})
         if key not in shelves:
@@ -573,19 +579,6 @@ class LifeStep:
                 best = moment
         return best
 
-    def _need_due(self, info: dict | None, now: datetime.datetime, ahead_minutes: float = 0.0) -> bool:
-        """同一个 need() 结果在现在 / 往后顺带多久时算不算该写。"""
-        if info is None:
-            return False
-        mode = str(info.get("mode") or "")
-        if mode in ("open", "gap", "after"):
-            return True
-        edge = parse_time(info.get("start")) if info.get("start") is not None else None
-        if edge is None or mode not in ("next", "fill"):
-            return False
-        flat = now.replace(tzinfo=None)
-        return flat >= edge - datetime.timedelta(minutes=self.lead_minutes + ahead_minutes)
-
     def due(self, now: datetime.datetime) -> bool:
         if not self.enabled or self.running:
             return False
@@ -609,28 +602,42 @@ class LifeStep:
             return ""
         persona_id = str(self.cfg.get("persona_id") or "").strip()
         try:
-            persona = await manager.get_persona(persona_id) if persona_id else None
+            persona = None
+            if persona_id:
+                persona = await manager.get_persona(persona_id)
+                if persona is None:
+                    logger.warning("[super_enhance/life] 配置的人格 %s 不存在，回退到机器人人格", persona_id)
             if persona is None:
                 try:
-                    persona = await manager.get_default_persona_v3(profile_umo_for_bot(bot))
+                    persona = await manager.get_default_persona_v3(profile_umo_for_bot(bot) or None)
                 except TypeError:
                     persona = await manager.get_default_persona_v3()
-        except Exception as exc:
-            logger.warning("[super_enhance/world] 读取人格失败：%s", exc)
+        except Exception as e:
+            logger.warning("[super_enhance/life] 读取人格失败：%s", e)
+            return ""
+        if persona is None:
             return ""
         if isinstance(persona, dict):
             return str(persona.get("system_prompt") or persona.get("prompt") or "")
         return str(getattr(persona, "system_prompt", None) or getattr(persona, "prompt", "") or "")
+
     def _with_abilities(self, bot: str, persona: str) -> str:
+        """人设后面接上「后来学会的」：人设是最初的样子，能力清单是后来的变化。"""
         if self.abilities is None:
             return persona
         try:
             text = self.abilities.render(bot)
         except Exception:
+            logger.warning("[super_enhance/life] 读取能力清单失败", exc_info=True)
             return persona
         if not text:
             return persona
-        return (persona or "（未配置人格）") + chr(10) * 2 + "【后来的变化】下面是她在主人的训练下后来学会、或长期改变的事；和上面设定冲突时以这里为准：" + chr(10) + text
+        return (
+            (persona or "（未配置人格）")
+            + "\n\n【后来的变化】下面是她在主人的训练下后来学会、或长期改变的事；"
+            "和上面设定冲突时以这里为准：\n"
+            + text
+        )
 
     async def _personas(self, bots: list) -> str:
         blocks = []
@@ -996,18 +1003,16 @@ class LifeStep:
         这样两个人后面的事是一起排出来的，不会一个已经排出去两小时、另一个只能绕着她排。"""
         bots = list(self.raw_log.enabled_bots())
         tasks = {}
-        probe_ahead = 10**6 if force else BATCH_MINUTES
-        probes = {bot: self.need(bot, now, ahead_minutes=probe_ahead) for bot in bots}
         for bot in bots:
-            info = probes.get(bot)
-            if info is not None and self._need_due(info, now):
+            info = self.need(bot, now)
+            if info is not None:
                 tasks[bot] = info
         if not tasks and not force:
             return {}
         for bot in bots:
             if bot in tasks:
                 continue
-            info = probes.get(bot)
+            info = self.need(bot, now, ahead_minutes=10**6 if force else BATCH_MINUTES)
             if info is not None:
                 tasks[bot] = info
         flat = now.replace(tzinfo=None)
@@ -1070,6 +1075,8 @@ class LifeStep:
                 attempts=2,
                 log_label="补写",
             )
+            # 等模型的这几分钟里网页可能改过种子、存货：落库时重新读
+            self._run_cache = {}
             data = llm.extract_json(text)
             if not isinstance(data, dict):
                 self._save_thought(moment, thought, False, "返回内容不是 JSON")

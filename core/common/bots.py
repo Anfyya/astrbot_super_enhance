@@ -58,7 +58,10 @@ def platform_of(umo: str) -> str:
 
 
 def profile_umo(bot: str) -> str:
+    """构造一个能命中该机器人配置档（abconf）的 UMO，用于解析它的人格与模型。"""
     value = str(bot or "").strip()
+    if not value:
+        return ""
     return value if ":" in value else "%s:FriendMessage:0" % value
 
 

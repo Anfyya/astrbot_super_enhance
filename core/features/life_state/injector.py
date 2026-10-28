@@ -6,14 +6,6 @@ FAKE_TOOL_NAME = "life_state_snapshot"
 FAKE_TOOL_ID = "super_enhance_life_fake_call"
 
 
-# 日程只是打算：对话里实际发生的、约好的事优先，别让模型在思考里纠结「以哪个为准」
-PLAN_NOTE = (
-    "（上面只是你今天原本的打算，不是必须照做的安排：对话里实际发生的事、和主人约好的事优先，"
-    "两者对不上时按对话来，不用解释、也不用纠结以哪个为准；写到主人的部分同样只是打算，"
-    "主人实际在哪以他自己说的为准。不要向用户复述本段内容。）"
-)
-
-
 def as_context_part(text: str) -> TextPart:
     """临时附加上下文：不落库，只在本次请求生效。"""
     return TextPart(text=text).mark_as_temp()

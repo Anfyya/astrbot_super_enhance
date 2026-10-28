@@ -1,39 +1,19 @@
-"""在练的事：进度怎么算（纯计算，不读写文件）。
+"""在练的事：进度怎么算，以及练成后的收尾。
 
-- 日程生成时把练这件事的时段标上 ``training: "#编号"``；
-- 练了多久 = 开始记之前已练的（base_hours）+ 以前每天日程里标了它的时段（log，夜里回查按聊天改过）
+- 世界线里练这件事的段标着 ``training: "#编号"``；
+- 练了多久 = 开始记之前已练的（base_hours）+ 以前每天世界线里标了它的时段（log）
   + 今天已经过去的那部分；开始记的那天只算记下之后的时段；
-- 够数的那一刻就算练成；今天的日程排得到够数，就能算出「几点前后练够」。
+- 够数的那一刻就算练成；今天排好的段练得到够数，就能算出「几点前后练够」。
 """
 
 import datetime
-import re
 
 from astrbot.api import logger
 
-from .models import LifeState, TimelineEntry
 from .world import is_event, parse_time
 
-TAG_KEY = "training"
 # 往回最多算这么多天的日程（日程文件本身只留十几天，更早的已经记进 log）
 LOOKBACK_DAYS = 30
-
-
-def tag_id(entry: TimelineEntry) -> str:
-    """时段标的是哪件事（「#3」「3」都认）；没标返回空串。"""
-    match = re.search(r"\d+", str((entry.extras or {}).get(TAG_KEY) or ""))
-    return match.group(0) if match else ""
-
-
-def segments(state: LifeState | None, tid: str) -> list[tuple[int, int]]:
-    """这一天标了这件事的时段（分钟区间，按时间排好）。"""
-    if state is None or state.status != "ok":
-        return []
-    out: list[tuple[int, int]] = []
-    for entry in state.timeline or []:
-        if tag_id(entry) == str(tid):
-            out.extend(entry.ranges())
-    return sorted(out)
 
 
 def minutes_between(spans: list[tuple[int, int]], low: int, high: int) -> int:
@@ -98,13 +78,8 @@ class Progress:
         }
 
 
-def compute(item: dict, store_get, bot: str, now: datetime.datetime, spans_fn=None) -> Progress:
-    """算这件事练到哪了。
-
-    - 默认按日程算：store_get(bot, date_text) → LifeState | None；
-    - 世界线模式下由调用方给 spans_fn(date_text) → [(起分钟, 止分钟)]，直接按世界线条目算。
-    now 带时区。
-    """
+def compute(item: dict, now: datetime.datetime, spans_fn) -> Progress:
+    """算这件事练到哪了：spans_fn(date_text) → 世界线里标了它的时段 [(起分钟, 止分钟)]。now 带时区。"""
     prog = Progress()
     tid = str(item.get("id"))
     try:
@@ -117,21 +92,14 @@ def compute(item: dict, store_get, bot: str, now: datetime.datetime, spans_fn=No
     log = {str(k): int(v) for k, v in (item.get("log") or {}).items() if str(k) < today.isoformat()}
     day = max(start.date(), today - datetime.timedelta(days=LOOKBACK_DAYS))
     while day < today:
-        if spans_fn is not None:
-            spans = spans_fn(day.isoformat())
-        else:
-            state = store_get(bot, day.isoformat())
-            spans = segments(state, tid) if (state is not None and state.status == "ok") else []
+        spans = spans_fn(day.isoformat())
         low = start.hour * 60 + start.minute if day == start.date() else 0
         log[day.isoformat()] = minutes_between(spans, low, 1440)
         day += datetime.timedelta(days=1)
     prog.log = log
     before_today = base + sum(log.values())
 
-    if spans_fn is not None:
-        spans = spans_fn(today.isoformat())
-    else:
-        spans = segments(store_get(bot, today.isoformat()), tid)
+    spans = spans_fn(today.isoformat())
     low = start.hour * 60 + start.minute if start.date() == today else 0
     if start.date() > today:
         spans = []
@@ -161,10 +129,7 @@ def training_progress(service, item: dict, now: datetime.datetime | None = None)
     moment = now or service._now()
     bot = str(item.get("bot"))
     tid = str(item.get("id"))
-    return compute(
-        item, None, bot, moment,
-        spans_fn=lambda date_text: service._training_spans(bot, tid, date_text),
-    )
+    return compute(item, moment, lambda date_text: service._training_spans(bot, tid, date_text))
 
 def _training_spans(service, bot: str, tid: str, date_text: str) -> list:
     """世界线里标了这件事的时段（分钟区间）。开口的一条算到现在。"""
@@ -337,20 +302,6 @@ async def training_finished(service, bot: str, tid: str) -> bool:
     await service.settle_trainings(bot)
     item = service.trainings.get(tid)
     return item is not None and item.get("status") == "done"
-
-def training_slots(service, bot: str, state: LifeState, now: datetime.datetime) -> list[tuple[int, dict]]:
-    """给主动对话排期：今天照日程会练够的那一刻（分钟, 那件事）。"""
-    if not service.training_enabled or state is None or state.date != now.date().isoformat():
-        return []
-    out = []
-    for item in service.trainings.open_for(bot):
-        try:
-            prog = service.training_progress(item, now)
-        except Exception:
-            continue
-        if prog.eta is not None:
-            out.append((prog.eta.hour * 60 + prog.eta.minute, item))
-    return out
 
 async def _resync_today(service, bot: str) -> None:
     await service._sync_live_jobs(service._today())
