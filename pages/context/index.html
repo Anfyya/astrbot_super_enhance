@@ -4238,7 +4238,6 @@
   }
 
   /* ---------- 时间：输入框里写短的（同一天只写钟点），存的时候补全 ---------- */
-  function pad2(n) { return (+n < 10 ? "0" : "") + (+n); }
   function dayShift(date, n) {
     var ms = worldMs(String(date).slice(0, 10) + " 00:00");
     return ms === null ? String(date).slice(0, 10) : new Date(ms + n * 86400000).toISOString().slice(0, 10);
@@ -4254,8 +4253,8 @@
     var m = /^(?:(\d{4})[-/.])?(?:(\d{1,2})[-/.](\d{1,2})\s*)?(\d{1,2}):?(\d{2})$/.exec(s);
     if (!m || +m[4] > 23 || +m[5] > 59) { return null; }
     if (m[2] && (+m[2] < 1 || +m[2] > 12 || +m[3] < 1 || +m[3] > 31)) { return null; }
-    var clock = pad2(m[4]) + ":" + m[5];
-    var date = m[2] ? (m[1] || String(base).slice(0, 4)) + "-" + pad2(m[2]) + "-" + pad2(m[3]) : dayShift(base, shift || 0);
+    var clock = pad(m[4]) + ":" + m[5];
+    var date = m[2] ? (m[1] || String(base).slice(0, 4)) + "-" + pad(m[2]) + "-" + pad(m[3]) : dayShift(base, shift || 0);
     var out = date + " " + clock;
     if (after && !m[2] && shift === null && out < String(after).slice(0, 16)) { out = dayShift(date, 1) + " " + clock; }
     return out;
@@ -6237,46 +6236,32 @@
     renderThings(switched ? { toTop: true } : {});
   }
 
-  function thingRow(it) {
+  function dataRow(it, opt) {
     var open = !!S.thingsOpen[it.id];
-    var tone = thingTone(it);
     var row = h("div", { class: "trow", "data-tk": "t:" + it.id });
-    row.appendChild(h("span", { class: "tdot " + thingDot(it), title: it.ended ? "没了" : it.fresh.level + (it.low ? "，余量不多" : "") }));
+    row.appendChild(opt.dot(it));
     var main = h("div", { class: "tmain" });
-    main.appendChild(h("div", { class: "thead" },
-      h("span", { class: "tid", text: it.id }),
-      h("span", { class: "tname", text: it.name }),
-      h("span", { class: "tag", text: it.kind })));
-    var where = [it.place, it.keep, thingSpotShown(it.spot), it.state && it.state !== "整的" ? it.state : ""].filter(Boolean).join("，");
-    if (!it.ended && where) { main.appendChild(h("div", { class: "tmeta", text: where })); }
-    main.appendChild(it.ended ? h("div", { class: "tfresh " + tone, text: it.fresh.text }) : thingGauges(it));
+    main.appendChild(h("div", { class: "thead" }, opt.head(it)));
+    [].concat(opt.meta(it) || []).filter(Boolean).forEach(function (node) { main.appendChild(node); });
+    var body = opt.body && opt.body(it);
+    if (body) { main.appendChild(body); }
     var first = it.stages[0] || {};
-    var line = h("div", { class: "tfrom" },
-      h("span", { text: String(first.at || "").slice(5, 16) + " " + (first.by_label || "") + (first.what || "") + (it.origin ? "（" + it.origin + "）" : "") }));
-    if (it.from.length) {
-      line.appendChild(h("span", { text: "用料" }));
-      it.from.forEach(function (y) { line.appendChild(thingLink(y)); });
-    }
-    if (it.made.length) {
-      line.appendChild(h("span", { text: "做成了" }));
-      it.made.forEach(function (y) { line.appendChild(thingLink(y)); });
-    }
+    var line = h("div", { class: "tfrom" }, h("span", { text: String(first.at || "").slice(5, 16) + " " + (first.by_label || "") + (first.what || "") + (it.origin ? "（" + it.origin + "）" : "") }));
+    if (it.from.length) { line.appendChild(h("span", { text: opt.fromLabel })); it.from.forEach(function (y) { line.appendChild(thingLink(y)); }); }
+    if (it.made.length) { line.appendChild(h("span", { text: "做成了" })); it.made.forEach(function (y) { line.appendChild(thingLink(y)); }); }
     main.appendChild(line);
-    if (open) { main.appendChild(thingDetail(it)); }
+    if (open) { main.appendChild(opt.detail(it)); }
     row.appendChild(main);
-    row.appendChild(h("div", { class: "tacts" }, h("button", { class: "btn quiet sm tmore" + (open ? " on" : ""), type: "button",
-      "aria-expanded": open ? "true" : "false", title: open ? "收起每一步" : "看每一步、改某一步", onclick: function () {
+    row.appendChild(h("div", { class: "tacts" }, h("button", { class: "btn quiet sm tmore" + (open ? " on" : ""), type: "button", "aria-expanded": open ? "true" : "false", title: open ? "收起每一步" : "看每一步、改某一步", onclick: function () {
       if (S.thingsOpen[it.id]) {
         var keys = Object.keys(S.tEdit).filter(function (k) { return k.split(":")[1] === it.id; });
         if (keys.some(function (k) { return worldDirty(S.tEdit[k]); })) { toast("先保存或取消正在改的那一项", { err: true }); return; }
-        keys.forEach(function (k) { delete S.tEdit[k]; });
-        delete S.thingsOpen[it.id];
+        keys.forEach(function (k) { delete S.tEdit[k]; }); delete S.thingsOpen[it.id];
       } else { S.thingsOpen[it.id] = true; }
       thingRedraw(it.id);
     } }, "每一步", icon("chev"))));
     return row;
   }
-
   function thingSrc(st) {
     var src = st.src || {};
     if (st.wl) {
@@ -6702,50 +6687,30 @@
     card.appendChild(rows);
   }
 
-  function objRow(it) {
-    var open = !!S.thingsOpen[it.id];
-    var row = h("div", { class: "trow", "data-tk": "t:" + it.id });
-    row.appendChild(h("span", { class: "tdot " + (it.ended ? "gone" : "ok"), title: it.ended ? "没了" : "在家里" }));
-    var main = h("div", { class: "tmain" });
-    main.appendChild(h("div", { class: "thead" },
-      h("span", { class: "tid", text: it.id }),
-      h("span", { class: "tname", text: it.name }),
-      it.kind ? h("span", { class: "tag", text: it.kind }) : null,
-      it.owner_label ? h("span", { class: "tag", text: "归" + it.owner_label }) : null));
-    if (it.look) { main.appendChild(h("div", { class: "tmeta", text: it.look })); }
-    if (it.ended) {
-      main.appendChild(h("div", { class: "tmeta", text: "已经没了：" + String(it.ended.at || "").slice(5, 16) + " " + it.ended.what }));
-    } else {
-      var now = [it.state && String(it.look || "").indexOf(it.state) < 0 ? it.state : "", objWhere(it)].filter(Boolean).join(" · ");
-      if (now) { main.appendChild(h("div", { class: "tmeta", text: now })); }
-    }
-    var first = it.stages[0] || {};
-    var line = h("div", { class: "tfrom" },
-      h("span", { text: String(first.at || "").slice(5, 16) + " " + (first.by_label || "") + (first.what || "") + (it.origin ? "（" + it.origin + "）" : "") }));
-    if (it.from.length) {
-      line.appendChild(h("span", { text: "用什么做的" }));
-      it.from.forEach(function (y) { line.appendChild(thingLink(y)); });
-    }
-    if (it.made.length) {
-      line.appendChild(h("span", { text: "做成了" }));
-      it.made.forEach(function (y) { line.appendChild(thingLink(y)); });
-    }
-    main.appendChild(line);
-    if (open) { main.appendChild(objDetail(it)); }
-    row.appendChild(main);
-    row.appendChild(h("div", { class: "tacts" }, h("button", { class: "btn quiet sm tmore" + (open ? " on" : ""), type: "button",
-      "aria-expanded": open ? "true" : "false", title: open ? "收起每一步" : "看每一步、改某一步", onclick: function () {
-      if (S.thingsOpen[it.id]) {
-        var keys = Object.keys(S.tEdit).filter(function (k) { return k.split(":")[1] === it.id; });
-        if (keys.some(function (k) { return worldDirty(S.tEdit[k]); })) { toast("先保存或取消正在改的那一项", { err: true }); return; }
-        keys.forEach(function (k) { delete S.tEdit[k]; });
-        delete S.thingsOpen[it.id];
-      } else { S.thingsOpen[it.id] = true; }
-      thingRedraw(it.id);
-    } }, "每一步", icon("chev"))));
-    return row;
+  function thingRow(it) {
+    var tone = thingTone(it);
+    return dataRow(it, {
+      dot: function (x) { return h("span", { class: "tdot " + thingDot(x), title: x.ended ? "没了" : x.fresh.level + (x.low ? "，余量不多" : "") }); },
+      head: function (x) { return [h("span", { class: "tid", text: x.id }), h("span", { class: "tname", text: x.name }), h("span", { class: "tag", text: x.kind })]; },
+      meta: function (x) { var w = [x.place, x.keep, thingSpotShown(x.spot), x.state && x.state !== "整的" ? x.state : ""].filter(Boolean).join("，"); return !x.ended && w ? h("div", { class: "tmeta", text: w }) : null; },
+      body: function (x) { return x.ended ? h("div", { class: "tfresh " + tone, text: x.fresh.text }) : thingGauges(x); },
+      fromLabel: "用料", detail: thingDetail
+    });
   }
 
+  function objRow(it) {
+    return dataRow(it, {
+      dot: function (x) { return h("span", { class: "tdot " + (x.ended ? "gone" : "ok"), title: x.ended ? "没了" : "在家里" }); },
+      head: function (x) { return [h("span", { class: "tid", text: x.id }), h("span", { class: "tname", text: x.name }), x.kind ? h("span", { class: "tag", text: x.kind }) : null, x.owner_label ? h("span", { class: "tag", text: "归" + x.owner_label }) : null]; },
+      meta: function (x) {
+        var out = x.look ? [h("div", { class: "tmeta", text: x.look })] : [];
+        if (x.ended) { out.push(h("div", { class: "tmeta", text: "已经没了：" + String(x.ended.at || "").slice(5, 16) + " " + x.ended.what })); }
+        else { var now = [x.state && String(x.look || "").indexOf(x.state) < 0 ? x.state : "", objWhere(x)].filter(Boolean).join(" · "); if (now) { out.push(h("div", { class: "tmeta", text: now })); } }
+        return out;
+      },
+      body: null, fromLabel: "用什么做的", detail: objDetail
+    });
+  }
   function objStageRow(it, st, vidx, isFirst, pos) {
     var isVoid = vidx !== undefined;
     var kind = isFirst ? "start" : objIsEnd(st.what) ? "end" : "";
