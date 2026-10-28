@@ -477,25 +477,34 @@ class PoolStore:
 
     def __init__(self, path) -> None:
         self.path = Path(path)
+        self._cache: tuple[int, dict] | None = None
 
     def custom(self) -> bool:
         return self.path.exists()
 
     def load(self) -> dict:
         if not self.path.exists():
+            self._cache = None
             return default_pools()
+        version = self.path.stat().st_mtime_ns
+        if self._cache is not None and self._cache[0] == version:
+            return self._cache[1]
         try:
-            return normalize_pools(jsonio.load(self.path, {}))
+            data = normalize_pools(jsonio.load(self.path, {}))
         except Exception:
             return default_pools()
+        self._cache = (version, data)
+        return data
 
     def save(self, pools: dict) -> None:
         data = {kind: list(pools.get(kind) or []) for kind in POOL_KINDS}
         jsonio.save(self.path, data, indent=1)
+        self._cache = (self.path.stat().st_mtime_ns, normalize_pools(data))
 
     def reset(self) -> None:
         if self.path.exists():
             self.path.unlink()
+        self._cache = None
 
 
 TONES = (
@@ -878,12 +887,19 @@ class SeedLog:
 
     def __init__(self, path) -> None:
         self.path = Path(path)
+        self._cache: tuple[int, dict] | None = None
 
     def load(self) -> dict:
         if not self.path.exists():
+            self._cache = None
             return {}
+        version = self.path.stat().st_mtime_ns
+        if self._cache is not None and self._cache[0] == version:
+            return self._cache[1]
         data = jsonio.load(self.path, {})
-        return data if isinstance(data, dict) else {}
+        data = data if isinstance(data, dict) else {}
+        self._cache = (version, data)
+        return data
 
     def save(self, date_text: str, seed: dict) -> None:
         data = self.load()
@@ -894,3 +910,4 @@ class SeedLog:
         data[date_text] = record
         data = {day: data[day] for day in sorted(data)[-SEED_KEEP_DAYS:]}
         jsonio.save(self.path, data, indent=1)
+        self._cache = (self.path.stat().st_mtime_ns, data)

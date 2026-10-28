@@ -677,27 +677,17 @@ class WorldStore:
         return str((self._load_state().get("done_marks") or {}).get(str(who)) or "")
 
     def set_done_mark(self, who: str, when: str) -> None:
-        self._load_state().setdefault("done_marks", {})[str(who)] = str(when)
+        marks = self._load_state().setdefault("done_marks", {})
+        value = str(when)
+        if marks.get(str(who)) == value:
+            return
+        marks[str(who)] = value
         self._save_state()
 
     # ---------- 约束 ----------
 
     def constraints(self, who: str = "", active_only: bool = True) -> list:
         items = list(self._load_state().get("constraints") or [])
-        if active_only:
-            # 顺手把到点的收掉——谁读谁算，不做后台轮询
-            moment = self.now_local()
-            dirty = False
-            for item in items:
-                if str(item.get("status")) != "active":
-                    continue
-                when = parse_time(item.get("until_time"))
-                if when is not None and when <= moment:
-                    item["status"] = "lifted"
-                    item["note"] = "到点自动解除"
-                    dirty = True
-            if dirty:
-                self._save_state()
         if who:
             items = [x for x in items if str(x.get("who")) == str(who)]
         if active_only:
@@ -762,6 +752,12 @@ class WorldStore:
 
     def expire_constraints(self, now: datetime.datetime | None = None) -> int:
         """到点的约束自动解除（只看 until_time）。返回解除条数。"""
+        count = self._expire_constraints(now)
+        if count:
+            self._save_state()
+        return count
+
+    def _expire_constraints(self, now: datetime.datetime | None = None) -> int:
         moment = (now or self.now_local()).replace(tzinfo=None)
         count = 0
         for item in self._load_state().get("constraints") or []:
@@ -772,8 +768,6 @@ class WorldStore:
                 item["status"] = "lifted"
                 item["note"] = "到点自动解除"
                 count += 1
-        if count:
-            self._save_state()
         return count
 
     # ---------- 打算 ----------
@@ -781,28 +775,32 @@ class WorldStore:
     def intentions(self, who: str = "") -> list:
         state = self._load_state()
         items = list(state.get("intentions") or [])
-        # 打算不过期、不限条数：记/撤全由记录员（或网页手动）决定。
-        # 老数据没有编号，这里一次性补上，好让记录员按编号精确撤。
+        # 读的时候只在内存里规整；统一由 tick() 落盘，避免每轮读一次就写一次。
         seq = self._intention_seq(state)
-        changed = False
         for item in items:
             if not str(item.get("id") or "").strip():
                 item["id"] = "i%d" % seq
                 state["intention_seq"] = seq
                 seq += 1
-                changed = True
-        # 主人说的他自己的安排（明天有课、晚上去图书馆）：过了那天就撤；没写哪天的，记下的第二天过完撤
         today = self.now_local().date()
         kept = [x for x in items if not _master_plan_expired(x, today)]
         if len(kept) != len(items):
             items = kept
-            changed = True
-        if changed:
             state["intentions"] = items
-            self._save_state()
         if who:
             items = [x for x in items if str(x.get("who")) == str(who)]
         return items
+
+    def tick(self, now: datetime.datetime | None = None) -> None:
+        """每轮一次的轻维护：到点约束、旧打算编号和过期都只在这里写回。"""
+        moment = (now or self.now_local()).replace(tzinfo=None)
+        state = self._load_state()
+        before = [dict(item) for item in (state.get("intentions") or [])]
+        self.intentions()
+        after = state.get("intentions") or []
+        changed = before != after or self._expire_constraints(moment) > 0
+        if changed:
+            self._save_state()
 
     def _intention_seq(self, state: dict) -> int:
         """下一条打算的编号：只增不减（存在 intention_seq），撤掉的编号不再用，

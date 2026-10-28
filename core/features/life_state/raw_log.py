@@ -37,6 +37,7 @@ class RawMessageLog:
         self.cfg = cfg
         self.bots = BotRegistry(cfg)
         self.folder = Path(data_dir) / FOLDER_NAME
+        self._day_cache: dict[str, tuple[int, list[dict]]] = {}
         # () -> 记录员还没处理完的最早那天（YYYY-MM-DD，没有就空串）；清理旧文件时这天以后的先不删
         self.keep_from_fn = None
 
@@ -98,6 +99,7 @@ class RawMessageLog:
                 item["src"] = str(src)
             with path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(item, ensure_ascii=False) + "\n")
+            self._day_cache.pop(day, None)
             self.cleanup()
             return True
         except Exception as e:
@@ -178,6 +180,7 @@ class RawMessageLog:
             temp = path.with_name(path.name + ".tmp")
             temp.write_text("".join(line + "\n" for line in kept), encoding="utf-8")
             temp.replace(path)
+            self._day_cache.pop(path.stem, None)
         return removed
 
     def cleanup(self) -> None:
@@ -203,6 +206,7 @@ class RawMessageLog:
                 if need and path.stem >= need:
                     logger.warning("[super_enhance/raw_log] %s 里还有记录员没处理的消息，但已经超过 %d 天，删掉", path.name, MAX_KEEP_DAYS)
                 path.unlink()
+                self._day_cache.pop(path.stem, None)
         except Exception as e:
             logger.warning("[super_enhance/raw_log] 清理旧文件失败：%s", e)
 
@@ -211,7 +215,15 @@ class RawMessageLog:
     def read_day(self, date_text: str) -> list[dict]:
         path = self.folder / ("%s.jsonl" % date_text)
         if not path.exists():
+            self._day_cache.pop(str(date_text), None)
             return []
+        try:
+            version = path.stat().st_mtime_ns
+        except Exception:
+            version = 0
+        cached = self._day_cache.get(str(date_text))
+        if cached is not None and cached[0] == version:
+            return cached[1]
         items: list[dict] = []
         try:
             for line in path.read_text(encoding="utf-8").splitlines():
@@ -229,6 +241,7 @@ class RawMessageLog:
             logger.error("[super_enhance/raw_log] 读取 %s 失败：%s", date_text, e)
             return []
         items.sort(key=lambda item: item.get("ts") or 0)
+        self._day_cache[str(date_text)] = (version, items)
         return items
 
     def _fix_ts(self, item: dict) -> None:

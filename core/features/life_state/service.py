@@ -610,6 +610,7 @@ class LifeStateService:
                     self._world_day = today
                 else:
                     await self._review_if_due(now)
+                self.world.tick(now)
                 for umo in self.recorder.sessions():
                     items = self.recorder.pending(umo, now)
                     if items:
