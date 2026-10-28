@@ -94,10 +94,6 @@ class TimelineEntry:
             return []
         return [(single, min(single + 60, 1440))]
 
-    def start_minute(self) -> int | None:
-        ranges = self.ranges()
-        return ranges[0][0] if ranges else None
-
 @dataclass
 class LifeState:
     """某一天的生活状态。"""

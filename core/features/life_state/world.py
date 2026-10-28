@@ -200,23 +200,6 @@ class WorldStore:
                 return found
         return None
 
-    def entries_between(self, who: str, lo, hi) -> list:
-        """某人开始时刻落在 [lo, hi] 里的条目，跨日一次取齐。"""
-        lower = parse_time(lo) if not isinstance(lo, datetime.datetime) else lo.replace(tzinfo=None)
-        upper = parse_time(hi) if not isinstance(hi, datetime.datetime) else hi.replace(tzinfo=None)
-        if lower is None or upper is None or upper < lower:
-            return []
-        out = []
-        day = lower.date()
-        while day <= upper.date():
-            out.extend(
-                item for item in self.entries(day.isoformat(), who)
-                if (start := parse_time(item.get("start"))) is not None and lower <= start <= upper
-            )
-            day += datetime.timedelta(days=1)
-        out.sort(key=lambda item: str(item.get("start") or ""))
-        return out
-
     def interrupt(self, entry: dict, at, *, by: str = "", why: str = ""):
         """截停一段：还没开始就删，正在做就截到 at；睡觉和手动条目不动。"""
         if not isinstance(entry, dict) or is_event(entry) or is_sleep(entry) or str(entry.get("source") or "") == "manual":
