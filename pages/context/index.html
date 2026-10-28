@@ -2629,13 +2629,10 @@
     var c = curConv();
     if (!c) { return Promise.resolve([]); }
     var umo = c.umo;
-    if (toolCache[umo]) { return Promise.resolve(toolCache[umo]); }
+    var cacheKey = umo + ":" + (S.requestVersion || 0);
+    if (toolCache[cacheKey]) { return Promise.resolve(toolCache[cacheKey]); }
     var got = S.req.data && S.req.data.umo === umo ? Promise.resolve(S.req.data.tools || []) :
-      api("ctx/requests", { umo: umo, limit: 1 }).then(function (d) {
-        var it = d && d.items && d.items[0];
-        if (!it) { return []; }
-        return api("ctx/request", { id: it.id }).then(function (snap) { return (snap && snap.tools) || []; });
-      });
+      api("ctx/request_tools", { umo: umo }).then(function (d) { return (d && d.tools) || []; });
     return got.then(function (list) {
       var seen = {};
       list = list.filter(function (t) {
@@ -2650,7 +2647,7 @@
         });
       });
       list.sort(function (a, b) { return a.name < b.name ? -1 : 1; });
-      if (list.length) { toolCache[umo] = list; }
+      if (list.length) { toolCache[cacheKey] = list; }
       return list;
     });
   }

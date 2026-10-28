@@ -375,6 +375,8 @@ class ContextPageApi:
         self._pic_cache = {}
         self._pulse_cache = {}
         self._token_cache = {}
+        self._pool_cache: tuple[Any, dict] | None = None
+        self._things_cache: tuple[Any, dict] | None = None
         self._sched_job: dict[str, Any] | None = None
 
     # ------------------------------------------------------------------ 基础
@@ -402,6 +404,7 @@ class ContextPageApi:
                 mime = text[5:text.index(";")]
             out.append({"id": pic_id, "type": mime, "size": len(text)})
         return out
+
     def _resolve_images(self, values) -> list[str]:
         if not hasattr(self, "_pic_cache"):
             self._pic_cache = {}
@@ -416,6 +419,7 @@ class ContextPageApi:
                 text = str(raw or "")
                 out.append(self._pic_cache.get(text, text))
         return out
+
     async def get_picture(self):
         args = request.args if request is not None else {}
         pic_id = str(args.get("id") or "").strip()
@@ -427,6 +431,33 @@ class ContextPageApi:
     @property
     def manager(self):
         return self.context.conversation_manager
+
+    def _conversation_stats(self, conv, history: list[dict]) -> dict[str, int]:
+        """按会话 ``updated_at`` 缓存网页用的字数与 token 估算。
+
+        页面列表和第一页历史会同时用到这组数；历史没变就不该把整段再扫一遍。
+        ``__new__`` 构造的旧测试没有走到 ``__init__``，所以这里兼容懒初始化。
+        """
+        if not hasattr(self, "_token_cache"):
+            self._token_cache = {}
+        cid = str(getattr(conv, "cid", "") or "")
+        key = (_as_int(getattr(conv, "updated_at", 0)), _as_int(getattr(conv, "token_usage", 0)), len(history))
+        cached = self._token_cache.get(cid)
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        texts_chars = 0
+        thinks_chars = 0
+        for item in history:
+            texts, thinks, _ = _text_parts(item)
+            texts_chars += sum(len(text) for text in texts)
+            thinks_chars += sum(len(think) for think in thinks)
+        stats = {
+            "text_chars": texts_chars,
+            "think_chars": thinks_chars,
+            "estimate_tokens": _estimate_tokens(history),
+        }
+        self._token_cache[cid] = (key, stats)
+        return stats
 
     # ---------- 世界线 ----------
 
@@ -834,7 +865,25 @@ class ContextPageApi:
 
             store = life.things
             now = life._now().replace(tzinfo=None)
-            shelf = store.view(now)
+            def stamp(path: Path) -> int:
+                try:
+                    return path.stat().st_mtime_ns
+                except Exception:
+                    return 0
+
+            world_stamp = tuple(
+                sorted((path.name, stamp(path)) for path in life.world.dir.glob("*.json"))
+            ) if life.world.dir.exists() else ()
+            key = (
+                now.strftime("%Y-%m-%d %H:%M"),
+                stamp(store.path),
+                stamp(life.data_dir / "daily_seeds.json"),
+                world_stamp,
+            )
+            cached = getattr(self, "_things_cache", None)
+            if cached is not None and cached[0] == key:
+                return _ok(cached[1])
+            shelf = await asyncio.to_thread(store.view, now)
 
             def name_of(tid) -> dict:
                 found = shelf.find(tid)
@@ -952,7 +1001,7 @@ class ContextPageApi:
             obj_rows.sort(key=lambda x: str(x.get("created") or ""))
             future = self._things_future(life, store, shelf, now)
             bots = list(life.enabled_bots() or [])
-            return _ok({
+            data = {
                 "now": now.strftime("%Y-%m-%d %H:%M:%S"),
                 "items": items,
                 "future": future,
@@ -967,7 +1016,9 @@ class ContextPageApi:
                 "measured_kinds": list(things_mod.MEASURED_KINDS),
                 "people": [{"key": b, "label": self._thing_who(life, b)} for b in bots] + [{"key": "master", "label": "主人"}],
                 "settle_days": things_mod.SETTLE_DAYS,
-            })
+            }
+            self._things_cache = (key, data)
+            return _ok(data)
         except Exception as exc:
             logger.error("[super_enhance/ctx] 读取家里的吃的失败", exc_info=True)
             return _err(exc)
@@ -1102,15 +1153,29 @@ class ContextPageApi:
             from .features.life_state import variety
 
             today = life._today()
-            pools = life.pool_store.load()
-            history = life.seed_log.load() or {}
             bots = [{"id": bot, "label": life.bots.label_for(bot) or bot} for bot in life.enabled_bots() or []]
             labels = {b["id"]: b["label"] for b in bots}
-            # 模拟几百次抽签要零点几秒，放到线程里，别卡住收发消息
-            outlook = await asyncio.to_thread(variety.pool_outlook, pools, history, today, labels, _POOL_SIMS)
-            groups = variety.group_map(pools)
-            return _ok(
-                {
+            def stamp(path: Path) -> int:
+                try:
+                    return path.stat().st_mtime_ns
+                except Exception:
+                    return 0
+
+            key = (
+                today,
+                _POOL_SIMS,
+                tuple((b["id"], b["label"]) for b in bots),
+                stamp(life.pool_store.path),
+                stamp(life.seed_log.path),
+            )
+            cached = getattr(self, "_pool_cache", None)
+            if cached is None or cached[0] != key:
+                pools = life.pool_store.load()
+                history = life.seed_log.load() or {}
+                # 模拟几百次抽签要零点几秒，放到线程里，别卡住收发消息
+                outlook = await asyncio.to_thread(variety.pool_outlook, pools, history, today, labels, _POOL_SIMS)
+                groups = variety.group_map(pools)
+                data = {
                     "today": today,
                     "next": outlook["date"],
                     "sims": outlook["sims"],
@@ -1126,7 +1191,9 @@ class ContextPageApi:
                     "groups": sorted({g for g in groups.values() if g}),
                     "cool_max": variety.COOL_MAX,
                 }
-            )
+                self._pool_cache = (key, data)
+            cached = getattr(self, "_pool_cache", None)
+            return _ok(cached[1] if cached is not None else {})
         except Exception as exc:
             logger.error("[super_enhance/ctx] 读取插曲与消遣池失败", exc_info=True)
             return _err(exc)
@@ -1374,6 +1441,8 @@ class ContextPageApi:
             history=history,
             token_usage=tokens,
         )
+        if hasattr(self, "_token_cache"):
+            self._token_cache.pop(str(conv.cid), None)
         return tokens
 
     def _backup(self, cid: str, history: list[dict]) -> str:
@@ -1523,12 +1592,9 @@ class ContextPageApi:
         items = []
         for conv in convs:
             history = _history_of(conv.history)
-            texts_chars = 0
-            thinks_chars = 0
-            for item in history:
-                texts, thinks, _ = _text_parts(item)
-                texts_chars += sum(len(t) for t in texts)
-                thinks_chars += sum(len(t) for t in thinks)
+            stats = self._conversation_stats(conv, history)
+            texts_chars = stats["text_chars"]
+            thinks_chars = stats["think_chars"]
             items.append(
                 {
                     "cid": conv.cid,
@@ -1541,7 +1607,7 @@ class ContextPageApi:
                     "text_chars": texts_chars,
                     "think_chars": thinks_chars,
                     "token_usage": _as_int(conv.token_usage),
-                    "estimate_tokens": _estimate_tokens(history),
+                    "estimate_tokens": stats["estimate_tokens"],
                     "updated_at": _as_int(conv.updated_at),
                 }
             )
@@ -1651,7 +1717,7 @@ class ContextPageApi:
                 "start": start,
                 "end": end,
                 "has_more": start > 0,
-                "estimate_tokens": _estimate_tokens(history),
+                "estimate_tokens": self._conversation_stats(conv, history)["estimate_tokens"],
                 "token_usage": _as_int(conv.token_usage),
                 "last_sig": hashlib.sha1(json.dumps(history[-1], ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")).hexdigest() if history else "",
                 "content_max": self._limit_tokens(conv.user_id),
@@ -2055,6 +2121,31 @@ class ContextPageApi:
         path = self.data_dir / "request_snapshots" / "index.json"
         version = path.stat().st_mtime_ns if path.exists() else 0
         return _ok({"items": items, "disabled": False, "version": version})
+
+    async def request_tools(self):
+        """只回一份快照里的工具定义；页面不再为了工具列表读整份请求快照。"""
+        args = request.args if request is not None else {}
+        rid = str(args.get("id") or "").strip()
+        umo = str(args.get("umo") or "").strip()
+        store = self._snapshot_store()
+        if store is None:
+            return _ok({"id": "", "tools": [], "disabled": True})
+        try:
+            if not rid:
+                if not umo:
+                    return _err("缺少 umo")
+                items = await asyncio.to_thread(store.list, umo, 1)
+                if not items:
+                    return _ok({"id": "", "tools": [], "disabled": False})
+                rid = str((items[0] or {}).get("id") or "")
+            data = await asyncio.to_thread(store.load, rid)
+        except Exception as exc:
+            logger.error("[super_enhance/ctx] 读取工具列表失败", exc_info=True)
+            return _err(exc)
+        if data is None:
+            return _ok({"id": rid, "tools": [], "disabled": False})
+        tools = data.get("tools") if isinstance(data, dict) else []
+        return _ok({"id": rid, "tools": tools if isinstance(tools, list) else [], "disabled": False})
 
     async def get_request(self):
         args = request.args if request is not None else {}
