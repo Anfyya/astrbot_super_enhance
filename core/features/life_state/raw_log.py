@@ -13,12 +13,14 @@ AstrBot 的会话历史会被 ``/compact`` 压成摘要，回查前一天日程�
 
 import datetime
 import json
+import time
 from pathlib import Path
 from astrbot.api import logger
 
 from ...common import history_io, timeutil
 from ...common.bots import BotRegistry
 from ...common.text import clean_message, text_of, time_of
+from .proactive import is_proactive_event
 
 FOLDER_NAME = "raw_messages"
 KEEP_DAYS = 2  # 今天 + 昨天
@@ -299,3 +301,113 @@ class RawMessageLog:
             if self.record(umo, role, body, when):
                 count += 1
         return count
+
+# ---------- 服务层：原始消息钩子 ----------
+
+def _touch(service, umo: str) -> None:
+    if umo:
+        service._activity[str(umo)] = time.time()
+
+def last_activity(service, umo: str) -> float:
+    """这个会话最近一次有人说话（主人发来或 Bot 发出）的时刻；重启后从原始消息副本里补。"""
+    best = service._activity.get(str(umo), 0.0)
+    now = time.time()
+    for item in service.recent_messages(umo):
+        try:
+            ts = float(item.get("ts") or 0.0)
+        except Exception:
+            continue
+        if ts > now + 120:
+            # 时间在未来的记录（时区没对上）不算「刚聊过」
+            continue
+        best = max(best, ts)
+    return best
+
+def recent_messages(service, umo: str) -> list[dict]:
+    """原始消息副本里这个会话今天 + 昨天的消息，按时间排好。"""
+    today = service._now().date()
+    items: list[dict] = []
+    for day in (today - datetime.timedelta(days=1), today):
+        for item in service.raw_log.read_day(day.isoformat()):
+            if str(item.get("umo") or "") == str(umo):
+                items.append(item)
+    items.sort(key=lambda item: item.get("ts") or 0)
+    return items
+
+def record_incoming(service, event) -> None:
+    """记录用户发来的原始消息。"""
+    service._touch(getattr(event, "unified_msg_origin", ""))
+    try:
+        service.raw_log.record(
+            event.unified_msg_origin, "user", event.get_message_str() or ""
+        )
+    except Exception:
+        logger.debug("[super_enhance/life] 记录用户消息失败", exc_info=True)
+
+def record_reply(service, event) -> None:
+    """记录 Bot 实际发出去的回复文本。"""
+    try:
+        result = event.get_result()
+    except Exception:
+        result = None
+    if result is None:
+        return
+    texts = []
+    for comp in getattr(result, "chain", []) or []:
+        text = getattr(comp, "text", None)
+        if isinstance(text, str) and text.strip():
+            texts.append(text.strip())
+    if not texts:
+        return
+    service._touch(getattr(event, "unified_msg_origin", ""))
+    try:
+        service.raw_log.record(
+            event.unified_msg_origin, "assistant", "\n".join(texts)
+        )
+    except Exception:
+        logger.debug("[super_enhance/life] 记录回复失败", exc_info=True)
+
+def record_tool_message(service, event, tool, tool_args) -> None:
+    """记录经 send_message_to_user 主动发出的消息（含定时主动对话）。"""
+    if getattr(tool, "name", "") != "send_message_to_user":
+        return
+    args = tool_args or {}
+    messages = args.get("messages")
+    if not isinstance(messages, list) or not messages:
+        return
+    texts = []
+    for item in messages:
+        if isinstance(item, dict):
+            text = str(item.get("text") or "").strip()
+            if text:
+                texts.append(text)
+    if not texts:
+        return
+    umo = str(getattr(event, "unified_msg_origin", "") or "")
+    session = args.get("session")
+    if isinstance(session, str) and session.strip():
+        value = session.strip()
+        if ":" in value:
+            umo = value
+        else:
+            try:
+                cur = MessageSession.from_str(umo)
+                umo = str(
+                    MessageSession(
+                        platform_name=cur.platform_name,
+                        message_type=MessageType.FRIEND_MESSAGE,
+                        session_id=value,
+                    )
+                )
+            except Exception:
+                pass
+    service._touch(umo)
+    # 本插件排的主动对话发给主人的消息：打上标记，下次到点好判断「上一条主人回没回」
+    src = ""
+    if is_proactive_event(event) and umo == str(getattr(event, "unified_msg_origin", "") or ""):
+        src = "proactive"
+        service._proactive_sent[umo] = time.time()
+    try:
+        service.raw_log.record(umo, "assistant", "\n".join(texts), src=src)
+    except Exception:
+        logger.debug("[super_enhance/life] 记录主动消息失败", exc_info=True)

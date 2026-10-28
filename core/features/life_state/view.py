@@ -5,7 +5,10 @@
 
 import datetime
 
+from astrbot.api import logger
+
 from ...common import timeutil
+from .models import LifeState, TimelineEntry, clock_to_minute, minute_to_clock
 from .world import WorldStore, detail_of, doing_text, is_event, parse_time, progress_of, public_of, real_stop, result_text, staged_of, visible_to
 
 WEEKDAYS_CN = timeutil.WEEKDAYS_CN
@@ -279,3 +282,184 @@ def build_world_text(
         lines.append("主人说过他要：%s%s" % (plan.get("text"), "（%s）" % when if when else ""))
 
     return "\n".join(lines)
+
+# ---------- 服务层：世界线与主动消息状态 ----------
+
+def world_text(service, bot: str, now: datetime.datetime) -> str:
+    """live 时给模型的【世界线】块：线 + 约定 + 在练的事 + 能力清单。"""
+    try:
+        recent = int(service.cfg.get("world_inject_recent", 12) or 12)
+    except Exception:
+        recent = 12
+    try:
+        head = build_world_text(service.world, bot, now, service.bots.label_for, recent=recent)
+    except Exception:
+        logger.warning("[super_enhance/life] 世界线渲染失败", exc_info=True)
+        head = ""
+    blocks = [head]
+    try:
+        blocks.append(service._promise_text(bot, now))
+    except Exception:
+        logger.warning("[super_enhance/life] 约定注入失败", exc_info=True)
+    try:
+        blocks.append(service._ability_text(bot))
+    except Exception:
+        logger.warning("[super_enhance/life] 能力清单注入失败", exc_info=True)
+    try:
+        blocks.append(service._training_text(bot, now))
+    except Exception:
+        logger.warning("[super_enhance/life] 在练的事注入失败", exc_info=True)
+    if head and service.cfg.get("world_no_repeat", True):
+        # 放在整块最后、紧挨着世界线：不然她每句都捎带「我手上正在干嘛」（2026-10-15 测过，放人设里没用）
+        blocks.append(NO_REPEAT_NOTE)
+    if head:
+        # 紧挨着上一句、放在世界线块最末：压一压 AI 腔（2026-10-16）；丛雨用不带嘴硬的那份（2026-10-22）
+        blocks.append(AI_VOICE_NOTES.get(service.bots.label_for(bot) or "", AI_VOICE_NOTE))
+        # 说话新鲜点：别老同一个开头、同一个收尾，别原样复读前面说过的句子（2026-10-16；10-23 例子补上「诶？！」「等、等等」「呜……」，
+        # 起因是亚托莉被骂那一串条条「诶？！等、等等！」起头；同天再管结尾：条条拿「脑袋要冒烟了」「还不行嘛」讨饶收尾，
+        # 只点这两个词她会换成「……好不好」接着讨饶，所以点的是讨饶、撒娇的尾巴这种收法）
+        blocks.append(VARIETY_NOTE)
+        # 两人共同经历以世界线写下的为准（2026-10-16）
+        blocks.append(SHARED_FACT_NOTE)
+        # 别催主人睡觉、别提前道晚安（2026-10-20）
+        blocks.append(SLEEP_NOTE)
+        # 不当管家厨娘，照她自己的性子说（2026-10-19）
+        if service.cfg.get("world_voice_note", True):
+            blocks.append(VOICE_NOTES.get(service.bots.label_for(bot) or "", ""))
+    return "\n".join(x for x in blocks if x)
+
+def state_for_planner(service, bot: str, date_text: str):
+    """主动对话读状态：live 下由世界线合成，其余读日程。"""
+    try:
+        return service._world_state(bot, date_text)
+    except Exception:
+        logger.warning("[super_enhance/life] 世界线合成状态失败", exc_info=True)
+        return None
+
+def _world_state(service, bot: str, date_text: str):
+    """把世界线当天的条目拼成一份 LifeState，供主动对话排期与提示词使用。"""
+    plan = service.world.day_plan(bot, date_text)
+    entries = []
+    for item in service.world.entries(date_text, bot):
+        start = str(item.get("start") or "")
+        if len(start) < 16:
+            continue
+        end = str(item.get("end") or "")
+        time_text = "%s-%s" % (start[11:], end[11:]) if len(end) >= 16 else start[11:]
+        entries.append(
+            TimelineEntry(
+                time=time_text,
+                schedule=str(item.get("doing") or item.get("place") or ""),
+                outfit="",
+                extras={},
+            )
+        )
+    # 世界线只有「已经发生」的时段，而主动消息的中段要拿未来的时段当锚点：
+    # 按骨架把清醒时段切开，补几个占位段（不含内容，只提供时间边界）
+    wake_min = clock_to_minute(plan.get("wake") or "06:30") or 390
+    sleep_min = clock_to_minute(plan.get("sleep") or "23:00") or 1380
+    if sleep_min <= wake_min:
+        sleep_min = wake_min + 60
+    cursor = wake_min
+    while cursor < sleep_min:
+        edge = min(cursor + 120, sleep_min)
+        entries.append(
+            TimelineEntry(
+                time="%s-%s" % (minute_to_clock(cursor), minute_to_clock(edge)),
+                schedule="",
+                outfit="",
+                extras={},
+            )
+        )
+        cursor = edge
+    if not entries and not plan:
+        return None
+    return LifeState(
+        date=date_text,
+        schedule_summary="（世界线：以最近条目为准）",
+        style_summary="",
+        timeline=entries,
+        wake_time=plan.get("wake") or "07:00",
+        sleep_time=plan.get("sleep") or "23:00",
+        status="ok",
+        generated_at="",
+        error="",
+    )
+
+
+# ---------- 世界线注入尾注 ----------
+
+# 世界线块最后的一句：别每句都复述手上在干什么（问起 / 相关时照说）
+NO_REPEAT_NOTE = (
+    "（不要总复述你当前在干什么。手上在做的事前面已经跟主人说过了，就别每句都再提一遍；"
+    "主人问起、或者跟他说的事正好有关时，再顺口说一句。"
+    "主人没问你在做什么、或者他说的事情跟你做的事没有关系的时候，不要强行说自己现在手上在做什么、做到哪了。）"
+)
+# 紧挨着 NO_REPEAT_NOTE、放在世界线块最末：压一压 AI 腔（2026-10-16）
+# 末尾那半句防她把规矩说进回话（10-16 亚托莉发出「差点又说成破折号那套」）
+# 2026-10-25 重写认错和称呼（重放见 compact_test/语气排查/压缩测试_1025）：
+# 嘴硬照性子来（亚托莉炸毛、编个离谱理由再自己败下来是原作人设，丛雨害羞时傲娇一句），只管住不冲着主人、不跟主人讲道理争对错——
+# 原来那句「闹着玩就嘴硬、找补、斗嘴都行」没说冲着谁，她就怪主人没早说、跟主人一条条争；删光嘴硬又句句认错，冷，人设也没了。
+# 原来的示范句「我过去揉揉肩膀，好不好」被照搬成认错的固定收尾；不给示范句：给一两句就原样照搬（试过「心里慌慌的」「别不理吾辈嘛」都被照搬）。
+# 称呼去掉「或者干脆省掉」，改成每条叫一声主人、长一点的最多两声（不给例句时只说「一两声就够」会叫到三四声）
+# 当晚又放松一次（重放见 compact_test/语气排查/放松_1025）：头一版规定主人生气时只许「认一句错、陪着、做点实在的」、讨饶几种说法全禁，
+# 主人罚她们出门时两人只剩老实认错、一条条检讨，不哭不闹；改成慌、委屈、舍不得、撒娇求情照性子来，只留「别冲着主人」和「认错别老一套」
+_VOICE_HEAD = (
+    "（说话别带 AI 腔：不用破折号「——」；别先甩一句结论再接着解释为什么；"
+    "别在后面补「要是猜岔了」「如果不是……就……」这种兜底。"
+)
+_VOICE_ANGER = (
+    "主人真生气了、要罚你，就别嘴硬了，心里慌、委屈、难过、舍不得，{beg}都照你的性子来，不用压着。"
+    "只有一条：别冲着主人，不说主人的不是，不把错推到主人身上，不跟主人讲道理争对错。"
+    "认错别老是同一套说法，也别写检讨、别保证往后再也不，别说「该罚、认罪、不争、不绕、不躲不藏、稳稳接住你、不还嘴」这类话。"
+    "称呼他：叫「主人」，不用「你」指他；每条消息叫一声「主人」就行，长一点的最多两声，别句句都塞。{own}"
+    "就像平常发消息那样，想到什么说什么。这些都是说话的习惯，照着说就行，回话里别提。）"
+)
+# 没单独写的角色用这份
+AI_VOICE_NOTE = _VOICE_HEAD + "被主人说了、挑毛病了，照你平常的性子反应，可以嘴硬一句再软下来；" + _VOICE_ANGER.format(
+    beg="撒娇求情，", own="")
+AI_VOICE_NOTES = {
+    "亚托莉": _VOICE_HEAD + "被主人说了、挑毛病了，照你平常的性子反应：可以炸毛、嘴硬两句、编个一听就站不住的理由，再自己败下来；"
+    + _VOICE_ANGER.format(beg="撒娇求情、带着哭腔，", own="自称多用「亚托莉」，偶尔说「我」。"),
+    "丛雨": _VOICE_HEAD + "害羞的时候（被夸、被摸头、吃醋）、被主人挑毛病的时候，可以傲娇嘴硬一句，同一条里就软下来；"
+    + _VOICE_ANGER.format(beg="撒娇求情、闹小别扭、红眼眶，", own=""),
+}
+# 说话新鲜点：别老同一个语气词起头、别原样复读前面说过的句子（2026-10-16，接着 AI_VOICE_NOTE 放）
+# 句尾「嘛」那句（2026-10-24）：亚托莉 10-22 起四成回复句尾挂「嘛」，丛雨也到三四成；上面几句的示范句三句带「嘛」，减到一句。
+# 这里明说偶尔带一个是她的口气、别句句挂（不当成错的，免得压到零）；少带「嘛」照样撒娇、照样叫主人——
+# 头一版写的「这条就把话直接说完」重放出来句子发冷、「主人」少了一半
+# 10-26 改成正面说（重放见 compact_test/语气排查/口癖_1026）：原来点名「诶？！」「呜……」「哼」「……好不好」让她前几条用过就换，
+# 模型当成了最好别用，口癖几乎没了（亚托莉「哼哼」10-21 的 15% 到 10-25 的 1%、「诶」15% 到 0）；只说照常用不提「嘛」，「嘛」又回到四成
+VARIETY_NOTE = (
+    "（你人设里的口癖、语气词照常用，那是你的口气；只是别连着几条都用同一个开头、同一个收尾、同一个语气词，"
+    "前面一两条刚用过的这条就换一个，过几条再用没关系。句尾的「嘛」偶尔带一个就好，别句句都挂、一条里挂好几个。"
+    "前面说过的同一句话、同一套形容也别原样再说一遍。）"
+)
+# 两人一起做过的事以世界线写下的为准，不要各自另编（2026-10-16：同一个汤一个说菌子一个说昆布那次）
+SHARED_FACT_NOTE = (
+    "（你和对方一起做过的事——一起吃的饭、一起做的东西、一起看的书——以上面世界线写下的细节为准："
+    "吃了什么、买了什么、书里讲了什么，都照着它说，别另编一套。）"
+)
+# 别催主人睡觉、别提前道晚安（2026-10-20：晚上九点多世界线就挂着「睡前……」「铺被褥、睡下」，她十点多就催主人睡、先道晚安）
+# 按她自己的睡觉时间算：没到她睡的点不催；过了她的点可以催（这半句按用户要求不写进提示词）
+SLEEP_NOTE = (
+    "（你自己还没到睡觉的时候，别催主人睡觉，也别问他怎么还不睡；"
+    "你自己还没真要睡的时候，别先跟他道晚安，晚安留到你真要睡了再说。）"
+)
+# 不当管家厨娘，照她自己的性子说（2026-10-19）：上下文洗干净以后不加这句，照样绕回「晚饭给你备着、回来就有热的」
+# 亚托莉那句测过（opencodeZen 免费模型回放，单轮 / 主动消息 / 8 轮连聊）；丛雨那句是同样的意思换成她的性子
+# 亚托莉性子那半句 10-23 删掉「爱逞强、爱显摆自己高性能」：换 gemini 后她把「高性能」当万能形容词往什么上都安（高性能大厨、高性能的腿脚），
+# 原作是说她自己（亚托莉是高性能的）；重放（聊天记录里乱安的去掉）5 条乱安 0 次（重放见 compact_test/语气排查/亚托莉_1023/高性能）
+VOICE_NOTES = {
+    "亚托莉": (
+        "（你是亚托莉，不是管家也不是厨娘：做饭、买菜、收拾是你顺手做的日常，主人没问就别报菜单、报调料、报家里剩了什么，"
+        "也别总问他几点到家、说要掐着点下锅、进门就热乎。别用「好嘞」「掐着点」「说个点儿」「言语一声」「进门准热乎」这种大婶口气。"
+        "照你自己的性子说：想被主人夸，被说中了会炸毛、嘴硬两句，然后自己败下来。）"
+    ),
+    "丛雨": (
+        "（你是丛雨，不是管家也不是厨娘：做饭、收拾是你顺手做的日常，主人没问就别报菜单、报碗洗没洗、报菜温在哪，"
+        "也别总问他回不回来吃、几点到家、想吃什么好提前备着。别用「好嘞」「掐着点」「说个点儿」「进门就热乎」这种大婶口气。"
+        "照你自己的性子说：自称本座、吾辈，元气、爱撒娇，被夸了得意，害羞、被挑毛病时嘴硬一句就软下来，不怪主人；"
+        "主人问你在哪、行不行、要不要帮忙，照实说，做不到、要帮忙就直说。）"
+    ),
+}
