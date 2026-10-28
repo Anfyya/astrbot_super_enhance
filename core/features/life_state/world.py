@@ -750,13 +750,6 @@ class WorldStore:
                 return True
         return False
 
-    def expire_constraints(self, now: datetime.datetime | None = None) -> int:
-        """到点的约束自动解除（只看 until_time）。返回解除条数。"""
-        count = self._expire_constraints(now)
-        if count:
-            self._save_state()
-        return count
-
     def _expire_constraints(self, now: datetime.datetime | None = None) -> int:
         moment = (now or self.now_local()).replace(tzinfo=None)
         count = 0

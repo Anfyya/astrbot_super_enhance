@@ -101,19 +101,6 @@ def merge_close(items: list, gap_minutes: int = FRAGMENT_MINUTES) -> list:
     return out
 
 
-def _day_word(date_text: str, today: datetime.date) -> str:
-    try:
-        day = datetime.date.fromisoformat(str(date_text))
-    except Exception:
-        return ""
-    if day == today:
-        return ""
-    delta = (today - day).days
-    if delta == 1:
-        return "昨天 "
-    return "%s " % date_text
-
-
 def _when(item: dict) -> str:
     """「09:00–10:40」或「10:40 起」。"""
     return timeutil.span_text(item.get("start"), item.get("end"))

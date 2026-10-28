@@ -98,11 +98,6 @@ class TimelineEntry:
         ranges = self.ranges()
         return ranges[0][0] if ranges else None
 
-    def end_minute(self) -> int | None:
-        ranges = self.ranges()
-        return ranges[-1][1] if ranges else None
-
-
 @dataclass
 class LifeState:
     """某一天的生活状态。"""
@@ -139,20 +134,6 @@ class LifeState:
                 for item in self.timeline
             ],
         }
-
-    def find_entry(self, minute: int) -> TimelineEntry | None:
-        """取覆盖该分钟的时段；没有覆盖则回退到它之前最近的一个时段。"""
-        if not self.timeline:
-            return None
-        previous: TimelineEntry | None = None
-        for entry in self.timeline:
-            for start, end in entry.ranges():
-                if start <= minute < end:
-                    return entry
-            start = entry.start_minute()
-            if start is not None and start <= minute:
-                previous = entry
-        return previous or self.timeline[0]
 
     def find_entry_strict(self, minute: int) -> TimelineEntry | None:
         """只取真正覆盖该分钟的时段；落在时间线外（多为睡眠）返回 None，不回退。"""

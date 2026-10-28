@@ -98,9 +98,6 @@ class AbilityBook(_JsonBook):
         items = bots.get(str(bot))
         return [x for x in items if isinstance(x, dict)] if isinstance(items, list) else []
 
-    def all_bots(self) -> list[str]:
-        return sorted(k for k, v in (self._load().get("bots") or {}).items() if v)
-
     def add(self, bot: str, text: str, source: str, since: str = "") -> tuple[dict, bool]:
         """记一条；同样的内容已存在就原样返回（created=False）。"""
         bot = str(bot or "").strip()

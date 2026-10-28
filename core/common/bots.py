@@ -169,10 +169,3 @@ class BotRegistry:
     def is_target(self, umo: str) -> bool:
         bots = self.enabled_bots()
         return bool(bots) and platform_of(umo) in bots
-
-    def representative_umo(self, bot: str) -> str:
-        for key in ("proactive_targets", "session_list"):
-            for item in list_of(self._life_get(key)):
-                if ":" in item and platform_of(item) == bot:
-                    return item
-        return profile_umo(bot)

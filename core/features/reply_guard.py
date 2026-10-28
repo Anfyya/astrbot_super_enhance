@@ -30,7 +30,6 @@ from .turn_state import (
     drop_unsent,
     final_texts,
     local_stamp,
-    reminder_text,
     remove_texts_from_tail,
 )
 
@@ -248,10 +247,6 @@ class ReplyGuardFeature:
             "[super_enhance/reply_guard] 已把上一条用户消息单独补进本次请求：%s",
             text[:40],
         )
-
-    @staticmethod
-    def _reminder(info: dict) -> str:
-        return reminder_text(info)
 
     @staticmethod
     def _context_has(req, text: str) -> bool:
