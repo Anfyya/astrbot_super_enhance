@@ -1606,29 +1606,21 @@
     });
   }
 
-  function openLedger() {
+  function openAuxPage(view, render, load) {
     guardDirty().then(function (ok) {
       if (!ok) { return; }
       setSideOpen(false);
       closeInsp(true);
-      S.view = "ledger";
+      S.view = view;
       showView();
-      renderLedger();
-      loadLedger();
+      render();
+      load();
     });
   }
 
-  function openPools() {
-    guardDirty().then(function (ok) {
-      if (!ok) { return; }
-      setSideOpen(false);
-      closeInsp(true);
-      S.view = "pool";
-      showView();
-      renderPools();
-      loadPools();
-    });
-  }
+  function openLedger() { openAuxPage("ledger", renderLedger, loadLedger); }
+
+  function openPools() { openAuxPage("pool", renderPools, loadPools); }
 
   function openWorld() {
     guardDirty().then(function (ok) {
@@ -3199,33 +3191,38 @@
   };
   var POOL_SORTS = [["chance", "按明天抽中"], ["base", "按初始权重"], ["order", "原顺序"]];
 
-  function loadPools(silent) {
-    if (S.poolsLoading) { return Promise.resolve(); }
-    S.poolsLoading = true;
-    return api("ctx/pools").then(function (d) {
-      S.poolsLoading = false;
-      S.pools = d;
-      S.poolsErr = "";
+  function loadAuxPage(path, key, view, render, silent) {
+    var loading = key + "Loading", err = key + "Err";
+    if (S[loading]) { return Promise.resolve(); }
+    S[loading] = true;
+    return api(path).then(function (d) {
+      S[loading] = false;
+      S[key] = d;
+      S[err] = "";
       renderSide();
-      if (S.view === "pool") { renderPools(); }
+      if (S.view === view) { render(); }
     }).catch(function (e) {
-      S.poolsLoading = false;
-      S.poolsErr = errMsg(e);
+      S[loading] = false;
+      S[err] = errMsg(e);
       renderSide();
-      if (S.view === "pool") { renderPools(); }
-      if (!silent && S.view === "pool") { toast("读取失败：" + S.poolsErr, { err: true }); }
+      if (S.view === view) { render(); }
+      if (!silent && S.view === view) { toast("读取失败：" + S[err], { err: true }); }
     });
   }
 
-  function poolPost(body, okMsg, done) {
-    return post("ctx/pools/edit", body).then(function () {
+  function loadPools(silent) { return loadAuxPage("ctx/pools", "pools", "pool", renderPools, silent); }
+
+  function resourcePost(path, reload, body, okMsg, done) {
+    return post(path, body).then(function () {
       if (done) { done(); }
       if (okMsg) { toast(okMsg); }
-      return loadPools(true);
+      return reload(true);
     }).catch(function (e) {
       toast("没保存：" + errMsg(e), { err: true });
     });
   }
+
+  function poolPost(body, okMsg, done) { return resourcePost("ctx/pools/edit", loadPools, body, okMsg, done); }
 
   function poolLabel(kind) {
     var ks = (S.pools && S.pools.kinds) || [];
@@ -3554,34 +3551,10 @@
   $("poolRefresh").addEventListener("click", function () { loadPools().then(function () { if (!S.poolsErr) { toast("已刷新"); } }); });
 
   /* ================= 能力与约定 ================= */
-  function loadLedger(silent) {
-    if (S.ledgerLoading) { return Promise.resolve(); }
-    S.ledgerLoading = true;
-    return api("ctx/ledger").then(function (d) {
-      S.ledgerLoading = false;
-      S.ledger = d;
-      S.ledgerErr = "";
-      renderSide();
-      if (S.view === "ledger") { renderLedger(); }
-    }).catch(function (e) {
-      S.ledgerLoading = false;
-      S.ledgerErr = errMsg(e);
-      renderSide();
-      if (S.view === "ledger") { renderLedger(); }
-      if (!silent && S.view === "ledger") { toast("读取失败：" + S.ledgerErr, { err: true }); }
-    });
-  }
+  function loadLedger(silent) { return loadAuxPage("ctx/ledger", "ledger", "ledger", renderLedger, silent); }
 
   // 提交成功：先跑 done（比如退出编辑态），再重读；失败只提示，保留正在编辑的内容
-  function ledgerPost(body, okMsg, done) {
-    return post("ctx/ledger/edit", body).then(function () {
-      if (done) { done(); }
-      if (okMsg) { toast(okMsg); }
-      return loadLedger(true);
-    }).catch(function (e) {
-      toast("没保存：" + errMsg(e), { err: true });
-    });
-  }
+  function ledgerPost(body, okMsg, done) { return resourcePost("ctx/ledger/edit", loadLedger, body, okMsg, done); }
 
   function labelOfBot(id) {
     var bots = (S.ledger && S.ledger.bots) || [];
