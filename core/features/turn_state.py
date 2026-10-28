@@ -9,6 +9,8 @@
 
 import time
 
+from astrbot.api import logger
+
 from ..common import text as text_utils, timeutil
 
 # 消息到达时间（time.time()），on_any_message 里打
@@ -31,6 +33,72 @@ def set_timezone(name: str) -> None:
 def local_stamp(ts: float | None = None) -> str:
     """和 AstrBot 自己的格式一致：2026-10-03 05:14 (CST), Weekday: Saturday。"""
     return timeutil.local_stamp(ts)
+
+
+def detach_runner(event, feature: str) -> None:
+    """把一轮从 AstrBot 的 follow-up 注册表摘掉，避免新消息被折进旧轮。"""
+    try:
+        from astrbot.core.pipeline.process_stage import follow_up as follow_up_mod
+
+        umo = event.unified_msg_origin
+        runner = follow_up_mod._ACTIVE_AGENT_RUNNERS.get(umo)  # noqa: SLF001
+        if runner is None:
+            return
+        run_context = getattr(runner, "run_context", None)
+        context = getattr(run_context, "context", None)
+        if getattr(context, "event", None) is not event:
+            return
+        follow_up_mod.unregister_active_runner(umo, runner)
+        logger.info("[super_enhance/%s] 已把当前轮从 follow-up 注册表摘除", feature)
+    except Exception:
+        logger.warning("[super_enhance/%s] 摘除 follow-up 注册失败", feature, exc_info=True)
+
+
+def context_has(req, text: str) -> bool:
+    """最近 8 条 user 消息里有没有同一句；工具调用多时也不会误判成缺失。"""
+    contexts = getattr(req, "contexts", None) or []
+    users = [
+        item for item in contexts
+        if (item.get("role") if isinstance(item, dict) else getattr(item, "role", None)) == "user"
+    ]
+    for item in users[-8:]:
+        content = item.get("content") if isinstance(item, dict) else getattr(item, "content", None)
+        if isinstance(content, str) and text in content:
+            return True
+        if isinstance(content, list):
+            for part in content:
+                piece = part.get("text") if isinstance(part, dict) else getattr(part, "text", None)
+                if isinstance(piece, str) and text in piece:
+                    return True
+    return False
+
+
+def reminder_text(info: dict) -> str:
+    return (
+        "<system_reminder>User ID: %s, Nickname: %s\n"
+        "Current datetime: %s</system_reminder>"
+    ) % (
+        info.get("sender_id") or "unknown",
+        info.get("sender_name") or "unknown",
+        info.get("at") or "",
+    )
+
+
+def append_pending_user(req, info: dict, ttl_seconds: float) -> str:
+    """补回上一条被折叠的用户消息；返回正文，空串表示过期或已经在上下文里。"""
+    if time.time() - float(info.get("ts") or 0) > ttl_seconds:
+        return ""
+    text = str(info.get("text") or "").strip()
+    if not text or context_has(req, text):
+        return ""
+    req.contexts.append({
+        "role": "user",
+        "content": [
+            {"type": "text", "text": text},
+            {"type": "text", "text": reminder_text(info)},
+        ],
+    })
+    return text
 
 
 def mark_arrived(event) -> None:

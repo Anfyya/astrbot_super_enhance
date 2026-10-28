@@ -23,10 +23,14 @@ from .turn_state import (
     AGENT_DONE_FLAG,
     START_IDX_FLAG,
     UNSENT_TEXTS_FLAG,
+    append_pending_user,
     arrived_at,
+    context_has,
+    detach_runner,
     drop_unsent,
     final_texts,
     local_stamp,
+    reminder_text,
     remove_texts_from_tail,
 )
 
@@ -220,24 +224,7 @@ class ReplyGuardFeature:
 
     @staticmethod
     def _detach_runner(old_event) -> None:
-        """把上一轮从 follow-up 注册表摘掉，否则新消息会被折叠进那个作废的轮次。"""
-        try:
-            from astrbot.core.pipeline.process_stage import follow_up as follow_up_mod
-
-            umo = old_event.unified_msg_origin
-            runner = follow_up_mod._ACTIVE_AGENT_RUNNERS.get(umo)  # noqa: SLF001
-            if runner is None:
-                return
-            run_context = getattr(runner, "run_context", None)
-            context = getattr(run_context, "context", None)
-            if getattr(context, "event", None) is not old_event:
-                return
-            follow_up_mod.unregister_active_runner(umo, runner)
-            logger.info("[super_enhance/reply_guard] 已把作废轮次从 follow-up 注册表摘除")
-        except Exception:
-            logger.warning(
-                "[super_enhance/reply_guard] 摘除 follow-up 注册失败", exc_info=True
-            )
+        detach_runner(old_event, "reply_guard")
 
     # ---------- 2. 请求构造时补上一条用户消息 ----------
 
@@ -247,9 +234,6 @@ class ReplyGuardFeature:
         info = self._pending.pop(event.unified_msg_origin, None)
         if not info:
             return
-        age = time.time() - float(info.get("ts") or 0)
-        if age > PENDING_TTL_SECONDS:
-            return
         contexts = getattr(req, "contexts", None)
         if isinstance(contexts, list) and info.get("unsent"):
             # 上一轮存进历史又被作废的那几句，可能已经被这一轮读进来了
@@ -257,18 +241,9 @@ class ReplyGuardFeature:
             if n:
                 contexts[:] = new
                 logger.info("[super_enhance/reply_guard] 本次请求里去掉 %d 句没发出去的旧回复", n)
-        text = str(info.get("text") or "").strip()
-        if not text or self._context_has(req, text):
+        text = append_pending_user(req, info, PENDING_TTL_SECONDS)
+        if not text:
             return
-        req.contexts.append(
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": text},
-                    {"type": "text", "text": self._reminder(info)},
-                ],
-            }
-        )
         logger.info(
             "[super_enhance/reply_guard] 已把上一条用户消息单独补进本次请求：%s",
             text[:40],
@@ -276,41 +251,11 @@ class ReplyGuardFeature:
 
     @staticmethod
     def _reminder(info: dict) -> str:
-        return (
-            "<system_reminder>User ID: %s, Nickname: %s\n"
-            "Current datetime: %s</system_reminder>"
-        ) % (
-            info.get("sender_id") or "unknown",
-            info.get("sender_name") or "unknown",
-            info.get("at") or "",
-        )
+        return reminder_text(info)
 
     @staticmethod
     def _context_has(req, text: str) -> bool:
-        contexts = getattr(req, "contexts", None) or []
-        # 只看最近 8 条用户消息：上一轮工具调用多时，那条用户消息早被挤出最后 8 条，会被当成没有、再插一次
-        users = [
-            item for item in contexts
-            if (item.get("role") if isinstance(item, dict) else getattr(item, "role", None)) == "user"
-        ]
-        for item in users[-8:]:
-            content = (
-                item.get("content")
-                if isinstance(item, dict)
-                else getattr(item, "content", None)
-            )
-            if isinstance(content, str) and text in content:
-                return True
-            if isinstance(content, list):
-                for part in content:
-                    piece = (
-                        part.get("text")
-                        if isinstance(part, dict)
-                        else getattr(part, "text", None)
-                    )
-                    if isinstance(piece, str) and text in piece:
-                        return True
-        return False
+        return context_has(req, text)
 
     # ---------- 3. 记录 / 丢弃本轮 ----------
 

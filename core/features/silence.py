@@ -13,7 +13,10 @@ import datetime
 
 from astrbot.api import logger
 
-from .turn_state import arrived_at, is_agent_done, local_stamp, mark_arrived
+from .turn_state import (
+    append_pending_user, arrived_at, context_has, detach_runner, is_agent_done,
+    local_stamp, mark_arrived,
+)
 
 # 故意加插件前缀，避免与旧的 stay_silent 插件互相干扰。
 SILENT_FLAG = "_super_enhance_stay_silent"
@@ -54,7 +57,7 @@ class SilenceFeature:
             # 不用摘、也不用把上一条再补一遍
             and not is_agent_done(previous)
         ):
-            self._detach_runner(previous)
+            detach_runner(previous, "silence")
             arrived = arrived_at(previous) or datetime.datetime.now().timestamp()
             self._pending[umo] = {
                 "text": (previous.get_message_str() or "").strip(),
@@ -73,24 +76,7 @@ class SilenceFeature:
 
     @staticmethod
     def _detach_runner(old_event) -> None:
-        """把静默轮从 follow-up 注册表摘掉，否则新消息会被折叠进这一轮然后石沉大海。"""
-        try:
-            from astrbot.core.pipeline.process_stage import follow_up as follow_up_mod
-
-            umo = old_event.unified_msg_origin
-            runner = follow_up_mod._ACTIVE_AGENT_RUNNERS.get(umo)  # noqa: SLF001
-            if runner is None:
-                return
-            run_context = getattr(runner, "run_context", None)
-            context = getattr(run_context, "context", None)
-            if getattr(context, "event", None) is not old_event:
-                return
-            follow_up_mod.unregister_active_runner(umo, runner)
-            logger.info("[super_enhance/silence] 已把静默轮摘下，避免新消息被折叠")
-        except Exception:
-            logger.warning(
-                "[super_enhance/silence] 摘除 follow-up 注册失败", exc_info=True
-            )
+        detach_runner(old_event, "silence")
 
     # ---------- 工具 ----------
 
@@ -155,61 +141,16 @@ class SilenceFeature:
         info = self._pending.pop(event.unified_msg_origin, None)
         if not info:
             return
-        if datetime.datetime.now().timestamp() - float(info.get("ts") or 0) > PENDING_TTL_SECONDS:
+        text = append_pending_user(req, info, PENDING_TTL_SECONDS)
+        if not text:
             return
-        text = str(info.get("text") or "").strip()
-        if not text or self._context_has(req, text):
-            return
-        req.contexts.append(
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": text},
-                    {
-                        "type": "text",
-                        "text": (
-                            "<system_reminder>User ID: %s, Nickname: %s\n"
-                            "Current datetime: %s</system_reminder>"
-                        )
-                        % (
-                            info.get("sender_id") or "unknown",
-                            info.get("sender_name") or "unknown",
-                            info.get("at") or "",
-                        ),
-                    },
-                ],
-            }
-        )
         logger.info(
             "[super_enhance/silence] 已把静默轮的用户消息补进新一轮请求：%s", text[:40]
         )
 
     @staticmethod
     def _context_has(req, text: str) -> bool:
-        contexts = getattr(req, "contexts", None) or []
-        # 只看最近 8 条用户消息：上一轮工具调用多时，那条用户消息早被挤出最后 8 条，会被当成没有、再插一次
-        users = [
-            item for item in contexts
-            if (item.get("role") if isinstance(item, dict) else getattr(item, "role", None)) == "user"
-        ]
-        for item in users[-8:]:
-            content = (
-                item.get("content")
-                if isinstance(item, dict)
-                else getattr(item, "content", None)
-            )
-            if isinstance(content, str) and text in content:
-                return True
-            if isinstance(content, list):
-                for part in content:
-                    piece = (
-                        part.get("text")
-                        if isinstance(part, dict)
-                        else getattr(part, "text", None)
-                    )
-                    if isinstance(piece, str) and text in piece:
-                        return True
-        return False
+        return context_has(req, text)
 
     # ---------- 发送前 ----------
 
