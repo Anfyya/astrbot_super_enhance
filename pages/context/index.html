@@ -6590,26 +6590,32 @@
     }, function () { return worldDirty(f); });
   }
 
-  function thingItemForm(it) {
-    var key = "i:" + it.id;
+  function dataItemForm(it, objectMode) {
+    var key = (objectMode ? "oi:" : "i:") + it.id;
     var f = S.tEdit[key];
-    var box = edBox(null, "改名字和来历", it.id + " · 编号改不了", "");
+    var box = edBox(null, objectMode ? "改名字和样子" : "改名字和来历", it.id + " · 编号改不了", "");
     box.setAttribute("data-tf", key);
-    box.appendChild(edSec(edInput(f.name, "名字", function (v) { f.name = v; }, { cls: "ed-title", focus: true })));
+    box.appendChild(edSec(edInput(f.name, objectMode ? "叫什么" : "名字", function (v) { f.name = v; }, { cls: "ed-title", focus: true })));
     var p = edProps();
-    edRow(p, "哪一类", [edSelect(S.things.kinds.map(function (k) { return { key: k.key, label: k.key }; }), f.kind, function (v) { f.kind = v; }),
-      h("span", { class: "ed-n", text: "决定能放多久" })]);
+    edRow(p, objectMode ? "是什么" : "哪一类", objectMode
+      ? edInput(f.kind, "一个词：围巾、窗花、纸条……", function (v) { f.kind = v; })
+      : [edSelect(S.things.kinds.map(function (k) { return { key: k.key, label: k.key }; }), f.kind, function (v) { f.kind = v; }), h("span", { class: "ed-n", text: "决定能放多久" })],
+      objectMode ? "同一种的排在一起，提醒认准编号" : null);
+    if (objectMode) { edRow(p, "样子", edInput(f.look, "能和同一种的别的那件分清", function (v) { f.look = v; }, { area: true })); }
+    if (objectMode) { edRow(p, "归谁", edChips(edPeople("大家一起用"), f.owner, function (v) { f.owner = v; })); }
     edRow(p, "哪来的", edInput(f.origin, "可空", function (v) { f.origin = v; }));
-    edRow(p, "用料", edPicker(f, "from", function () { return thingCands(it.id); }, { add: "挑用料", live: true }), "做这道菜用了家里哪几件；买来的、别人送的不用挑");
+    edRow(p, objectMode ? "材料" : "用料", edPicker(f, "from", function () { return objectMode ? objCands(it.id) : thingCands(it.id); }, { add: objectMode ? "挑材料" : "挑用料", live: true }), objectMode ? "用家里哪几件东西做的；买来的、别人送的不用挑" : "做这道菜用了家里哪几件；买来的、别人送的不用挑");
     box.appendChild(edSec(p));
     return worldFormFoot(box, function () { thingCloseForm(key); }, "保存", function () {
       if (!String(f.name || "").trim()) { toast("名字不能空", { err: true }); return null; }
-      return thingPost({ action: "update_item", id: it.id, name: f.name, kind: f.kind, origin: f.origin, from: f.from },
-        "已保存", function () { delete S.tEdit[key]; }, it.id);
+      var body = { action: "update_item", id: it.id, name: f.name, kind: f.kind, origin: f.origin, from: f.from };
+      if (objectMode) { body.look = f.look; body.owner = f.owner; }
+      return thingPost(body, "已保存", function () { delete S.tEdit[key]; }, it.id);
     }, function () { return worldDirty(f); });
   }
 
-  /* ================= 家里的东西（吃的以外）：每件一个编号（p 开头），哪来的、经过谁手、搁在哪、变成什么样 ================= */
+  function thingItemForm(it) { return dataItemForm(it, false); }
+  function objItemForm(it) { return dataItemForm(it, true); }
   function objFind(id) {
     var key = String(id || "").toLowerCase();
     return ((S.things && S.things.objects) || []).filter(function (x) { return String(x.id).toLowerCase() === key; })[0] || null;
@@ -6968,26 +6974,6 @@
           "已保存", function () { delete S.tEdit[key]; }, it.id);
       }
       return thingPost({ action: "stage", id: it.id, stage: stage }, "已添加", function () { delete S.tEdit[key]; }, it.id);
-    }, function () { return worldDirty(f); });
-  }
-
-  function objItemForm(it) {
-    var key = "oi:" + it.id;
-    var f = S.tEdit[key];
-    var box = edBox(null, "改名字和样子", it.id + " · 编号改不了", "");
-    box.setAttribute("data-tf", key);
-    box.appendChild(edSec(edInput(f.name, "叫什么", function (v) { f.name = v; }, { cls: "ed-title", focus: true })));
-    var p = edProps();
-    edRow(p, "是什么", edInput(f.kind, "一个词：围巾、窗花、纸条……", function (v) { f.kind = v; }), "同一种的排在一起，提醒认准编号");
-    edRow(p, "样子", edInput(f.look, "能和同一种的别的那件分清", function (v) { f.look = v; }, { area: true }));
-    edRow(p, "归谁", edChips(edPeople("大家一起用"), f.owner, function (v) { f.owner = v; }));
-    edRow(p, "哪来的", edInput(f.origin, "可空", function (v) { f.origin = v; }));
-    edRow(p, "材料", edPicker(f, "from", function () { return objCands(it.id); }, { add: "挑材料", live: true }), "用家里哪几件东西做的；买来的、别人送的不用挑");
-    box.appendChild(edSec(p));
-    return worldFormFoot(box, function () { thingCloseForm(key); }, "保存", function () {
-      if (!String(f.name || "").trim()) { toast("名字不能空", { err: true }); return null; }
-      return thingPost({ action: "update_item", id: it.id, name: f.name, kind: f.kind, look: f.look, owner: f.owner, origin: f.origin, from: f.from },
-        "已保存", function () { delete S.tEdit[key]; }, it.id);
     }, function () { return worldDirty(f); });
   }
 
