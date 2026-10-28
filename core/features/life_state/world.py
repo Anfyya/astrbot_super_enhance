@@ -339,6 +339,7 @@ class WorldStore:
                 kept.append(old)
             # 否则整条被新的盖掉
 
+        parsed_steps, parsed_minutes = parse_steps(entry.get("steps"))
         record = {
             "id": str(entry.get("id") or ("e%d" % int(day.get("next_id") or 1))),
             "who": who,
@@ -354,10 +355,9 @@ class WorldStore:
             "source": source,
             "src_umo": str(entry.get("src_umo") or ""),
             "src_quote": clean_text(entry.get("src_quote"), MAX_TEXT),
-            "steps": parse_steps(entry.get("steps"))[0],
-            "step_minutes": (
-                parse_steps(entry.get("steps"))[1]
-                or (list(entry.get("step_minutes") or []) if not isinstance(entry.get("steps"), str) else [])
+            "steps": parsed_steps,
+            "step_minutes": parsed_minutes or (
+                list(entry.get("step_minutes") or []) if not isinstance(entry.get("steps"), str) else []
             ),
             # 截短 / 拉长前原定的分步（fit_steps 第一次改分步时存下），再拉长回去时照它恢复
             "steps_planned": entry.get("steps_planned") if isinstance(entry.get("steps_planned"), list) else None,

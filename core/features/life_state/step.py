@@ -204,6 +204,7 @@ class LifeStep:
         self._now = now_fn
         self.abilities_txt = abilities_txt
         self.running = False
+        self._run_cache: dict = {}
 
     # ---------- 配置 ----------
 
@@ -232,6 +233,24 @@ class LifeStep:
     @property
     def timeout(self) -> float:
         return self._timeout
+
+    def _seed_for(self, date_text: str):
+        cache = self.__dict__.get("_run_cache") or {}
+        if "seeds" not in cache:
+            try:
+                cache["seeds"] = (self.seed_log.load() or {}) if self.seed_log is not None else {}
+            except Exception:
+                cache["seeds"] = {}
+        return cache["seeds"].get(date_text)
+
+    def _shelf_at(self, moment: datetime.datetime):
+        cache = self.__dict__.get("_run_cache") or {}
+        key = fmt_time(moment)
+        shelves = cache.setdefault("shelves", {})
+        if key not in shelves:
+            store = getattr(self, "things", None)
+            shelves[key] = store.view(moment) if store is not None else None
+        return shelves[key]
 
     @property
     def home(self) -> str:
@@ -555,6 +574,19 @@ class LifeStep:
                 best = moment
         return best
 
+    def _need_due(self, info: dict | None, now: datetime.datetime, ahead_minutes: float = 0.0) -> bool:
+        """同一个 need() 结果在现在 / 往后顺带多久时算不算该写。"""
+        if info is None:
+            return False
+        mode = str(info.get("mode") or "")
+        if mode in ("open", "gap", "after"):
+            return True
+        edge = parse_time(info.get("start")) if info.get("start") is not None else None
+        if edge is None or mode not in ("next", "fill"):
+            return False
+        flat = now.replace(tzinfo=None)
+        return flat >= edge - datetime.timedelta(minutes=self.lead_minutes + ahead_minutes)
+
     def due(self, now: datetime.datetime) -> bool:
         if not self.enabled or self.running:
             return False
@@ -794,7 +826,7 @@ class LifeStep:
                 # 按这次补写的起点现算：世界线里那时已经做完的段标的吃的算进去（提前几分钟补写时，正在收尾那段做的菜也算）
                 moment = self._things_moment(tasks, flat)
                 when = "此刻" if moment <= flat else "到 %s" % moment.strftime("%H:%M")
-                shelf = store.view(moment)
+                shelf = self._shelf_at(moment)
                 parts.append("家里的吃的（%s；每件前面是编号）：\n" % when + store.food_list(moment, shelf, self.label))
                 parts.append("家里的东西（吃的以外，%s；每件前面是编号）：\n" % when + store.item_list(moment, shelf, self.label))
             except Exception:
@@ -899,12 +931,7 @@ class LifeStep:
         )
         labels = {bot: (self.label(bot) or bot) for bot in bots}
         date_text = now.date().isoformat()
-        seed = None
-        if self.seed_log is not None:
-            try:
-                seed = (self.seed_log.load() or {}).get(date_text)
-            except Exception:
-                seed = None
+        seed = self._seed_for(date_text) if self.seed_log is not None else None
         # 这次从晚上开始写：随机的小事只给晚上那份，也不给意外
         first = min((x["start"] for x in tasks.values() if x.get("start")), default=None) or now
         night = first.hour >= NIGHT_FROM or first.hour < NIGHT_UNTIL
@@ -965,16 +992,18 @@ class LifeStep:
         这样两个人后面的事是一起排出来的，不会一个已经排出去两小时、另一个只能绕着她排。"""
         bots = list(self.raw_log.enabled_bots())
         tasks = {}
+        probe_ahead = 10**6 if force else BATCH_MINUTES
+        probes = {bot: self.need(bot, now, ahead_minutes=probe_ahead) for bot in bots}
         for bot in bots:
-            info = self.need(bot, now)
-            if info is not None:
+            info = probes.get(bot)
+            if info is not None and self._need_due(info, now):
                 tasks[bot] = info
         if not tasks and not force:
             return {}
         for bot in bots:
             if bot in tasks:
                 continue
-            info = self.need(bot, now, ahead_minutes=10**6 if force else BATCH_MINUTES)
+            info = probes.get(bot)
             if info is not None:
                 tasks[bot] = info
         flat = now.replace(tzinfo=None)
@@ -1013,13 +1042,16 @@ class LifeStep:
     async def run(self, now: datetime.datetime | None = None, force: bool = False) -> bool:
         # 世界线里的时间都是不带时区的本地时间，这里统一成一样的口径
         moment = (now or self._now()).replace(tzinfo=None)
+        self._run_cache = {}
         tasks = self.tasks_for(moment, force=force)
         if not tasks:
+            self._run_cache = {}
             return False
         provider = self._resolve_provider()
         if provider is None:
             self.world.note_error("step", "没有可用的模型")
             self.world.set_last_step_attempt(fmt_time(moment))
+            self._run_cache = {}
             return False
         self.running = True
         try:
@@ -1064,6 +1096,7 @@ class LifeStep:
             return False
         finally:
             self.running = False
+            self._run_cache = {}
 
     def _limit(self, start: datetime.datetime, end, sleepy: bool) -> datetime.datetime:
         """结束时间缺了、早于开始、或长得离谱时规整一下（睡觉那段放宽到 MAX_SLEEP_HOURS）。"""
@@ -1081,16 +1114,11 @@ class LifeStep:
         end_current = data.get("end_current") if isinstance(data.get("end_current"), dict) else {}
         bots = list(self.raw_log.enabled_bots())
         written, missed = {}, []
-        seed = None
-        if self.seed_log is not None:
-            try:
-                seed = (self.seed_log.load() or {}).get(date_text)
-            except Exception:
-                seed = None
+        seed = self._seed_for(date_text) if self.seed_log is not None else None
         # 段里标的吃的：对照此刻现算的存货；临时代号（n1、n2……）这一次里两个人共用，同一个代号就是同一件
         store = getattr(self, "things", None)
         try:
-            shelf = store.view(self._things_moment(tasks, flat)) if store is not None else None
+            shelf = self._shelf_at(self._things_moment(tasks, flat)) if store is not None else None
         except Exception:
             logger.warning("[super_enhance/world] 补写算家里的吃的失败", exc_info=True)
             shelf = None
@@ -1141,6 +1169,7 @@ class LifeStep:
                 idle, sleep = state == "idle", state == "sleep"
                 # 分了步、写了各步分钟的：这段做多久就是分钟加起来，模型写的 end 不算（闲着、睡觉除外）
                 _texts, minutes = parse_steps(raw.get("steps"))
+                parsed_steps = [{"text": text, "minutes": value} for text, value in zip(_texts, minutes)] if minutes else list(_texts)
                 if minutes and state == "do":
                     seg_end = cursor + datetime.timedelta(minutes=sum(minutes))
                 seg_end = self._limit(cursor, seg_end, sleep)
@@ -1166,7 +1195,7 @@ class LifeStep:
                     "end": fmt_time(seg_end),
                     "place": raw.get("place"),
                     "doing": raw.get("doing"),
-                    "steps": None if state != "do" else raw.get("steps"),
+                    "steps": None if state != "do" or raw.get("steps") is None else parsed_steps,
                     "result": None if state != "do" else raw.get("result"),
                     "idle": idle,
                     "sleep": sleep,
