@@ -9,14 +9,13 @@
 - 补写不撤规矩，规矩只由记录员撤。
 """
 
-import asyncio
 import datetime
 
 from astrbot.api import logger
 
-from ...common import jsonio
+from ...common import jsonio, llm
 
-from .models import extract_json, profile_umo_for_bot
+from .models import profile_umo_for_bot
 from .recorder import norm_time
 from .things import (CAT_ITEM, END_STEPS, ITEM_END_STEPS, ITEM_MID_STEPS, ITEM_START_STEPS, KEEPS, KINDS, MEASURED_KINDS, MID_STEPS,
                      SPOTS, START_STEPS, had_before, norm_kind, norm_state, norm_step, split_keep, step_no)
@@ -24,9 +23,7 @@ from .variety import default_pools, twists_of, when_map, with_when
 from .world import (WorldStore, clean_text, doing_text, fmt_time, is_event, is_sleep, parse_steps, parse_time, progress_of, real_stop, result_text,
                     steps_text)
 
-SYSTEM_PROMPT = (
-    "你只输出一个可以被 JSON 解析的对象，不要输出解释、Markdown 代码块或任何多余文本。"
-)
+SYSTEM_PROMPT = llm.SYSTEM_PROMPT
 
 # 几点到几点算晚上（补写只给晚上的随机小事、不给意外）
 NIGHT_FROM = 18
@@ -459,18 +456,7 @@ class LifeStep:
             return 120.0
 
     def _resolve_provider(self):
-        provider_id = str(self.cfg.get("llm_provider_id") or "").strip()
-        if provider_id:
-            try:
-                provider = self.context.get_provider_by_id(provider_id)
-            except Exception:
-                provider = None
-            if provider is not None:
-                return provider
-        try:
-            return self.context.get_using_provider()
-        except Exception:
-            return None
+        return llm.resolve_provider(self.context, str(self.cfg.get("llm_provider_id") or "").strip())
 
     # ---------- 什么时候跑 ----------
 
@@ -1038,26 +1024,17 @@ class LifeStep:
         self.running = True
         try:
             prompt = await self.build_prompt(tasks, moment)
-            text = ""
-            thought = ""
-            for attempt in (1, 2):
-                try:
-                    response = await asyncio.wait_for(
-                        provider.text_chat(
-                            prompt=prompt,
-                            system_prompt=SYSTEM_PROMPT,
-                            session_id="super_enhance_lifestep",
-                        ),
-                        timeout=self.timeout,
-                    )
-                    text = getattr(response, "completion_text", "") or ""
-                    thought = str(getattr(response, "reasoning_content", "") or "").strip()
-                    break
-                except Exception as e:
-                    if attempt == 2:
-                        raise
-                    logger.warning("[super_enhance/world] 补写第 %d 次失败：%s", attempt, e)
-            data = extract_json(text)
+            text, thought = await llm.text_chat(
+                self.context,
+                prompt,
+                provider_id=str(self.cfg.get("llm_provider_id") or "").strip(),
+                timeout=self.timeout,
+                session_id="super_enhance_lifestep",
+                system_prompt=SYSTEM_PROMPT,
+                attempts=2,
+                log_label="补写",
+            )
+            data = llm.extract_json(text)
             if not isinstance(data, dict):
                 self._save_thought(moment, thought, False, "返回内容不是 JSON")
                 self.world.note_error("step", "返回内容不是 JSON")

@@ -6,7 +6,6 @@
 - 失败：游标不前进，写错误记录，下次重试。
 """
 
-import asyncio
 import datetime
 import hashlib
 import json
@@ -14,8 +13,9 @@ import re
 
 from astrbot.api import logger
 
+from ...common import llm
 from ...common.text import strip_inline_system
-from .models import bot_of_umo, extract_json
+from .models import bot_of_umo
 from .things import (CAT_FOOD, CAT_ITEM, KEEPS, KINDS, SAME_NEW_MINUTES, SAME_STEP_MINUTES, SPOTS, STEPS, USE_STEPS, cat_of,
                      find_same, norm_step, usable)
 from .world import (WorldStore, clean_steps, clean_text, doing_text, fit_steps, fmt_time, is_event, is_sleep, parse_time, progress_of,
@@ -25,9 +25,7 @@ from .things import reached_steps
 # 记录员停过一阵时，往前最多翻几天的原始消息（原始消息副本最多也只留这么久）
 RAW_BACK_DAYS = 6
 
-SYSTEM_PROMPT = (
-    "你只输出一个可以被 JSON 解析的对象，不要输出解释、Markdown 代码块或任何多余文本。"
-)
+SYSTEM_PROMPT = llm.SYSTEM_PROMPT
 
 # 给记录员对照的「后面排好的」：往后看几小时、每人最多几段
 # 新打算腾地方：时间段超过这么久就当说得太笼统，不动排好的
@@ -248,17 +246,7 @@ class Recorder:
             return 120.0
 
     def _resolve_provider(self):
-        if self.provider_id:
-            try:
-                provider = self.context.get_provider_by_id(self.provider_id)
-            except Exception:
-                provider = None
-            if provider is not None:
-                return provider
-        try:
-            return self.context.get_using_provider()
-        except Exception:
-            return None
+        return llm.resolve_provider(self.context, self.provider_id)
 
     # ---------- 待处理的消息 ----------
 
@@ -519,24 +507,17 @@ class Recorder:
         self._running.add(umo)
         try:
             prompt = self.build_prompt(umo, items, moment)
-            text = ""
-            for attempt in (1, 2):
-                try:
-                    response = await asyncio.wait_for(
-                        provider.text_chat(
-                            prompt=prompt,
-                            system_prompt=SYSTEM_PROMPT,
-                            session_id="super_enhance_recorder",
-                        ),
-                        timeout=self.timeout,
-                    )
-                    text = getattr(response, "completion_text", "") or ""
-                    break
-                except Exception as e:
-                    if attempt == 2:
-                        raise
-                    logger.warning("[super_enhance/world] 记录员第 %d 次失败：%s", attempt, e)
-            data = extract_json(text)
+            text, _thought = await llm.text_chat(
+                self.context,
+                prompt,
+                provider_id=self.provider_id,
+                timeout=self.timeout,
+                session_id="super_enhance_recorder",
+                system_prompt=SYSTEM_PROMPT,
+                attempts=2,
+                log_label="记录员",
+            )
+            data = llm.extract_json(text)
             if data is None:
                 self.world.note_error("recorder", "返回内容不是 JSON")
                 return False
@@ -614,15 +595,17 @@ class Recorder:
         provider = self._resolve_provider()
         if provider is None:
             raise RuntimeError("没有可用的模型")
-        response = await asyncio.wait_for(
-            provider.text_chat(
-                prompt=self._review_prompt(active, moment),
-                system_prompt=SYSTEM_PROMPT,
-                session_id="super_enhance_constraint_review",
-            ),
+        text, _thought = await llm.text_chat(
+            self.context,
+            self._review_prompt(active, moment),
+            provider_id=self.provider_id,
             timeout=self.timeout,
+            session_id="super_enhance_constraint_review",
+            system_prompt=SYSTEM_PROMPT,
+            attempts=1,
+            log_label="约束复核",
         )
-        data = extract_json(getattr(response, "completion_text", "") or "")
+        data = llm.extract_json(text)
         if not isinstance(data, dict):
             raise RuntimeError("返回内容不是 JSON")
         ids = {str(x.get("id")) for x in active}

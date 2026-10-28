@@ -29,7 +29,7 @@ from pathlib import Path
 from astrbot.api import logger
 from astrbot.api.event import MessageChain
 
-from ..common import jsonio
+from ..common import jsonio, llm
 from ..common.bots import platform_of
 
 SIZE_RE = re.compile(r"^\s*(\d{2,5})\s*[xX*×]\s*(\d{2,5})\s*$")
@@ -212,7 +212,7 @@ class ImageGenFeature:
             return "没画：prompt 要写清楚画什么。"
         umo = str(getattr(event, "unified_msg_origin", "") or "")
         bot = platform_of(umo) or "bot"
-        provider = self.context.get_provider_by_id(self.provider_id)
+        provider = llm.resolve_provider(self.context, self.provider_id, fallback=False)
         client = getattr(provider, "client", None)
         if client is None:
             return "没画：找不到图像模型 %s（或者它不是 OpenAI 格式的源）。" % self.provider_id

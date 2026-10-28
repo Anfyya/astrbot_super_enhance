@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ...common.bots import platform_of, profile_umo
-from ...common import timeutil
+from ...common import llm, timeutil
 
 # 自然时段 → 当天的分钟区间（左闭右开）
 NATURAL_SLOTS: dict[str, tuple[int, int]] = {
@@ -46,7 +46,6 @@ MIN_TIMELINE_ENTRIES = 2
 # 时段结尾写成「24:00」= 当天结束（跨午夜的日程按提示词要求这样写最后一段）
 _DAY_END_RE = re.compile(r"^\s*24\s*[:：]\s*0{1,2}\s*$")
 _RANGE_SPLIT_RE = re.compile(r"\s*(?:-|~|—|–|－|至|到)\s*")
-_FENCE_RE = re.compile(r"^\s*```(?:json)?\s*|\s*```\s*$", re.IGNORECASE)
 
 
 def clock_to_minute(text: Any) -> int | None:
@@ -229,26 +228,7 @@ class LifeState:
 
 def extract_json(text: str) -> dict[str, Any] | None:
     """从模型输出里抠出 JSON 对象（容忍 ```json 围栏与前后废话）。"""
-    if not isinstance(text, str):
-        return None
-    cleaned = _FENCE_RE.sub("", text.strip())
-    try:
-        import json
-
-        data = json.loads(cleaned)
-        return data if isinstance(data, dict) else None
-    except Exception:
-        pass
-    start, end = cleaned.find("{"), cleaned.rfind("}")
-    if start == -1 or end <= start:
-        return None
-    try:
-        import json
-
-        data = json.loads(cleaned[start : end + 1])
-        return data if isinstance(data, dict) else None
-    except Exception:
-        return None
+    return llm.extract_json(text)
 
 
 def parse_state(raw: dict[str, Any], date_text: str) -> LifeState:

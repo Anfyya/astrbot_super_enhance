@@ -26,7 +26,7 @@ from pathlib import Path
 
 from astrbot.api import logger
 
-from ..common import jsonio, text as text_utils, timeutil
+from ..common import jsonio, llm, text as text_utils, timeutil
 from astrbot.core.message.components import Node, Plain
 
 from ..common.text import strip_inline_system
@@ -42,6 +42,7 @@ _PRE_RE = text_utils.PRE_STAMP_PARTS_RE
 _JUNK_RE = text_utils.SYSTEM_JUNK_RE
 _KEEP_RE = re.compile(r"^(\d{1,4})([dhm])$", re.I)
 MEMO_MARK = text_utils.MEMO_PREFIX
+_extract_json = llm.extract_json
 
 PROMPT = """你在帮一个角色扮演聊天机器人整理它和主人的旧聊天记录。角色是「{role}」（她的自称和口癖照记录里的来），主人叫 {master}。下面每条消息前有编号 #N。
 
@@ -100,21 +101,6 @@ def _drop_think(m: dict) -> dict:
     else:
         m["content"] = None if m.get("tool_calls") else [{"type": "text", "text": ""}]
     return m
-
-
-def _extract_json(text: str):
-    text = str(text or "").strip()
-    try:
-        return json.loads(text)
-    except Exception:
-        pass
-    start, end = text.find("{"), text.rfind("}")
-    if start != -1 and end > start:
-        try:
-            return json.loads(text[start : end + 1])
-        except Exception:
-            return None
-    return None
 
 
 class CompactV2:
@@ -344,7 +330,7 @@ class CompactV2:
 
     async def _call_llm(self, messages: list) -> dict:
         pid = str(self._cfg("v2_provider_id", DEFAULT_PROVIDER)).strip()
-        provider = self.context.get_provider_by_id(pid)
+        provider = llm.resolve_provider(self.context, pid, fallback=False)
         if provider is None:
             raise RuntimeError("找不到模型提供商 %s（插件配置 context_tools.v2_provider_id）" % pid)
         client = getattr(provider, "client", None)
@@ -491,7 +477,7 @@ class CompactV2:
                 logger.error("[super_enhance/compact_v2] 调用模型失败", exc_info=True)
                 yield event.plain_result("调用模型失败，历史没动：%s" % (e or type(e).__name__))
                 return
-            result = _extract_json(out["text"])
+            result = llm.extract_json(out["text"])
             if not isinstance(result, dict) or not str(result.get("memo") or "").strip():
                 yield event.plain_result(
                     "模型没给出可用的 JSON（结束原因 %s），历史没动。可以再发一次。" % out["info"].get("finish")
@@ -654,7 +640,7 @@ class CompactV2:
         try:
             logger.info("[super_enhance/compact_v2] 自动压缩 %s：%s", umo, note)
             out = await asyncio.wait_for(self._call_llm(state["messages"]), timeout=1200)
-            result = _extract_json(out["text"])
+            result = llm.extract_json(out["text"])
             if not isinstance(result, dict) or not str(result.get("memo") or "").strip():
                 return False, "模型没给出可用的 JSON（结束原因 %s），历史没动" % out["info"].get("finish")
             excerpts, whys, dropped = self._validate(result, state["usable"], state["end"])
