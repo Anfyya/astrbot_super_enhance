@@ -25,7 +25,6 @@ from collections.abc import Mapping
 from astrbot.api import logger
 
 from ..common import history_io
-from . import cron_history
 from .life_state.models import bot_of_umo
 from .turn_state import local_stamp
 
@@ -130,7 +129,9 @@ def remember_model_error(config, event, run_context, response) -> None:
     """
     if getattr(response, "role", None) != "err":
         return
-    if not _section(config).get(NOTE_KEY, True) or cron_history.is_cron_event(event):
+    from .cron_context import is_cron_event
+
+    if not _section(config).get(NOTE_KEY, True) or is_cron_event(event):
         return
     exc = sys.exc_info()[1]
     reason = ("%s: %s" % (type(exc).__name__, exc)) if exc is not None else ""

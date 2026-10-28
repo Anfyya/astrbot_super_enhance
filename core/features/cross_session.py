@@ -18,7 +18,7 @@ from astrbot.core.platform.message_type import MessageType
 
 from ..common import history_io, timeutil
 
-from . import cron_history
+from .cron_context import get as get_cron_conversation, is_cron_event
 from .proactive_think import tag_think
 from .turn_state import START_IDX_FLAG, _content, _role
 
@@ -206,13 +206,13 @@ class CrossSessionFeature:
             # 普通对话由 pipeline 自己保存历史；但主动对话（cron）不走 pipeline，
             # 收尾只写一条 [CronJob] 流水账，她那句话会丢——这里并入本次 cron
             # 请求的内存会话对象，由 AstrBot 收尾写库时一起落盘。
-            if cron_history.is_cron_event(event):
+            if is_cron_event(event):
                 await self._append_to_live_conversation(current_umo, messages)
             return
 
         if target_umo == current_umo:
             # 显式填了自己这个会话：跟留空一样（主动对话并进本次会话；普通对话由 pipeline 自己保存）
-            if cron_history.is_cron_event(event):
+            if is_cron_event(event):
                 await self._append_to_live_conversation(current_umo, messages)
             return
 
@@ -229,7 +229,7 @@ class CrossSessionFeature:
 
     async def _append_to_live_conversation(self, umo: str, messages: list) -> None:
         """把 cron 主动消息并入本次请求的会话对象（随后由 AstrBot 收尾写库）。"""
-        conv = cron_history.get(umo)
+        conv = get_cron_conversation(umo)
         if conv is None:
             logger.warning(
                 "[super_enhance/cross_session] 主动消息未并入历史：未登记会话对象 %s",
@@ -268,10 +268,10 @@ class CrossSessionFeature:
         （content 第一段是 think），开头带「主动消息的思考」标签：面板能看能改，但发请求时
         proactive_think 会把它换成空，不发给模型。
         """
-        if not cron_history.is_cron_event(event):
+        if not is_cron_event(event):
             return
         umo = getattr(event, "unified_msg_origin", "") or ""
-        conv = cron_history.get(umo)
+        conv = get_cron_conversation(umo)
         appended = getattr(conv, CRON_APPENDED_ATTR, None) if conv is not None else None
         if not appended:
             return

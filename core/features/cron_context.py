@@ -19,6 +19,7 @@ AstrBot 的 cron 唤醒（``cron/manager.py::_woke_main_agent``）会把整份�
 import datetime
 import json
 import re
+import time
 
 from astrbot.api import logger
 from astrbot.core.message.components import Plain
@@ -27,10 +28,50 @@ from astrbot.core.message.message_event_result import MessageChain
 from ..common import text as text_utils
 from ..common.patching import PatchSet
 from ..config_view import SectionConfig
-from . import cron_history, error_voice
+from . import error_voice
 
 # cron 事件在 extras 里带这两个键；用它把主动对话和普通聊天区分开
 CRON_EXTRA_KEYS = ("cron_job", "cron_payload")
+CONVERSATION_TTL_SECONDS = 900
+_cron_conversations: dict[str, tuple[object, float]] = {}
+
+
+def is_cron_event(event) -> bool:
+    if event is None:
+        return False
+    for key in CRON_EXTRA_KEYS:
+        try:
+            if event.get_extra(key):
+                return True
+        except Exception:
+            break
+    extras = getattr(event, "extras", None)
+    if isinstance(extras, dict) and any(key in extras for key in CRON_EXTRA_KEYS):
+        return True
+    return type(event).__name__ == "CronMessageEvent"
+
+
+def _prune_cron_conversations() -> None:
+    now = time.time()
+    for key, (_conv, stamp) in list(_cron_conversations.items()):
+        if now - stamp > CONVERSATION_TTL_SECONDS:
+            _cron_conversations.pop(key, None)
+
+
+def remember(umo: str, conversation) -> None:
+    if umo and conversation is not None:
+        _prune_cron_conversations()
+        _cron_conversations[str(umo)] = (conversation, time.time())
+
+
+def get(umo: str):
+    _prune_cron_conversations()
+    item = _cron_conversations.get(str(umo or ""))
+    return item[0] if item is not None else None
+
+
+def forget(umo: str) -> None:
+    _cron_conversations.pop(str(umo or ""), None)
 
 TIME_RES = (text_utils.CURRENT_TIME_RE, text_utils.SENT_TIME_RE)
 
@@ -114,13 +155,13 @@ class CronContextFeature:
             try:
                 # 登记本次 cron 用的会话对象：cross_session 要把主动消息并入历史
                 # （这一步与下面的裁剪开关无关，始终执行）。
-                if req is not None and cron_history.is_cron_event(event):
+                if req is not None and is_cron_event(event):
                     conv = getattr(req, "conversation", None)
                     if conv is not None:
-                        cron_history.remember(
+                        remember(
                             getattr(event, "unified_msg_origin", "") or "", conv
                         )
-                if req is not None and cron_history.is_cron_event(event):
+                if req is not None and is_cron_event(event):
                     for hook in list(feature.cron_request_hooks):
                         try:
                             await hook(event, req)
@@ -247,18 +288,7 @@ class CronContextFeature:
 
     @staticmethod
     def _is_cron_event(event) -> bool:
-        if event is None:
-            return False
-        for key in CRON_EXTRA_KEYS:
-            try:
-                if event.get_extra(key):
-                    return True
-            except Exception:
-                break
-        extras = getattr(event, "extras", None)
-        if isinstance(extras, dict) and any(k in extras for k in CRON_EXTRA_KEYS):
-            return True
-        return type(event).__name__ == "CronMessageEvent"
+        return is_cron_event(event)
 
     @staticmethod
     def _text_of(message) -> str:
@@ -341,7 +371,7 @@ class CronContextFeature:
             logger.warning("[super_enhance/cron_ctx] 无通知目标，仅记录日志：%s", text)
             return
         # 这次主动消息还在跑：补进历史要并到它登记的会话对象上，收尾时一起写库
-        live_conv = cron_history.get(umo) if self._is_cron_event(event) else None
+        live_conv = get(umo) if self._is_cron_event(event) else None
         await self._send(umo, text, live_conv)
 
     def _notify_targets_sync(self, text: str) -> None:

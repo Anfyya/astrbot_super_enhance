@@ -11,6 +11,7 @@
    追加到"主人 ↔ 本机器人"的会话历史里，并写清楚对方是另一个机器人、不是主人。
 """
 
+import copy
 import datetime
 import json
 import re
@@ -20,9 +21,11 @@ from astrbot.api import logger
 from astrbot.core.agent.message import TextPart
 
 from ..common import history_io, text as text_utils, timeutil
-from ..common.bots import BotRegistry, identify_event
+from ..common.bots import BotRegistry, identify_event, session_for
 
 ROUND_FLAG = "_super_enhance_bot_dialog_round"
+SEND_TOOL = "send_message_to_user"
+TELL_TOOL = "tell"
 HINT_HEAD = "【对话节奏】"
 RECORD_HEAD = "【跨会话记录】"
 DELEGATION_HEAD = "【委托回报】"
@@ -94,6 +97,7 @@ class BotDialogFeature:
         self.context = context
         self.silence = silence
         self.bots = BotRegistry(config)
+        self.tool_bots_fn = None
         self._state: dict[str, dict] = {}
         # 待回报的委托：key = (本机器人平台, 对方 bot 的 QQ)
         self._pending_report: dict[tuple, dict] = {}
@@ -640,3 +644,70 @@ class BotDialogFeature:
             self._state.pop(bot, None)
         else:
             self._state.clear()
+
+    # ---------- send_message_to_user / tell 本轮说明 ----------
+
+    def accounts(self) -> dict[str, str]:
+        return dict(self.bots.accounts)
+
+    def master_id(self) -> str:
+        ids = self.master_ids
+        return ids[0] if ids else ""
+
+    def others(self, own: str) -> list[tuple[str, str]]:
+        enabled = self.tool_bots_fn() if self.tool_bots_fn else self.bot_ids
+        return [
+            (self.bots.label_for(bot), session_for(own, self.accounts()[bot]))
+            for bot in dict.fromkeys(enabled or []) if bot and bot != own and self.accounts().get(bot)
+        ]
+
+    def send_text(self, own: str, umo: str) -> str:
+        others, master = self.others(own), self.master_id()
+        where = "当前会话"
+        if master and umo == session_for(own, master):
+            where = "和主人的私聊"
+        for label, session in others:
+            if umo == session:
+                where = "和%s的私聊" % label
+        names = "、".join(label for label, _session in others) or "另一个角色"
+        lines = [
+            "发一条 QQ 消息出去（真的发出去，对方会收到，可能回你）。", "", "什么时候用：",
+            "- 想问%s一件事、要她回话，或者想跟她当场聊几句：发给她。她回的话会自己来到你这边。" % names,
+            "- 主动找主人说话（比如到点的主动消息）：发给主人。",
+            "- 平时回主人的话直接说就行，不用这个工具。",
+            "只是想让%s知道一件事、不需要她回：用 tell，不要用这个。" % names, "",
+            "session 只能填下面这几个，照抄，不要自己拼：",
+        ]
+        lines += ["- %s：%s" % (label, session) for label, session in others]
+        if master:
+            lines.append("- 主人：%s" % session_for(own, master))
+        lines += ["- 留空 = 发到你现在这个会话（现在是：%s）" % where, "", 'messages 这样填：[{"type": "plain", "text": "要说的话"}]']
+        return "\n".join(lines)
+
+    def tell_text(self, own: str) -> str:
+        others = self.others(own)
+        name = others[0][0] if len(others) == 1 else "另一个角色"
+        return "\n".join([
+            "告诉%s一件事（只是让她知道，不用她回）。" % name, "",
+            "- 这句话会写进%s和主人的聊天记录里一直留着，她下次开口就看得到；不发 QQ，她不会马上回你。" % name,
+            "- 用在：主人让你转告的话、你答应过要告诉她的事、需要她知道的事。",
+            "- 要问她问题、要她回话、想跟她当场聊几句：用 send_message_to_user 发给她，不要用这个。",
+            "回复里说「已经跟她说了」之前，必须先真的调用这个工具；没调用就等于没说。",
+        ])
+
+    def apply_tool_guide(self, event, req) -> None:
+        tools = getattr(getattr(req, "func_tool", None), "tools", None) if req is not None else None
+        if not isinstance(tools, list) or not tools:
+            return
+        umo = str(getattr(event, "unified_msg_origin", "") or "")
+        own = self._identity(event).bot
+        texts = {SEND_TOOL: self.send_text(own, umo), TELL_TOOL: self.tell_text(own)}
+        for index, tool in enumerate(tools):
+            text = texts.get(getattr(tool, "name", ""))
+            if text:
+                guided = copy.copy(tool)
+                guided.description = text
+                tools[index] = guided
+
+    async def on_cron_request(self, event, req) -> None:
+        self.apply_tool_guide(event, req)

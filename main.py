@@ -55,7 +55,6 @@ from .core.features.silence import SilenceFeature
 from .core.features.bot_dialog import BotDialogFeature
 from .core.features.typing import TypingFeature
 from .core.features.lm_edits import MemoryEditRunner
-from .core.features.tool_guide import ToolGuideFeature
 from .core.features.silence import SILENT_FLAG
 from .core.features.turn_state import (
     AGENT_DONE_FLAG,
@@ -135,11 +134,8 @@ class SuperEnhance(Star):
         # 聊天记录里的图（她发出去的、主人发来的），之后每轮放进本轮那条用户消息的副本里给她看
         self.transcript.attach = self.image_gen.attach_images
         # 发消息 / tell 的说明换成写死对象和会话号的中文版（只改这一轮的工具清单）
-        self.tool_guide = ToolGuideFeature(
-            SectionConfig(raw, "bot_dialog"),
-            lambda: self.life.enabled_bots(),
-            lambda bot: self.life.bots.label_for(bot),
-        )
+        self.bot_dialog.tool_bots_fn = self.life.enabled_bots
+        self.tool_guide = self.bot_dialog
         self.page_api = None
         self.snapshot = RequestSnapshotFeature(
             context, SectionConfig(raw, "request_snapshot"), data_dir
@@ -442,7 +438,7 @@ class SuperEnhance(Star):
         self, event: AstrMessageEvent, req: ProviderRequest
     ) -> None:
         """工具都装配完以后：发消息 / tell 的说明换成写死对象和会话号的中文版。"""
-        self.tool_guide.apply(event, req)
+        self.tool_guide.apply_tool_guide(event, req)
 
     @filter.on_llm_request(priority=LAST_PRIORITY)
     async def on_llm_request_snapshot(
