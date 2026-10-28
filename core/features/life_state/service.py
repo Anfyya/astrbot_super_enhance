@@ -364,17 +364,7 @@ class LifeStateService:
                         str(item.get("start"))[11:16], str(item.get("end") or "")[11:16] or "…",
                         str(item.get("doing") or item.get("place") or "")[:30],
                     )
-        removed = []
-        later = sorted({*dates, (now.date() + datetime.timedelta(days=1)).isoformat()})
-        for date_text in later:
-            for item in list(self.world.entries(date_text, bot)):
-                start = parse_time(item.get("start"))
-                if (
-                    start is not None and now <= start
-                    and item.get("source") == "step" and not is_event(item)
-                ):
-                    self.world.delete_entry(date_text, str(item.get("id")))
-                    removed.append(item)
+        removed = self.world.clear_planned(bot, now)
         same_place = not str(place or "").strip()
         record = self.world.add_entry(now.date().isoformat(), {
             "who": bot,
@@ -423,14 +413,15 @@ class LifeStateService:
                     stop = parse_time(item.get("end")) if item.get("end") else None
                     if start is None or (stop is not None and stop <= now):
                         continue
-                    if start < now:
-                        name = self.bots.label_for(bot) or bot
-                        self.world.update_entry(date_text, str(item.get("id")), end=fmt_time(now), intent="", stopped=True,
-                                                stop_by="%s改去%s了" % (name, what[:30]) if what else "%s被叫去做别的了" % name)
-                        out.append("%s %s 到此刻为止" % (item.get("id"), str(item.get("doing") or "")[:20]))
-                    else:
-                        self.world.delete_entry(date_text, str(item.get("id")))
+                    name = self.bots.label_for(bot) or bot
+                    reason = "%s改去%s了" % (name, what[:30]) if what else "%s被叫去做别的了" % name
+                    changed = self.world.interrupt(item, now, by=reason)
+                    if changed is None:
+                        continue
+                    if changed.get("deleted"):
                         out.append("%s %s 撤掉" % (item.get("id"), str(item.get("doing") or "")[:20]))
+                    else:
+                        out.append("%s %s 到此刻为止" % (item.get("id"), str(item.get("doing") or "")[:20]))
         return out
 
     def tool_recall(self, umo: str, keyword: str = "", date: str = "", time: str = "", entry: str = "") -> str:

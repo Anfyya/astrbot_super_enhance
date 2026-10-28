@@ -871,12 +871,14 @@ class Recorder:
                     # 睡觉不打断：已经睡下的那段照旧睡到起床，打算等她起来再排
                     done.append("%s 已经睡下，不动" % item.get("id"))
                     continue
+                changed = self.world.interrupt(
+                    item, lo, by="到了说好去做的事：%s" % clean_text(intention.get("text"), 30)
+                )
+                if changed is None:
+                    continue
                 if start < lo:
-                    self.world.update_entry(date_text, str(item.get("id")), end=fmt_time(lo), intent="", stopped=True,
-                                            stop_by="到了说好去做的事：%s" % clean_text(intention.get("text"), 30))
                     done.append("%s %s 到 %s 为止" % (item.get("id"), clean_text(item.get("doing"), 20), fmt_time(lo)[11:]))
                 else:
-                    self.world.delete_entry(date_text, str(item.get("id")))
                     done.append("%s %s 撤掉" % (item.get("id"), clean_text(item.get("doing"), 20)))
         if done:
             logger.info("[super_enhance/world] 新打算 %s（%s %s）腾地方：%s", intention.get("id"),
@@ -902,13 +904,8 @@ class Recorder:
         cur = self.world.current(who, at)
         if cur is not None and not is_event(cur) and str(cur.get("source") or "") == "step" \
                 and str(cur.get("id")) not in self._mentioned:
-            date_text, entry_id = str(cur.get("start"))[:10], str(cur.get("id"))
-            start = parse_time(cur.get("start"))
-            if start is not None and start < at:
-                self.world.update_entry(date_text, entry_id, end=fmt_time(at), intent="", stopped=True,
-                                        stop_by="改去%s" % clean_text(intention.get("text"), 30))
-            else:
-                self.world.delete_entry(date_text, entry_id)
+            entry_id = str(cur.get("id"))
+            self.world.interrupt(cur, at, by="改去%s" % clean_text(intention.get("text"), 30))
             logger.info("[super_enhance/world] %s答应现在就去做「%s」：手上补写排的 %s %s 到 %s 为止",
                         self.label(who) or who, clean_text(intention.get("text"), 30), entry_id,
                         clean_text(cur.get("doing"), 20), fmt_time(at)[11:])
@@ -969,14 +966,9 @@ class Recorder:
                 name, mine = self.label(who) or who, self.label(other) or other
                 doing = str(record.get("doing") or "")
                 doing = doing.replace(mine, name) if mine and mine in doing else "和%s一起%s" % (name, doing)
-                b_start = parse_time(before.get("start"))
                 b_end = parse_time(before.get("end")) if before.get("end") else None
                 if b_end is None or b_end > start:
-                    if b_start is not None and b_start < start:
-                        self.world.update_entry(str(before.get("start"))[:10], str(before.get("id")), end=fmt_time(start), intent="",
-                                                stopped=True, stop_by="改去%s" % clean_text(doing, 30))
-                    else:
-                        self.world.delete_entry(str(before.get("start"))[:10], str(before.get("id")))
+                    self.world.interrupt(before, start, by="改去%s" % clean_text(doing, 30))
                 seen = sorted((set(record.get("seen_by") or []) | {who}) - {other})
                 twin = self.world.add_entry(str(record.get("start"))[:10], {
                     "who": other, "kind": "activity", "start": record.get("start"), "end": record.get("end") or "",
@@ -1102,8 +1094,7 @@ class Recorder:
                     continue
                 note = "（%s中途走了）" % name if s0 < start else "（%s不来了）" % name
                 doing = str(item.get("doing") or "")
-                self.world.update_entry(day, str(item.get("id")), doing=doing if note in doing else doing + note,
-                                        **{"with": [x for x in (item.get("with") or []) if x != who]})
+                self.world.remove_partner(item, who, doing=doing if note in doing else doing + note)
 
     def _movable(self, entry, now: datetime.datetime) -> bool:
         """补写排的、还没做完的段（不是睡觉、不是顺带的事）：她提前做了能整段挪过来。"""

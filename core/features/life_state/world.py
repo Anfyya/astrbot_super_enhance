@@ -28,6 +28,7 @@ import datetime
 import hashlib
 import random
 import re
+from contextlib import contextmanager
 from pathlib import Path
 from astrbot.api import logger
 
@@ -102,6 +103,8 @@ class WorldStore:
         self._state = None
         self._routine = None
         self._days = {}
+        self._defer_depth = 0
+        self._dirty_days: set[str] = set()
 
     # ---------- 通用 ----------
 
@@ -145,7 +148,27 @@ class WorldStore:
 
     def _save_day(self, date_text: str) -> None:
         key = str(date_text).strip()
+        if self._defer_depth:
+            self._dirty_days.add(key)
+            return
         self._write_json(self._day_path(key), self._load_day(key))
+
+    @contextmanager
+    def day_transaction(self, *date_texts: str):
+        """把同一批世界线改动合并成每天一次写盘。"""
+        for value in date_texts:
+            if str(value or "").strip():
+                self._load_day(str(value).strip())
+        self._defer_depth += 1
+        try:
+            yield self
+        finally:
+            self._defer_depth -= 1
+            if not self._defer_depth:
+                dirty = sorted(self._dirty_days)
+                self._dirty_days.clear()
+                for key in dirty:
+                    self._write_json(self._day_path(key), self._load_day(key))
 
     # ---------- 条目 ----------
 
@@ -155,6 +178,90 @@ class WorldStore:
             items = [x for x in items if str(x.get("who")) == str(who)]
         items.sort(key=lambda x: str(x.get("start") or ""))
         return items
+
+    def find(self, entry_id: str, *, date_text: str = "", who: str = "", back_days: int = 2):
+        """按编号找一条；没给日期就从今天往前找。"""
+        wanted = str(entry_id or "").strip()
+        if not wanted:
+            return None
+        if date_text:
+            return next((item for item in self.entries(date_text, who) if str(item.get("id")) == wanted), None)
+        today = self.now_local().date()
+        for back in range(max(0, back_days) + 1):
+            day = (today - datetime.timedelta(days=back)).isoformat()
+            found = next((item for item in self.entries(day, who) if str(item.get("id")) == wanted), None)
+            if found is not None:
+                return found
+        return None
+
+    def entries_between(self, who: str, lo, hi) -> list:
+        """某人开始时刻落在 [lo, hi] 里的条目，跨日一次取齐。"""
+        lower = parse_time(lo) if not isinstance(lo, datetime.datetime) else lo.replace(tzinfo=None)
+        upper = parse_time(hi) if not isinstance(hi, datetime.datetime) else hi.replace(tzinfo=None)
+        if lower is None or upper is None or upper < lower:
+            return []
+        out = []
+        day = lower.date()
+        while day <= upper.date():
+            out.extend(
+                item for item in self.entries(day.isoformat(), who)
+                if (start := parse_time(item.get("start"))) is not None and lower <= start <= upper
+            )
+            day += datetime.timedelta(days=1)
+        out.sort(key=lambda item: str(item.get("start") or ""))
+        return out
+
+    def interrupt(self, entry: dict, at, *, by: str = "", why: str = ""):
+        """截停一段：还没开始就删，正在做就截到 at；睡觉和手动条目不动。"""
+        if not isinstance(entry, dict) or is_event(entry) or is_sleep(entry) or str(entry.get("source") or "") == "manual":
+            return None
+        moment = parse_time(at) if not isinstance(at, datetime.datetime) else at.replace(tzinfo=None)
+        start = parse_time(entry.get("start"))
+        end = parse_time(entry.get("end")) if entry.get("end") else None
+        if moment is None or start is None or (end is not None and end <= moment):
+            return entry
+        date_text = start.date().isoformat()
+        if start >= moment:
+            return self.delete_entry(date_text, str(entry.get("id"))) and {"id": entry.get("id"), "deleted": True}
+        fields = {"end": fmt_time(moment), "stopped": True, "intent": ""}
+        if clean_text(why, MAX_STOP_WHY):
+            fields["stop_why"] = clean_text(why, MAX_STOP_WHY)
+        elif clean_text(by, MAX_STOP_WHY):
+            fields["stop_by"] = clean_text(by, MAX_STOP_WHY)
+        return self.update(date_text, str(entry.get("id")), mode="normal", **fields)
+
+    def clear_planned(self, who: str, after, keep=None) -> list:
+        """撤掉 after 以后还没开始的补写段；skip ids in keep、睡觉和手动段。"""
+        moment = parse_time(after) if not isinstance(after, datetime.datetime) else after.replace(tzinfo=None)
+        if moment is None:
+            return []
+        kept = {str(value) for value in (keep or [])}
+        removed = []
+        for back in (0, 1, 2):
+            date_text = (moment.date() + datetime.timedelta(days=back)).isoformat()
+            for item in list(self.entries(date_text, who)):
+                start = parse_time(item.get("start"))
+                if (
+                    start is not None and start >= moment and str(item.get("id")) not in kept
+                    and str(item.get("source") or "") == "step" and not is_sleep(item) and not is_event(item)
+                ):
+                    if self.delete_entry(date_text, str(item.get("id"))):
+                        removed.append(item)
+        return removed
+
+    def remove_partner(self, entry: dict, who: str, note: str = "", **fields):
+        """把某人从对方写的同行段里去掉，保留对方那一段；手动写的不动。"""
+        if not isinstance(entry, dict) or str(entry.get("source") or "") == "manual":
+            return None
+        people = [str(value) for value in (entry.get("with") or []) if str(value).strip()]
+        if str(who) not in people:
+            return entry
+        people = [value for value in people if value != str(who)]
+        date_text = str(entry.get("start") or "")[:10]
+        fields["with"] = people
+        if note and not entry.get("stop_why"):
+            fields["stop_why"] = note
+        return self.update(date_text, str(entry.get("id")), mode="normal", **fields)
 
     @staticmethod
     def _overlaps(a_start, a_end, b_start, b_end) -> bool:
@@ -295,6 +402,7 @@ class WorldStore:
             record["moved_from"] = entry["moved_from"]
         if not entry.get("id"):
             day["next_id"] = int(day.get("next_id") or 1) + 1
+        stamp_stop_verdict(record)
         kept.append(record)
         kept.sort(key=lambda x: str(x.get("start") or ""))
         if len(kept) > MAX_DAY_ENTRIES:
@@ -303,6 +411,14 @@ class WorldStore:
         day["entries"] = kept[-MAX_DAY_ENTRIES:]
         self._save_day(date_text)
         return record
+
+    def update(self, date_text: str, entry_id: str, *, mode: str = "normal", **fields):
+        """统一的条目更新入口：normal 规整字段，patch 原样替换，manual 走网页语义。"""
+        if mode == "patch":
+            return self.patch_entry(date_text, entry_id, fields)
+        if mode == "manual":
+            return self.manual_update(date_text, entry_id, **fields)
+        return self.update_entry(date_text, entry_id, **fields)
 
     def patch_entry(self, date_text: str, entry_id: str, fields: dict):
         """原样改几个字段（收尾、做完、交给时用：分步已经按收场算好了，不再按起止重排）。"""
@@ -315,6 +431,7 @@ class WorldStore:
                     item.pop(key, None)
                 else:
                     item[key] = value
+            stamp_stop_verdict(item)
             self._save_day(date_text)
             return item
         return None
@@ -362,6 +479,7 @@ class WorldStore:
             if (fields.get("end") is not None or fields.get("start") is not None) and fields.get("steps") is None:
                 # 起止改了（截短 / 拉长）：分步跟着按新时长对上，别把十几分钟的分步压进一两分钟里
                 fit_steps(item)
+            stamp_stop_verdict(item)
             self._save_day(date_text)
             return item
         return None
@@ -958,7 +1076,7 @@ def same_thing(a, b) -> bool:
     return best >= 3
 
 
-def real_stop(entry: dict) -> bool:
+def _real_stop_calc(entry: dict) -> bool:
     """真被打断、没做完的段：给她看成「做到哪先放下了、为什么、后来怎么样」。
     闲着、睡觉、主人自己的、记录员从聊天里记的（多半是同一件事说法更新了）、停在最后一步（收尾）的，
     不算，照常写那段（时段截到打断那刻就是了）。"""
@@ -985,6 +1103,25 @@ def real_stop(entry: dict) -> bool:
     if len(planned) >= 2 and len(kept) >= len(planned):
         return False  # 停在最后一步（收尾），正事做完了
     return True
+
+
+def real_stop(entry: dict) -> bool:
+    """读写入时定下的结论；老条目没有结论时按原规则现算。"""
+    entry = entry or {}
+    if "real_stopped" in entry:
+        return bool(entry.get("real_stopped"))
+    return _real_stop_calc(entry)
+
+
+def stamp_stop_verdict(entry: dict) -> dict:
+    """条目的分步 / 起止改完以后，只在这里定一次「算不算真停下」。"""
+    if not isinstance(entry, dict):
+        return entry
+    if entry.get("stopped"):
+        entry["real_stopped"] = _real_stop_calc({key: value for key, value in entry.items() if key != "real_stopped"})
+    else:
+        entry.pop("real_stopped", None)
+    return entry
 
 
 def stop_note(entry: dict) -> str:
