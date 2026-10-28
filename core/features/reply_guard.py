@@ -254,6 +254,24 @@ class ReplyGuardFeature:
 
     # ---------- 3. 记录 / 丢弃本轮 ----------
 
+    def finish_turn(self, event, run_context) -> None:
+        """最高优先级收尾：标记本轮结束，并按作废 / 静默状态处理未发送内容。"""
+        try:
+            event.set_extra(AGENT_DONE_FLAG, time.time())
+        except Exception:
+            pass
+        try:
+            self.on_agent_done(event, run_context)
+        except Exception:
+            logger.error("[super_enhance] 新消息优先收尾失败", exc_info=True)
+        if event.get_extra(SILENT_FLAG) and not event.is_stopped():
+            start = event.get_extra(START_IDX_FLAG)
+            messages = getattr(run_context, "messages", None) or []
+            start = start if isinstance(start, int) and 0 <= start <= len(messages) else 0
+            marked = drop_unsent(messages, start)
+            if marked:
+                logger.info("[super_enhance/silence] 静默轮里没发出去的 %d 条回复不写入历史", marked)
+
     async def on_agent_begin(self, event, run_context) -> None:
         try:
             event.set_extra(START_IDX_FLAG, len(run_context.messages))

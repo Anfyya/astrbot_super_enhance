@@ -21,7 +21,6 @@
    注入重复、/usage 输出两次），启用某一项前请先停用对应的旧插件。
 """
 
-import time
 from pathlib import Path
 
 from astrbot.api import logger
@@ -55,14 +54,7 @@ from .core.features.silence import SilenceFeature
 from .core.features.bot_dialog import BotDialogFeature
 from .core.features.typing import TypingFeature
 from .core.features.lm_edits import MemoryEditRunner
-from .core.features.silence import SILENT_FLAG
-from .core.features.turn_state import (
-    AGENT_DONE_FLAG,
-    START_IDX_FLAG,
-    drop_unsent,
-    mark_arrived,
-    set_timezone,
-)
+from .core.features.turn_state import mark_arrived, set_timezone
 
 # 一轮收尾的钩子必须排在所有插件最前面（见 on_agent_done_turn）
 FIRST_PRIORITY = 10**9
@@ -455,24 +447,10 @@ class SuperEnhance(Star):
         - 模型失败的轮次：记下原因和主人原话，发完以后补进历史（error_voice）。
         """
         try:
-            event.set_extra(AGENT_DONE_FLAG, time.time())
-        except Exception:
-            pass
-        try:
             error_voice.remember_model_error(self.config, event, run_context, response)
         except Exception:
             logger.error("[super_enhance/error_voice] 记录模型失败出错", exc_info=True)
-        try:
-            self.reply_guard.on_agent_done(event, run_context)
-        except Exception:
-            logger.error("[super_enhance] 新消息优先收尾失败", exc_info=True)
-        if event.get_extra(SILENT_FLAG) and not event.is_stopped():
-            start = event.get_extra(START_IDX_FLAG)
-            messages = getattr(run_context, "messages", None) or []
-            start = start if isinstance(start, int) and 0 <= start <= len(messages) else 0
-            marked = drop_unsent(messages, start)
-            if marked:
-                logger.info("[super_enhance/silence] 静默轮里没发出去的 %d 条回复不写入历史", marked)
+        self.reply_guard.finish_turn(event, run_context)
 
     @filter.after_message_sent()
     async def after_message_sent_main(self, event: AstrMessageEvent) -> None:
