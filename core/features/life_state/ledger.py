@@ -24,8 +24,6 @@ MAX_PROMISE_LEN = 120
 MAX_TRAINING_HOURS = 80.0
 TRAINING_KEEP_DAYS = 30
 PROMISE_KEEP_DAYS = 14
-MAX_EVENT_DAYS = 7
-EVENT_KEEP_DAYS = 30
 
 
 # 记账时间用本地时间（容器系统时区是 UTC）；service 启动时按配置的时区改
@@ -325,93 +323,6 @@ class PromiseBook(_JsonBook):
 
 
 # ---------------------------------------------------------------- 事件
-
-
-class EventBook(_JsonBook):
-    """持续多天的事件（祭典、考试周、出远门…），带起止日期。"""
-
-    def __init__(self, path: Path) -> None:
-        super().__init__(path, {"version": 1, "items": []})
-
-    def items(self) -> list[dict]:
-        raw = self._load().setdefault("items", [])
-        return [x for x in raw if isinstance(x, dict)]
-
-    def merge(self, raw_events, today: str) -> int:
-        """收编生成器给出的 events；同名的只延长/修正结束日，返回改动条数。"""
-        if not isinstance(raw_events, list):
-            return 0
-        first = _date(today)
-        if first is None:
-            return 0
-        changed = 0
-        items = self.items()
-        for raw in raw_events:
-            if not isinstance(raw, dict):
-                continue
-            name = _clean(raw.get("name"), 30)
-            start = _date(raw.get("start")) or first
-            end = _date(raw.get("end")) or start
-            if not name:
-                continue
-            if end < start:
-                end = start
-            # 不许无限续命：最长 MAX_EVENT_DAYS 天
-            end = min(end, start + datetime.timedelta(days=MAX_EVENT_DAYS - 1))
-            existing = next((x for x in items if _norm(x.get("name")) == _norm(name)), None)
-            if existing is not None:
-                old_start = _date(existing.get("start")) or start
-                old_end = _date(existing.get("end")) or old_start
-                if old_end < first:
-                    # 已经结束的事件不准复活
-                    continue
-                cap = old_start + datetime.timedelta(days=MAX_EVENT_DAYS - 1)
-                new_end = min(max(old_end, end), cap)
-                if new_end != old_end:
-                    existing["end"] = new_end.isoformat()
-                    changed += 1
-                continue
-            items.append(
-                {
-                    "name": name,
-                    "start": start.isoformat(),
-                    "end": end.isoformat(),
-                    "note": _clean(raw.get("note"), 60),
-                    "added": _now_text(),
-                }
-            )
-            changed += 1
-        cutoff = first - datetime.timedelta(days=EVENT_KEEP_DAYS)
-        kept = [x for x in items if (_date(x.get("end")) or first) >= cutoff]
-        if changed or len(kept) != len(items):
-            self._load()["items"] = kept
-            self._save()
-        return changed
-
-    def active(self, date_text: str) -> list[dict]:
-        day = _date(date_text)
-        if day is None:
-            return []
-        return [
-            x
-            for x in self.items()
-            if (_date(x.get("start")) or day) <= day <= (_date(x.get("end")) or day)
-        ]
-
-    def ended(self, date_text: str, within_days: int = 21) -> list[dict]:
-        day = _date(date_text)
-        if day is None:
-            return []
-        cutoff = day - datetime.timedelta(days=within_days)
-        out = []
-        for x in self.items():
-            end = _date(x.get("end"))
-            if end is not None and cutoff <= end < day:
-                out.append(x)
-        return out
-
-
-# ---------------------------------------------------------------- 在练的事
 
 
 def parse_hours(value, field: str = "时长") -> float:

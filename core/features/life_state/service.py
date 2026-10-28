@@ -34,7 +34,6 @@ from .models import (
 from .ledger import set_timezone as set_ledger_timezone
 from .ledger import (
     AbilityBook,
-    EventBook,
     PromiseBook,
     TrainingBook,
     parse_hours,
@@ -63,7 +62,6 @@ REVIEW_TRIES = 3
 STATE_FILE_NAME = "life_states.json"
 ABILITY_FILE_NAME = "abilities.json"
 PROMISE_FILE_NAME = "promises.json"
-EVENT_FILE_NAME = "events.json"
 TRAINING_FILE_NAME = "trainings.json"
 # 练成后「刚练成」提示最多挂这么久（她一直没跟主人说话也不再提）
 TRAINING_NOTICE_HOURS = 48
@@ -157,7 +155,6 @@ class LifeStateService:
         # 三本小账（见 ledger.py）
         self.abilities = AbilityBook(self.data_dir / ABILITY_FILE_NAME)
         self.promises = PromiseBook(self.data_dir / PROMISE_FILE_NAME)
-        self.events = EventBook(self.data_dir / EVENT_FILE_NAME)
         self.trainings = TrainingBook(self.data_dir / TRAINING_FILE_NAME)
         if self.promise_enabled:
             self.planner.promises = self.promises
