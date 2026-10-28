@@ -20,6 +20,7 @@ from astrbot.api import logger
 from astrbot.core.agent.message import TextPart
 
 from ..common import text as text_utils, timeutil
+from ..common.bots import BotRegistry, platform_of
 
 ROUND_FLAG = "_super_enhance_bot_dialog_round"
 HINT_HEAD = "【对话节奏】"
@@ -92,6 +93,7 @@ class BotDialogFeature:
         self.config = config
         self.context = context
         self.silence = silence
+        self.bots = BotRegistry(config)
         self._state: dict[str, dict] = {}
         # 待回报的委托：key = (本机器人平台, 对方 bot 的 QQ)
         self._pending_report: dict[tuple, dict] = {}
@@ -102,22 +104,13 @@ class BotDialogFeature:
     def enabled(self) -> bool:
         return bool(self.config.get("enabled", False))
 
-    def _ids(self, key: str) -> list[str]:
-        try:
-            value = self.config.get(key) or []
-        except Exception:
-            value = []
-        if isinstance(value, str):
-            value = value.replace("，", ",").split(",")
-        return [str(x).strip() for x in value if str(x).strip()]
-
     @property
     def bot_ids(self) -> list[str]:
-        return self._ids("bot_ids")
+        return self.bots.bot_id_list()
 
     @property
     def master_ids(self) -> list[str]:
-        return self._ids("master_ids")
+        return self.bots.master_ids()
 
     @property
     def max_rounds(self) -> int:
@@ -149,27 +142,10 @@ class BotDialogFeature:
             return 120
 
     def _names(self) -> dict:
-        try:
-            value = self.config.get("bot_names") or {}
-        except Exception:
-            value = {}
-        out: dict = {}
-        if isinstance(value, dict):
-            for key, name in value.items():
-                key, name = str(key).strip(), str(name).strip()
-                if key and name:
-                    out[key] = name
-            return out
-        for chunk in re.split(r"[,\n;，；]", str(value)):
-            key, sep, name = chunk.partition("=")
-            key, name = key.strip(), name.strip()
-            if sep and key and name:
-                out[key] = name
-        return out
+        return dict(self.bots.names)
 
     def _other_name(self, sender_id: str) -> str:
-        names = self._names()
-        return str(names.get(str(sender_id)) or "").strip() or "另一个机器人"
+        return self.bots.other_name(sender_id) or "另一个机器人"
 
     def bot_name(self, qq: str) -> str:
         """这个 QQ 号是另一个机器人就给出她的名字（没配 bot_names 写「另一个机器人」），不是就空。"""
@@ -225,7 +201,7 @@ class BotDialogFeature:
             return
         try:
             sender = str(event.get_sender_id()).strip()
-            bot = str(event.unified_msg_origin).split(":", 1)[0].strip()
+            bot = platform_of(event.unified_msg_origin)
         except Exception:
             return
         if not bot:
@@ -318,7 +294,7 @@ class BotDialogFeature:
 
         try:
             sender = str(event.get_sender_id()).strip()
-            bot = str(event.unified_msg_origin).split(":", 1)[0].strip()
+            bot = platform_of(event.unified_msg_origin)
         except Exception:
             return
         masters = self.master_ids
@@ -353,7 +329,7 @@ class BotDialogFeature:
         try:
             sender = str(event.get_sender_id()).strip()
             master_umo = str(event.unified_msg_origin)
-            platform = master_umo.split(":", 1)[0].strip()
+            platform = platform_of(master_umo)
         except Exception:
             return
         if sender not in self.master_ids or not platform:
@@ -667,7 +643,7 @@ class BotDialogFeature:
         text = re.sub(r"\s+", " ", str(content or "")).strip()
         if not text:
             return "没有内容，这次没有传话。"
-        own = str(getattr(event, "unified_msg_origin", "") or "").split(":", 1)[0].strip()
+        own = platform_of(getattr(event, "unified_msg_origin", ""))
         others = [b for b in dict.fromkeys(bots or []) if b and b != own]
         if own not in (bots or []) or len(others) != 1:
             return "认不出该告诉谁（需要正好两个角色），这次没有传话。"

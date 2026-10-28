@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from ...common.bots import platform_of, profile_umo
 from ...common import timeutil
 
 # 自然时段 → 当天的分钟区间（左闭右开）
@@ -24,19 +25,12 @@ WEEKDAYS_CN = timeutil.WEEKDAYS_CN
 
 def bot_of_umo(umo: str) -> str:
     """从 UMO 里取出机器人（平台实例）id：napcat:FriendMessage:123456 → napcat。"""
-    text = str(umo or "").strip()
-    if not text:
-        return ""
-    head, _sep, _rest = text.partition(":")
-    return head.strip() or text
+    return platform_of(umo)
 
 
 def profile_umo_for_bot(bot: str) -> str:
     """构造一个能命中该机器人配置档（abconf）的 UMO，用于解析它的人格与模型。"""
-    text = str(bot or "").strip()
-    if not text:
-        return ""
-    return text if ":" in text else "%s:FriendMessage:0" % text
+    return profile_umo(bot)
 
 # 时间线里允许出现的可选字段（其余额外字段也会保留并展示）
 OPTIONAL_FIELDS: dict[str, dict[str, str]] = {

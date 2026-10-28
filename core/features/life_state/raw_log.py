@@ -17,9 +17,8 @@ from pathlib import Path
 from astrbot.api import logger
 
 from ...common import timeutil
-
+from ...common.bots import BotRegistry
 from ...common.text import clean_message, text_of, time_of
-from .models import bot_of_umo
 
 FOLDER_NAME = "raw_messages"
 KEEP_DAYS = 2  # 今天 + 昨天
@@ -36,6 +35,7 @@ class RawMessageLog:
     def __init__(self, context, cfg, data_dir: Path) -> None:
         self.context = context
         self.cfg = cfg
+        self.bots = BotRegistry(cfg)
         self.folder = Path(data_dir) / FOLDER_NAME
         # () -> 记录员还没处理完的最早那天（YYYY-MM-DD，没有就空串）；清理旧文件时这天以后的先不删
         self.keep_from_fn = None
@@ -51,34 +51,14 @@ class RawMessageLog:
 
     def target_sessions(self) -> list[str]:
         """配置里明确写出来的完整会话（启动回补历史时用）。"""
-        out: list[str] = []
-        for key in ("proactive_targets", "session_list"):
-            value = self.cfg.get(key)
-            if isinstance(value, list):
-                for item in value:
-                    text = str(item or "").strip()
-                    if text and text not in out:
-                        out.append(text)
-        return out
+        return self.bots.target_sessions()
 
     def enabled_bots(self) -> list[str]:
         """启用日程的机器人（平台实例）列表。"""
-        out: list[str] = []
-        for key in ("session_list", "proactive_targets"):
-            value = self.cfg.get(key)
-            if isinstance(value, list):
-                for item in value:
-                    bot = bot_of_umo(item)
-                    if bot and bot not in out:
-                        out.append(bot)
-        return out
+        return self.bots.enabled_bots()
 
     def is_target(self, umo: str) -> bool:
-        bots = self.enabled_bots()
-        if not bots:
-            # 没配名单就不记，避免把全平台的消息都存下来
-            return False
-        return bot_of_umo(umo) in bots
+        return self.bots.is_target(umo)
 
     # ---------- 写入 ----------
 

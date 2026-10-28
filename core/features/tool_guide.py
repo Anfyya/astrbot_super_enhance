@@ -13,12 +13,14 @@ platform_id:message_type:session_id」），没说另一个角色在哪个会话
 
 import copy
 
+from ..common.bots import BotRegistry, platform_of, session_for
+
 SEND_TOOL = "send_message_to_user"
 TELL_TOOL = "tell"
 
 
 def _session(platform: str, user_id: str) -> str:
-    return "%s:FriendMessage:%s" % (platform, user_id)
+    return session_for(platform, user_id)
 
 
 class ToolGuideFeature:
@@ -26,20 +28,13 @@ class ToolGuideFeature:
         self.config = config  # 「机器人对话」分组
         self.bots_fn = bots_fn  # 启用的角色（平台 id 列表）
         self.label_fn = label_fn  # 平台 id → 角色名
+        self.registry = BotRegistry(config)
 
     def accounts(self) -> dict[str, str]:
-        out = {}
-        for line in self.config.get("bot_accounts") or []:
-            platform, sep, qq = str(line).partition("=")
-            if sep and platform.strip() and qq.strip():
-                out[platform.strip()] = qq.strip()
-        return out
+        return dict(self.registry.accounts)
 
     def master_id(self) -> str:
-        value = self.config.get("master_ids") or []
-        if isinstance(value, str):
-            value = value.replace("，", ",").split(",")
-        ids = [str(x).strip() for x in value if str(x).strip()]
+        ids = self.registry.master_ids()
         return ids[0] if ids else ""
 
     def others(self, own: str) -> list[tuple[str, str]]:
@@ -101,7 +96,7 @@ class ToolGuideFeature:
         if not isinstance(tools, list) or not tools:
             return
         umo = str(getattr(event, "unified_msg_origin", "") or "")
-        own = umo.split(":", 1)[0].strip()
+        own = platform_of(umo)
         if own not in (self.bots_fn() or []):
             return
         texts = {SEND_TOOL: self.send_text(own, umo), TELL_TOOL: self.tell_text(own)}

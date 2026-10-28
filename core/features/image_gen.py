@@ -30,6 +30,7 @@ from astrbot.api import logger
 from astrbot.api.event import MessageChain
 
 from ..common import jsonio
+from ..common.bots import platform_of
 
 SIZE_RE = re.compile(r"^\s*(\d{2,5})\s*[xX*×]\s*(\d{2,5})\s*$")
 RATIO_RE = re.compile(r"^\s*(\d{1,2})\s*[:：]\s*(\d{1,2})\s*$")
@@ -210,7 +211,7 @@ class ImageGenFeature:
         if not prompt:
             return "没画：prompt 要写清楚画什么。"
         umo = str(getattr(event, "unified_msg_origin", "") or "")
-        bot = umo.split(":", 1)[0] or "bot"
+        bot = platform_of(umo) or "bot"
         provider = self.context.get_provider_by_id(self.provider_id)
         client = getattr(provider, "client", None)
         if client is None:
@@ -275,7 +276,7 @@ class ImageGenFeature:
         if not self.enabled:
             return "画图没开。"
         umo = str(getattr(event, "unified_msg_origin", "") or "")
-        bot = umo.split(":", 1)[0] or "bot"
+        bot = platform_of(umo) or "bot"
         index = self._load_index()
         hit = ID_RE.search(str(image_id or ""))
         key = hit.group(0).lower() if hit else self._latest(index, bot)

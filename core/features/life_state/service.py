@@ -13,6 +13,7 @@ from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.platform.message_type import MessageType
 
 from ...common import jsonio, timeutil
+from ...common.bots import platform_of
 
 from .injector import (
     as_context_part,
@@ -24,11 +25,9 @@ from .models import (
     OPTIONAL_FIELDS,
     LifeState,
     TimelineEntry,
-    bot_of_umo,
     clock_to_minute,
     format_datetime,
     minute_to_clock,
-    profile_umo_for_bot,
     weekday_cn,
 )
 from .ledger import set_timezone as set_ledger_timezone
@@ -322,7 +321,7 @@ class LifeStateService:
         另一个人补写排的、写着和她一起的段也跟着处理（见 _release_partners），不等记录员去猜。
         返回给模型看的结果（只写事实）。
         """
-        bot = bot_of_umo(umo)
+        bot = platform_of(umo)
         what = " ".join(str(what or "").split())
         if not bot or not what:
             return "没写进去：要写清楚做什么。"
@@ -436,7 +435,7 @@ class LifeStateService:
 
     def tool_recall(self, umo: str, keyword: str = "", date: str = "", time: str = "", entry: str = "") -> str:
         """回想工具：按关键词 / 日期 / 时间搜世界线（只列简短的几条）；填了 entry 就看那一条当时准确的世界线。"""
-        bot = bot_of_umo(umo)
+        bot = platform_of(umo)
         if not bot:
             return "认不出你是谁，翻不到。"
         from . import recall
@@ -1066,7 +1065,7 @@ class LifeStateService:
     def _bot_enabled(self, bot: str) -> bool:
         """该机器人（平台实例）是否启用动态生活状态。"""
         mode = str(self.cfg.get("session_list_mode") or "whitelist").strip()
-        items = [bot_of_umo(x) for x in (self.cfg.get("session_list") or [])]
+        items = [platform_of(x) for x in (self.cfg.get("session_list") or [])]
         if mode == "none":
             return True
         if mode == "blacklist":
@@ -1075,28 +1074,18 @@ class LifeStateService:
 
     def enabled_bots(self) -> list[str]:
         """按会话名单取启用的机器人，保持配置顺序且去重。"""
-        out = []
-        for key in ("session_list", "proactive_targets"):
-            for item in self.cfg.get(key) or []:
-                bot = bot_of_umo(str(item or ""))
-                if bot and bot not in out:
-                    out.append(bot)
-        return out
+        return self.bots.enabled_bots()
+
     def _profile_umo(self, bot: str) -> str:
         """解析该机器人的配置档（人格 / 模型）用的代表 UMO。"""
-        for key in ("proactive_targets", "session_list"):
-            for item in self.cfg.get(key) or []:
-                text = str(item or "").strip()
-                if text and ":" in text and bot_of_umo(text) == bot:
-                    return text
-        return profile_umo_for_bot(bot)
+        return self.bots.representative_umo(bot)
 
     # ---------- 请求注入 ----------
 
     async def on_llm_request(self, event, req) -> None:
         if not self.enabled:
             return
-        bot = bot_of_umo(getattr(event, "unified_msg_origin", ""))
+        bot = platform_of(getattr(event, "unified_msg_origin", ""))
         if not self._bot_enabled(bot):
             return
         text = self.world_text(bot, self._now())
@@ -1197,7 +1186,7 @@ class LifeStateService:
         """主动对话请求补上世界线；cron 的上下文随后会被裁成纯对话。"""
         if not self.enabled or req is None:
             return
-        bot = bot_of_umo(getattr(event, "unified_msg_origin", ""))
+        bot = platform_of(getattr(event, "unified_msg_origin", ""))
         if not self._bot_enabled(bot):
             return
         try:
