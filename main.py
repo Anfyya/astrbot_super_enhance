@@ -51,6 +51,7 @@ from .core.features.msg_time import MsgTimeFeature
 from .core.features.proactive_think import ProactiveThinkFilter
 from .core.features.reply_guard import ReplyGuardFeature
 from .core.features.request_snapshot import LAST_PRIORITY, RequestSnapshotFeature
+from .core.features.request_pipeline import RequestPipeline
 from .core.features.runner_hooks import RunnerHooks
 from .core.features.silence import SilenceFeature
 from .core.features.bot_dialog import BotDialogFeature
@@ -137,6 +138,11 @@ class SuperEnhance(Star):
         # 发消息 / tell 的说明换成写死对象和会话号的中文版（只改这一轮的工具清单）
         self.bot_dialog.tool_bots_fn = self.life.enabled_bots
         self.tool_guide = self.bot_dialog
+        self.request_pipeline = RequestPipeline(
+            transcript=self.transcript, msg_time=self.msg_time, life=self.life,
+            bot_dialog=self.bot_dialog, silence=self.silence,
+            reply_guard=self.reply_guard, tool_guide=self.tool_guide,
+        )
         self.page_api = None
         self.snapshot = RequestSnapshotFeature(
             context, SectionConfig(raw, "request_snapshot"), data_dir
@@ -156,10 +162,7 @@ class SuperEnhance(Star):
     async def initialize(self) -> None:
         """插件加载后初始化（动态生活状态需要起调度器）。"""
         await self.life.initialize()
-        self.cron_context.cron_request_hooks.append(self.life.on_cron_request)
-        self.cron_context.cron_request_hooks.append(self.tool_guide.on_cron_request)
-        self.cron_context.cron_request_hooks.append(self.transcript.on_cron_request)
-        self.cron_context.cron_request_hooks.append(self.silence.on_cron_request)
+        self.cron_context.cron_request_hooks.append(self.request_pipeline.cron)
         self.features.start()
         self._register_page_api()
         await self.sync_tool_visibility()
@@ -252,12 +255,7 @@ class SuperEnhance(Star):
     async def on_llm_request_main(self, event: AstrMessageEvent, req: ProviderRequest) -> None:
         """同优先级的常规请求钩子，按固定顺序一次跑完。"""
         error_voice.prepare_model_error(self.config, event)
-        await self.transcript.on_llm_request(event, req)
-        await self.msg_time.declare(req)
-        await self.life.on_llm_request(event, req)
-        await self.bot_dialog.on_llm_request(event, req)
-        await self.silence.on_llm_request(event, req)
-        await self.reply_guard.on_llm_request(event, req)
+        await self.request_pipeline.chat(event, req)
 
     # ------------------------------------------------------------------
     # 4. 上下文工具
