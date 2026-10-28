@@ -1485,6 +1485,73 @@ class ContextPageApi:
         items.sort(key=lambda x: x["updated_at"], reverse=True)
         return _ok({"conversations": items})
 
+    @staticmethod
+    def _tool_names(history: list[dict]) -> dict[str, str]:
+        names = {}
+        for item in history:
+            for call in item.get("tool_calls") or []:
+                if isinstance(call, dict) and call.get("id"):
+                    names[str(call["id"])] = str((call.get("function") or {}).get("name") or "")
+        return names
+
+    def _history_row(self, item: dict, index: int, tool_names: dict[str, str], drawer):
+        texts, thinks, images = _text_parts(item)
+        pictures = _pictures(item)
+        calls = []
+        for call in item.get("tool_calls") or []:
+            if not isinstance(call, dict):
+                continue
+            fn = call.get("function") or {}
+            calls.append(
+                {
+                    "id": str(call.get("id") or ""),
+                    "name": str(fn.get("name") or ""),
+                    "arguments": str(fn.get("arguments") or ""),
+                }
+            )
+        text = "\n".join(texts)
+        reason = "\n".join(thinks)
+        tool_id = str(item.get("tool_call_id") or "")
+        drawn = []
+        if drawer is not None and tool_names.get(tool_id) == "draw_image" and text.startswith("画好了："):
+            # 她画的图不在历史里（存成文件了）：画好那条回包下面按编号显示存着的小图，换图、删图走 ctx/drawn
+            for image_id in dict.fromkeys(re.findall(r"img\d+", text.split("。", 1)[0])):
+                if drawer.is_deleted(image_id):
+                    drawn.append({"id": image_id, "url": "", "deleted": True})
+                    continue
+                uri = drawer.view_uri(image_id)
+                if uri:
+                    drawn.append({"id": image_id, "url": uri})
+        content = item.get("content")
+        if isinstance(content, str):
+            editable = True
+        elif isinstance(content, list):
+            editable = any(
+                isinstance(part, dict)
+                and str(part.get("type") or "").lower() in ("text", "plain")
+                for part in content
+            )
+        else:
+            editable = False
+        return {
+                "i": index,
+                "role": str(item.get("role") or ""),
+                "text": text,
+                "think": reason,
+                "think_editable": bool(reason)
+                or isinstance(item.get("reasoning_content"), str)
+                or str(item.get("role") or "") == "assistant",
+                "images": images,
+                "pictures": self._picture_refs(pictures),
+                "drawn": drawn,
+                "tool_calls": calls,
+                "tool_call_id": tool_id,
+                "tool_name": tool_names.get(tool_id, ""),
+                "stamp": _stamp_of(text) or _stamp_of(reason),
+                "chars": len(text) + len(reason),
+                "editable": editable,
+        }
+
     async def get_history(self):
         args = request.args if request is not None else {}
         cid = str(args.get("cid") or "").strip()
@@ -1508,76 +1575,10 @@ class ContextPageApi:
         total = len(history)
         end = total if end <= 0 or end > total else end
         start = max(0, end - limit)
-        tool_names: dict[str, str] = {}
-        for item in history:
-            for call in item.get("tool_calls") or []:
-                if isinstance(call, dict) and call.get("id"):
-                    fn = call.get("function") or {}
-                    tool_names[str(call["id"])] = str(fn.get("name") or "")
+        tool_names = self._tool_names(history)
 
         drawer = getattr(self.plugin, "image_gen", None)
-        items = []
-        for index in range(start, end):
-            item = history[index]
-            texts, thinks, images = _text_parts(item)
-            pictures = _pictures(item)
-            calls = []
-            for call in item.get("tool_calls") or []:
-                if not isinstance(call, dict):
-                    continue
-                fn = call.get("function") or {}
-                calls.append(
-                    {
-                        "id": str(call.get("id") or ""),
-                        "name": str(fn.get("name") or ""),
-                        "arguments": str(fn.get("arguments") or ""),
-                    }
-                )
-            text = "\n".join(texts)
-            reason = "\n".join(thinks)
-            tool_id = str(item.get("tool_call_id") or "")
-            drawn = []
-            if drawer is not None and tool_names.get(tool_id) == "draw_image" and text.startswith("画好了："):
-                # 她画的图不在历史里（存成文件了）：画好那条回包下面按编号显示存着的小图，换图、删图走 ctx/drawn
-                for image_id in dict.fromkeys(re.findall(r"img\d+", text.split("。", 1)[0])):
-                    if drawer.is_deleted(image_id):
-                        drawn.append({"id": image_id, "url": "", "deleted": True})
-                        continue
-                    uri = drawer.view_uri(image_id)
-                    if uri:
-                        drawn.append({"id": image_id, "url": uri})
-            content = item.get("content")
-            if isinstance(content, str):
-                editable = True
-            elif isinstance(content, list):
-                editable = any(
-                    isinstance(part, dict)
-                    and str(part.get("type") or "").lower() in ("text", "plain")
-                    for part in content
-                )
-            else:
-                editable = False
-            items.append(
-                {
-                    "i": index,
-                    "role": str(item.get("role") or ""),
-                    "text": text,
-                    "think": reason,
-                    "think_editable": bool(reason)
-                    or isinstance(item.get("reasoning_content"), str)
-                    or str(item.get("role") or "") == "assistant",
-                    "images": images,
-                    "pictures": self._picture_refs(pictures),
-                    "drawn": drawn,
-                    "tool_calls": calls,
-                    "tool_call_id": tool_id,
-                    "tool_name": tool_names.get(tool_id, ""),
-                    "stamp": _stamp_of(text) or _stamp_of(reason),
-                    "chars": len(text) + len(reason),
-                    "editable": editable,
-                }
-            )
-
+        items = [self._history_row(history[index], index, tool_names, drawer) for index in range(start, end)]
         return _ok(
             {
                 "cid": cid,
@@ -1646,6 +1647,8 @@ class ContextPageApi:
                 "removed_extra": extra,
                 "total": len(kept),
                 "estimate_tokens": tokens,
+                "token_usage": tokens,
+                "last_sig": hashlib.sha1(json.dumps(kept[-1], ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")).hexdigest() if kept else "",
                 "backup": backup,
             }
         )
@@ -1734,11 +1737,16 @@ class ContextPageApi:
             len(images) if has_images else "不动",
             cid,
         )
+        drawer = getattr(self.plugin, "image_gen", None)
         return _ok(
             {
                 "index": index,
                 "chars": len(text or "") + len(think or ""),
                 "estimate_tokens": tokens,
+                "token_usage": tokens,
+                "total": len(history),
+                "last_sig": hashlib.sha1(json.dumps(history[-1], ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")).hexdigest() if history else "",
+                "item": self._history_row(item, index, self._tool_names(history), drawer),
             }
         )
 
@@ -1924,6 +1932,12 @@ class ContextPageApi:
                 "start": pos,
                 "total": len(merged),
                 "estimate_tokens": tokens,
+                "token_usage": tokens,
+                "last_sig": hashlib.sha1(json.dumps(merged[-1], ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")).hexdigest() if merged else "",
+                "items": [
+                    self._history_row(row, pos + offset, self._tool_names(merged), getattr(self.plugin, "image_gen", None))
+                    for offset, row in enumerate(new_items)
+                ],
                 "backup": backup,
             }
         )

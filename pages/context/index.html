@@ -2575,13 +2575,27 @@
     var changes = (draws ? draws.list : []).filter(function (d) { return d.change; }).map(function (d) { return Object.assign({ id: d.id }, d.change); });
     if (!edits && !changes.length) { return; }
     btn.disabled = true;
-    (edits ? post("ctx/edit", payload) : Promise.resolve(null)).then(function () {
+    var editResult = null;
+    (edits ? post("ctx/edit", payload) : Promise.resolve(null)).then(function (saved) {
+      editResult = saved;
       return changes.length ? post("ctx/drawn", { changes: changes }) : null;
     }).then(function (r) {
       if (S.insp) { S.insp.dirty = false; }
       var failed = r && r.failed && r.failed.length ? "；没改成：" + r.failed.join("；") : "";
       // 撤销只管存档里的改动；她画的图换了 / 删了，原图在图片文件夹的 old/ 里
       toast("已保存 #" + it.i + failed, edits ? { action: { label: "撤销", run: function () { doUndo(true); } } } : {});
+      if (editResult && editResult.item && !changes.length) {
+        S.total = editResult.total;
+        if (S.range) { S.range.total = S.range.end = editResult.total; }
+        S.lastSig = editResult.last_sig || S.lastSig;
+        var conv = curConv();
+        if (conv) { conv.estimate_tokens = editResult.estimate_tokens; conv.token_usage = editResult.token_usage; }
+        S.items.forEach(function (row, k) { if (row.i === it.i) { S.items[k] = editResult.item; } });
+        renderStream();
+        renderHead();
+        openMsg(it.i);
+        return;
+      }
       return loadHistory("keep");
     }).catch(function (e) {
       btn.disabled = false;
@@ -2597,6 +2611,22 @@
       S.multi = false;
       if (S.insp && S.insp.kind === "msg" && indexes.indexOf(S.insp.i) >= 0) { closeInsp(true); }
       toast(msg, { action: { label: "撤销", run: function () { doUndo(true); } } });
+      if (!r.removed_extra) {
+        var gone = {};
+        indexes.forEach(function (i) { gone[i] = 1; });
+        S.items = S.items.filter(function (row) { return !gone[row.i]; }).map(function (row) {
+          row.i -= indexes.filter(function (i) { return i < row.i; }).length;
+          return row;
+        });
+        S.total = r.total;
+        if (S.range) { S.range.total = S.range.end = r.total; }
+        S.lastSig = r.last_sig || S.lastSig;
+        var conv = curConv();
+        if (conv) { conv.items = r.total; conv.estimate_tokens = r.estimate_tokens; conv.token_usage = r.token_usage; }
+        renderStream();
+        renderHead();
+        return;
+      }
       return loadHistory("keep");
     }).catch(function (e) {
       toast("删除失败：" + errMsg(e), { err: true });
@@ -3002,6 +3032,21 @@
       var at = r && typeof r.start === "number" ? r.start : null;
       toast("已插入 " + ((r && r.added) || 1) + " 条", { action: { label: "撤销", run: function () { doUndo(true); } } });
       closeInsp(true);
+      if (r && r.items && typeof r.start === "number") {
+        S.items.forEach(function (row) { if (row.i >= r.start) { row.i += r.items.length; } });
+        var start = (S.range && S.range.start) || 0;
+        S.items = S.items.slice(0, Math.max(0, r.start - start)).concat(r.items, S.items.slice(Math.max(0, r.start - start)));
+        S.total = r.total;
+        if (S.range) { S.range.total = S.range.end = r.total; }
+        S.lastSig = r.last_sig || S.lastSig;
+        var conv = curConv();
+        if (conv) { conv.items = r.total; conv.estimate_tokens = r.estimate_tokens; conv.token_usage = r.token_usage; }
+        renderStream();
+        renderHead();
+        openMsg(at);
+        scrollToItem(at, true);
+        return;
+      }
       return loadHistory("keep").then(function () {
         if (at !== null && itemByIndex(at)) { openMsg(at); scrollToItem(at, true); }
       });
