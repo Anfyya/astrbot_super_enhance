@@ -6439,16 +6439,43 @@
   var THING_MAIN = { "挪地方": ["place", "keep", "spot"], "切开了": ["state", "keep"], "用掉一部分": ["qty"], "吃了一部分": ["qty"], "清点": ["qty"],
     "热了一下": ["spot"], "腌上了": ["place", "keep", "spot"], "晒上了": ["place", "keep", "spot"], "熏上了": ["place", "spot"] };
 
-  function thingNewForm(d) {
-    var key = "new";
+  function dataNewForm(d, objectMode) {
+    var key = objectMode ? "onew" : "new";
     var f = S.tEdit[key];
-    var box = edBox(null, "加一件吃的", "编号由程序发", "存成网页手动");
+    var box = edBox(null, objectMode ? "加一件东西" : "加一件吃的", objectMode ? "编号由程序发（p 开头）" : "编号由程序发", "存成网页手动");
     box.setAttribute("data-tf", key);
-    box.appendChild(edSec(edInput(f.name, "是什么，例如：嫩豆腐", function (v) { f.name = v; }, { cls: "ed-title", focus: true })));
+    box.appendChild(edSec(edInput(f.name, objectMode ? "叫什么，叫得出区别的，例如：深青围巾" : "是什么，例如：嫩豆腐", function (v) { f.name = v; }, { cls: "ed-title", focus: true })));
+    if (objectMode) {
+      var top = edProps();
+      edRow(top, "是什么", edInput(f.kind, "一个词：围巾、窗花、纸条、书……", function (v) { f.kind = v; }), "同一种的排在一起，提醒认准编号");
+      edRow(top, "样子", edInput(f.look, "颜色、材料、大小、上面有什么，能和同一种的别的那件分清", function (v) { f.look = v; }, { area: true }));
+      edRow(top, "归谁", edChips(edPeople("大家一起用"), f.owner, function (v) { f.owner = v; }));
+      edRow(top, "哪来的", edInput(f.origin, "例如：丛雨给主人织的", function (v) { f.origin = v; }));
+      box.appendChild(edSec(top));
+    }
     var dyn = h("div", { class: "ed-dyn" });
     box.appendChild(dyn);
     function draw() {
       dyn.textContent = "";
+      if (objectMode) {
+        var c = { first: true, exceptId: "" };
+        var q = edProps();
+        edRow(q, "怎么来的", edChips(edOpts(d.item_steps.start), f.what, function (v) {
+          var redo = !!OBJ_MADE[v] !== !!OBJ_MADE[f.what];
+          f.what = v;
+          if (redo) { draw(); }
+        }));
+        edRow(q, "什么时候", edInput(f.at, "现在", function (v) { f.at = v; }, { cls: "ed-num", auto: true }), THING_AT_TIP);
+        edRow(q, "谁", edMulti(edWho(), f.by, function (v) { f.by = v; }), "可以多选；都不选就是没说");
+        if (OBJ_MADE[f.what] || f.from.length) {
+          edRow(q, "材料", edPicker(f, "from", function () { return objCands(""); }, { add: "挑材料", live: true }), "用家里哪几件东西做的，例如红纸剪成窗花");
+        }
+        ["place", "holder", "state"].forEach(function (k) { objFieldRow(q, f, k, c); });
+        edRow(q, "备注", edInput(f.note, "可空", function (v) { f.note = v; }));
+        dyn.appendChild(edSec(q));
+        edFitIn(dyn);
+        return;
+      }
       var measured = thingMeasuredKind(f.kind);
       var c = { first: true, measured: measured, exceptId: "" };
       var p = edProps();
@@ -6481,15 +6508,23 @@
     }
     draw();
     return worldFormFoot(box, function () { thingCloseForm(key); }, "添加", function () {
-      if (!String(f.name || "").trim()) { toast("写一下是什么", { err: true }); return null; }
-      if (!f.kind) { toast("选一下哪一类（决定能放多久）", { err: true }); return null; }
+      if (!String(f.name || "").trim()) { toast(objectMode ? "写一下叫什么" : "写一下是什么", { err: true }); return null; }
+      if (!objectMode && !f.kind) { toast("选一下哪一类（决定能放多久）", { err: true }); return null; }
       var at = fullTime(f.at, thingToday());
       if (at === null) { toast("时间写成 08:30、昨天 08:30 或 10-18 08:30", { err: true }); return null; }
-      return thingPost({ action: "add", name: f.name, kind: f.kind, origin: f.origin, from: f.from,
-        stage: { what: f.what, at: at, left: f.left, amount: f.amount, place: f.place, keep: f.keep, spot: f.spot, state: f.state, by: (f.by || []).join(","), note: f.note } },
+      var body = objectMode
+        ? { action: "add", cat: "item", name: f.name, kind: f.kind, look: f.look, owner: f.owner, origin: f.origin, from: f.from,
+            stage: { what: f.what, at: at, place: f.place, holder: f.holder, state: f.state, by: (f.by || []).join(","), note: f.note } }
+        : { action: "add", name: f.name, kind: f.kind, origin: f.origin, from: f.from,
+            stage: { what: f.what, at: at, left: f.left, amount: f.amount, place: f.place, keep: f.keep, spot: f.spot, state: f.state, by: (f.by || []).join(","), note: f.note } };
+      return thingPost(body,
         "已添加", function () { delete S.tEdit[key]; });
     }, function () { return worldDirty(f); });
   }
+
+  function thingNewForm(d) { return dataNewForm(d, false); }
+
+  function objNewForm(d) { return dataNewForm(d, true); }
 
   function dataStageForm(it, st, pos, objectMode) {
     var wl = !!st && thingWlStep(st);
@@ -6672,50 +6707,6 @@
   }
   var OBJ_MAIN = { "挪地方": ["place", "holder"], "交给": ["holder", "place"], "做了一截": ["state"], "做好了": ["state", "place"], "变了样": ["state"], "用了": ["state"], "送人了": ["owner"] };
   var OBJ_MADE = { "开始做": 1, "做好了": 1 };
-
-  function objNewForm(d) {
-    var key = "onew";
-    var f = S.tEdit[key];
-    var box = edBox(null, "加一件东西", "编号由程序发（p 开头）", "存成网页手动");
-    box.setAttribute("data-tf", key);
-    box.appendChild(edSec(edInput(f.name, "叫什么，叫得出区别的，例如：深青围巾", function (v) { f.name = v; }, { cls: "ed-title", focus: true })));
-    var p = edProps();
-    edRow(p, "是什么", edInput(f.kind, "一个词：围巾、窗花、纸条、书……", function (v) { f.kind = v; }), "同一种的排在一起，提醒认准编号");
-    edRow(p, "样子", edInput(f.look, "颜色、材料、大小、上面有什么，能和同一种的别的那件分清", function (v) { f.look = v; }, { area: true }));
-    edRow(p, "归谁", edChips(edPeople("大家一起用"), f.owner, function (v) { f.owner = v; }));
-    edRow(p, "哪来的", edInput(f.origin, "例如：丛雨给主人织的", function (v) { f.origin = v; }));
-    box.appendChild(edSec(p));
-    var dyn = h("div", { class: "ed-dyn" });
-    box.appendChild(dyn);
-    function draw() {
-      dyn.textContent = "";
-      var c = { first: true, exceptId: "" };
-      var q = edProps();
-      edRow(q, "怎么来的", edChips(edOpts(d.item_steps.start), f.what, function (v) {
-        var redo = !!OBJ_MADE[v] !== !!OBJ_MADE[f.what];
-        f.what = v;
-        if (redo) { draw(); }
-      }));
-      edRow(q, "什么时候", edInput(f.at, "现在", function (v) { f.at = v; }, { cls: "ed-num", auto: true }), THING_AT_TIP);
-      edRow(q, "谁", edMulti(edWho(), f.by, function (v) { f.by = v; }), "可以多选；都不选就是没说");
-      if (OBJ_MADE[f.what] || f.from.length) {
-        edRow(q, "材料", edPicker(f, "from", function () { return objCands(""); }, { add: "挑材料", live: true }), "用家里哪几件东西做的，例如红纸剪成窗花");
-      }
-      ["place", "holder", "state"].forEach(function (k) { objFieldRow(q, f, k, c); });
-      edRow(q, "备注", edInput(f.note, "可空", function (v) { f.note = v; }));
-      dyn.appendChild(edSec(q));
-      edFitIn(dyn);
-    }
-    draw();
-    return worldFormFoot(box, function () { thingCloseForm(key); }, "添加", function () {
-      if (!String(f.name || "").trim()) { toast("写一下叫什么", { err: true }); return null; }
-      var at = fullTime(f.at, thingToday());
-      if (at === null) { toast("时间写成 08:30、昨天 08:30 或 10-18 08:30", { err: true }); return null; }
-      return thingPost({ action: "add", cat: "item", name: f.name, kind: f.kind, look: f.look, owner: f.owner, origin: f.origin, from: f.from,
-        stage: { what: f.what, at: at, place: f.place, holder: f.holder, state: f.state, by: (f.by || []).join(","), note: f.note } },
-        "已添加", function () { delete S.tEdit[key]; });
-    }, function () { return worldDirty(f); });
-  }
 
   $("thingsRefresh").addEventListener("click", function () {
     if (!thingGuard()) { return; }
