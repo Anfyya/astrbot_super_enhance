@@ -978,8 +978,9 @@ class Sim:
     def _add(self, key: str, value: float, floor: float = 0.0) -> None:
         self.acc[key] = max(floor, self.acc.get(key, 0.0) + value)
 
-    def _taste(self, moment, dt, temp, weather) -> None:
-        p, cover, spot, state = self.p, self.cover, self.spot, self.state
+    def _taste_context(self, moment, weather, p: dict, temp):
+        """本步需要的环境：冻没冻、潮不潮、旁边有什么、催熟气多强。"""
+        cover, spot = self.cover, self.spot
         frozen = temp <= -2
         wet = wet_weather(weather) or "雾" in weather_kind(weather)
         near = []
@@ -991,6 +992,11 @@ class Sim:
             if info["ethylene"]:
                 eth += info["ethylene"] * (0.4 if "收着放" in (n_cover, cover) else 1.0) * (0.5 if spot == "冰箱" else 1.0)
         eth = min(eth, 2.0)
+        return frozen, wet, near, eth
+
+    def _taste(self, moment, dt, temp, weather) -> None:
+        p, cover, spot, state = self.p, self.cover, self.spot, self.state
+        frozen, wet, near, eth = self._taste_context(moment, weather, p, temp)
         if "dry" in p and not frozen:
             if cover == "泡在水里":
                 # 蔫了的泡进冷水：每半个钟头缓回一半；蔫透了的（过了「蔫了」两倍）只能缓到有点蔫
