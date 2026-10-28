@@ -20,7 +20,7 @@ from astrbot.api import logger
 from astrbot.core.agent.message import TextPart
 
 from ..common import history_io, text as text_utils, timeutil
-from ..common.bots import BotRegistry, platform_of
+from ..common.bots import BotRegistry, identify_event
 
 ROUND_FLAG = "_super_enhance_bot_dialog_round"
 HINT_HEAD = "【对话节奏】"
@@ -163,11 +163,9 @@ class BotDialogFeature:
         不拦的话，每条真回话前都多一条空事件：来回次数翻倍（提前触发回报和静默），
         跨会话记录也会多写一条只有「我上一句」的重复记录。
         """
-        try:
-            sender = str(event.get_sender_id()).strip()
-        except Exception:
-            return False
-        if sender not in self.bot_ids:
+        identity = self._identity(event)
+        sender = identity.sender
+        if not identity.peer_bot:
             return False
         try:
             raw = getattr(getattr(event, "message_obj", None), "raw_message", None)
@@ -199,11 +197,8 @@ class BotDialogFeature:
     def note_incoming(self, event) -> None:
         if not self.enabled:
             return
-        try:
-            sender = str(event.get_sender_id()).strip()
-            bot = platform_of(event.unified_msg_origin)
-        except Exception:
-            return
+        identity = self._identity(event)
+        sender, bot = identity.sender, identity.bot
         if not bot:
             return
 
@@ -292,13 +287,10 @@ class BotDialogFeature:
         except Exception:
             pass
 
-        try:
-            sender = str(event.get_sender_id()).strip()
-            bot = platform_of(event.unified_msg_origin)
-        except Exception:
-            return
+        identity = self._identity(event)
+        sender, bot = identity.sender, identity.bot
         masters = self.master_ids
-        if not bot or sender not in self.bot_ids or not masters:
+        if not bot or not identity.peer_bot or not masters:
             return
 
         try:
@@ -326,12 +318,8 @@ class BotDialogFeature:
             return
         if str(getattr(tool, "name", "") or "") != "send_message_to_user":
             return
-        try:
-            sender = str(event.get_sender_id()).strip()
-            master_umo = str(event.unified_msg_origin)
-            platform = platform_of(master_umo)
-        except Exception:
-            return
+        identity = self._identity(event)
+        sender, platform = identity.sender, identity.bot
         if sender not in self.master_ids or not platform:
             return
 
@@ -430,6 +418,9 @@ class BotDialogFeature:
     def _cron(self):
         return getattr(self.context, "cron_manager", None)
 
+    def _identity(self, event):
+        return identify_event(event, self.bots)
+
     def _zone(self):
         return timeutil.timezone(self.config, self.context)
 
@@ -480,12 +471,9 @@ class BotDialogFeature:
         if conv_mgr is None:
             return ""
 
-        other_session = str(getattr(event, "unified_msg_origin", "") or "")
-        try:
-            own_id = str(event.get_self_id() or "").strip()
-        except Exception:
-            own_id = ""
-        own_id = own_id or bot
+        identity = self._identity(event)
+        other_session = identity.umo
+        own_id = identity.self_id or bot
 
         sent_text, sent_at = await self._last_message(
             conv_mgr, other_session, role="assistant"
@@ -627,7 +615,7 @@ class BotDialogFeature:
         text = re.sub(r"\s+", " ", str(content or "")).strip()
         if not text:
             return "没有内容，这次没有传话。"
-        own = platform_of(getattr(event, "unified_msg_origin", ""))
+        own = self._identity(event).bot
         others = [b for b in dict.fromkeys(bots or []) if b and b != own]
         if own not in (bots or []) or len(others) != 1:
             return "认不出该告诉谁（需要正好两个角色），这次没有传话。"

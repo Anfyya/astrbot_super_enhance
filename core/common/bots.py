@@ -4,7 +4,52 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
+
+IDENTITY_ATTR = "_super_enhance_event_identity"
+
+
+@dataclass(frozen=True)
+class EventIdentity:
+    umo: str
+    bot: str
+    sender: str
+    self_id: str
+    proactive: bool
+    peer_bot: bool
+
+
+def identify_event(event, registry: "BotRegistry", *, proactive: bool = False) -> EventIdentity:
+    """每个事件只解析一次 umo / bot / sender；缓存在 event.extra。"""
+    try:
+        cached = event.get_extra(IDENTITY_ATTR)
+    except Exception:
+        cached = None
+    if isinstance(cached, EventIdentity):
+        return cached
+    umo = str(getattr(event, "unified_msg_origin", "") or "")
+    try:
+        sender = str(event.get_sender_id() or "").strip()
+    except Exception:
+        sender = ""
+    try:
+        self_id = str(event.get_self_id() or "").strip()
+    except Exception:
+        self_id = ""
+    value = EventIdentity(
+        umo=umo,
+        bot=platform_of(umo),
+        sender=sender,
+        self_id=self_id,
+        proactive=bool(proactive),
+        peer_bot=bool(sender and sender in registry.bot_ids()),
+    )
+    try:
+        event.set_extra(IDENTITY_ATTR, value)
+    except Exception:
+        pass
+    return value
 
 
 def platform_of(umo: str) -> str:

@@ -33,6 +33,7 @@ from astrbot.core.star.star_tools import StarTools
 from mcp.types import CallToolResult
 
 from .core.config_view import SectionConfig
+from .core.common.bots import identify_event
 from .core.features.context_tools import ContextToolsFeature
 from .core.features.history_merge import HistoryMergeFeature
 from .core.features.history_transcript import HistoryTranscriptFeature
@@ -44,6 +45,7 @@ from .core.features import error_voice
 from .core.features.cron_context import CronContextFeature
 from .core.features.cross_session import CrossSessionFeature
 from .core.features.life_state import LifeStateService
+from .core.features.life_state.proactive import is_proactive_event
 from .core.features.msg_time import MsgTimeFeature
 from .core.features.proactive_think import ProactiveThinkFilter
 from .core.features.reply_guard import ReplyGuardFeature
@@ -232,24 +234,20 @@ class SuperEnhance(Star):
         return await self.silence.stay_silent(event)
 
     @filter.on_decorating_result()
-    async def on_decorating_silence(self, event: AstrMessageEvent) -> None:
-        """命中静默标记则清空本轮结果。"""
+    async def on_decorating_main(self, event: AstrMessageEvent) -> None:
+        """发送前按固定顺序处理静默、仿写时间戳和作废回复。"""
         await self.silence.on_decorating_result(event)
+        await self.msg_time.clean_outgoing(event)
+        await self.reply_guard.on_decorating_result(event)
 
     # ------------------------------------------------------------------
     # 3. 消息时间戳
     # ------------------------------------------------------------------
     @filter.on_agent_done()
-    async def on_agent_done_msg_time(
-        self, event: AstrMessageEvent, run_context, response
-    ) -> None:
-        """本轮结束时给 Bot 自己的消息盖上真实发送时间。"""
+    async def on_agent_done_main(self, event: AstrMessageEvent, run_context, response) -> None:
+        """轮次结束后盖发送时间；主动对话再把她这轮的思考挂回历史。"""
         await self.msg_time.on_agent_done(event, run_context, response)
-
-    @filter.on_decorating_result()
-    async def on_decorating_msg_time(self, event: AstrMessageEvent) -> None:
-        """发送前剥掉模型自己模仿出来的时间戳。"""
-        await self.msg_time.clean_outgoing(event)
+        await self.cross_session.attach_cron_thinking(event, run_context)
 
     @filter.on_llm_request(priority=100000)
     async def on_llm_request_overflow(
@@ -259,25 +257,15 @@ class SuperEnhance(Star):
         await self.overflow.on_llm_request(event, req)
 
     @filter.on_llm_request()
-    async def on_llm_request_error_voice(
-        self, event: AstrMessageEvent, req: ProviderRequest
-    ) -> None:
-        """这次模型请求要是失败了，AstrBot 发的不是「LLM 响应错误」，而是设置里备好的她自己口吻的一句。"""
+    async def on_llm_request_main(self, event: AstrMessageEvent, req: ProviderRequest) -> None:
+        """同优先级的常规请求钩子，按固定顺序一次跑完。"""
         error_voice.prepare_model_error(self.config, event)
-
-    @filter.on_llm_request()
-    async def on_llm_request_transcript(
-        self, event: AstrMessageEvent, req: ProviderRequest
-    ) -> None:
-        """给这次请求打记号：真正发给模型时，历史改写成系统提示里的一段聊天记录。"""
         await self.transcript.on_llm_request(event, req)
-
-    @filter.on_llm_request()
-    async def on_llm_request_msg_time(
-        self, event: AstrMessageEvent, req: ProviderRequest
-    ) -> None:
-        """在系统提示里声明时间戳由系统自动生成。"""
         await self.msg_time.declare(req)
+        await self.life.on_llm_request(event, req)
+        await self.bot_dialog.on_llm_request(event, req)
+        await self.silence.on_llm_request(event, req)
+        await self.reply_guard.on_llm_request(event, req)
 
     # ------------------------------------------------------------------
     # 4. 上下文工具
@@ -309,23 +297,6 @@ class SuperEnhance(Star):
     ) -> None:
         """send_message_to_user 发往别的私聊时，把内容补进对方历史。"""
         await self.cross_session.on_tool_respond(event, tool, tool_args, tool_result)
-
-    @filter.on_agent_done()
-    async def on_agent_done_cron_thinking(
-        self, event: AstrMessageEvent, run_context, response
-    ) -> None:
-        """主动对话收尾：这一轮的思考存进她发出的那条消息（和平时聊天一样，面板能看能改）。"""
-        await self.cross_session.attach_cron_thinking(event, run_context)
-
-    # ------------------------------------------------------------------
-    # 6. 动态生活状态
-    # ------------------------------------------------------------------
-    @filter.on_llm_request()
-    async def on_llm_request_life_state(
-        self, event: AstrMessageEvent, req: ProviderRequest
-    ) -> None:
-        """把当前时段的生活状态注入本次请求。"""
-        await self.life.on_llm_request(event, req)
 
     @filter.llm_tool(name="tell")
     async def tell(self, event: AstrMessageEvent, content: str) -> str:
@@ -451,6 +422,7 @@ class SuperEnhance(Star):
     async def on_any_message(self, event: AstrMessageEvent) -> None:
         """每条新消息最先经过这里：登记新消息（静默工具要用），再处理新消息优先。"""
         mark_arrived(event)
+        identify_event(event, self.bot_dialog.bots, proactive=is_proactive_event(event))
         if self.bot_dialog.is_blank_bot_event(event):
             # 另一个机器人「正在输入」推过来的空消息：不计来回、不写记录、不触发回复
             event.stop_event()
@@ -466,27 +438,6 @@ class SuperEnhance(Star):
             event.stop_event()
             return
         await self.reply_guard.on_incoming(event)
-
-    @filter.on_llm_request()
-    async def on_llm_request_bot_dialog(
-        self, event: AstrMessageEvent, req: ProviderRequest
-    ) -> None:
-        """bot↔bot 连续来回：注入轮次提示，超过上限则静默。"""
-        await self.bot_dialog.on_llm_request(event, req)
-
-    @filter.on_llm_request()
-    async def on_llm_request_silence(
-        self, event: AstrMessageEvent, req: ProviderRequest
-    ) -> None:
-        """静默轮期间进来的新消息：把上一轮的用户消息补进它的请求。"""
-        await self.silence.on_llm_request(event, req)
-
-    @filter.on_llm_request()
-    async def on_llm_request_reply_guard(
-        self, event: AstrMessageEvent, req: ProviderRequest
-    ) -> None:
-        """把被丢掉那一轮的用户消息单独补进本次请求。"""
-        await self.reply_guard.on_llm_request(event, req)
 
     @filter.on_llm_request(priority=LAST_PRIORITY + 1)
     async def on_llm_request_tool_guide(
@@ -543,47 +494,23 @@ class SuperEnhance(Star):
             if marked:
                 logger.info("[super_enhance/silence] 静默轮里没发出去的 %d 条回复不写入历史", marked)
 
-    @filter.on_decorating_result()
-    async def on_decorating_reply_guard(self, event: AstrMessageEvent) -> None:
-        await self.reply_guard.on_decorating_result(event)
-
     @filter.after_message_sent()
-    async def after_message_sent_reply_guard(self, event: AstrMessageEvent) -> None:
+    async def after_message_sent_main(self, event: AstrMessageEvent) -> None:
+        """发送后按固定顺序收尾作废回复、模型报错和原始消息副本。"""
         await self.reply_guard.after_message_sent(event)
-
-    @filter.after_message_sent()
-    async def after_message_sent_error_note(self, event: AstrMessageEvent) -> None:
-        """模型失败的那一轮：那句代发的话发完以后，把这一轮补进会话历史。"""
         await error_voice.write_model_error(self.context, event, self.msg_time.marker())
-
-    # ------------------------------------------------------------------
-    # 8. 原始消息副本（只给日程回查用，保留今天+昨天两个自然日）
-    # ------------------------------------------------------------------
-    @filter.after_message_sent()
-    async def after_message_sent_raw_log(self, event: AstrMessageEvent) -> None:
-        """把 Bot 实际发出去的回复记进原始消息副本。"""
         self.life.record_reply(event)
 
     @filter.on_llm_tool_respond()
-    async def on_tool_respond_raw_log(
+    async def on_tool_respond_main(
         self,
         event: AstrMessageEvent,
         tool: FunctionTool,
         tool_args: dict | None,
         tool_result: CallToolResult | None,
     ) -> None:
-        """把 send_message_to_user 发出去的内容（含定时主动对话）也记进副本。"""
+        """工具结果同优先级的两项：原始消息副本、bot↔bot 委托回报。"""
         self.life.record_tool_message(event, tool, tool_args)
-
-    @filter.on_llm_tool_respond()
-    async def on_tool_respond_bot_dialog(
-        self,
-        event: AstrMessageEvent,
-        tool: FunctionTool,
-        tool_args: dict | None,
-        tool_result: CallToolResult | None,
-    ) -> None:
-        """主人派活给另一个机器人时，记一条“待回报”。"""
         await self.bot_dialog.note_delegation(event, tool, tool_args)
 
     # ------------------------------------------------------------------
