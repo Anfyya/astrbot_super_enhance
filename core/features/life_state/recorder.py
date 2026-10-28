@@ -17,7 +17,7 @@ from ...common import llm
 from ...common.text import strip_inline_system
 from .models import bot_of_umo
 from .things import (CAT_FOOD, CAT_ITEM, KEEPS, KINDS, SAME_NEW_MINUTES, SAME_STEP_MINUTES, SPOTS, STEPS, USE_STEPS, cat_of,
-                     find_same, norm_step, usable)
+                     checked_place, find_same, norm_step, usable)
 from .world import (WorldStore, clean_steps, clean_text, doing_text, fit_steps, fmt_time, is_event, is_sleep, parse_time,
                     result_text, step_minutes, wind_up)
 from .things import reached_steps
@@ -110,12 +110,13 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
    - kind 从这几类里挑：{kinds}。origin 写哪来的（谁在哪买的、谁送的）；自己做的留空。
    - 做菜：做好的那盘菜是新的一件，第一步「做好了」，from 写用了清单里哪几件（写编号；这一批里新记的写临时代号；用到的米面油盐、调料也写上）；用掉的每一件，各记一步「用掉一部分」或「用完了」，into 写那盘菜，按量记的写上 used。用的料清单里没有的，from 里就不写它，一件都对不上就留空。买来的、别人送的熟菜，from 留空。剩下的菜还是那一件，又吃了就记「吃了一部分」「吃完了」。
    - 已有的那件又发生了一步：写 id（清单里的编号；这一批里新记的写临时代号）和这一步。同样的东西有好几件、说不清是哪件的，记在最早有的那件上。
-   - 每一步写：at（发生的时刻 YYYY-MM-DD HH:MM）、what（{steps}）、left（这一步之后还剩多少，比如「两块」「小半锅」；用完、吃完写空——用完、吃完必须单独写一步，what 填「用完了」或「吃完了」，别把「吃完了」塞进 left 里）、amount / used（按量记的才写，见上）、place（放在哪个地方，例如「灶房·柜格」）、keep（怎么放：{keeps}）、spot（放在哪，管冷热：{spots}；屋里常温的不用写）、state（整的 / 切开了 / 碰伤了 / 没熟透）、by（谁：napcat / napcat2 / master，别人写名字）、into（用掉是做进了哪盘菜）、quote（摘原文里说这件事的那句话）。place、keep、spot、state 跟上一步一样的不用写。剩菜回锅、凉了热一热记一步「热了一下」；端回锅里重新煎透、煮透、再蒸一下、回炉也是「热了一下」（她说已经下锅了就记，不用等做完）；聊天里说出来中间没熟、夹生、没煎透的，在说出来的那一刻给那件记一步「清点」，state 写「没熟透」，left 照原样；开始腌、晒、熏记「腌上了」「晒上了」「熏上了」（晒、熏写上 spot，比如太阳底下、屋外）。
+   - 每一步写：at（发生的时刻 YYYY-MM-DD HH:MM）、what（{steps}）、left（这一步之后还剩多少，比如「两块」「小半锅」；用完、吃完写空——用完、吃完必须单独写一步，what 填「用完了」或「吃完了」，别把「吃完了」塞进 left 里）、amount / used（按量记的才写，见上）、place（搁在哪，写法见下一条）、keep（怎么放：{keeps}）、spot（放在哪，管冷热：{spots}；屋里常温的不用写）、state（整的 / 切开了 / 碰伤了 / 没熟透）、by（谁：napcat / napcat2 / master，别人写名字）、into（用掉是做进了哪盘菜）、quote（摘原文里说这件事的那句话）。place、keep、spot、state 跟上一步一样的不用写。剩菜回锅、凉了热一热记一步「热了一下」；端回锅里重新煎透、煮透、再蒸一下、回炉也是「热了一下」（她说已经下锅了就记，不用等做完）；聊天里说出来中间没熟、夹生、没煎透的，在说出来的那一刻给那件记一步「清点」，state 写「没熟透」，left 照原样；开始腌、晒、熏记「腌上了」「晒上了」「熏上了」（晒、熏写上 spot，比如太阳底下、屋外）。
+   - place 拆开写，别连成一句：area 是在哪间屋、哪个地方（不在宿舍的写那个地方，例如「镇外梯田的农家灶房」）；at 是搁在那儿的什么上、什么里（矮桌、柜格、案上、灶上、水盆、书架、窗台……）；detail 是再细一点的哪一格、哪个容器里（桌角、第二格、竹筛里、锅里），说不上来就空着。area 和 at 都得有，光写一间屋不算。例如 {{"area": "堂屋", "at": "矮桌", "detail": "桌角"}}、{{"area": "灶房", "at": "案上", "detail": "竹筛里"}}、{{"area": "灶房", "at": "柜格", "detail": ""}}。拿在手上、揣在身上的：area 写谁，at 写手上、袖子里、菜篮里，例如 {{"area": "亚托莉", "at": "手上", "detail": ""}}。聊天里没说搁在哪的，照常理挑一处（剩菜盖好搁灶上或柜格，点心、糖搁堂屋柜里或盒子里，米面调料在灶房柜格）；没挪地方的不写 place。
    - 「记错了」只用在清单里确实记错了的那件（根本没这回事）。
 19. 家里的东西（吃的以外的：衣裳围巾、书册本子、纸条信、画和窗花、布偶摆件、工具器物、首饰小物……）：每件一个编号（p 开头），写进 items，记它从哪来、经过谁手、搁在哪、变成什么样。只记聊天里说已经发生了的，规矩和第 18 条一样。
    - 新的一件（上面「家里的东西」里没有的）：写 new（这一批里的临时代号 x1、x2……；编号由程序发）、name（叫得出区别的名字，例如「深青围巾」「兔子窗花」「压在茶壶底下的纸条」，别只写「围巾」「纸条」）、kind（它是什么，一个词：围巾、窗花、纸条、布偶、书……）、look（样子：颜色、材料、大小、上面有什么，能和同一种的别的那件分清）、owner（归谁：napcat / napcat2 / master，大家一起用的留空）、origin（哪来的）、from（用清单里哪几件做的），再加上它的第一步。第一步只能是「买回来」「收到」「捡到」「开始做」（起了个头、还没做完）「做好了」「原来就有」（家里本来就有、清单里还没记的）。
    - 已有的那件又发生了一步：写 id（清单里的编号）和这一步，what 从这几样挑：挪地方 / 交给（交到谁手上）/ 用了 / 做了一截（没做完的接着做）/ 做好了（没做完的那件做完了）/ 变了样（修好了、弄脏了、洗干净了）/ 送人了 / 丢了 / 坏了扔了 / 用完了 / 记错了。
-   - 每一步写：at、what、place（搁在哪）、holder（在谁手上、身上：napcat / napcat2 / master，别人写名字；放下搁着就留空）、state（这一步之后它什么样，例如「织到一半」「织好了」「补上了耳朵」）、by（谁弄的）、owner（归属换了才写，例如送给主人了写 master）、quote。跟上一步一样的不用写。
+   - 每一步写：at、what、place（搁在哪，和第 18 条一样拆开写，例如 {{"area": "卧房", "at": "针线笸箩", "detail": ""}}、{{"area": "堂屋", "at": "书架", "detail": "第二格"}}）、holder（在谁手上、身上：napcat / napcat2 / master，别人写名字；放下搁着就留空）、state（这一步之后它什么样，例如「织到一半」「织好了」「补上了耳朵」）、by（谁弄的）、owner（归属换了才写，例如送给主人了写 master）、quote。跟上一步一样的不用写。
    - 同一种东西有好几件的（清单里标着「长得像，认准编号」），看清是谁做的、什么样、在哪再记；对不上是哪一件就不记，别记到别的那件上，也别为它另建一件。
 {world_notes}
 输出这个 JSON（没有的字段留空数组）：
@@ -138,16 +139,16 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
   "stale": [{{"who": "napcat2", "entry": "e100", "why": "主人叫她去街上看看有什么硬菜", "how": "收尾", "wrap": "关火，把炒了一半的饭盛出来扣好", "minutes": 2, "result": "饭炒到一半，盛在盘里扣着", "to": "", "doing": ""}}],
   "things": [
     {{"new": "n1", "name": "嫩豆腐", "kind": "鲜水豆腐", "origin": "主人在商店街豆腐店买的", "from": [],
-      "at": "2026-10-18 08:30", "what": "买回来", "left": "两块", "place": "灶房·水盆里", "keep": "泡在水里", "state": "整的", "by": "master", "quote": "摘一句原文"}},
+      "at": "2026-10-18 08:30", "what": "买回来", "left": "两块", "place": {{"area": "灶房", "at": "水盆", "detail": ""}}, "keep": "泡在水里", "state": "整的", "by": "master", "quote": "摘一句原文"}},
     {{"new": "n2", "name": "豆腐味噌汤", "kind": "熟汤羹粥", "origin": "", "from": ["n1", "w7"],
-      "at": "2026-10-18 11:40", "what": "做好了", "left": "一锅", "place": "灶房·灶台", "keep": "收着放", "by": "napcat2", "quote": "摘一句原文"}},
+      "at": "2026-10-18 11:40", "what": "做好了", "left": "一锅", "place": {{"area": "灶房", "at": "灶台", "detail": "锅里"}}, "keep": "收着放", "by": "napcat2", "quote": "摘一句原文"}},
     {{"id": "n1", "at": "2026-10-18 11:40", "what": "用掉一部分", "left": "一块", "into": "n2", "by": "napcat2", "quote": "摘一句原文"}},
     {{"id": "w7", "at": "2026-10-18 11:40", "what": "用完了", "left": "", "into": "n2", "by": "napcat2", "quote": "摘一句原文"}},
     {{"id": "w4", "at": "2026-10-18 11:40", "what": "用掉一部分", "used": "3 克", "into": "n2", "by": "napcat2", "quote": "摘一句原文"}}
   ],
   "items": [
     {{"new": "x1", "name": "深青围巾", "kind": "围巾", "look": "深青色粗毛线，平针", "owner": "master", "origin": "丛雨给主人织的", "from": [],
-      "at": "2026-10-16 13:05", "what": "开始做", "place": "卧房·矮桌", "state": "起了个头", "by": "napcat", "quote": "摘一句原文"}},
+      "at": "2026-10-16 13:05", "what": "开始做", "place": {{"area": "卧房", "at": "矮桌", "detail": ""}}, "state": "起了个头", "by": "napcat", "quote": "摘一句原文"}},
     {{"id": "p3", "at": "2026-10-17 20:00", "what": "交给", "holder": "master", "owner": "master", "state": "织好了", "by": "napcat", "quote": "摘一句原文"}}
   ],
   "promises": [{{"action": "add", "bots": ["napcat"], "date": "2026-10-12", "time": "14:00",
@@ -1559,7 +1560,7 @@ class Recorder:
                 return item
         return None
 
-    def _thing_stage(self, raw: dict, umo: str, items, day: str, now: datetime.datetime) -> dict:
+    def _thing_stage(self, raw: dict, umo: str, items, day: str, now: datetime.datetime, new: bool = False) -> dict:
         """记录员写的一步 → 存货里的一步；src 对回原话是哪条消息、谁说的。"""
         hit = self._said_item(items, raw.get("quote"))
         said = norm_time("%s %s" % (hit.get("date"), hit.get("time")), day) if hit else ""
@@ -1575,7 +1576,7 @@ class Recorder:
             "at": norm_time(raw.get("at"), day, fallback=said or fmt_time(now)),
             "what": raw.get("what"),
             "left": raw.get("left"),
-            "place": raw.get("place"),
+            "place": checked_place(raw.get("place"), new, raw.get("name") or raw.get("id")),
             "keep": raw.get("keep"),
             "state": raw.get("state"),
             "amount": raw.get("amount"),
@@ -1621,7 +1622,7 @@ class Recorder:
             if not isinstance(raw, dict) or not str(raw.get("new") or "").strip():
                 continue
             key = str(raw["new"]).strip()
-            stage = self._thing_stage(raw, umo, items, day, now)
+            stage = self._thing_stage(raw, umo, items, day, now, new=True)
             if bad_time(stage):
                 logger.warning("[super_enhance/things] 新的一件 %s 时间不对或晚于现在，不记：%s", raw.get("name"), stage.get("at"))
                 continue

@@ -18,7 +18,7 @@ from ...common import jsonio, llm
 from .models import profile_umo_for_bot
 from .recorder import norm_time
 from .things import (CAT_ITEM, END_STEPS, ITEM_END_STEPS, ITEM_MID_STEPS, ITEM_START_STEPS, KEEPS, KINDS, MEASURED_KINDS, MID_STEPS,
-                     SPOTS, START_STEPS, had_before, norm_kind, norm_state, norm_step, split_keep, step_no)
+                     SPOTS, START_STEPS, checked_place, had_before, norm_kind, norm_state, norm_step, split_keep, step_no)
 from .variety import default_pools, twists_of, when_map, with_when
 from .world import (WorldStore, clean_text, doing_text, fmt_time, is_event, is_sleep, parse_steps, parse_time, progress_of, real_stop, result_text,
                     steps_text)
@@ -98,6 +98,7 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
 18. **家里的吃的**：上面「家里的吃的」是此刻家里有的（编号、剩多少、放在哪、还能放到什么时候）。段里动到家里的吃的，写进这段的 things（没动到就是空数组）：
    - 用了、吃了家里有的：写 id（编号）、what（用掉一部分 / 用完了 / 吃了一部分 / 吃完了）、left（这段做完还剩多少，用完、吃完写空——用完、吃完必须单独写一步，what 填「用完了」或「吃完了」，别把「吃完了」塞进 left 里）；做进了这一次新做的菜，into 写那盘菜的临时代号。换了地方或放法、切开了：what 写「挪地方」或「切开了」，写上新的 place / keep（怎么放）/ spot（放在哪）/ state。剩菜回锅、凉了热一热：what 写「热了一下」。开始腌、晒、熏：what 写「腌上了」「晒上了」「熏上了」，晒、熏写上 spot（晒在太阳底下、挂在屋外风干、搁灶上熏）。扔掉：what 写「丢了」或「坏了扔了」。
    - 做出来的菜、买回来的、别人给的：写 new（临时代号 n1、n2……，这一次里每件一个；编号由程序发）、name、kind、what（做好了 / 买回来 / 收到）、left、place、keep、spot；做的菜 from 写用了哪几件（编号或这一次的临时代号），买来的 origin 写在哪买的。
+   - place 拆开写，别连成一句：area 是在哪间屋、哪个地方（不在宿舍的写那个地方，例如「镇外梯田的农家灶房」）；at 是搁在那儿的什么上、什么里（矮桌、柜格、案上、灶上、水盆、书架、窗台……）；detail 是再细一点的哪一格、哪个容器里（桌角、第二格、竹筛里、锅里），说不上来就空着。area 和 at 都得有，光写一间屋不算。例如 {{"area": "堂屋", "at": "矮桌", "detail": "桌角"}}、{{"area": "灶房", "at": "案上", "detail": "竹筛里"}}、{{"area": "灶房", "at": "柜格", "detail": ""}}。拿在手上、揣在身上的：area 写谁，at 写手上、袖子里、菜篮里，例如 {{"area": "亚托莉", "at": "手上", "detail": ""}}。这是东西搁在哪，不是人在哪，别照抄这段的 place；挑的时候照常理（剩菜盖好搁灶上或柜格，点心、糖搁堂屋柜里或盒子里，米面调料在灶房柜格）；没挪地方的不写 place。
    - 每一步都写 step：这件事发生在这段分步里的第几步（从 1 数，例如第 2 步「下锅炒」用掉鸡蛋、做好蛋炒饭就写 2，第 3 步吃完就写 3）。这段要是中途被打断，只有做到了的那几步才算数。
    - 这一次里先做好、后面又吃掉的菜，吃饭那段也要写一步：id 填它的临时代号（n1 这种），what 写吃完了或吃了一部分，left 写还剩多少（比如给主人留的那份）。
    - 做饭用料先用家里有的，先用快不行了的；新鲜的料（豆腐、菜、鱼肉、蛋、水果）家里没有，就在做饭之前排一段去买回来。米面油盐、调料干货、腌菜这些按量记的（清单里写着「还剩多少克 / 毫升」），用到的也要写：写进那盘菜的 from，再各写一步「用掉一部分」，used 写这次用了多少（「250 克」「3 克」「15 毫升」，照这道菜平常的用量）；标着「快用完了」的，排一段去买（买回来的写 amount，例如「5 斤」「500 毫升」）。家里一直备着、清单里还没记的常备调料（糖、醋这类），头一回用到就写一件 new，what 写「原来就有」，amount 写估计还有多少；别的清单里没有的料要先买。两人一起做的饭、一起吃的饭，things 写在其中一个人那段里。
@@ -107,6 +108,7 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
 20. **家里的东西**（吃的以外）：上面「家里的东西」是此刻家里有的（编号、样子、在哪、在谁手上）。段里做了、用了、挪了、交给别人了、接着做了一截的东西，写进这段的 items（没动到就是空数组）：
    - 已有的写 id、what（挪地方 / 交给 / 用了 / 做了一截 / 做好了 / 变了样 / 送人了 / 丢了 / 坏了扔了 / 用完了）、place、holder（交到谁手上）、state（这段做完它什么样，比如「织到两尺长」）。接着做没做完的那件（比如接着织那条围巾），就是清单里那一件，写「做了一截」或「做好了」，不要另建一件。
    - 新做出来的、买回来的、捡到的写 new（临时代号 x1、x2……）、name（叫得出区别的名字，例如「兔子窗花」）、kind（它是什么，一个词：窗花、围巾……）、look（样子）、owner（归谁）、what（开始做 / 做好了 / 买回来 / 收到 / 捡到）、place、state。清单里还没有、可前面早就有了的（比如前几天起了头的围巾），也写 new，what 写「原来就有」，state 写它现在的样子。
+   - place 和第 18 条一样拆开写，例如 {{"area": "卧房", "at": "针线笸箩", "detail": ""}}、{{"area": "堂屋", "at": "书架", "detail": "第二格"}}。
    - 每一步也写 step（第几步，同第 18 条）。
    - 同一种东西有好几件的（清单里标着「长得像，认准编号」），照清单认准是哪一件。
 {world_notes}
@@ -391,8 +393,9 @@ class LifeStep:
                 into = resolve(raw.get("into"))
                 if into and into != tid:
                     step["into"] = into
-            keep, spot = split_keep(raw.get("keep"), raw.get("spot"), raw.get("place"))
-            step.update({"what": what, "left": clean_text(raw.get("left"), 20), "place": clean_text(raw.get("place"), 40),
+            place = checked_place(raw.get("place"), bool(key), raw.get("name") or step.get("id"))
+            keep, spot = split_keep(raw.get("keep"), raw.get("spot"), place)
+            step.update({"what": what, "left": clean_text(raw.get("left"), 20), "place": place,
                          "keep": keep, "spot": spot, "state": norm_state(raw.get("state")),
                          "amount": clean_text(raw.get("amount"), 20), "used": clean_text(raw.get("used"), 20),
                          "step": step_no(raw.get("step")) or ""})
@@ -436,7 +439,8 @@ class LifeStep:
                 step = {"id": tid}
                 if raw.get("owner"):
                     step["owner"] = clean_text(raw.get("owner"), 12)
-            step.update({"what": what, "place": clean_text(raw.get("place"), 40), "holder": clean_text(raw.get("holder"), 12),
+            place = checked_place(raw.get("place"), bool(key), raw.get("name") or step.get("id"))
+            step.update({"what": what, "place": place, "holder": clean_text(raw.get("holder"), 12),
                          "state": clean_text(raw.get("state"), 40), "step": step_no(raw.get("step")) or ""})
             out.append({k: v for k, v in step.items() if v not in ("", None, [])})
         return out

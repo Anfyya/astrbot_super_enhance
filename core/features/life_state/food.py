@@ -724,14 +724,18 @@ def ethylene_of(name) -> float:
 # ---------- 东西之间：按「放在哪 + 地点」归堆 ----------
 
 ENCLOSED = ("柜", "橱", "罐", "缸", "盒", "坛", "箱", "笼", "篓")
+# 补写、记录员给的地点没写全（只有 area、没有 at）时，地点后面带上这个：网页上看得出来，也不跟别的东西算放在一块
+VAGUE_PLACE = "没说清放哪"
 
 
 def space_key(spot: str, place: str) -> str:
-    """同一堆的才互相影响：冰箱、冻着、地窖、井里各算一整个；别的按同样冷热 + 同一个地点（没写地点的不归堆）。"""
+    """同一堆的才互相影响：冰箱、冻着、地窖、井里各算一整个；别的按同样冷热 + 同一个地点（没写地点的、没说清放哪的不归堆）。"""
     if spot in ("冰箱", "冻着", "地窖", "井里"):
         return spot
     text = _clean(place)
-    return "%s|%s" % (spot or DEFAULT_SPOT, text) if text else ""
+    if not text or VAGUE_PLACE in text:
+        return ""
+    return "%s|%s" % (spot or DEFAULT_SPOT, text)
 
 
 def space_closeness(key: str) -> float:

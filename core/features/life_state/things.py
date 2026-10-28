@@ -37,7 +37,7 @@ from ...common import jsonio
 
 from .food import (DEFAULT_KEEP, DEFAULT_SHIFT, DEFAULT_SPOT, DEFAULT_STATE, KEEPS, MONTH_TEMP, PROCESS_STEPS, SLICE_MINUTES,
                    SPOTS, STATES, WEATHER_SHIFT, SpaceIndex, month_temp, norm_keep, norm_spot, norm_state, room_temp,
-                   simulate, split_keep, weather_kind, weather_shift)
+                   simulate, split_keep, weather_kind, weather_shift, VAGUE_PLACE)
 from .world import clean_steps, clean_text, fmt_time, parse_time, real_stop
 
 FILE_NAME = "things.json"
@@ -300,7 +300,7 @@ def fmt_amount(value: float, unit: str) -> str:
     return text
 
 MAX_NAME = 30
-MAX_PLACE = 40
+MAX_PLACE = 60
 MAX_LEFT = 20
 MAX_ORIGIN = 60
 MAX_QUOTE = 80
@@ -430,6 +430,30 @@ def measure(item: dict) -> dict | None:
     low_mark = min(max(pack * LOW_SHARE, per_use * LOW_USES), pack * LOW_CAP)
     return {"unit": unit, "pack": pack, "per_use": per_use, "rows": rows, "left": max(0.0, left),
             "zero": zero, "low": 0 < left <= low_mark}
+
+
+# 补写、记录员写地点拆开写：area 哪间屋、哪个地方，at 搁在那儿的什么上、什么里，detail 再细一点的哪一格、哪个容器里（可空）
+PLACE_FIELDS = ("area", "at", "detail")
+MAX_PLACE_PART = 16
+
+
+def checked_place(value, new: bool, what: str = "") -> str:
+    """模型写的 place（{"area", "at", "detail"}）→ 存的一串「area·at·detail」。area、at 都有才算写全。
+    没写（空）：照上一步，返回空串。没写全的（只有 area、或者还是连着写的一串字）：已有的那件当没挪（返回空串），
+    新的一件记成「写了的那几个字（没说清放哪）」。没写全的记一行日志。"""
+    if value in (None, "", {}, []):
+        return ""
+    if isinstance(value, dict):
+        parts = [clean_text(value.get(key), MAX_PLACE_PART) for key in PLACE_FIELDS]
+        if not any(parts):
+            return ""
+        text = "·".join(part for part in parts if part)
+        if parts[0] and parts[1]:
+            return text
+    else:
+        text = clean_text(value, MAX_PLACE_PART * 2)
+    logger.warning("[super_enhance/things] %s 的地点没拆开写全（area、at 都要有）：%s", what or "这一件", value)
+    return "%s（%s）" % (text, VAGUE_PLACE) if new and text else ""
 
 
 def is_ended(item: dict) -> dict | None:
