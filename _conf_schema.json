@@ -306,12 +306,6 @@
                         "hint": "更早的那几天自动删掉。",
                         "default": 30
                     },
-                    "edit_tool_enabled": {
-                        "description": "改日程工具",
-                        "type": "bool",
-                        "hint": "旧的每日日程才用：给她 revise_life_state 改自己的日程。世界线开启时不给。",
-                        "default": true
-                    },
                     "debug": {
                         "description": "调试日志",
                         "type": "bool",
