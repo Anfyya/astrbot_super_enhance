@@ -115,6 +115,16 @@ class BotRegistry:
         self.labels = labels
         self.names = names
         self.accounts = mapping_lines(self._identity_get("bot_accounts"))
+        self.identities: dict[str, tuple[str, str]] = {}
+        for row in list_of(self._identity_get("bot_identities")):
+            parts = [part.strip() for part in row.split("=", 2)]
+            if len(parts) != 3 or not all(parts):
+                continue
+            platform, qq, name = parts
+            self.identities[platform] = (qq, name)
+            self.accounts[platform] = qq
+            self.names[qq] = name
+            self.labels[platform] = name
 
     @staticmethod
     def _get(config, key: str, default=None):

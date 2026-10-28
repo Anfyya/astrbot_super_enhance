@@ -310,7 +310,7 @@ AI 调用后本轮不发任何消息。本轮开始后又来了新消息时，�
   没说另一个角色在哪个会话，角色就乱填 session。每次请求（含主动对话）把这两个工具换成只给这一轮用的副本：
   `send_message_to_user` 写明是真发 QQ、用来问问题 / 要对方回话，session 只列能填的几个
   （另一个角色、主人、留空 = 当前会话）；`tell` 写明只是让对方知道、不发 QQ、对方不会马上回。
-  角色的 QQ 号在 `bot_accounts`（每行 `平台id=QQ号`），主人号用 `master_ids`。不动 AstrBot 的全局工具。
+  机器人身份统一写在 `bot_identities`（每行 `平台id=QQ号=名字`），主人号用 `master_ids`。不动 AstrBot 的全局工具。
 
 ### ⑭ 发出去的话补进历史（`cross_session`）
 

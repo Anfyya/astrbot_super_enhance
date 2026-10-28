@@ -10,15 +10,6 @@
                 "hint": "总开关，关了这一组都不起作用。",
                 "default": true
             },
-            "bot_labels": {
-                "description": "机器人名字",
-                "type": "string",
-                "hint": "写成 napcat=丛雨,napcat2=亚托莉。世界线、网页、提示词里都用这个名字。",
-                "condition": {
-                    "enabled": true
-                },
-                "default": "napcat=丛雨,napcat2=亚托莉"
-            },
             "session_list_mode": {
                 "description": "管哪些机器人",
                 "type": "string",
@@ -845,10 +836,10 @@
                 },
                 "default": 120
             },
-            "bot_ids": {
-                "description": "机器人的 QQ 号",
+            "bot_identities": {
+                "description": "机器人身份",
                 "type": "list",
-                "hint": "哪些号算「另一个机器人」，一行一个。",
+                "hint": "每行「平台id=QQ号=名字」，例如 napcat=3810794928=丛雨。世界线、发消息和跨会话记录都用这一份。",
                 "items": {
                     "type": "string"
                 },
@@ -862,21 +853,6 @@
                     "type": "string"
                 },
                 "default": []
-            },
-            "bot_accounts": {
-                "description": "机器人 id 对 QQ 号",
-                "type": "list",
-                "hint": "每行「机器人id=QQ号」（napcat=丛雨的号）。发消息工具的说明照这里写，找另一个机器人该填哪个会话号。",
-                "items": {
-                    "type": "string"
-                },
-                "default": []
-            },
-            "bot_names": {
-                "description": "QQ 号对名字",
-                "type": "string",
-                "hint": "写成「QQ号=名字」，逗号隔开。记录里用它写清对面是谁，没配的写「另一个机器人」。",
-                "default": ""
             }
         }
     },
