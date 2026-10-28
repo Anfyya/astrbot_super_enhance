@@ -13,13 +13,15 @@
 
 from astrbot.api import logger
 
+from ..common.patching import PatchSet
+
 TARGET = "_iter_llm_responses"
 
 
 class ZeroThinkRetryFeature:
     def __init__(self, config) -> None:
         self.config = config
-        self._patches: list = []
+        self.patches = PatchSet()
 
     @property
     def enabled(self) -> bool:
@@ -113,18 +115,15 @@ class ZeroThinkRetryFeature:
                             feature._model_of(runner), tries,
                             str(getattr(final, "completion_text", "") or getattr(final, "tools_call_name", "") or "")[:40])
 
-        wrapped._super_enhance_orig = orig
-        setattr(ToolLoopAgentRunner, TARGET, wrapped)
-        self._patches.append((ToolLoopAgentRunner, TARGET, orig))
+        self.patches.add(ToolLoopAgentRunner, TARGET, orig, wrapped)
         logger.info("[super_enhance/zero_think] 已安装：一个字没想的回复不发，重新要（最多 %d 次，只管：%s）",
                     self.max_retries, "、".join(self._keywords()) or "无")
 
     def uninstall(self) -> None:
-        for owner, name, orig in reversed(self._patches):
-            try:
-                setattr(owner, name, orig)
-            except Exception:
-                logger.error("[super_enhance/zero_think] 卸载 %s 失败", name, exc_info=True)
-        if self._patches:
+        had = bool(self.patches)
+        try:
+            self.patches.uninstall()
+        except Exception:
+            logger.error("[super_enhance/zero_think] 卸载补丁失败", exc_info=True)
+        if had:
             logger.info("[super_enhance/zero_think] 已卸载")
-        self._patches = []

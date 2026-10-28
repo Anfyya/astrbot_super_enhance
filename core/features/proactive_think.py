@@ -15,6 +15,8 @@ assistant 消息必须带这个字段，缺了报 400）。存着的历史一个
 
 from astrbot.api import logger
 
+from ..common.patching import PatchSet
+
 PROACTIVE_THINK_TAG = "【主动消息的思考·不发给模型】"
 
 
@@ -44,8 +46,7 @@ class ProactiveThinkFilter:
     """包装 OpenAI 兼容接口的请求转换：带标签的主动消息思考不发给模型。"""
 
     def __init__(self) -> None:
-        self._cls = None
-        self._orig = None
+        self.patches = PatchSet()
 
     def install(self) -> None:
         try:
@@ -70,22 +71,18 @@ class ProactiveThinkFilter:
                 logger.error("[super_enhance/proactive_think] 去掉主动消息思考失败", exc_info=True)
             return result
 
-        patched._super_enhance_think_orig = orig
-        patched.__wrapped__ = orig
-        ProviderOpenAIOfficial._finally_convert_payload = patched
-        self._cls = ProviderOpenAIOfficial
-        self._orig = orig
+        self.patches.add(
+            ProviderOpenAIOfficial,
+            "_finally_convert_payload",
+            orig,
+            patched,
+            marker="_super_enhance_think_orig",
+        )
         logger.info("[super_enhance/proactive_think] 已安装：主动消息的思考不发给模型")
 
     def uninstall(self) -> None:
-        if self._cls is None or self._orig is None:
-            return
         try:
-            current = self._cls.__dict__.get("_finally_convert_payload")
-            if getattr(current, "_super_enhance_think_orig", None) is not None:
-                self._cls._finally_convert_payload = self._orig
+            if self.patches.uninstall():
                 logger.info("[super_enhance/proactive_think] 已卸载")
         except Exception:
             logger.error("[super_enhance/proactive_think] 卸载失败", exc_info=True)
-        self._cls = None
-        self._orig = None

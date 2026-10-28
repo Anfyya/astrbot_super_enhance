@@ -29,6 +29,7 @@ from astrbot.api import logger
 from .life_state.models import bot_of_umo
 from ..common import text as text_utils
 from ..common.text import strip_inline_system
+from ..common.patching import PatchSet
 
 MARK_ATTR = "_super_enhance_transcript"
 REMINDER_RE = text_utils.STAMP_TAG_RE
@@ -299,7 +300,7 @@ class HistoryTranscriptFeature:
         self.peer_name = peer_name
         # 聊天记录里的图放进本轮那条用户消息的副本（image_gen.attach_images，main.py 里接上）
         self.attach = None
-        self._patches: list = []
+        self.patches = PatchSet()
 
     @property
     def enabled(self) -> bool:
@@ -408,21 +409,15 @@ class HistoryTranscriptFeature:
             return sanitize
 
         for name, factory in (("reset", wrap_reset), ("_sanitize_contexts_for_provider", wrap_sanitize)):
-            current = ToolLoopAgentRunner.__dict__.get(name) or getattr(ToolLoopAgentRunner, name)
-            orig = getattr(current, "_super_enhance_orig", None) or current
-            wrapped = factory(orig)
-            wrapped._super_enhance_orig = orig
-            setattr(ToolLoopAgentRunner, name, wrapped)
-            self._patches.append((ToolLoopAgentRunner, name, orig))
+            self.patches.patch(ToolLoopAgentRunner, name, factory)
         logger.info("[super_enhance/transcript] 已安装：历史写成聊天记录发给模型（%s）",
                     "最近 %d 条" % self.recent if self.recent else "备忘之后的全部原话")
 
     def uninstall(self) -> None:
-        for owner, name, orig in reversed(self._patches):
-            try:
-                setattr(owner, name, orig)
-            except Exception:
-                logger.error("[super_enhance/transcript] 卸载 %s 失败", name, exc_info=True)
-        if self._patches:
+        had = bool(self.patches)
+        try:
+            self.patches.uninstall()
+        except Exception:
+            logger.error("[super_enhance/transcript] 卸载补丁失败", exc_info=True)
+        if had:
             logger.info("[super_enhance/transcript] 已卸载")
-        self._patches = []

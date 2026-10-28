@@ -14,6 +14,7 @@ from astrbot.api import logger
 from astrbot.core.message.components import Plain
 from astrbot.core.message.message_event_result import MessageChain
 
+from ..common.patching import PatchSet
 from .life_state.models import bot_of_umo
 
 DEFAULT_REPLY = "（上下文满了，请主人手动 /compact v2）"
@@ -26,7 +27,7 @@ class OverflowGuard:
         self.context = context
         self.config = config
         self.tools = tools  # ContextToolsFeature：复用 /usage 的上限算法
-        self._orig = None
+        self.patches = PatchSet()
 
     @property
     def enabled(self) -> bool:
@@ -65,21 +66,14 @@ class OverflowGuard:
             )
             return messages
 
-        blocked._super_enhance_orig = orig
-        ContextManager._run_compression = blocked
-        self._orig = orig
+        self.patches.add(ContextManager, "_run_compression", orig, blocked)
         logger.info("[super_enhance/overflow] 已拦截 AstrBot 自动压缩")
 
     def uninstall(self) -> None:
-        if self._orig is None:
-            return
         try:
-            from astrbot.core.agent.context.manager import ContextManager
-
-            ContextManager._run_compression = self._orig
+            self.patches.uninstall()
         except Exception:
             pass
-        self._orig = None
 
     # ---------- 2. 超限固定回复 ----------
 

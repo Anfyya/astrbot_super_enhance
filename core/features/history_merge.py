@@ -35,6 +35,7 @@ import contextvars
 from astrbot.api import logger
 
 from ..common.history_io import ORIG_HISTORY_ATTR, history_of
+from ..common.patching import PatchSet
 from .turn_state import INTERRUPTION_ASSISTANT, INTERRUPTION_USER, body_text
 
 _BASE: contextvars.ContextVar = contextvars.ContextVar("super_enhance_history_base", default=None)
@@ -89,7 +90,7 @@ class HistoryMergeFeature:
     """安装 / 卸载三处补丁。"""
 
     def __init__(self) -> None:
-        self._patches: list = []
+        self.patches = PatchSet()
         self._locks: dict = {}
 
     def _lock(self, cid: str) -> asyncio.Lock:
@@ -125,14 +126,6 @@ class HistoryMergeFeature:
                 return False
             await orig(mgr, umo, cid, history=self._clean(umo, new))
             return True
-
-    def _patch(self, owner, name: str, factory) -> None:
-        current = getattr(owner, name)
-        orig = getattr(current, "_super_enhance_orig", None) or current
-        wrapped = factory(orig)
-        wrapped._super_enhance_orig = orig
-        setattr(owner, name, wrapped)
-        self._patches.append((owner, name, orig))
 
     def install(self) -> None:
         try:
@@ -206,26 +199,24 @@ class HistoryMergeFeature:
         persist_req = lambda a, k: k.get("req")
 
         try:
-            self._patch(conversation_mgr.ConversationManager, "update_conversation", wrap_update)
-            self._patch(internal.InternalAgentSubStage, "_save_to_history", with_base(save_req))
-            self._patch(history_saver, "persist_agent_history", with_base(persist_req))
+            self.patches.patch(conversation_mgr.ConversationManager, "update_conversation", wrap_update)
+            self.patches.patch(internal.InternalAgentSubStage, "_save_to_history", with_base(save_req))
+            self.patches.patch(history_saver, "persist_agent_history", with_base(persist_req))
             # cron / 后台任务模块在顶层 import 了这个函数，得把它们手里的那份也换掉
             for mod_name in ("astrbot.core.cron.manager", "astrbot.core.astr_agent_tool_exec"):
                 import importlib
 
                 mod = importlib.import_module(mod_name)
                 if hasattr(mod, "persist_agent_history"):
-                    self._patch(mod, "persist_agent_history", with_base(persist_req))
+                    self.patches.patch(mod, "persist_agent_history", with_base(persist_req))
         except Exception:
             logger.error("[super_enhance/history_merge] 安装失败，已全部回退", exc_info=True)
             self.uninstall()
             return
-        logger.info("[super_enhance/history_merge] 已安装：会话历史保存时合并并发写入（%d 处）", len(self._patches))
+        logger.info("[super_enhance/history_merge] 已安装：会话历史保存时合并并发写入（%d 处）", len(self.patches))
 
     def uninstall(self) -> None:
-        for owner, name, orig in reversed(self._patches):
-            try:
-                setattr(owner, name, orig)
-            except Exception:
-                pass
-        self._patches.clear()
+        try:
+            self.patches.uninstall()
+        except Exception:
+            pass

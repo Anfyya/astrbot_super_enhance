@@ -31,6 +31,7 @@ from astrbot.api.event import MessageChain
 
 from ..common import jsonio, llm
 from ..common.bots import platform_of
+from ..common.patching import PatchSet
 
 SIZE_RE = re.compile(r"^\s*(\d{2,5})\s*[xX*×]\s*(\d{2,5})\s*$")
 RATIO_RE = re.compile(r"^\s*(\d{1,2})\s*[:：]\s*(\d{1,2})\s*$")
@@ -100,7 +101,7 @@ class ImageGenFeature:
         self._sent: dict[str, tuple[float, list]] = {}  # 会话 → (什么时候发的, 主人发的图)
         self._views: dict[str, tuple[str, str]] = {}  # 编号 → 回看用的小图 (mime, base64)
         self._recalled: tuple = ()  # 上次回看带了哪几张（变了才记日志）
-        self._patches: list = []
+        self.patches = PatchSet()
 
     @property
     def enabled(self) -> bool:
@@ -533,15 +534,11 @@ class ImageGenFeature:
                 if message is not None:
                     feature.drop_view(runner, message)
 
-        wrapped._super_enhance_image_orig = orig
-        setattr(ToolLoopAgentRunner, TARGET, wrapped)
-        self._patches.append((ToolLoopAgentRunner, TARGET, orig))
+        self.patches.add(ToolLoopAgentRunner, TARGET, orig, wrapped, marker="_super_enhance_image_orig")
         logger.info("[super_enhance/image] 已安装：画好的图先放进她的上下文给她看，看完不存进历史")
 
     def uninstall(self) -> None:
-        for owner, name, orig in reversed(self._patches):
-            try:
-                setattr(owner, name, orig)
-            except Exception:
-                logger.error("[super_enhance/image] 卸载 %s 失败", name, exc_info=True)
-        self._patches = []
+        try:
+            self.patches.uninstall()
+        except Exception:
+            logger.error("[super_enhance/image] 卸载补丁失败", exc_info=True)

@@ -25,6 +25,7 @@ from astrbot.core.message.components import Plain
 from astrbot.core.message.message_event_result import MessageChain
 
 from ..common import text as text_utils
+from ..common.patching import PatchSet
 from ..config_view import SectionConfig
 from . import cron_history, error_voice
 
@@ -53,7 +54,7 @@ class CronContextFeature:
     def __init__(self, context, config) -> None:
         self.context = context
         self.config = config
-        self._installed_orig = None
+        self.patches = PatchSet()
         self._notify_at: dict[str, float] = {}
         # cron 请求的补注入回调（async (event, req)）：cron 路径不触发 on_llm_request，
         # 生活状态等功能要在这里把平时的注入补上；与裁剪开关无关，始终执行。
@@ -133,10 +134,13 @@ class CronContextFeature:
                 logger.error("[super_enhance/cron_ctx] cron 钩子异常", exc_info=True)
             return await orig(*args, **kwargs)
 
-        patched._super_enhance_cron_ctx_orig = orig
-        patched.__wrapped__ = orig
-        ama.build_main_agent = patched
-        self._installed_orig = orig
+        self.patches.add(
+            ama,
+            "build_main_agent",
+            orig,
+            patched,
+            marker="_super_enhance_cron_ctx_orig",
+        )
         logger.info(
             "[super_enhance/cron_ctx] 已安装 cron 钩子（上下文裁剪=%s，窗口 %s 小时，上限 %d 条）",
             "开" if self.enabled else "关",
@@ -145,17 +149,11 @@ class CronContextFeature:
         )
 
     def uninstall(self) -> None:
-        if self._installed_orig is None:
-            return
         try:
-            from astrbot.core import astr_main_agent as ama
-
-            if getattr(ama.build_main_agent, "_super_enhance_cron_ctx_orig", None) is not None:
-                ama.build_main_agent = self._installed_orig
+            if self.patches.uninstall():
                 logger.info("[super_enhance/cron_ctx] 已卸载主动对话上下文裁剪")
         except Exception:
             logger.error("[super_enhance/cron_ctx] 卸载失败", exc_info=True)
-        self._installed_orig = None
 
     # ---------- 裁剪 ----------
 
