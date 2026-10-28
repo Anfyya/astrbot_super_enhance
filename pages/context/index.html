@@ -1477,13 +1477,15 @@
     });
 
     var world = clear($("worldNav"));
-    var wlive = worldLive();
+    // 侧栏小字：打开过那一页就用那一页的完整数据，没打开过用首屏后取的 ctx/side
+    var side = S.side || {};
+    var wst = S.world ? (S.world.status || {}) : side.world;
+    var wlive = S.world ? worldLive() : !!(wst && wst.mode === "live");
     var wg = h("span", { class: "av hm" });
     wg.appendChild(icon("clock"));
     var wsub = "读取中…";
     if (S.worldErr && !S.world) { wsub = "不可用"; }
-    else if (S.world) {
-      var wst = S.world.status || {};
+    else if (wst) {
       wsub = wst.mode === "off" ? "已关闭" : (wst.mode === "shadow" ? "影子运行" : "live") +
         (wst.last_step ? " · 上次补写 " + String(wst.last_step).slice(11, 16) : "");
     }
@@ -1495,16 +1497,21 @@
 
     var tg = h("span", { class: "av hm" });
     tg.appendChild(icon("bowl"));
-    var tsub = "读取中…", tbad = false;
-    if (S.thingsErr && !S.things) { tsub = "不可用"; }
-    else if (S.things) {
+    var tsub = "读取中…", tbad = false, food = side.food;
+    if (S.things) {
       var live = (S.things.items || []).filter(function (x) { return !x.ended; });
-      var nBad = live.filter(function (x) { return (x.fresh || {}).level === "坏了"; }).length;
-      var nHurry = live.filter(function (x) { return (x.fresh || {}).level === "快不行了"; }).length;
-      var nLow = live.filter(function (x) { return x.low; }).length;
-      tbad = nBad + nHurry > 0;
-      tsub = live.length ? live.length + " 件" + (nHurry ? " · " + nHurry + " 件快不行了" : "") + (nBad ? " · " + nBad + " 件坏了" : "")
-        + (nLow ? " · " + nLow + " 件余量不多" : "") : "还没有记着的";
+      food = {
+        n: live.length,
+        bad: live.filter(function (x) { return (x.fresh || {}).level === "坏了"; }).length,
+        hurry: live.filter(function (x) { return (x.fresh || {}).level === "快不行了"; }).length,
+        low: live.filter(function (x) { return x.low; }).length
+      };
+    }
+    if (S.thingsErr && !S.things) { tsub = "不可用"; }
+    else if (food) {
+      tbad = food.bad + food.hurry > 0;
+      tsub = food.n ? food.n + " 件" + (food.hurry ? " · " + food.hurry + " 件快不行了" : "") + (food.bad ? " · " + food.bad + " 件坏了" : "")
+        + (food.low ? " · " + food.low + " 件余量不多" : "") : "还没有记着的";
     }
     world.appendChild(h("button", {
       class: "nav-item" + (S.view === "things" && S.thingsCat !== "item" ? " on" : ""), type: "button",
@@ -1514,14 +1521,16 @@
 
     var og = h("span", { class: "av hm" });
     og.appendChild(icon("box"));
-    var osub = "读取中…";
-    if (S.thingsErr && !S.things) { osub = "不可用"; }
-    else if (S.things) {
+    var osub = "读取中…", objs = side.items;
+    if (S.things) {
       var olive = (S.things.objects || []).filter(function (x) { return !x.ended; });
       var okinds = {};
       olive.forEach(function (x) { var k = x.kind || x.name; okinds[k] = (okinds[k] || 0) + 1; });
-      var nSame = Object.keys(okinds).filter(function (k) { return okinds[k] > 1; }).length;
-      osub = olive.length ? olive.length + " 件" + (nSame ? " · " + nSame + " 组长得像" : "") : "还没有记着的";
+      objs = { n: olive.length, same: Object.keys(okinds).filter(function (k) { return okinds[k] > 1; }).length };
+    }
+    if (S.thingsErr && !S.things) { osub = "不可用"; }
+    else if (objs) {
+      osub = objs.n ? objs.n + " 件" + (objs.same ? " · " + objs.same + " 组长得像" : "") : "还没有记着的";
     }
     world.appendChild(h("button", {
       class: "nav-item" + (S.view === "things" && S.thingsCat === "item" ? " on" : ""), type: "button",
@@ -1530,14 +1539,17 @@
 
     var lg = h("span", { class: "av hm" });
     lg.appendChild(icon("spark"));
-    var lsub = "能力清单 · 约定";
+    var lsub = "能力清单 · 约定", led = side.ledger;
     if (S.ledger) {
       var nAb = 0;
       (S.ledger.bots || []).forEach(function (b) { nAb += (b.abilities || []).length; });
-      var nPr = (S.ledger.promises || []).filter(function (x) { return x.status === "open" && x.date >= S.ledger.today; }).length;
-      var nTr = (S.ledger.trainings || []).filter(function (x) { return x.status === "open"; }).length;
-      lsub = nAb + " 项能力 · " + (nTr ? nTr + " 件在练 · " : "") + nPr + " 个约定";
+      led = {
+        abilities: nAb,
+        promises: (S.ledger.promises || []).filter(function (x) { return x.status === "open" && x.date >= S.ledger.today; }).length,
+        trainings: (S.ledger.trainings || []).filter(function (x) { return x.status === "open"; }).length
+      };
     }
+    if (led) { lsub = led.abilities + " 项能力 · " + (led.trainings ? led.trainings + " 件在练 · " : "") + led.promises + " 个约定"; }
     world.appendChild(h("button", {
       class: "nav-item" + (S.view === "ledger" ? " on" : ""), type: "button",
       onclick: function () { openLedger(); }
@@ -1545,12 +1557,17 @@
 
     var pg = h("span", { class: "av hm" });
     pg.appendChild(icon("cal"));
-    var psub = "每天抽的插曲 · 消遣";
+    var psub = "每天抽的插曲 · 消遣", pc = side.pools;
     if (S.pools) {
       var np = S.pools.pools || {};
-      psub = ((np.twists || []).length + (np.night_twists || []).length + (np.together || []).length) + " 件插曲 · " +
-        (np.pastimes || []).length + " 样消遣 · " + ((np.idles || []).length + (np.night_idles || []).length) + " 种闲着" + (S.pools.custom ? "" : " · 默认");
+      pc = {
+        twists: (np.twists || []).length + (np.night_twists || []).length + (np.together || []).length,
+        pastimes: (np.pastimes || []).length,
+        idles: (np.idles || []).length + (np.night_idles || []).length,
+        custom: S.pools.custom
+      };
     }
+    if (pc) { psub = pc.twists + " 件插曲 · " + pc.pastimes + " 样消遣 · " + pc.idles + " 种闲着" + (pc.custom ? "" : " · 默认"); }
     world.appendChild(h("button", {
       class: "nav-item" + (S.view === "pool" ? " on" : ""), type: "button",
       onclick: function () { openPools(); }
@@ -6798,6 +6815,7 @@
   document.addEventListener("visibilitychange", function () {
     if (document.hidden) { return; }
     pollTick();
+    if (Date.now() - sideAt > 60000) { loadSide(); }
   });
   setInterval(function () {
     if (document.hidden) { return; }
@@ -6820,6 +6838,13 @@
     });
   }
 
+  // 侧栏那几项的小字（不打开那一页也显示个数）：首屏画完后取一次，切回页面时超过一分钟再取
+  var sideAt = 0;
+  function loadSide() {
+    sideAt = Date.now();
+    return api("ctx/side").then(function (d) { S.side = d || {}; renderSide(); }).catch(function () { /* 小字取不到就先显示读取中 */ });
+  }
+
   function start() {
     Array.prototype.forEach.call(document.querySelectorAll("[data-icon]"), function (el) {
       el.insertBefore(icon(el.getAttribute("data-icon")), el.firstChild);
@@ -6834,8 +6859,6 @@
       S.convErr = "";
       S.labels = {};
       (d.bots || []).forEach(function (x) { S.labels[x.id] = x.label; });
-      S.counts = d.counts || {};
-      S.worldHead = d.world || "";
       renderSide();
       showView();
       if (!list.length) { renderStream(); return; }
@@ -6843,6 +6866,7 @@
       var has = list.some(function (c) { return c.cid === saved; });
       var cid = has ? saved : list[0].cid;
       selectConv(cid, cid === list[0].cid ? d.history : null);
+      loadSide();
     }).catch(function (e) {
       toast("初始化失败：" + errMsg(e), { err: true });
     });

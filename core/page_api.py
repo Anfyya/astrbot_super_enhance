@@ -43,6 +43,7 @@ _ROUTE_SPECS = (
     ("manual_send", "manual_send", ("POST",), "手动以 bot 身份发一条消息（运维）"),
     ("fire_proactive", "fire_proactive", ("POST",), "立刻发一条主动消息"),
     ("boot", "boot", ("GET",), "上下文页面：首屏一次取完"),
+    ("side", "side_view", ("GET",), "上下文页面：侧栏那几项的小字（不打开那一页也显示个数）"),
     ("pulse", "pulse", ("GET",), "上下文页面：低成本轮询"),
     ("pic", "get_picture", ("GET",), "上下文页面：按需读取历史图片"),
     ("conversations", "list_conversations", ("GET",), "上下文页面：会话列表"),
@@ -1369,7 +1370,7 @@ class ContextPageApi:
         return limit
 
     async def boot(self):
-        """首屏一次取回会话、机器人、世界线摘要和第一页历史。"""
+        """首屏一次取回会话、机器人和第一页历史。"""
         global request
         old = request
         try:
@@ -1386,21 +1387,65 @@ class ContextPageApi:
                     history = hist_resp.get("data")
             life = self.plugin.life
             bots = [{"id": b, "label": life.bots.label_for(b)} for b in life.enabled_bots()]
-            now = life._now().replace(tzinfo=None)
-            current = {b: str((life.world.current(b, now) or {}).get("doing") or "") for b in life.enabled_bots()}
-            return _ok({
-                "conversations": conversations,
-                "history": history,
-                "bots": bots,
-                "current": current,
-                "world": life.world_text(life.enabled_bots()[0], now) if life.enabled_bots() else "",
-                "counts": {
-                    "constraints": len(life.world.constraints(active_only=True)),
-                    "intentions": len(life.world.intentions()),
-                },
-            })
+            return _ok({"conversations": conversations, "history": history, "bots": bots})
         except Exception as exc:
             logger.error("[super_enhance/ctx] 首屏读取失败", exc_info=True)
+            return _err(exc)
+        finally:
+            request = old
+
+    async def side_view(self):
+        """侧栏那几项的小字：世界线、家里的吃的、家里的东西、能力与约定、插曲与消遣，不打开那一页也显示个数。
+        首屏画完以后再取，不挡首屏；吃的那份走 things_view 自己的缓存。口径和网页打开那一页时算的一样。"""
+        global request
+        life = getattr(self.plugin, "life", None)
+        if life is None:
+            return _err("动态生活状态未加载")
+        out: dict[str, Any] = {}
+        old = request
+        try:
+            request = SimpleNamespace(args={}, get_json=lambda *a, **k: None)
+            try:
+                out["world"] = {"mode": "live", "last_step": life.world.last_step()}
+            except Exception:
+                logger.warning("[super_enhance/ctx] 侧栏：世界线状态没取到", exc_info=True)
+            res = await self.things_view()
+            if res.get("status") == "ok":
+                data = res.get("data") or {}
+                food = [x for x in data.get("items") or [] if not x.get("ended")]
+                level = [str((x.get("fresh") or {}).get("level") or "") for x in food]
+                out["food"] = {
+                    "n": len(food),
+                    "hurry": level.count("快不行了"),
+                    "bad": level.count("坏了"),
+                    "low": sum(1 for x in food if x.get("low")),
+                }
+                objects = [x for x in data.get("objects") or [] if not x.get("ended")]
+                kinds: dict[str, int] = {}
+                for x in objects:
+                    key = str(x.get("kind") or x.get("name") or "")
+                    kinds[key] = kinds.get(key, 0) + 1
+                out["items"] = {"n": len(objects), "same": sum(1 for n in kinds.values() if n > 1)}
+            res = await self.get_ledger()
+            if res.get("status") == "ok":
+                data = res.get("data") or {}
+                today = str(data.get("today") or "")
+                out["ledger"] = {
+                    "abilities": sum(len(b.get("abilities") or []) for b in data.get("bots") or []),
+                    "promises": sum(1 for x in data.get("promises") or []
+                                    if x.get("status") == "open" and str(x.get("date") or "") >= today),
+                    "trainings": sum(1 for x in data.get("trainings") or [] if x.get("status") == "open"),
+                }
+            pools = life.pool_store.load()
+            out["pools"] = {
+                "twists": sum(len(pools.get(k) or []) for k in ("twists", "night_twists", "together")),
+                "pastimes": len(pools.get("pastimes") or []),
+                "idles": sum(len(pools.get(k) or []) for k in ("idles", "night_idles")),
+                "custom": life.pool_store.custom(),
+            }
+            return _ok(out)
+        except Exception as exc:
+            logger.error("[super_enhance/ctx] 侧栏读取失败", exc_info=True)
             return _err(exc)
         finally:
             request = old
