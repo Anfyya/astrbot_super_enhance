@@ -122,6 +122,11 @@ def _text_parts(item: dict) -> tuple[list[str], list[str], int]:
     return texts, thinks, images
 
 
+def _picture_id(url: str) -> str:
+    """一张图的编号：按内容算，同一张图换个时候算还是这个号（重启后也认得回来）。"""
+    return "pic_" + hashlib.sha256(url.encode("utf-8")).hexdigest()[:20]
+
+
 def _pictures(item: dict) -> list[str]:
     """这条里存着的图（AstrBot 存在历史里的 data URI），网页直接拿来显示。"""
     out = []
@@ -405,27 +410,12 @@ class ContextPageApi:
             text = str(url or "")
             if not text:
                 continue
-            pic_id = "pic_" + hashlib.sha256(text.encode("utf-8")).hexdigest()[:20]
+            pic_id = _picture_id(text)
             self._pic_cache[pic_id] = text
             mime = "image/*"
             if text.startswith("data:") and ";" in text:
                 mime = text[5:text.index(";")]
             out.append({"id": pic_id, "type": mime, "size": len(text)})
-        return out
-
-    def _resolve_images(self, values) -> list[str]:
-        if not hasattr(self, "_pic_cache"):
-            self._pic_cache = {}
-        out = []
-        for raw in values or []:
-            if isinstance(raw, dict):
-                key = str(raw.get("id") or "")
-                url = self._pic_cache.get(key)
-                if url:
-                    out.append(url)
-            else:
-                text = str(raw or "")
-                out.append(self._pic_cache.get(text, text))
         return out
 
     async def get_picture(self):
@@ -1694,13 +1684,8 @@ class ContextPageApi:
         has_images = isinstance(images, list)
         if not has_text and not has_think and not has_images:
             return _err("缺少正文、思考链或图片")
-        if has_images:
-            if len(images) > _IMAGES_PER_ITEM:
-                return _err("一条最多放 %d 张图" % _IMAGES_PER_ITEM)
-            cleaned = [_shrink_image(url) for url in images]
-            if any(url is None for url in cleaned):
-                return _err("有一张图认不出来（只认 jpg / png / webp 这类图片）")
-            images = cleaned
+        if has_images and len(images) > _IMAGES_PER_ITEM:
+            return _err("一条最多放 %d 张图" % _IMAGES_PER_ITEM)
 
         try:
             conv, history = await self._load(cid)
@@ -1710,15 +1695,26 @@ class ContextPageApi:
             return _err("序号越界: %d" % index)
 
         item = dict(history[index])
-        if has_images and str(item.get("role") or "") not in ("user", "assistant"):
-            return _err("只有主人和她的消息能放图")
+        if has_images:
+            if str(item.get("role") or "") not in ("user", "assistant"):
+                return _err("只有主人和她的消息能放图")
+            # 留着的图网页只传编号，按这条自己存着的图认回来；新加的才是 data URI
+            own = {_picture_id(url): url for url in _pictures(item)}
+            kept = []
+            for raw in images:
+                ref = str((raw.get("id") if isinstance(raw, dict) else raw) or "")
+                url = own.get(ref) or _shrink_image(ref)
+                if url is None:
+                    return _err("有一张图认不出来（只认 jpg / png / webp 这类图片），刷新页面再改")
+                kept.append(url)
+            images = kept
         changed = False
         if has_text:
             changed = _apply_text(item, text) or changed
         if has_think:
             changed = _apply_think(item, think) or changed
         if has_images:
-            changed = _apply_images(item, self._resolve_images(images)) or changed
+            changed = _apply_images(item, images) or changed
         if not changed:
             return _err("这条没有可改的内容")
 
