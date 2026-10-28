@@ -702,7 +702,7 @@ class LifeStep:
             text = clean_text(text, 80)
             if entry is None or not text or not real_stop(entry) or entry.get("stop_result"):
                 continue
-            self.world.update_entry(date_text, str(entry.get("id")), stop_result=text)
+            self.world.update(date_text, str(entry.get("id")), stop_result=text)
             logger.info("[super_enhance/world] 被打断的 %s「%s」后来：%s", entry.get("id"), clean_text(entry.get("doing"), 20), text)
 
     @staticmethod
@@ -1143,7 +1143,7 @@ class LifeStep:
                 if end is None or end < floor:
                     end = floor
                 end = self._limit(cur_start, end, is_sleep(cur))
-                self.world.update_entry(
+                self.world.update(
                     self.world.date_of(cur.get("id"), bot, flat) or cur_start.date().isoformat(),
                     cur.get("id"), end=fmt_time(end),
                 )
@@ -1226,7 +1226,7 @@ class LifeStep:
             if until is not None and rows and cursor < until <= cursor + datetime.timedelta(minutes=FILL_STRETCH_MINUTES):
                 # 离后面那段只差一点：最后一段拉长接上，免得剩个小空档再调一次模型
                 last = rows[-1]
-                self.world.update_entry(str(last.get("start"))[:10], last.get("id"), end=fmt_time(until))
+                self.world.update(str(last.get("start"))[:10], last.get("id"), end=fmt_time(until))
                 last["end"] = fmt_time(until)
                 cursor = until
             written[bot] = rows

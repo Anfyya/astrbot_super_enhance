@@ -1076,7 +1076,7 @@ class Recorder:
                     who, owner, since, end or since + datetime.timedelta(hours=1)):
                 note = "（%s中途走了）" % name
                 doing = str(item.get("doing") or "")
-                self.world.update_entry(day, iid, doing=doing if note in doing else doing + note,
+                self.world.update(day, iid, doing=doing if note in doing else doing + note,
                                         **{"with": [x for x in (item.get("with") or []) if x != who]})
                 freed.append("%s的 %s 只去掉%s" % (self.label(owner) or owner, iid, name))
         # 对方和她一起的段还没开始：对方从那段起往后补写排的都撤掉重排
@@ -1109,7 +1109,7 @@ class Recorder:
                 doing = str(item.get("doing") or "")
                 for other in gone:
                     doing = re.sub(r"(和|跟|与|同)%s(一起|一道|一块儿?)?[，,、]?" % re.escape(self.label(other) or other), "", doing)
-                self.world.update_entry(day, str(item.get("id")), doing=doing.strip("，, ") or str(item.get("doing") or ""),
+                self.world.update(day, str(item.get("id")), doing=doing.strip("，, ") or str(item.get("doing") or ""),
                                         **{"with": [x for x in (item.get("with") or []) if x not in gone]})
                 logger.info("[super_enhance/world] %s的 %s 写着和%s一起，对方那边同一时候在做别的：照对方的，去掉「一起」",
                             self.label(who) or who, item.get("id"), "、".join(self.label(x) or x for x in gone))
@@ -1263,7 +1263,7 @@ class Recorder:
                 fields = {"with": together}
                 if str(raw.get("doing") or "").strip():
                     fields["doing"] = clean_text(raw.get("doing"), 120)
-                self.world.update_entry(date_text, entry_id, **fields)
+                self.world.update(date_text, entry_id, **fields)
                 # 走了的那个人段里没做到的那几步标的吃的、东西（两人一起的饭常只标在一个人那段里）：跟到这段上，她做完就算
                 moved = []
                 for leaver, tags in orphans:
@@ -1272,7 +1272,7 @@ class Recorder:
                         tags.clear()
                 if moved:
                     current = next((x for x in self.world.entries(date_text, who) if str(x.get("id")) == entry_id), entry)
-                    self.world.patch_entry(date_text, entry_id, {"things": list(current.get("things") or []) + moved})
+                    self.world.update(date_text, entry_id, mode="patch", things=list(current.get("things") or []) + moved)
                 logger.info("[super_enhance/world] %s的 %s 改成一个人接着做：%s%s（%s）", name, entry_id,
                             clean_text(fields.get("doing") or entry.get("doing"), 30),
                             "，接过 %d 样吃的 / 东西" % len(moved) if moved else "", why)
@@ -1305,7 +1305,7 @@ class Recorder:
                 if result:
                     fields["stop_result"] = result
             before = dict(entry)  # 改之前的样子（原来几点结束、标了什么）：后面跟着处理要用
-            after = self.world.patch_entry(date_text, entry_id, fields) or entry
+            after = self.world.update(date_text, entry_id, mode="patch", **fields) or entry
             self._touch(who, flat)
             ready = parse_time(after.get("end"))
             if ready is not None and ready > flat:
