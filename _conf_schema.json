@@ -833,7 +833,7 @@
             "bot_identities": {
                 "description": "机器人身份",
                 "type": "list",
-                "hint": "每行「平台id=QQ号=名字」，例如 napcat=3810794928=丛雨。世界线、发消息和跨会话记录都用这一份。",
+                "hint": "每行「平台id=QQ号=名字」，例如 napcat=123456789=丛雨。世界线、发消息和跨会话记录都用这一份。",
                 "items": {
                     "type": "string"
                 },
