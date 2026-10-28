@@ -42,7 +42,7 @@ from . import training as training_calc
 from .proactive import ProactivePlanner, is_proactive_event, notify_done
 from . import raw_log as raw_log_mod
 from .raw_log import RawMessageLog
-from .bots import BotRegistry
+from ...common.bots import BotRegistry
 from . import view as view_mod
 from . import operations as operations_mod
 from .variety import PoolStore, SeedLog
