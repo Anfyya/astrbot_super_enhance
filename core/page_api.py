@@ -470,6 +470,7 @@ class ContextPageApi:
 
     async def world_view(self):
         """世界线：某天的条目 + 约束 + 打算 + 骨架 + 运行状态。"""
+        from .features.life_state.proactive import done_min_importance
         from .features.life_state.world import doing_text, real_stop
 
         try:
@@ -544,7 +545,7 @@ class ContextPageApi:
                 "thing_names": thing_names,
                 "current": current,
                 # 做完的事够这个重要程度才叫她主动说（网页标颜色用）
-                "done_min": life._done_min_importance(),
+                "done_min": done_min_importance(life.cfg),
                 "dates": dates,
                 "days": days,
                 "constraints": constraints,

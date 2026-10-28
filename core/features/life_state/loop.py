@@ -10,6 +10,10 @@ from astrbot.core.message.message_event_result import MessageChain
 
 from .proactive import notify_done
 
+# 每日约束复核失败后隔多久重试、一天最多试几回
+REVIEW_RETRY_MINUTES = 10
+REVIEW_TRIES = 3
+
 async def _flush_outbox(service) -> None:
     """手动外发队列：data_dir/outbox.jsonl 里的消息逐条发出去（运维用）。"""
     fp = service.data_dir / "outbox.jsonl"

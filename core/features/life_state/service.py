@@ -42,14 +42,9 @@ from .things import FILE_NAME as THINGS_FILE_NAME
 from .things import ThingStore
 
 DEFAULT_TZ = "Asia/Shanghai"
-# 每日约束复核失败后隔多久重试、一天最多试几回
-REVIEW_RETRY_MINUTES = 10
-REVIEW_TRIES = 3
 ABILITY_FILE_NAME = "abilities.json"
 PROMISE_FILE_NAME = "promises.json"
 TRAINING_FILE_NAME = "trainings.json"
-# 练成后「刚练成」提示最多挂这么久（她一直没跟主人说话也不再提）
-TRAINING_NOTICE_HOURS = 48
 # 约定注入时往后看几天
 PROMISE_LOOKAHEAD_DAYS = 7
 # 同一个人这么久之内只叫一次开饭（被截停的那顿饭又被重排时，别再叫一次）（分钟）

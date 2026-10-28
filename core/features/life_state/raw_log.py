@@ -16,6 +16,8 @@ import json
 import time
 from pathlib import Path
 from astrbot.api import logger
+from astrbot.core.platform.message_session import MessageSession
+from astrbot.core.platform.message_type import MessageType
 
 from ...common import history_io, timeutil
 from ...common.bots import BotRegistry

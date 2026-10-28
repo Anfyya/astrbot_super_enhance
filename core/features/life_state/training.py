@@ -10,8 +10,11 @@ import datetime
 
 from astrbot.api import logger
 
+from .ledger import parse_id_list
 from .world import is_event, parse_time
 
+# 练成后「刚练成」提示最多挂这么久（她一直没跟主人说话也不再提）
+TRAINING_NOTICE_HOURS = 48
 # 往回最多算这么多天的日程（日程文件本身只留十几天，更早的已经记进 log）
 LOOKBACK_DAYS = 30
 

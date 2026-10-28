@@ -143,17 +143,21 @@ def clean_line(text, limit: int) -> str:
     return value if len(value) <= limit else value[:limit] + "…"
 
 
+def done_min_importance(cfg) -> int:
+    """做完一件事要多重要（1–5）才叫她发主动消息。"""
+    try:
+        return max(1, min(int(cfg.get("proactive_done_min_importance", 4) or 4), 5))
+    except Exception:
+        return 4
+
+
 async def notify_done(planner, world, bots: list[str], now: datetime.datetime, meal_notified: dict) -> None:
     """检查新开始 / 刚做完的段；由生活服务定期调用，具体怎么叫她仍交给 planner。"""
     if not planner.enabled:
         return
     flat = now.replace(tzinfo=None)
     flat_text = fmt_time(flat)
-    config = getattr(planner, "cfg", {}) or {}
-    try:
-        min_importance = max(1, min(int(config.get("proactive_done_min_importance", 4) or 4), 5))
-    except Exception:
-        min_importance = 4
+    min_importance = done_min_importance(getattr(planner, "cfg", {}) or {})
 
     def moment_kind(items: list, index: int) -> str:
         item = items[index]
@@ -590,6 +594,7 @@ class ProactivePlanner:
                 out.append((minute, item))
         return out
 
+    @staticmethod
     def _meta_payload(meta: dict) -> dict:
         out = {
             "se_kind": meta.get("kind") or "middle",

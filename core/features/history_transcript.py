@@ -315,7 +315,7 @@ class HistoryTranscriptFeature:
 
     def _label(self, bot: str) -> str:
         try:
-            return str(self.life.scene.label_for(bot)) if self.life is not None else bot
+            return str(self.life.bots.label_for(bot)) if self.life is not None else bot
         except Exception:
             return bot
 
