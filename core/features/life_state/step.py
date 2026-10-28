@@ -712,9 +712,8 @@ class LifeStep:
         starts = [x for x in starts if isinstance(x, datetime.datetime)]
         return max([flat] + [x.replace(tzinfo=None) for x in starts])
 
-    def _context_block(self, bots: list, now: datetime.datetime, tasks: dict | None = None) -> str:
-        parts = []
-        flat = now.replace(tzinfo=None)
+    def _history_blocks(self, bots: list, flat: datetime.datetime) -> list[str]:
+        blocks = []
         for date_offset in (1, 0):
             date_text = (flat.date() - datetime.timedelta(days=date_offset)).isoformat()
             lines = []
@@ -745,7 +744,13 @@ class LifeStep:
                     % (str(item.get("start"))[11:], item.get("place"), item.get("doing") or "")
                 )
             if lines:
-                parts.append("【%s 已经发生的】\n%s" % (date_text, "\n".join(lines)))
+                blocks.append("【%s 已经发生的】\n%s" % (date_text, "\n".join(lines)))
+        return blocks
+
+    def _context_block(self, bots: list, now: datetime.datetime, tasks: dict | None = None) -> str:
+        parts = []
+        flat = now.replace(tzinfo=None)
+        parts.extend(self._history_blocks(bots, flat))
         # 今天真被打断、还没交代后来怎么样的事：补写在 stopped_results 里写一句（见第 19 条）
         stops = []
         today_text = flat.date().isoformat()
