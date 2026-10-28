@@ -278,6 +278,59 @@ class WorldStore:
             return False
         return True
 
+    def _entry_record(self, day: dict, entry: dict, *, who: str, kind: str,
+                      start: datetime.datetime, end, source: str) -> dict:
+        """把外部给的条目规整成世界线落盘格式；顺带发新编号。"""
+        parsed_steps, parsed_minutes = parse_steps(entry.get("steps"))
+        record = {
+            "id": str(entry.get("id") or ("e%d" % int(day.get("next_id") or 1))),
+            "who": who,
+            "kind": kind,
+            "start": fmt_time(start),
+            "end": fmt_time(end) if end else "",
+            "place": clean_text(entry.get("place"), MAX_PLACE),
+            "doing": clean_text(entry.get("doing"), MAX_DOING),
+            "public": clean_text(entry.get("public"), MAX_PUBLIC),
+            "with": [str(x) for x in (entry.get("with") or []) if str(x).strip()],
+            "training": str(entry.get("training") or "").strip(),
+            "seen_by": [str(x) for x in (entry.get("seen_by") or []) if str(x).strip()],
+            "source": source,
+            "src_umo": str(entry.get("src_umo") or ""),
+            "src_quote": clean_text(entry.get("src_quote"), MAX_TEXT),
+            "steps": parsed_steps,
+            "step_minutes": parsed_minutes or (
+                list(entry.get("step_minutes") or []) if not isinstance(entry.get("steps"), str) else []
+            ),
+            "steps_planned": entry.get("steps_planned") if isinstance(entry.get("steps_planned"), list) else None,
+            "idle": bool(entry.get("idle")) and kind != "event",
+            "importance": clean_importance(entry.get("importance")),
+            "at_home": clean_flag(entry.get("at_home")),
+            "meal": bool(clean_flag(entry.get("meal"))),
+            "result": clean_text(entry.get("result"), MAX_RESULT),
+            "asked": bool(entry.get("asked")) and kind != "event",
+            "intent": str(entry.get("intent") or "").strip() if kind != "event" else "",
+            "stopped": bool(entry.get("stopped")) and kind != "event",
+            "stop_why": clean_text(entry.get("stop_why"), MAX_STOP_WHY) if entry.get("stopped") else "",
+            "stop_by": clean_text(entry.get("stop_by"), MAX_STOP_WHY) if entry.get("stopped") else "",
+            "stop_result": clean_text(entry.get("stop_result"), MAX_RESULT) if entry.get("stopped") else "",
+            "sleep": None if entry.get("sleep") is None or kind == "event" else bool(entry.get("sleep")),
+            "origin": clean_origin(entry.get("origin")),
+            "things": [dict(x) for x in (entry.get("things") or []) if isinstance(x, dict)],
+            "created": str(entry.get("created") or fmt_time(self.now_local())),
+        }
+        if entry.get("tool") == "start_doing" and kind != "event":
+            record["tool"] = "start_doing"
+        if entry.get("stopped") and isinstance(entry.get("stop_at_step"), int):
+            record["stop_at_step"] = entry["stop_at_step"]
+        if entry.get("stopped") and str(entry.get("wrap") or "").strip():
+            record["wrap"] = clean_text(entry.get("wrap"), MAX_STEP)
+        if isinstance(entry.get("moved_from"), dict):
+            record["moved_from"] = entry["moved_from"]
+        if not entry.get("id"):
+            day["next_id"] = int(day.get("next_id") or 1) + 1
+        stamp_stop_verdict(record)
+        return record
+
     def add_entry(self, date_text: str, entry: dict):
         """加一条，处理同一个人的时间重叠：优先级高的留下，低的被裁掉或拒绝。"""
         who = str(entry.get("who") or "").strip()
@@ -345,70 +398,7 @@ class WorldStore:
                 kept.append(old)
             # 否则整条被新的盖掉
 
-        parsed_steps, parsed_minutes = parse_steps(entry.get("steps"))
-        record = {
-            "id": str(entry.get("id") or ("e%d" % int(day.get("next_id") or 1))),
-            "who": who,
-            "kind": kind,
-            "start": fmt_time(start),
-            "end": fmt_time(end) if end else "",
-            "place": clean_text(entry.get("place"), MAX_PLACE),
-            "doing": clean_text(entry.get("doing"), MAX_DOING),
-            "public": clean_text(entry.get("public"), MAX_PUBLIC),
-            "with": [str(x) for x in (entry.get("with") or []) if str(x).strip()],
-            "training": str(entry.get("training") or "").strip(),
-            "seen_by": [str(x) for x in (entry.get("seen_by") or []) if str(x).strip()],
-            "source": source,
-            "src_umo": str(entry.get("src_umo") or ""),
-            "src_quote": clean_text(entry.get("src_quote"), MAX_TEXT),
-            "steps": parsed_steps,
-            "step_minutes": parsed_minutes or (
-                list(entry.get("step_minutes") or []) if not isinstance(entry.get("steps"), str) else []
-            ),
-            # 截短 / 拉长前原定的分步（fit_steps 第一次改分步时存下），再拉长回去时照它恢复
-            "steps_planned": entry.get("steps_planned") if isinstance(entry.get("steps_planned"), list) else None,
-            # 闲着：没在做具体的事（不算进度、做完不叫她）
-            "idle": bool(entry.get("idle")) and kind != "event",
-            # 重要程度 1–5（补写打的分；0 = 没打分），够设置里的阈值，做完才叫她
-            "importance": clean_importance(entry.get("importance")),
-            # 人在不在宿舍（True / False；没标是 None）、是不是在吃饭：出门、到家、开饭时叫她
-            "at_home": clean_flag(entry.get("at_home")),
-            "meal": bool(clean_flag(entry.get("meal"))),
-            # 这件事最后的结果（修好了、没找着……）：不算一步，她做完才看得到
-            "result": clean_text(entry.get("result"), MAX_RESULT),
-            # 她用「现在去做」接下的事（多半是主人让做的）：做完不看时长和重要程度，一定叫她
-            "asked": bool(entry.get("asked")) and kind != "event",
-            # 这段做的是哪条打算（编号，如 i2）：做完叫她跟主人说一声，并撤掉那条打算
-            "intent": str(entry.get("intent") or "").strip() if kind != "event" else "",
-            # 做到一半被打断、到此为止的：结束时刻不算做完
-            "stopped": bool(entry.get("stopped")) and kind != "event",
-            # 停下的原因（记录员说的、她那边发生的事）：给她看成「做到……先放下了，因为……」
-            "stop_why": clean_text(entry.get("stop_why"), MAX_STOP_WHY) if entry.get("stopped") else "",
-            # 被什么接上了（新的一段压上来、到了说好的打算、对方被叫走）：「……先放下了，改去……」
-            "stop_by": clean_text(entry.get("stop_by"), MAX_STOP_WHY) if entry.get("stopped") else "",
-            # 这件没做完的事后来怎么样了（补写定的：撂下了 / 交给谁 / 回头做完了）：「（结果：……）」
-            "stop_result": clean_text(entry.get("stop_result"), MAX_RESULT) if entry.get("stopped") else "",
-            # 睡觉那段（补写给的 state=睡觉）：一直到起床，不算闲着，做完不叫她。
-            # 记录员、网页写的不带这个字段，留 None，is_sleep 按 doing 的字认
-            "sleep": None if entry.get("sleep") is None or kind == "event" else bool(entry.get("sleep")),
-            # 补写排的段是照什么写的：{"kind", "text"}（见 step.origin_of）
-            "origin": clean_origin(entry.get("origin")),
-            # 这段用了 / 吃了 / 做了 / 买了家里哪几件吃的（补写标的，见 things.py）：只在要用的时候现算，不写进存货
-            "things": [dict(x) for x in (entry.get("things") or []) if isinstance(x, dict)],
-            "created": str(entry.get("created") or fmt_time(self.now_local())),
-        }
-        if entry.get("tool") == "start_doing" and kind != "event":
-            record["tool"] = "start_doing"  # 她用「现在去做」自己写的：记录员不另记、不盖掉它（见 Recorder.apply）
-        if entry.get("stopped") and isinstance(entry.get("stop_at_step"), int):
-            record["stop_at_step"] = entry["stop_at_step"]  # 做完了原定的第几步（收尾 / 交给时记录员定的收场）
-        if entry.get("stopped") and str(entry.get("wrap") or "").strip():
-            record["wrap"] = clean_text(entry.get("wrap"), MAX_STEP)  # 走之前收尾做了什么（关火、盛出来……）
-        if isinstance(entry.get("moved_from"), dict):
-            # 记录员把补写排在后面的那段挪到现在（她提前去做了）：原来那段留一份，她一直没去做时照原样恢复
-            record["moved_from"] = entry["moved_from"]
-        if not entry.get("id"):
-            day["next_id"] = int(day.get("next_id") or 1) + 1
-        stamp_stop_verdict(record)
+        record = self._entry_record(day, entry, who=who, kind=kind, start=start, end=end, source=source)
         kept.append(record)
         kept.sort(key=lambda x: str(x.get("start") or ""))
         if len(kept) > MAX_DAY_ENTRIES:
