@@ -9,7 +9,6 @@
    她这一轮没发消息就没地方挂，不存。
 """
 
-import datetime
 import json
 
 from astrbot.api import logger

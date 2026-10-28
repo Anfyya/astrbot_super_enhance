@@ -14,7 +14,6 @@
 import datetime
 import re
 from pathlib import Path
-from astrbot.api import logger
 
 from ...common import jsonio, timeutil
 

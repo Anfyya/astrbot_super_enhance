@@ -2,14 +2,10 @@
 
 import asyncio
 import datetime
-import json
-import re
 import time
 from pathlib import Path
 
 from astrbot.api import logger
-from astrbot.core.platform.message_session import MessageSession
-from astrbot.core.platform.message_type import MessageType
 
 from ...common import jsonio, timeutil
 from ...common.bots import platform_of
@@ -21,12 +17,8 @@ from .injector import (
 )
 from . import loop as loop_mod
 from .models import (
-    NATURAL_SLOTS,
-    OPTIONAL_FIELDS,
     LifeState,
-    TimelineEntry,
     clock_to_minute,
-    format_datetime,
     weekday_cn,
 )
 from .ledger import set_timezone as set_ledger_timezone
@@ -34,24 +26,21 @@ from .ledger import (
     AbilityBook,
     PromiseBook,
     TrainingBook,
-    parse_hours,
-    parse_id_list,
     promise_with_for,
 )
 from . import training as training_calc
-from .proactive import ProactivePlanner, is_proactive_event, notify_done
+from .proactive import ProactivePlanner
 from . import raw_log as raw_log_mod
 from .raw_log import RawMessageLog
 from ...common.bots import BotRegistry
 from . import view as view_mod
 from . import operations as operations_mod
 from .variety import PoolStore, SeedLog
-from .world import WorldStore, fmt_time, is_event, is_sleep, parse_time
+from .world import WorldStore
 from .recorder import Recorder
 from .step import LifeStep
 from .things import FILE_NAME as THINGS_FILE_NAME
 from .things import ThingStore
-from .view import build_world_text
 
 DEFAULT_TZ = "Asia/Shanghai"
 # 每日约束复核失败后隔多久重试、一天最多试几回
@@ -66,15 +55,6 @@ TRAINING_NOTICE_HOURS = 48
 PROMISE_LOOKAHEAD_DAYS = 7
 # 同一个人这么久之内只叫一次开饭（被截停的那顿饭又被重排时，别再叫一次）（分钟）
 MEAL_NOTIFY_GAP_MINUTES = 90
-from .view import (
-    AI_VOICE_NOTE,
-    AI_VOICE_NOTES,
-    NO_REPEAT_NOTE,
-    SHARED_FACT_NOTE,
-    SLEEP_NOTE,
-    VARIETY_NOTE,
-    VOICE_NOTES,
-)
 # 主动消息再加一句（2026-10-19）：主动找主人时别报家务清单
 PROACTIVE_VOICE_NOTE = "（主动找主人的时候，说你这会儿想跟他说的事，别报家务清单：洗了什么、收了什么、菜温在哪、几点开饭，主人问起再说。）"
 # 这两种主动消息就是来告诉主人那件事做完了（接下的事、说好的打算）：不带上面那句，

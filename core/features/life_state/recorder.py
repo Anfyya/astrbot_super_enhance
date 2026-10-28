@@ -8,7 +8,6 @@
 
 import datetime
 import hashlib
-import json
 import re
 from dataclasses import dataclass, field
 
@@ -19,8 +18,8 @@ from ...common.text import strip_inline_system
 from .models import bot_of_umo
 from .things import (CAT_FOOD, CAT_ITEM, KEEPS, KINDS, SAME_NEW_MINUTES, SAME_STEP_MINUTES, SPOTS, STEPS, USE_STEPS, cat_of,
                      find_same, norm_step, usable)
-from .world import (WorldStore, clean_steps, clean_text, doing_text, fit_steps, fmt_time, is_event, is_sleep, parse_time, progress_of,
-                    result_text, step_minutes, steps_text, wind_up)
+from .world import (WorldStore, clean_steps, clean_text, doing_text, fit_steps, fmt_time, is_event, is_sleep, parse_time,
+                    result_text, step_minutes, wind_up)
 from .things import reached_steps
 
 # 记录员停过一阵时，往前最多翻几天的原始消息（原始消息副本最多也只留这么久）
