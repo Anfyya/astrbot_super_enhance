@@ -188,13 +188,6 @@
   .dot.on{background:var(--ok)}
   .dot.bad{background:var(--danger)}
 
-  .switch{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;color:var(--t2);cursor:pointer;user-select:none;position:relative}
-  .switch input{position:absolute;opacity:0;pointer-events:none}
-  .switch .tr{width:30px;height:18px;border-radius:9px;background:var(--line2);position:relative;transition:background .15s}
-  .switch .tr::after{content:"";position:absolute;left:2px;top:2px;width:14px;height:14px;border-radius:50%;background:#fff;transition:transform .15s;box-shadow:0 1px 2px rgba(0,0,0,.2)}
-  .switch input:checked + .tr{background:var(--accent)}
-  .switch input:checked + .tr::after{transform:translateX(12px)}
-  .switch input:focus-visible + .tr{outline:2px solid var(--ring);outline-offset:1px}
 
   .linkbtn{border:0;background:transparent;padding:2px 4px;margin-left:10px;border-radius:5px;color:var(--accent);font-size:12.5px}
   .linkbtn:hover{text-decoration:underline;text-underline-offset:3px}
@@ -437,7 +430,7 @@
   .ct .trow{display:flex;align-items:center;gap:8px;min-width:0}
   .ct .trow b{font-family:var(--mono);font-size:13px;font-weight:600}
   .quote{border-left:3px solid var(--accent);padding:2px 0 2px 16px;font-size:15px;line-height:1.85;white-space:pre-wrap;word-break:break-word}
-  .req .code,.sheet .code{background:var(--sunk);border-radius:8px}
+  .req .code{background:var(--sunk);border-radius:8px}
   .params{display:flex;flex-direction:column;gap:16px;margin-top:12px;padding:16px;border-radius:10px;background:var(--sunk)}
   .params .inp,.params .ta{background:var(--bg)}
   .params .ta{min-height:var(--ctl);padding:4px 10px;font-size:13.5px;line-height:22px}
@@ -501,7 +494,6 @@
   .nlist > div{position:relative;padding-left:14px}
   .nlist > div::before{content:"";position:absolute;left:2px;top:9px;width:4px;height:4px;border-radius:50%;background:var(--t3)}
   .pc > .pc-s .when-b{font-weight:600;color:var(--t2)}
-  .empty-note{font-size:13px;line-height:1.7;color:var(--t3)}
 
   /* ============ 编辑框 ============ */
   /* 就地展开成一块有边框的面板；外框和列表行左右对齐，保存 / 取消贴在视口底部 */
@@ -525,8 +517,6 @@
   .wcols > .wfld > .wfld-l{display:contents}
   .wcols > .wfld > .inp,.wcols > .wfld > .ta,.wcols > .wfld > select{order:2}
   .wcols > .wfld > .wfld-l > .n{order:3;margin-top:-2px;font-size:12px;line-height:1.5;color:var(--t3);font-weight:400}
-  .wcols.c2{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .wcols.r1{grid-template-columns:minmax(0,2fr) minmax(0,1fr) minmax(0,1fr)}
   .wform-f{position:sticky;bottom:0;z-index:3;display:flex;align-items:center;justify-content:flex-end;gap:8px;margin:0 -16px;padding:12px 16px;
     background:var(--sunk);border-top:1px solid var(--line);border-radius:0 0 10px 10px}
   .wform-f .hint{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
@@ -839,12 +829,6 @@
   .wsteps li.now{color:var(--t1);font-weight:600}
   .wsteps li.now::marker{color:var(--accent)}
   @media (prefers-reduced-motion:reduce){.wnowdot::after{animation:none}}
-  .wstep-ed{display:flex;flex-direction:column;gap:8px}
-  .wstep-row{display:flex;align-items:center;gap:8px}
-  .wstep-row .inp{flex:1;min-width:0}
-  .wstep-row .inp.wstep-m{flex:0 0 64px;text-align:right}
-  .wstep-n,.wstep-u{flex:none;font-size:12.5px;color:var(--t3);font-variant-numeric:tabular-nums}
-  .wstep-n{min-width:20px;text-align:right}
   .wthings{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px;font-size:12px}
   .wthings-l{color:var(--t3);margin-right:2px}
   .tchip{display:inline-flex;align-items:center;gap:4px;height:24px;border:1px solid var(--line2);background:var(--bg);color:var(--t2);border-radius:999px;font-size:12px;
@@ -918,53 +902,9 @@
   .tstep.void .ts-b > div:first-child{color:var(--t3);text-decoration:line-through;text-decoration-color:var(--line2)}
   .tsteps > li:not(.tstep){padding:8px 0}
   .tfoot{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-  .tpick{display:flex;flex-wrap:wrap;gap:6px}
-
-  /* ============ 旧版视图（共享场景、每日日程）：现在注释掉了，样式留着，恢复时不用补 ============ */
-  .slot-l + .place{margin-top:0}
-  .place{font-size:17px;font-weight:650;line-height:1.4;word-break:break-word}
-  .place.unk{color:var(--t3);font-weight:500;font-size:15px}
-  .doing{font-size:14px;color:var(--t2);margin-top:2px;word-break:break-word}
-  .when{font-size:12px;color:var(--t3);margin-top:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
-  .when svg.i{width:13px;height:13px}
-  .prev{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:var(--t2);line-height:1.6}
-  .prev .pl{color:var(--t1);font-weight:550}
-  .sched{font-size:12.5px;color:var(--t3);line-height:1.6;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-  .form{display:flex;flex-direction:column;gap:12px}
-  .form .row2{display:flex;gap:8px}
-  .form .row2 .inp{flex:1}
-  .form label{font-size:12px;color:var(--t2);display:block;margin-bottom:6px}
-  .form .inp{width:100%}
-  .pick{display:flex;flex-wrap:wrap;gap:6px}
-  .kv{display:grid;grid-template-columns:max-content 1fr;gap:10px 18px;font-size:13.5px;margin-bottom:18px}
-  .kv .k{color:var(--t3);font-size:12.5px;padding-top:1px}
-  .kv .v{white-space:pre-wrap;word-break:break-word}
-  .schbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 16px}
-  .schdate{display:flex;gap:6px;align-items:center;flex:0 1 auto;min-width:0}
-  .schdate select.inp{width:220px;min-width:0;flex:0 1 220px}
-  .schline{display:flex;gap:4px 8px;flex-wrap:wrap;align-items:center;margin-top:4px}
-  .schacts{display:flex;flex-wrap:wrap;gap:4px;margin:-4px 0 -2px -10px}
-  .schmeta{border-radius:12px;padding:12px 14px;margin:0 -14px;cursor:pointer;outline:none;transition:background .12s}
-  .schmeta:hover,.schmeta:focus-visible{background:var(--hover)}
-  .schmeta.focus{background:var(--accent-soft);box-shadow:inset 0 0 0 1.5px var(--accent)}
-  .tllist{display:flex;flex-direction:column;gap:2px;margin:0 -10px}
-  .tlrow{display:flex;gap:12px;padding:10px;border-radius:10px;align-items:flex-start;cursor:pointer;outline:none;transition:background .12s}
-  .tlrow:hover,.tlrow:focus-visible{background:var(--hover)}
-  .tlrow.ro{cursor:default}
-  .tlrow.ro:hover{background:transparent}
-  .tlrow .tm{flex:none;width:96px;font-variant-numeric:tabular-nums;font-size:13px;font-weight:600;color:var(--t2);padding-top:1px}
-  .tlrow .tx{flex:1;min-width:0;font-size:14px;line-height:1.6;word-break:break-word}
-  .tlrow .of{font-size:12px;color:var(--t3);margin-top:4px}
-  .tlrow.now{background:var(--accent-soft)}
-  .tlrow.now .tm{color:var(--accent)}
-  .tlrow.past .tx,.tlrow.past .tm{color:var(--t3)}
-  .tlrow.focus{box-shadow:inset 0 0 0 1.5px var(--accent);background:var(--accent-soft)}
-  .joblog{font-size:12.5px;line-height:1.7;color:var(--t2);white-space:pre-wrap;margin-top:6px}
-
   /* ============ 浮层 ============ */
   .scrim{position:fixed;inset:0;background:var(--scrim);z-index:55;animation:fadein .15s ease}
   @keyframes fadein{from{opacity:0}to{opacity:1}}
-  .sheet{position:fixed;top:0;right:0;bottom:0;width:min(600px,100vw);z-index:70;background:var(--bg);box-shadow:var(--pop);display:flex;flex-direction:column;animation:slidein .18s ease}
   @keyframes slidein{from{transform:translateX(20px);opacity:0}to{transform:none;opacity:1}}
   .modal{position:fixed;inset:0;z-index:90;display:flex;align-items:center;justify-content:center;padding:20px;background:var(--scrim);animation:fadein .15s ease}
   .dlg{background:var(--bg);border:1px solid var(--line);border-radius:14px;box-shadow:var(--pop);width:100%;max-width:400px;padding:20px 20px 16px}
@@ -994,7 +934,7 @@
   }
   @container main (max-width:720px){
     .gauge .bar,.gauge .lbl{display:none}
-    .wcols,.wcols.c2,.wcols.r1,.tform{grid-template-columns:minmax(0,1fr)}
+    .wcols,.tform{grid-template-columns:minmax(0,1fr)}
     .tform > .wfld{grid-column:1 / -1}
     .wform-f .hint{display:none}
     .pl-head{display:none}
@@ -1152,7 +1092,6 @@
       </div>
     </section>
 
-    <!-- 旧版（世界线 live 之后不用了，先注释掉）「共享场景」页
     <section class="view" id="ledgerView" hidden>
       <header class="mhead"><div class="mhead-in">
         <button class="btn quiet ibtn narrow-only" data-icon="menu" data-open-side title="会话列表" type="button"></button>
@@ -1179,10 +1118,6 @@
       </div></header>
       <div class="scroller scroll"><div class="scene" id="poolBody"></div></div>
     </section>
-
-    <!-- 旧版（世界线 live 之后不用了，先注释掉）「每日日程」页
-    
-    -->
 
     <!-- 世界线 -->
     <section class="view" id="worldView" hidden>
@@ -1492,8 +1427,7 @@
     world: null, worldErr: "", worldLoading: false, worldDate: "", worldWho: "", worldBusy: "", worldShowLifted: false, worldShowStatus: false,
     wEdit: {}, cEdit: {}, iEdit: {}, rEdit: {}, nEdit: {},
     things: null, thingsErr: "", thingsLoading: false, thingsFilter: "now", thingsQ: "", thingsOpen: {}, thingsVoid: {}, tEdit: {}, thingsFocus: "",
-    thingsCat: "food", objFilter: "now", objQ: "",
-    sch: null, schErr: "", schLoading: false, schBot: store.get("schBot", ""), schDate: ""
+    thingsCat: "food", objFilter: "now", objQ: ""
   };
 
   function curConv() {
@@ -1594,21 +1528,6 @@
       onclick: function () { openThings(null, "item"); }
     }, og, h("span", { class: "nav-t" }, h("span", { class: "nav-n", text: "家里的东西" }), h("span", { class: "nav-s", text: osub }))));
 
-    // 旧版（世界线 live 之后不用了，先注释掉）：共享场景入口
-    // var sub = "读取中…";
-    // if (S.sceneErr && !S.scene) { sub = "不可用"; }
-    // else if (S.scene) {
-      // var m = (S.scene.raw || {}).master || {};
-      // sub = !S.scene.enabled ? "已关闭" : (m.doing || m.place) ? "主人：" + (m.doing || m.place) : "主人行踪未知";
-    // }
-    // var g = h("span", { class: "av hm" });
-    // g.appendChild(icon("globe"));
-    // world.appendChild(h("button", {
-      // class: "nav-item" + (S.view === "scene" ? " on" : ""), type: "button",
-      // onclick: function () { openScene(); }
-    // }, g, h("span", { class: "nav-t" }, h("span", { class: "nav-n", text: "共享场景" }), h("span", { class: "nav-s", text: sub })),
-      // S.scene && S.scene.enabled ? h("span", { class: "dot on", title: "已开启" }) : null));
-
     var lg = h("span", { class: "av hm" });
     lg.appendChild(icon("spark"));
     var lsub = "能力清单 · 约定";
@@ -1637,25 +1556,6 @@
       onclick: function () { openPools(); }
     }, pg, h("span", { class: "nav-t" }, h("span", { class: "nav-n", text: "插曲与消遣" }), h("span", { class: "nav-s", text: psub }))));
 
-    // 旧版（世界线 live 之后不用了，先注释掉）：每日日程入口
-    // var cg = h("span", { class: "av hm" });
-    // cg.appendChild(icon("cal"));
-    // var csub = "读取中…", cbad = false;
-    // if (S.schErr && !S.sch) { csub = "不可用"; }
-    // else if (S.sch) {
-      // var parts = [];
-      // (S.sch.bots || []).forEach(function (b) {
-        // var st = (b.days || {})[S.sch.today];
-        // if (!st || st.status !== "ok") { cbad = true; }
-        // parts.push(b.label + (st && st.status === "ok" ? " " + (st.timeline || []).length + " 段" : st && st.status === "deleted" ? " 已删" : " 没有"));
-      // });
-      // csub = S.sch.job && !S.sch.job.done ? (S.sch.job.kind === "regen" ? "正在重新生成…" : "正在回查…") : "今天：" + parts.join(" · ");
-    // }
-    // world.appendChild(h("button", {
-      // class: "nav-item" + (S.view === "sch" ? " on" : ""), type: "button",
-      // onclick: function () { openSchedule(); }
-    // }, cg, h("span", { class: "nav-t" }, h("span", { class: "nav-n", text: "每日日程" }), h("span", { class: "nav-s", text: csub })),
-      // cbad ? h("span", { class: "dot bad", title: "今天有角色没有日程" }) : null));
   }
 
   function setSideOpen(open) {
@@ -1664,8 +1564,7 @@
   }
 
   function syncScrim() {
-    var show = S.drawer ||
-      (isNarrow() && $("app").classList.contains("side-open")) ||
+    var show = (isNarrow() && $("app").classList.contains("side-open")) ||
       (insOverlay() && !!S.insp);
     $("scrim").hidden = !show;
   }
@@ -1707,19 +1606,6 @@
     });
   }
 
-  // 旧版（世界线 live 之后不用了，先注释掉）
-  // function openScene() {
-    // guardDirty().then(function (ok) {
-      // if (!ok) { return; }
-      // setSideOpen(false);
-      // closeInsp(true);
-      // S.view = "scene";
-      // showView();
-      // renderScene();
-      // loadScene();
-    // });
-  // }
-
   function openLedger() {
     guardDirty().then(function (ok) {
       if (!ok) { return; }
@@ -1743,19 +1629,6 @@
       loadPools();
     });
   }
-
-  // 旧版（世界线 live 之后不用了，先注释掉）
-  // function openSchedule() {
-    // guardDirty().then(function (ok) {
-      // if (!ok) { return; }
-      // setSideOpen(false);
-      // closeInsp(true);
-      // S.view = "sch";
-      // showView();
-      // renderSchedule();
-      // loadSchedule();
-    // });
-  // }
 
   function openWorld() {
     guardDirty().then(function (ok) {
@@ -1824,10 +1697,8 @@
     if (S.view !== "things" && !$("thingsView").hidden && S.things) { S.thingsSaved = { cat: S.thingsCat, a: thingsAnchor() }; }
     var isConv = S.view === "conv";
     $("convView").hidden = !isConv;
-    // $("sceneView").hidden = S.view !== "scene";
     $("ledgerView").hidden = S.view !== "ledger";
     $("poolView").hidden = S.view !== "pool";
-    // $("schView").hidden = S.view !== "sch";
     $("worldView").hidden = S.view !== "world";
     $("thingsView").hidden = S.view !== "things";
     if (isConv) {
@@ -2337,13 +2208,11 @@
       guardDirty().then(function (ok) { if (ok) { closeInsp(true); } });
       return;
     }
-    // var wasSch = isSchInsp();
     S.insp = null;
     $("insp").hidden = true;
     clear($("insp"));
     paintSelection();
     syncScrim();
-    // if (wasSch && S.view === "sch") { renderSchedule(); }
   }
 
   function renderInsp() {
@@ -2351,7 +2220,6 @@
     if (!S.insp) { box.hidden = true; syncScrim(); return; }
     box.hidden = false;
     if (S.insp.kind === "msg") { renderInspMsg(box); }
-    // else if (/^sch-/.test(S.insp.kind)) { renderInspSch(box); }
     else { renderCompose(box); }
     syncScrim();
   }
@@ -6911,7 +6779,6 @@
 
   $("refreshBtn").addEventListener("click", function () {
     loadConvs();
-    // loadScene(true);
     if (S.tab === "history") { loadHistory(S.items.length ? "keep" : "fresh"); } else { loadRequests(); }
   });
 
@@ -6996,7 +6863,6 @@
   document.addEventListener("visibilitychange", function () {
     if (document.hidden) { return; }
     pollTick();
-    // if (S.view === "scene" && S.auto && !Object.keys(S.edits).length && !S.drawer) { loadScene(true); }
   });
   setInterval(function () {
     if (document.hidden) { return; }
