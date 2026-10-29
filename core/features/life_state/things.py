@@ -1627,9 +1627,20 @@ class ThingStore:
             return "%s在%s手上" % (place + "，" if place else "", self._who(holder, label_fn))
         return place
 
+    @staticmethod
+    def progress_of(stages: list) -> dict | None:
+        """边做边记的东西（第一步是「开始做」）后来又做了一截、做好了：最后做到哪一步（做好过就是做好的那一步）。
+        样子只在新建时写一次，起头时记的「绣了小半朵」后来绣完了也不会跟着变，所以做到哪要看这一步。"""
+        if not stages or stages[0].get("what") != "开始做":
+            return None
+        later = [x for x in stages[1:] if x.get("what") in ("做了一截", "做好了")]
+        done = [x for x in later if x.get("what") == "做好了"]
+        return (done or later or [None])[-1]
+
     def item_line(self, item: dict, view: View, label_fn=None) -> str:
         """一件东西一行：编号 名字〔是什么；用什么做的；做好过就标已做好〕：样子｜现在什么样｜在哪（谁手上）｜哪来的｜归谁。
-        写了来历的只写来历（谁做的、哪来的），没写的才写哪天谁怎么有的。"""
+        写了来历的只写来历（谁做的、哪来的），没写的才写哪天谁怎么有的。
+        起头以后又做过的，样子那格换成做到哪（「10-24 14:46 做好了：整朵黄花绣完」），起头时的样子跟在来历后面注明。"""
         stages = item.get("stages") or [{}]
         first, last = stages[0], stages[-1]
         tags = [str(item.get("kind") or "东西")]
@@ -1646,6 +1657,12 @@ class ThingStore:
         came = item.get("origin") or "%s %s%s" % (str(first.get("at"))[5:16], self._who(first.get("by"), label_fn), first.get("what"))
         owner = self.owner_of(item)
         look, state = str(item.get("look") or ""), str(last.get("state") or "")
+        made = self.progress_of(stages)
+        if made is not None:
+            done = str(made.get("state") or "").strip()
+            if look:
+                came += "（起头时：%s）" % look
+            look = "%s %s%s" % (str(made.get("at"))[5:16], made.get("what"), "：" + done if done else "")
         parts = [x for x in (look, "" if state and state in look else state, self._where(last, label_fn), came,
                              "归%s" % self._who(owner, label_fn) if owner else "") if x]
         return "%s %s〔%s〕：%s" % (item.get("id"), item.get("name"), "；".join(tags), "｜".join(parts))
@@ -1668,7 +1685,9 @@ class ThingStore:
             head += "：%s" % item["origin"]
         lines = [head]
         if item.get("look"):
-            lines.append("样子：%s" % item["look"])
+            # 起头以后又做过的，样子是起头时记的，做到哪看下面每一步
+            started = self.progress_of(item.get("stages") or []) is not None
+            lines.append("%s：%s" % ("起头时的样子" if started else "样子", item["look"]))
         if item.get("from"):
             lines.append("用这几件做的：%s" % "、".join(self._name_of(view, x) for x in item["from"]))
         for stage in item.get("stages") or []:
