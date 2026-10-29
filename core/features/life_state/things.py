@@ -1628,7 +1628,7 @@ class ThingStore:
         return place
 
     def item_line(self, item: dict, view: View, label_fn=None) -> str:
-        """一件东西一行：编号 名字〔是什么；用什么做的〕：样子｜现在什么样｜在哪（谁手上）｜哪来的｜归谁。
+        """一件东西一行：编号 名字〔是什么；用什么做的；做好过就标已做好〕：样子｜现在什么样｜在哪（谁手上）｜哪来的｜归谁。
         写了来历的只写来历（谁做的、哪来的），没写的才写哪天谁怎么有的。"""
         stages = item.get("stages") or [{}]
         first, last = stages[0], stages[-1]
@@ -1641,6 +1641,8 @@ class ThingStore:
             return "%s %s〔%s〕：%s" % (item.get("id"), item.get("name"), "；".join(tags), "｜".join(parts))
         if item.get("from"):
             tags.append("用 %s 做的" % "、".join(self._name_of(view, x) for x in item["from"]))
+        if any(x.get("what") == "做好了" for x in stages):
+            tags.append("已做好")
         came = item.get("origin") or "%s %s%s" % (str(first.get("at"))[5:16], self._who(first.get("by"), label_fn), first.get("what"))
         owner = self.owner_of(item)
         look, state = str(item.get("look") or ""), str(last.get("state") or "")
