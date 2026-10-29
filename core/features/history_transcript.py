@@ -14,6 +14,7 @@
 - 主人消息里随手塞的 <system>……</system> 提示只在那一轮起作用，之后的聊天记录里去掉（2026-10-18）；
 - 她自己的话标成「你：」（不写她的名字），免得读着像别人的记录、不知道那是自己说过的（2026-10-16）；
 - 两个机器人私聊的会话里，对面那几句标对方的名字、标题写「你和她最近的聊天记录」，不再写成主人（2026-10-23）；
+  前面再放她和主人私聊里最近 MASTER_KEEP 条（不够就有几条放几条；跨会话记录就是这边的对话，不重复放）（2026-10-29）；
 - 只改发出去的这一份：AstrBot 回完话会把 ``run_context.messages`` 原样存回会话
   （``internal.py::_save_to_history``），所以不能改 ``req.contexts``，会把存档冲掉。
   这里包装 ``ToolLoopAgentRunner``：``reset`` 之后记下本轮那条用户消息，
@@ -27,6 +28,7 @@ import re
 from astrbot.api import logger
 
 from .life_state.models import bot_of_umo
+from ..common import history_io
 from ..common import text as text_utils
 from ..common.text import strip_inline_system
 from ..common.patching import PatchSet
@@ -47,6 +49,10 @@ IMG_ID_RE = re.compile(r"img\d+", re.IGNORECASE)
 PROMPT_CLIP = 200
 # 聊天记录里的图（她发出去的、对面发来的一起算）每轮最多带最近几张给她看
 IMAGE_KEEP = 6
+# 两个机器人私聊时，带上她和主人私聊里最近这么多条
+MASTER_KEEP = 20
+# 主人会话里写的两个机器人往来记录（bot_dialog.RECORD_HEAD）：就是这次私聊本身，不重复放
+PEER_RECORD_HEAD = "【跨会话记录】"
 
 
 def _dump(message) -> dict:
@@ -222,6 +228,17 @@ def build_block(history: list, label: str, recent: int, include_memo: bool, othe
     return "\n\n".join(parts), len(kept)
 
 
+def master_block(history: list, label: str, peer: str) -> tuple[str, int]:
+    """两个机器人私聊时放在前面的「她和主人最近的聊天记录」：最近 MASTER_KEEP 条，不够就有几条放几条。"""
+    lines, _memo, _excerpts = render_lines(history, "主人")
+    kept = [line for line in lines if PEER_RECORD_HEAD not in line][-MASTER_KEEP:]
+    if not kept:
+        return "", 0
+    head = ("【你和主人最近的聊天记录（在你和主人的私聊里，不是这次和%s的对话；按时间先后；"
+            "「你：」那几句就是你（%s）自己发给主人的消息）】\n" % (peer, label))
+    return head + "\n".join(kept), len(kept)
+
+
 def _with_content(message, content: str):
     if isinstance(message, dict):
         return dict(message, content=content)
@@ -259,10 +276,12 @@ def _turn_start(contexts: list, index: int) -> int:
     return start
 
 
-def transform(contexts: list, turn_message, label: str, recent: int, include_memo: bool, other: str = "主人", attach=None):
+def transform(contexts: list, turn_message, label: str, recent: int, include_memo: bool, other: str = "主人", attach=None,
+              before: str = ""):
     """把本轮那条用户消息之前的历史换成系统提示里的一段聊天记录。找不到本轮消息就返回 None。
 
     ``attach(本轮那条消息, recent_images 给的图, 对面是谁)`` 给出带上图的副本：聊天记录里的图放进去给她看。
+    ``before`` 放在这段聊天记录前面（两个机器人私聊时她和主人的聊天记录，master_block）。
     """
     index = next((i for i, m in enumerate(contexts) if m is turn_message), None)
     if index is None:
@@ -272,6 +291,8 @@ def transform(contexts: list, turn_message, label: str, recent: int, include_mem
     system = head[0] if head and _dump(head[0]).get("role") == "system" else None
     history = head[1:] if system is not None else head
     block, kept = build_block(history, label, recent, include_memo, other)
+    if before:
+        block = before + ("\n\n" + block if block else "")
     if system is not None:
         text = _text(_dump(system))
         new_system = _with_content(system, (text + "\n\n" + block) if block else text)
@@ -293,11 +314,13 @@ def transform(contexts: list, turn_message, label: str, recent: int, include_mem
 class HistoryTranscriptFeature:
     """普通聊天和主动对话都改成「聊天记录」写法（只管配置里的会话）。"""
 
-    def __init__(self, config, life=None, peer_name=None) -> None:
+    def __init__(self, config, life=None, peer_name=None, master_id=None) -> None:
         self.config = config
         self.life = life
         # 会话那头的 QQ 号 → 是另一个机器人就给她的名字，不是就空（bot_dialog.bot_name）
         self.peer_name = peer_name
+        # 主人的 QQ 号（bot_dialog.master_id）：两个机器人私聊时去翻她和主人的会话
+        self.master_id = master_id
         # 聊天记录里的图放进本轮那条用户消息的副本（image_gen.attach_images，main.py 里接上）
         self.attach = None
         self.patches = PatchSet()
@@ -353,11 +376,29 @@ class HistoryTranscriptFeature:
             "memo": bool(self.config.get("include_memo", True)), "other": self._other(umo),
         })
 
+    async def add_master(self, req) -> None:
+        """两个机器人私聊：把她和主人私聊里最近 MASTER_KEEP 条记下来，改写时放在前面。"""
+        opts = getattr(req, MARK_ATTR, None) if req is not None else None
+        if not opts or opts.get("other", "主人") == "主人":
+            return
+        try:
+            master = str(self.master_id() or "").strip() if self.master_id is not None else ""
+            conv_mgr = getattr(getattr(self.life, "context", None), "conversation_manager", None)
+            if not master or conv_mgr is None:
+                return
+            umo = "%s:FriendMessage:%s" % (bot_of_umo(opts["umo"]), master)
+            _cid, _conv, history = await history_io.load(conv_mgr, umo)
+            opts["master"], opts["master_kept"] = master_block(history, opts["label"], opts["other"])
+        except Exception:
+            logger.error("[super_enhance/transcript] %s 翻她和主人的聊天记录失败，这次不带", opts["umo"], exc_info=True)
+
     async def on_llm_request(self, event, req) -> None:
         self.mark(event, req)
+        await self.add_master(req)
 
     async def on_cron_request(self, event, req) -> None:
         self.mark(event, req)
+        await self.add_master(req)
 
     # ---------- 包装 AstrBot ----------
 
@@ -392,7 +433,8 @@ class HistoryTranscriptFeature:
                     try:
                         opts = info["opts"]
                         done = transform(contexts, info["turn"], opts["label"], opts["recent"], opts["memo"],
-                                         opts.get("other", "主人"), attach=self.attach)
+                                         opts.get("other", "主人"), attach=self.attach,
+                                         before=opts.get("master", ""))
                         if done is None:
                             if not info["logged"]:
                                 logger.warning("[super_enhance/transcript] %s 找不到本轮消息（上下文被压缩过？），这次照原样发", opts["umo"])
@@ -400,8 +442,9 @@ class HistoryTranscriptFeature:
                         else:
                             contexts, n_hist, kept, chars = done
                             if not info["logged"]:
-                                logger.info("[super_enhance/transcript] %s 历史 %d 条 → 聊天记录 %d 条（%d 字）",
-                                            opts["umo"], n_hist, kept, chars)
+                                logger.info("[super_enhance/transcript] %s 历史 %d 条 → 聊天记录 %d 条（%d 字）%s",
+                                            opts["umo"], n_hist, kept, chars,
+                                            "，带上和主人的 %d 条" % opts["master_kept"] if opts.get("master") else "")
                                 info["logged"] = True
                     except Exception:
                         logger.error("[super_enhance/transcript] 改写失败，这次照原样发", exc_info=True)
