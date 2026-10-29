@@ -188,6 +188,8 @@ class SuperEnhance(Star):
     async def terminate(self) -> None:
         """插件卸载/停用时收尾。"""
         self.features.stop()
+        if self.page_api is not None:
+            self.page_api.close()
         await self.life.terminate()
 
     # ------------------------------------------------------------------

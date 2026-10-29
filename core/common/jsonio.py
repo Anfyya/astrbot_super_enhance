@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from . import live
+
 
 def load(path, default: Any = None, *, encoding: str = "utf-8") -> Any:
     """读 JSON；文件不存在或内容坏了都回默认值（默认值会深拷贝）。"""
@@ -41,7 +43,7 @@ def save(
     ensure_ascii: bool = False,
     encoding: str = "utf-8",
 ) -> None:
-    """先写同目录临时文件，再原子替换目标。"""
+    """先写同目录临时文件，再原子替换目标；存完告诉网页这块变了（live）。"""
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     temp = target.with_name(target.name + ".tmp")
@@ -53,3 +55,4 @@ def save(
     )
     temp.write_text(body, encoding=encoding)
     os.replace(temp, target)
+    live.file_saved(target)

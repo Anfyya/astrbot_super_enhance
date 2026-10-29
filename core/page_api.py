@@ -21,7 +21,8 @@ from typing import Any
 
 from astrbot.api import logger
 
-from .common import history_io, text as text_utils
+from .common import history_io, live, text as text_utils
+from .common.patching import PatchSet
 from .common.text import clean_message, text_of, time_of
 from .features.life_state import loop as life_loop
 
@@ -46,6 +47,7 @@ _ROUTE_SPECS = (
     ("boot", "boot", ("GET",), "上下文页面：首屏一次取完"),
     ("side", "side_view", ("GET",), "上下文页面：侧栏那几项的小字（不打开那一页也显示个数）"),
     ("pulse", "pulse", ("GET",), "上下文页面：低成本轮询"),
+    ("stream", "stream", ("GET",), "上下文页面：实时推送（SSE，写了数据就推一条）"),
     ("pic", "get_picture", ("GET",), "上下文页面：按需读取历史图片"),
     ("conversations", "list_conversations", ("GET",), "上下文页面：会话列表"),
     ("history", "get_history", ("GET",), "上下文页面：某个会话的历史"),
@@ -63,6 +65,12 @@ _ROUTE_SPECS = (
 )
 
 _MAX_BACKUP_FILES = 30
+# 实时推送：没动静时隔这么久发一条心跳（网页按它判断连接还活着）。EdgeOne 空闲约 15 秒就掐断，要比它短
+LIVE_PING_SECONDS = 10
+# 一批写入（记录员一次会存好几份文件）攒这么久合成一条再推
+LIVE_BATCH_SECONDS = 0.3
+# AstrBot 数据库里写会话的方法：包一层，写完喊一声
+_CONV_WRITES = ("create_conversation", "update_conversation", "delete_conversation", "delete_conversations_by_user_id")
 # 她画的图在网页上的取图编号：drawn:img2（ctx/pic 按这个现取小图）
 DRAWN_PIC_PREFIX = "drawn:"
 _POOL_SIMS = 400  # 插曲与消遣页：「明天抽中」按这么多次模拟算
@@ -395,6 +403,8 @@ class ContextPageApi:
         self._pool_cache: tuple[Any, dict] | None = None
         self._things_cache: tuple[Any, dict] | None = None
         self._sched_job: dict[str, Any] | None = None
+        self._runs: dict[str, asyncio.Task] = {}
+        self._live_patches = PatchSet()
 
     # ------------------------------------------------------------------ 基础
     @staticmethod
@@ -578,6 +588,7 @@ class ContextPageApi:
                     "last_review": world.last_review(),
                     "cursors": cursors,
                     "errors": world.errors(),
+                    "running": [what for what, task in self._runs.items() if not task.done()],
                 },
             })
         except Exception as exc:
@@ -713,29 +724,41 @@ class ContextPageApi:
             return _err(exc)
 
     async def world_run(self):
-        """世界线：手动跑一次记录员 / 幕间补写。"""
+        """世界线：手动跑一次记录员 / 幕间补写 / 约束复核。在后台跑、马上返回（补写要好几分钟，等着会被 CDN 掐断），
+        跑完从实时推送发一条 run 带上结果；正在跑的写在世界线状态的 running 里。"""
         try:
             body = await request.get_json() or {}
         except Exception:
             body = {}
+        what = str(body.get("what") or "recorder")
+        if what not in ("recorder", "step", "review"):
+            return _err("不认识的 what：%s" % what)
+        task = self._runs.get(what)
+        if task is not None and not task.done():
+            return _ok({"started": False, "running": True})
+        self._runs[what] = asyncio.create_task(self._world_run(what))
+        return _ok({"started": True})
+
+    async def _world_run(self, what: str) -> None:
+        life = self.plugin.life
+        result: dict[str, Any] = {"what": what}
         try:
-            life = self.plugin.life
-            what = str(body.get("what") or "recorder")
             now = life._now()
             if what == "step":
                 # 手动：没写到下一段的人都接着往下写
-                ok = await life.life_step.run(now, force=True)
+                result["ok"] = bool(await life.life_step.run(now, force=True))
             elif what == "review":
-                lifted = await life.recorder.review_constraints(now)
+                result["lifted"] = await life.recorder.review_constraints(now)
                 life.world.set_last_review(now.date().isoformat())
                 life.world.clear_error("review")
-                return _ok({"ok": True, "lifted": lifted, "errors": life.world.errors()})
+                result["ok"] = True
             else:
-                ok = await life.recorder.run_all(now)
-            return _ok({"ok": bool(ok), "errors": life.world.errors()})
+                result["ok"] = bool(await life.recorder.run_all(now))
+            result["errors"] = life.world.errors()
         except Exception as exc:
             logger.error("[super_enhance/ctx] 世界线手动运行失败", exc_info=True)
-            return _err(exc)
+            result.update({"ok": False, "error": str(exc)})
+        live.notify("run", result)
 
     async def manual_send(self):
         """手动以 bot 身份发一条消息到指定会话（运维用）。"""
@@ -1298,6 +1321,10 @@ class ContextPageApi:
                 description,
             )
         logger.info("[super_enhance/ctx] 上下文页面 API 已注册（%d 个）", len(_ROUTE_SPECS))
+        try:
+            self._install_live()
+        except Exception:
+            logger.error("[super_enhance/ctx] 实时推送没装上，网页照旧轮询", exc_info=True)
     # -------------------------------------------------------------- 读写底层
     async def _load(self, cid: str):
         conv = await self.manager.get_conversation("", cid)
@@ -1496,6 +1523,76 @@ class ContextPageApi:
         }
         self._pulse_cache[cid] = state
         return _ok({**state, "changed": True, "conversations_changed": conversations_changed})
+
+    async def stream(self):
+        """实时推送（SSE）：挂着等 live 的通知，来一批推一条 {topics, runs}；没动静时每 LIVE_PING_SECONDS 秒发一条 ping。
+        连上先发一条 hello，网页收到了才算连上（中间的 CDN 要是把推送攒着不发，网页收不到就照旧轮询）。"""
+        from starlette.responses import StreamingResponse
+
+        def frame(event: str, data: Any) -> str:
+            return "event: %s\ndata: %s\n\n" % (event, json.dumps(data, ensure_ascii=False, default=str))
+
+        async def events():
+            queue = live.listen()
+            logger.info("[super_enhance/ctx] 网页实时推送连上了（现在 %d 个）", len(live._queues))
+            try:
+                yield "retry: 3000\n\n" + frame("hello", {})
+                while True:
+                    try:
+                        first = await asyncio.wait_for(queue.get(), timeout=LIVE_PING_SECONDS)
+                    except asyncio.TimeoutError:
+                        yield frame("ping", {})
+                        continue
+                    await asyncio.sleep(LIVE_BATCH_SECONDS)
+                    batch = [first]
+                    while not queue.empty():
+                        batch.append(queue.get_nowait())
+                    topics, runs = set(), []
+                    for topic, payload in batch:
+                        if topic == "run":
+                            runs.append(payload)
+                        else:
+                            topics.add(topic)
+                    yield frame("change", {"topics": sorted(topics), "runs": runs})
+            finally:
+                live.stop(queue)
+                logger.info("[super_enhance/ctx] 网页实时推送断开（还剩 %d 个）", len(live._queues))
+
+        return StreamingResponse(
+            events(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
+        )
+
+    def _install_live(self) -> None:
+        """实时推送的两头：记下事件循环和数据目录（数据文件存完 jsonio 会喊），再包住数据库里写会话的几个方法。"""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.get_event_loop()
+        live.bind(loop, self.data_dir)
+        db = getattr(self.manager, "db", None)
+        if db is None:
+            logger.warning("[super_enhance/ctx] 找不到会话数据库，会话变化不推送")
+            return
+
+        def wrap(orig):
+            async def wrapper(*args, **kwargs):
+                result = await orig(*args, **kwargs)
+                live.notify("conv")
+                return result
+            return wrapper
+
+        for name in _CONV_WRITES:
+            if hasattr(type(db), name):
+                self._live_patches.patch(type(db), name, wrap, marker="_super_enhance_live_orig")
+
+    def close(self) -> None:
+        """插件停用时撤掉包在数据库上的那几层，后台还在跑的手动补写也停掉。"""
+        self._live_patches.uninstall()
+        for task in self._runs.values():
+            if not task.done():
+                task.cancel()
 
     # ------------------------------------------------------------------ 路由
     async def list_conversations(self):

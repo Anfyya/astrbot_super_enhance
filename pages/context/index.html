@@ -4359,6 +4359,16 @@
       S.worldErr = "";
       (d.bots || []).forEach(function (bot) { if (bot.key) { S.labels[bot.key] = bot.label; } });
       if (!S.worldDate) { S.worldDate = d.date; }
+      // 后台在跑的手动补写：刷新页面后照样显示在跑；推送没连上时靠这里知道它跑完了
+      var running = (d.status && d.status.running) || [];
+      if (S.worldBusy && running.indexOf(S.worldBusy) < 0) {
+        if (!LIVE.on) { toast((RUN_LABEL[S.worldBusy] || S.worldBusy) + "跑完了"); }
+        S.worldBusy = "";
+        clearTimeout(S.worldRunT);
+      } else if (!S.worldBusy && running.length) {
+        S.worldBusy = running[0];
+        worldRunWatch();
+      }
       renderSide();
       if (S.view === "world") { renderWorld({ loaded: true }); }
     }).catch(function (e) {
@@ -4389,25 +4399,43 @@
     });
   }
 
+  // 手动跑：服务器在后台跑、马上返回；跑完从实时推送收到结果（worldRunDone）。
+  // 推送没连上时每 5 秒重读一次世界线，状态里的 running 没有它了就算跑完
+  var RUN_LABEL = { recorder: "记录员", step: "幕间补写", review: "约束复核" };
   function worldRun(what) {
     if (S.worldBusy) { return; }
-    var label = { recorder: "记录员", step: "幕间补写", review: "约束复核" }[what] || what;
+    var label = RUN_LABEL[what] || what;
     S.worldBusy = what;
     renderWorld();
     return post("ctx/world/run", { what: what }).then(function (r) {
-      S.worldBusy = "";
-      if (what === "review") {
-        var lifted = (r && r.lifted) || [];
-        toast(lifted.length ? "约束复核：撤掉了 " + lifted.join("、") : "约束复核：没有要撤的");
-      } else {
-        toast(r && r.ok ? label + "跑完了" : label + "这次没写东西（没有新内容，或者出错了，看上面的错误）");
-      }
-      return loadWorld(true);
+      toast(r && r.running ? label + "已经在跑了，跑完会提示" : label + "开始跑了，跑完会提示");
+      worldRunWatch();
     }).catch(function (e) {
       S.worldBusy = "";
       renderWorld();
       toast(label + "失败：" + errMsg(e), { err: true });
     });
+  }
+  function worldRunWatch() {
+    clearTimeout(S.worldRunT);
+    if (!S.worldBusy) { return; }
+    S.worldRunT = setTimeout(function () {
+      if (!LIVE.on && !document.hidden) { loadWorld(true); }
+      worldRunWatch();
+    }, 5000);
+  }
+  function worldRunDone(r) {
+    if (!r || !r.what) { return; }
+    var label = RUN_LABEL[r.what] || r.what;
+    if (r.error) { toast(label + "失败：" + r.error, { err: true }); }
+    else if (r.what === "review") {
+      var lifted = r.lifted || [];
+      toast(lifted.length ? "约束复核：撤掉了 " + lifted.join("、") : "约束复核：没有要撤的");
+    } else {
+      toast(r.ok ? label + "跑完了" : label + "这次没写东西（没有新内容，或者出错了，看上面的错误）");
+    }
+    if (S.worldBusy === r.what) { S.worldBusy = ""; clearTimeout(S.worldRunT); }
+    if (S.view === "world") { renderWorld(); loadWorld(true); }
   }
 
   function worldWhoList(d) {
@@ -6736,7 +6764,7 @@
 
   /* ================= 自动刷新 ================= */
   // 历史：每 4 秒只问一次「最后一条」，变了才整段重读；请求快照：有新快照且正看最新一份时自动换上
-  var POLL_MS = 4000, pollBusy = false, newCount = 0;
+  var POLL_MS = 4000, pollBusy = false, pollAgain = false, newCount = 0;
   function nearBottom() {
     var sc = $("histScroll");
     return sc.scrollHeight - sc.scrollTop - sc.clientHeight < 80;
@@ -6796,7 +6824,8 @@
   }
 
   function pollTick() {
-    if (pollBusy || document.hidden || S.view !== "conv" || !S.cid) { return; }
+    if (pollBusy) { pollAgain = true; return; }
+    if (document.hidden || S.view !== "conv" || !S.cid) { return; }
     var cid = S.cid;
     pollBusy = true;
     api("ctx/pulse", { cid: cid }).then(function (d) {
@@ -6807,20 +6836,99 @@
         return loadHistory("poll", Math.max(0, (d.total || 0) - (S.total || 0)));
       }
       if (S.tab === "requests" && d.versions && d.versions.requests !== S.requestVersion) { loadRequests(); }
-    }).catch(function () {}).then(function () { pollBusy = false; });
+    }).catch(function () {}).then(function () {
+      pollBusy = false;
+      if (pollAgain) { pollAgain = false; pollTick(); }
+    });
   }
 
-  setInterval(pollTick, POLL_MS);
+  // 实时推送连着的时候不轮询，断了才每 4 秒问一次
+  setInterval(function () { if (!LIVE.on) { pollTick(); } }, POLL_MS);
   // 切回面板时立刻补一次，不用等下一轮
   document.addEventListener("visibilitychange", function () {
     if (document.hidden) { return; }
-    pollTick();
+    if (LIVE.on) { liveFlush(); } else { pollTick(); }
     if (Date.now() - sideAt > 60000) { loadSide(); }
   });
   setInterval(function () {
-    if (document.hidden) { return; }
+    if (document.hidden || LIVE.on) { return; }
     if (S.view === "ledger") { loadLedger(true); }
   }, 30000);
+
+  /* ================= 实时推送 ================= */
+  // 服务器那头谁写了数据谁喊一声（ctx/stream），这里挂着收，收到只刷新正在看的那一页；
+  // 先收到 hello 才算连上，之后 LIVE_DEAD_MS 里一条都没收到（心跳 10 秒一条）就当断了，退回轮询、过一会儿重连
+  var LIVE = { on: false, id: null, retry: 0, last: 0, opened: false, timer: null, flushT: null, pending: {}, side: false };
+  var LIVE_DEAD_MS = 30000;
+  function liveStart() {
+    var b = bridge();
+    if (!b || typeof b.subscribeSSE !== "function") { return; }
+    LIVE.last = Date.now();
+    b.subscribeSSE("ctx/stream", {
+      onMessage: liveGot,
+      onError: liveLost
+    }).then(function (id) { LIVE.id = id; }).catch(liveLost);
+  }
+  function liveLost() {
+    LIVE.on = false;
+    if (LIVE.id) { try { bridge().unsubscribeSSE(LIVE.id); } catch (e) { /* 已经断了 */ } LIVE.id = null; }
+    if (LIVE.timer) { return; }
+    var wait = Math.min(30000, 2000 * Math.pow(2, LIVE.retry++));
+    LIVE.timer = setTimeout(function () { LIVE.timer = null; liveStart(); }, wait);
+    if (!document.hidden) { pollTick(); }
+  }
+  function liveGot(m) {
+    LIVE.last = Date.now();
+    var type = m && m.eventType, data = (m && m.parsed) || {};
+    if (type === "hello") {
+      LIVE.on = true;
+      LIVE.retry = 0;
+      // 头一回连上时首屏刚读完；断了重连的，断着那阵子可能漏了，正在看的这页整个重读
+      liveRefresh(LIVE.opened ? ["conv", "world", "things", "pools", "ledger", "requests"] : ["conv"]);
+      LIVE.opened = true;
+      return;
+    }
+    if (type !== "change") { return; }
+    (data.runs || []).forEach(worldRunDone);
+    liveRefresh(data.topics || []);
+  }
+  setInterval(function () {
+    if (LIVE.id && Date.now() - LIVE.last > LIVE_DEAD_MS) { liveLost(); }
+  }, 10000);
+
+  function liveRefresh(topics) {
+    topics.forEach(function (t) {
+      LIVE.pending[t] = true;
+      if (t !== "conv" && t !== "requests") { LIVE.side = true; }
+    });
+    liveFlush();
+  }
+  // 只刷新正在看的那一页；正忙着读、或者有改了没存的编辑框，过一会儿再试；别的页打开时本来就会重读，记下的直接丢掉
+  function liveFlush() {
+    clearTimeout(LIVE.flushT);
+    if (document.hidden) { return; }
+    var p = LIVE.pending, later = false;
+    function drop() { Array.prototype.forEach.call(arguments, function (t) { delete p[t]; }); }
+    if (p.conv || p.requests) {
+      if (S.view !== "conv") { drop("conv", "requests"); }
+      else { drop("conv", "requests"); pollTick(); }
+    }
+    if (p.world || p.things) {
+      if (S.view === "world") {
+        if (worldEditing() || S.worldLoading) { later = true; } else { drop("world", "things"); loadWorld(true); }
+      } else if (S.view === "things") {
+        if (Object.keys(S.tEdit).length || S.thingsLoading) { later = true; } else { drop("world", "things"); loadThings(true); }
+      } else { drop("world", "things"); }
+    }
+    if (p.pools) {
+      if (S.view !== "pool") { drop("pools"); } else if (S.poolsLoading) { later = true; } else { drop("pools"); loadPools(true); }
+    }
+    if (p.ledger) {
+      if (S.view !== "ledger") { drop("ledger"); } else if (S.ledgerLoading) { later = true; } else { drop("ledger"); loadLedger(true); }
+    }
+    if (LIVE.side) { LIVE.side = false; loadSide(); }
+    if (later) { LIVE.flushT = setTimeout(liveFlush, 1500); }
+  }
 
 
   /* ================= 启动 ================= */
@@ -6861,6 +6969,7 @@
       (d.bots || []).forEach(function (x) { S.labels[x.id] = x.label; });
       renderSide();
       showView();
+      liveStart();
       if (!list.length) { renderStream(); return; }
       var saved = store.get("cid", "");
       var has = list.some(function (c) { return c.cid === saved; });
