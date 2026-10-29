@@ -73,7 +73,7 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
 1. 只记原文里明确说了的。时间没说的，用那条消息的时间；说不清就先不记。不许记晚于「现在」的事。
 2. 条目里的 start / end 一律写成完整的 "YYYY-MM-DD HH:MM"，**日期必须照抄对话原文里的日期**，不许只写时分、也不许自己推成别的日子。
 3. 主人说他自己的事（去了哪、在干什么），记成一条 who = "master" 的条目。他说还在外面、还没回来、还得一会才回去，也是他这会儿的情况，照样记一条（人在外面、还没回宿舍），要回来那件事另记打算。他的反问、抱怨、随口一问（例如「你知道我几点回来？」）不是他的安排，不记。主人说他自己**之后**要干什么（明天有课、晚上要去图书馆、晚饭后陪她去夜市），不记成条目，记成 who = "master" 的打算（intentions）：text 写清楚他要去做什么、在哪、跟谁，date 写哪天，window 写钟点（说了才写）；要带上她一起去的，她那边另记一条 with 是 ["master"] 的打算。主人的打算过了那天程序会自己撤；他说不去了、改了主意的，照常按编号撤（第 14 条）。
-4. 主人给她定的、往后一直管着她的规矩（不许做什么、往后都要怎么做），记成 constraints（约束）：到期或主人撤了才解除。text 只写主人自己说出口的话；她回话里自己添上的、答应时顺嘴加的，都不是主人的规矩，不写进去。主人叫她去做一件做完就了结的事，不是规矩：叫她过会儿再去做的，按第 6 条记成打算；叫她现在就去做的，按第 5 条办（答应了还没做上的记成 now 的打算）。约束的 since 填主人说这句话的那条消息的时间；主人说了期限的要换算成 until_time（"这几天"按三天算、"今晚"到当天 23:59、"明天之前"到明天 0:00），只说了条件的写进 until。新规矩不要写编号，编号由程序分配。
+4. 主人给她定的、往后一直管着她的规矩（不许做什么、往后都要怎么做），记成 constraints（约束）：到期或主人撤了才解除。text 只写主人自己说出口的话；她回话里自己添上的、答应时顺嘴加的，都不是主人的规矩，不写进去。主人叫她去做一件做完就了结的事，不是规矩：叫她过会儿再去做的，按第 6 条记成打算；叫她现在就去做的，按第 5 条办（答应了还没做上的记成 now 的打算）。主人的原话是反问、反话的（例如罚站时说「一边站着一边干别的也叫站着？」），text 写成直说的意思（「站着的时候不许干别的」），不添主人没说的。约束的 since 填主人说这句话的那条消息的时间；主人说了期限的要换算成 until_time（"这几天"按三天算、"今晚"到当天 23:59、"明天之前"到明天 0:00），只说了条件的写进 until。新规矩不要写编号，编号由程序分配。
 5. 你只记**现在和过去**：已经发生了的、这会儿正在发生的。还没发生的（将来）交给补写去排，你不排。她的条目分两种，写在 kind 里：
    - "activity"：她说她已经开始做另一件事、已经换了地方、已经把手上的事放下去干别的了。一条只写一件事，她说了接连做了几件的，按先后拆成几条首尾相接。end 写这件事按常理预计做完的时刻（晚于 start）；她说已经做完的，end 写做完的那一刻。主人叫她做的事、她说已经在做了的，再写 asked: true（做完了程序会叫她回来跟主人说一声）。
    - 她答应现在就去做一件事、可还没做上（主人叫她去买、去做饭、去看看，她答应了；或者她自己说「这就回去给主人做饭」）：那件事是将来，不记成她在做那件事的条目，记成一条打算（第 6 条，写 now: true），到了以后怎么做由补写来排。你要记的是现在：她从手上那件怎么自然地接下去。不管她在哪、在做什么，都不可能上一刻还在做这件、下一刻就在做那件（手上本来闲着的除外）：
@@ -90,7 +90,7 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
 8. 每条条目写两层：public 是住在一起的人自然会知道的粗粒度信息（人在哪、大概在干哪类事，例如"在藏经阁闭关练功"、"出门吃饭了"），可以为空表示别人完全不知道；doing 是细节，可以写具体在干什么、聊了什么。
 9. seen_by 写"谁能看到细节"：当事人自己不用写；当时在场的人、以及这段话本来是在哪段私聊里说的，写进去。
 10. 这段时间里发生的事都要记下来（她开始做什么、去了哪、什么时候、主人交代了什么要紧的话），不要只挑一两件；纯寒暄、一句话的应答、边干活边聊天都不用记，同一件事连着说的几句合成一条。
-11. 上面「生效中的约束」里，已经不该再管着她的，把编号填进 lift_constraints：到期条件已经达成的；主人撤销或放宽了的；后来发生的事已经和它对不上的（例如被赶出去、禁足之后主人又叫她回来、原谅了她；说好"这几天"的那几天已经过了）；因为某件事才定的规矩，那件事结束了也跟着撤（两个人的都算）。拿不准就不动。
+11. 上面「生效中的约束」里，已经不该再管着她的，把编号填进 lift_constraints：到期条件已经达成的；主人撤销或放宽了的；后来发生的事已经和它对不上的（例如被赶出去、禁足之后主人又叫她回来、原谅了她；说好"这几天"的那几天已经过了）；因为某件事才定的规矩，那件事结束了也跟着撤（两个人的都算）。这些不算撤：主人试探她、说气话反话（罚着的时候说「那你走吧」「你直接走吧」「可以不凶你了」，是看她走不走，不是放她）；夸一句「态度还不错」「可以」；主人在原来那条上又补了一句要求（罚站时又说「好好站着」「站着不许干别的」），那是给那条添了要求，原来那条照旧留着，补的要求另记一条。要撤得是主人明说了不用再这样了（「进来吧」「不用站了」「不罚了」「去做别的吧」）。拿不准就不动。
 12. 条目里如果是在练「在练的事」里的某件，training 填它的编号，例如 "#2"；不是在练就留空。trainings 里 update / done / drop 的 id 也填这个编号。
 13. 她在回答、解释、回忆以前的事（昨天、早上、刚才已经说过的）时，那件事不是这会儿发生的：不要按这条消息的时间再记一条；下面「今天已经记了的」里有的别重复记。确实没记过、要补的，时间写成那件事实际发生的时候。
 14. 上面列的「打算」里（每条前面有编号，比如 i3），已经做完的、或者后来的事已经和它对不上的（例如说好在社务所等，后来人已经回了宿舍），把那几条的编号填进 drop_intentions（只撤这几条，别的留着）；这次又说了新打算的，照常写进 intentions；她之前说过、还没做完也没对不上的，不用重写。
@@ -101,7 +101,7 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
     - 交给：交给另一个人接着做；to 写交给谁（napcat / napcat2），doing 写那个人接着做什么，minutes 写交接用几分钟。
     - 放下：随时能停的事（看书、坐着、闲聊），或者还没开始的，直接放下。
     - 没做：其实压根没做（她只是嘴上答应了，后面一直在聊别的、改了主意），整段撤掉；她那段时间实际在干什么，照第 5 条另记一条（时间写实际的）。
-    - 接着做：清单里标着「和她一起」的另一个人那段，她走了以后对方一个人接着做；doing 写对方一个人接着做什么。
+    - 接着做：清单里标着「和她一起」的另一个人那段，她走了以后对方一个人接着做；doing 写对方一个人接着做什么，result 写对方一个人做完是什么样（只写对方这一个人，走了的那个不写进去）。
     她接下去的那段（往那边去的路上，或者她说已经做上了的新的那件），从收尾、做完、交接完的时候才开始（start 照常写那条消息的时间，程序会往后挪）。和她一起做这件事的另一个人那段（清单里标着「和她一起」），也写进 stale，按上面挑一样（多半是接着做、放下，或者被交给的那个人接手）。只写对不上的；照样做得了、不受影响的不写。还没开始的段不用写进 stale：谁的现在被你改了，程序会把她后面补写排的段全撤掉，由补写按新的情况从头排。
 17. 对话原文里标着「（主动发的）」的，是她自己主动发给主人的消息，不是在回主人的话：里面说的打算、提议、规矩一概不记（不写 intentions，也不写 constraints）；里面说她做了什么、在做什么，照常按第 5 条记。
 18. 吃的（家里的存货）：买回来的、收到的、做好的吃的，每件一个编号，从有了那一刻起每一步都记进 things。只记聊天里说已经发生了的：「待会去买」「明天做」不记；世界线里写着、聊天里没说的不记（那些程序会按世界线自己算进清单）。标「（主动发的）」的消息里说已经买了、做了、吃了的，也照记（这一条和第 17 条不一样）。
@@ -778,10 +778,15 @@ class Recorder:
         self._pair_up(records, umo, now)
 
     def _apply_constraints(self, data: dict, umo: str, now: datetime.datetime, batch: list) -> None:
+        """记新规矩、撤规矩。谁的规矩变了，两个人后面补写排的、还没开始的段都撤掉，由补写按新规矩重排
+        （不然已经排好的段照旧走，比如罚站「什么都不许干」定下以后，之前排好的一起吃午饭照样开吃；
+        另一个人排的段也会牵着她，比如丛雨排着「把午饭端到门口，招呼亚托莉一块吃」，补写就顺着给她排上一起吃）。"""
+        changed = False
+        flat = now.replace(tzinfo=None, second=0, microsecond=0)
         for raw in data.get("constraints") or []:
             if not isinstance(raw, dict):
                 continue
-            self.world.add_constraint({
+            added = self.world.add_constraint({
                 "who": raw.get("who"),
                 "text": raw.get("text"),
                 "public": raw.get("public"),
@@ -796,8 +801,20 @@ class Recorder:
                 "source": "chat",
                 "src_umo": umo,
             })
+            if added:
+                logger.info("[super_enhance/world] 记录员记了%s的规矩 %s：%s", self.label(added["who"]) or added["who"],
+                            added["id"], clean_text(added["text"], 40))
+                changed = changed or added["who"] in set(self.raw_log.enabled_bots())
+        rules = {str(x.get("id")): x for x in self.world.constraints() or []} if data.get("lift_constraints") else {}
         for cid in data.get("lift_constraints") or []:
-            self.world.lift_constraint(str(cid), note="对话里解除")
+            if self.world.lift_constraint(str(cid), note="对话里解除"):
+                old = rules.get(str(cid)) or {}
+                logger.info("[super_enhance/world] 记录员撤了%s的规矩 %s：%s", self.label(old.get("who")) or old.get("who"), cid,
+                            clean_text(old.get("text"), 40))
+                changed = changed or str(old.get("who") or "") in set(self.raw_log.enabled_bots())
+        if changed:
+            for bot in self.raw_log.enabled_bots():
+                self._touch(bot, flat)
 
     def _apply_intentions(self, data: dict, umo: str, now: datetime.datetime, bots: set,
                           flat_now: datetime.datetime) -> None:
@@ -1262,9 +1279,13 @@ class Recorder:
                 was_with = list(entry.get("with") or [])
                 together = [x for x in was_with if x not in bots]  # 一起的另一个人走了：只留主人
                 fields = {"with": together}
-                if str(raw.get("doing") or "").strip():
-                    fields["doing"] = clean_text(raw.get("doing"), 120)
-                self.world.update(date_text, entry_id, **fields)
+                alone = clean_text(raw.get("doing"), 120)
+                if alone:
+                    fields["doing"] = alone
+                    fields.update(self._alone_steps(entry, alone, start, end, flat))
+                # 结果原来是按两个人写的：换成记录员写的一个人的；没写就清掉，别留着两个人的说法
+                fields["result"] = clean_text(raw.get("result"), 80)
+                self.world.update(date_text, entry_id, mode="patch", **fields)
                 # 走了的那个人段里没做到的那几步标的吃的、东西（两人一起的饭常只标在一个人那段里）：跟到这段上，她做完就算
                 moved = []
                 for leaver, tags in orphans:
@@ -1328,6 +1349,23 @@ class Recorder:
                     left |= {str(x.get("new")) for x in tags if x.get("new")}
             self._follow_up(who, entry, after, flat, why, only=left)
         return free_at
+
+    @staticmethod
+    def _alone_steps(entry: dict, alone: str, start, end, flat: datetime.datetime) -> dict:
+        """一起做的另一个人走了、这个人一个人接着做：分步里她走之前做到的那几步留着（那会儿确实两个人一起），
+        后面的换成一步「一个人接着做的事」，占剩下的时间；还没开始就整段换成这一步。标的吃的写的第几步跟着落在这一步上。"""
+        if end is None or end <= flat:
+            return {}
+        if start is None or start >= flat:
+            total = max(1, int(round((end - (start or flat)).total_seconds() / 60)))
+            return {"steps": [alone], "step_minutes": [total], "steps_planned": None}
+        cut = wind_up(entry, flat, "放下")
+        done, mins = list(cut.get("steps") or []), list(cut.get("step_minutes") or [])
+        left = max(1, int(round((end - flat).total_seconds() / 60)))
+        if not done or len(mins) != len(done):
+            return {"steps": [alone], "step_minutes": [max(1, int(round((end - start).total_seconds() / 60)))],
+                    "steps_planned": None}
+        return {"steps": done + [alone], "step_minutes": mins + [left], "steps_planned": None}
 
     def _hand_over(self, who: str, after: dict, rest: list, raw: dict, now: datetime.datetime) -> None:
         """交给另一个人接着做：那个人从交接完的时候起接着做没做完的那截（剩下的分步、要用到 / 做出来的吃的跟过去）。"""
