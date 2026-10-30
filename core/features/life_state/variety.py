@@ -17,6 +17,7 @@ import re
 from pathlib import Path
 
 from ...common import jsonio
+from .menu import draw_meals
 
 WEATHER_BY_SEASON = {
     "spring": ("晴", "多云", "春雨绵绵", "起风", "阴天", "回暖的大晴天"),
@@ -666,13 +667,15 @@ def draw_seed(
     prev_weather: str = "",
     rng: random.Random | None = None,
     pools: dict | None = None,
+    meals_rng: random.Random | None = None,
 ) -> dict:
-    """抽当天的随机起点：天气（接着昨天变）、基调、小插曲、每人的心情、偶尔一个意外。
+    """抽当天的随机起点：天气（接着昨天变）、基调、小插曲、每人的心情、偶尔一个意外，还有今天的饭（``menu.draw_meals``）。
 
     labels 是 {机器人: 角色名}，每人各抽一个心情（不防重复）、各抽一份插曲和消遣（按她在池子里的权重）；
     两人一起的插曲当天一份。history 是以前每天抽到的（``SeedLog.load()``），用来防重复：
     插曲和消遣按这个人隔了几天没抽到打折（``cool_factor``，同组算一条；消遣按 ``PASTIME_COOLDOWN``，轻得多）；
     昨天的基调今天不再抽，30 天内碰过的意外不再碰。pools 是网页改过的池子（``PoolStore.load()``），不给用默认的。
+    饭用另一个随机数（meals_rng，不给就新开一个），不动 rng 原来的抽法（网页「明天抽中」按固定 rng 模拟）。
     """
     rng = rng or random.Random()
     history = history or {}
@@ -731,6 +734,7 @@ def draw_seed(
         "accident": accident,
         "when": {t: w for t, w in when_map(pools).items()
                  if any(t in items for items in (*twists.values(), *night_twists.values(), together))},
+        "meals": draw_meals(date_text, history, meals_rng or random.Random()),
     }
 
 class SeedLog:

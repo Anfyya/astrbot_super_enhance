@@ -19,6 +19,7 @@ from .models import profile_umo_for_bot
 from .recorder import norm_time
 from .things import (CAT_ITEM, END_STEPS, ITEM_END_STEPS, ITEM_MID_STEPS, ITEM_START_STEPS, KEEPS, KINDS, MEASURED_KINDS, MID_STEPS,
                      SPOTS, START_STEPS, checked_place, had_before, norm_kind, norm_state, norm_step, split_keep, step_no)
+from .menu import meal_slots, meals_text
 from .variety import default_pools, twists_of, when_map, with_when
 from .world import (WorldStore, clean_text, doing_text, fmt_time, is_event, is_sleep, parse_steps, parse_time, progress_of, real_stop, result_text,
                     steps_text)
@@ -344,6 +345,9 @@ class LifeStep:
                 "- 今天会碰上一件意外：%s。上面今天的条目里还没有的话，挑个合适的时段写进去，当天能收场；"
                 "已经写过就别再写。" % seed["accident"]
             )
+        meals = meals_text(seed.get("meals"))
+        if meals:
+            lines.append(meals)
         return "\n".join(lines)
 
     def training_id(self, value, bot: str) -> str:
@@ -662,6 +666,8 @@ class LifeStep:
                 lines.append("- %s：还没有作息骨架" % (self.label(bot) or bot))
                 continue
             meals = "、".join(base.get("meals") or []) or "（没定）"
+            # 今天的种子抽了吃哪几顿，就只写那几顿（老种子没抽，照旧写三餐时段）
+            today = meal_slots((self._seed_for(now.date().isoformat()) or {}).get("meals"), list(base.get("meals") or []))
             sleep = "今天定的 %s" % (plan.get("sleep") or "?")
             wake_at = parse_time("%s %s" % (now.date().isoformat(), plan.get("wake"))) if plan.get("wake") else None
             if wake_at is not None and now.replace(tzinfo=None) < wake_at:
@@ -669,7 +675,7 @@ class LifeStep:
                 last = self.world.day_plan(bot, (now.date() - datetime.timedelta(days=1)).isoformat())
                 sleep = "昨晚定的 %s；现在是夜里，还没到今天定的起床时刻" % (last.get("sleep") or "?")
             lines.append(
-                "- %s：起床 %s（今天定的 %s，明天定的 %s）、入睡 %s（%s）、平时三餐在这几个时间段里：%s%s"
+                "- %s：起床 %s（今天定的 %s，明天定的 %s）、入睡 %s（%s）、%s%s"
                 % (
                     self.label(bot) or bot,
                     base.get("wake") or "?",
@@ -677,7 +683,7 @@ class LifeStep:
                     tomorrow.get("wake") or "?",
                     base.get("sleep") or "?",
                     sleep,
-                    meals,
+                    today or "平时三餐在这几个时间段里：%s" % meals,
                     "；备注：%s" % base["notes"] if base.get("notes") else "",
                 )
             )
