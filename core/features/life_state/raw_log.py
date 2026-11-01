@@ -20,7 +20,7 @@ from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.platform.message_type import MessageType
 
 from ...common import history_io, timeutil
-from ...common.bots import BotRegistry
+from ...common.bots import BotRegistry, platform_of
 from ...common.text import clean_message, text_of, time_of
 from .proactive import is_proactive_event
 
@@ -317,6 +317,45 @@ def recent_messages(service, umo: str) -> list[dict]:
                 items.append(item)
     items.sort(key=lambda item: item.get("ts") or 0)
     return items
+
+# 主人在别的机器人那边连着说的话：前后隔不到这么久算同一段聊天（分钟）
+ELSEWHERE_GAP_MINUTES = 30
+# 那段聊天最后一句离现在超过这么久就不提了（分钟）
+ELSEWHERE_RECENT_MINUTES = 180
+
+
+def master_chats_elsewhere(service, bot: str, now: datetime.datetime) -> list[tuple[str, float, float]]:
+    """主人最近在别的机器人那边的那段聊天：[(那个机器人, 第一句时刻, 最后一句时刻)]，只看主人说的话、只给时刻。
+
+    会话照配置里的名单（主人和各个机器人的私聊）；同一个机器人只取最近的那段。
+    """
+    now_ts = now.timestamp()
+    out = []
+    for umo in service.raw_log.target_sessions():
+        other = platform_of(umo)
+        if not other or other == platform_of(bot):
+            continue
+        said = []
+        for item in recent_messages(service, umo):
+            try:
+                ts = float(item.get("ts") or 0.0)
+            except Exception:
+                continue
+            if item.get("role") == "user" and 0 < ts <= now_ts:
+                said.append(ts)
+        if not said:
+            continue
+        last = first = said[-1]
+        for ts in reversed(said[:-1]):
+            if first - ts > ELSEWHERE_GAP_MINUTES * 60:
+                break
+            first = ts
+        if now_ts - last <= ELSEWHERE_RECENT_MINUTES * 60:
+            out = [x for x in out if x[0] != other or x[2] > last]
+            if not any(x[0] == other for x in out):
+                out.append((other, first, last))
+    return out
+
 
 def record_incoming(service, event) -> None:
     """记录用户发来的原始消息。"""

@@ -337,6 +337,13 @@ class WorldStore:
                 logger.info("[super_enhance/world] %s 在睡觉（%s 起），%s 的「%s」记成顺带，不截睡觉",
                             who, str(bed.get("start"))[11:16], fmt_time(start)[11:], clean_text(entry.get("doing"), 30))
                 kind = "event"
+        if kind == "activity" and source != "manual" and who == "master" and end is None \
+                and not str(entry.get("place") or "").strip():
+            # 主人没说在哪、也没个结束，只是一句「吃完了」「到了」「好了」：是一刻的事，记成顺带，
+            # 不然会当成他一直在做，挂着几个钟头（2026-11-01「吃完了」13:04 起挂到 16:43）
+            logger.info("[super_enhance/world] 主人 %s 的「%s」没地点也没结束，记成顺带",
+                        fmt_time(start)[11:], clean_text(entry.get("doing"), 30))
+            kind = "event"
         if kind == "event":
             end = None
         day = self._load_day(date_text)
