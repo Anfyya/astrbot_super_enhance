@@ -1030,7 +1030,7 @@ class ProactivePlanner:
                 head,
                 "%s，" % done["place"] if done.get("place") and done["place"] not in str(done.get("doing") or "") else "",
                 done.get("doing") or "",
-                str(done.get("start") or "")[11:16],
+                timeutil.day_hm(done.get("start")),
                 "这之前刚做完：%s。" % done["prev"] if done.get("prev") else "",
             )
         if kind == "asked":
@@ -1039,8 +1039,8 @@ class ProactivePlanner:
                 "%s，" % done["place"] if done.get("place") and done["place"] not in str(done.get("doing") or "") else "",
                 done.get("doing") or "",
                 "，结果：%s" % done["result"] if done.get("result") else "",
-                str(done.get("start") or "")[11:16],
-                str(done.get("end") or "")[11:16],
+                timeutil.day_hm(done.get("start")),
+                timeutil.day_hm(done.get("end")),
             )
         if kind == "intent":
             done = meta.get("done") or {}
@@ -1048,8 +1048,8 @@ class ProactivePlanner:
                 "%s，" % done["place"] if done.get("place") and done["place"] not in str(done.get("doing") or "") else "",
                 done.get("doing") or "",
                 "，结果：%s" % done["result"] if done.get("result") else "",
-                str(done.get("start") or "")[11:16],
-                str(done.get("end") or "")[11:16],
+                timeutil.day_hm(done.get("start")),
+                timeutil.day_hm(done.get("end")),
             )
         if kind == "done":
             done = meta.get("done") or {}
@@ -1057,8 +1057,8 @@ class ProactivePlanner:
                 "%s，" % done["place"] if done.get("place") and done["place"] not in str(done.get("doing") or "") else "",
                 done.get("doing") or "",
                 "，结果：%s" % done["result"] if done.get("result") else "",
-                str(done.get("start") or "")[11:16],
-                str(done.get("end") or "")[11:16],
+                timeutil.day_hm(done.get("start")),
+                timeutil.day_hm(done.get("end")),
             )
         if kind == "training":
             training = meta.get("training") or {}
@@ -1104,7 +1104,7 @@ class ProactivePlanner:
             lines.append("")
             lines.append("你今天主动发过的话：")
             for moment, text, replied in sent:
-                lines.append("- %s %s%s" % (moment.strftime("%H:%M"), text, "" if replied else "（主人还没回）"))
+                lines.append("- %s %s%s" % (timeutil.day_hm(moment), text, "" if replied else "（主人还没回）"))
         lines.append("")
         if kind in MUST_SEND:
             lines.append("调用 send_message_to_user 发出去（这次是约定到点、刚练成或打算做完，必须发，除非主人定的规矩不许）。")

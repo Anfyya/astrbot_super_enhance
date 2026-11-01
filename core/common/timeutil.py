@@ -90,6 +90,15 @@ def hm(moment: datetime.datetime) -> str:
     return moment.strftime("%H:%M")
 
 
+def day_hm(value) -> str:
+    """给模型看的时刻一律带日期：``10-31 13:40``（不用「昨天」「今天」这类说法）。
+    收 datetime 或 ``YYYY-MM-DD HH:MM`` 字符串；认不出原样返回。"""
+    if isinstance(value, datetime.datetime):
+        return value.strftime("%m-%d %H:%M")
+    text = str(value or "").strip().replace("T", " ")
+    return text[5:16] if len(text) >= 16 else text
+
+
 def local_stamp(ts: float | None = None, tz: ZoneInfo | None = None) -> str:
     moment = datetime.datetime.fromtimestamp(time.time() if ts is None else ts, tz or zone())
     return "%s, Weekday: %s" % (moment.strftime("%Y-%m-%d %H:%M (%Z)"), WEEKDAYS_EN[moment.weekday()])

@@ -359,10 +359,8 @@ def part_of_day(moment: datetime.datetime) -> str:
 
 
 def when_text(moment: datetime.datetime, now: datetime.datetime) -> str:
-    """「今天下午」「明天早上」「10-21 晚上」。"""
-    diff = (moment.date() - now.date()).days
-    day = {0: "今天", 1: "明天", 2: "后天", -1: "昨天", -2: "前天"}.get(diff, moment.strftime("%m-%d") + " ")
-    return day + part_of_day(moment)
+    """「10-21 晚上」：一律写日期，不说今天明天（now 留着兼容老调用）。"""
+    return moment.strftime("%m-%d") + " " + part_of_day(moment)
 
 
 def staple_of(item: dict) -> tuple | None:
