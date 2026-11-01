@@ -94,7 +94,7 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
 12. 条目里如果是在练「在练的事」里的某件，training 填它的编号，例如 "#2"；不是在练就留空。trainings 里 update / done / drop 的 id 也填这个编号。
 13. 她在回答、解释、回忆以前的事（昨天、早上、刚才已经说过的）时，那件事不是这会儿发生的：不要按这条消息的时间再记一条；下面「今天已经记了的」里有的别重复记。确实没记过、要补的，时间写成那件事实际发生的时候。
 14. 上面列的「打算」里（每条前面有编号，比如 i3），已经做完的、或者后来的事已经和它对不上的（例如说好在社务所等，后来人已经回了宿舍），把那几条的编号填进 drop_intentions（只撤这几条，别的留着）；这次又说了新打算的，照常写进 intentions；她之前说过、还没做完也没对不上的，不用重写。
-15. 她把「今天的简略世界线」里标着「还没到」的某件事，说成已经做了、或者正在做：这件事不记成条目，也不要为它改别的条目，写进 early：who、entry（那段的编号）、said（她原话里说的那句）。只算那份清单里标了「还没到」的事；清单里没有的、已经做过或正在做的事，照上面的规则记（那件事前面已经做过一截、现在只是「接着」往下做的，不算说早了）。她说的是「待会儿去」「打算做」，不算，不写 early。
+15. 她说「今天的简略世界线」里标着「还没到」的某件事已经做了、或者正在做：以聊天为准，照第 5 条记成她做了 / 在做那件事（时间写她说这话的那条消息的时间）；清单里排在后面的那段不用管，程序会撤掉重排。她说的是「待会儿去」「打算做」，照第 6 条记打算。
 16. 「今天的简略世界线」里补写排的、主人让做的、你之前从聊天里记的（标着「正在做」「还没到」的都算），都是按当时的情况写的。这段对话里说的事让其中某几段对不上了的（例如主人说他回来了、出门了，主人说那件事先不做了，她答应了这会儿去做别的，人换了地方，那段写的事已经做过了，另一个人那段跟她有关的事跟着变了），把对不上的那几段写进 stale：who、entry（编号）、why（一句话写为什么不照原样做了，用她那边发生的事来说，例如「主人叫她去街上看看有什么硬菜」），再写 how：这件事怎么收场。照常人的做法想，手上正做着扔不下的事，不会撂下就走：
     - 做完：快做完了，先把它做完再去；minutes 写还要几分钟。
     - 收尾：手上的事扔不下（灶上炒着菜、锅里煮着东西、手里端着东西），先收个尾再走；wrap 写收尾做了什么（例如「关火，把炒了一半的饭盛出来扣好」），minutes 写几分钟；result 写放下时那件事是什么样（例如「饭炒到一半，盛在盘里扣着」）。这件事算没做完。
@@ -135,7 +135,6 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
                  {{"who": "napcat2", "text": "去镇上鱼摊买两条黑鱼回来，晚上做水煮鱼（16:40 主人说想吃水煮鱼，她答应这就去买）", "now": true, "since": "2026-10-17 16:40", "window": "", "date": "", "with": []}},
                  {{"who": "master", "text": "去鹈茅学院上课（23:03 睡前他说明天还有课）", "window": "", "date": "2026-10-18", "with": []}}],
   "drop_intentions": ["i3"],
-  "early": [{{"who": "napcat2", "entry": "e88", "said": "衣裳收进屋叠好了"}}],
   "stale": [{{"who": "napcat2", "entry": "e100", "why": "主人叫她去街上看看有什么硬菜", "how": "收尾", "wrap": "关火，把炒了一半的饭盛出来扣好", "minutes": 2, "result": "饭炒到一半，盛在盘里扣着", "to": "", "doing": ""}}],
   "things": [
     {{"new": "n1", "name": "嫩豆腐", "kind": "鲜水豆腐", "origin": "主人在商店街豆腐店买的", "from": [],
@@ -215,7 +214,6 @@ class RecorderBatch:
 
     touched: dict[str, datetime.datetime] = field(default_factory=dict)
     mentioned: set[str] = field(default_factory=set)
-    keep: set[str] = field(default_factory=set)
     fresh: set[str] = field(default_factory=set)
     free_at: dict[str, datetime.datetime] = field(default_factory=dict)
 
@@ -232,10 +230,6 @@ class Recorder:
         self._now = now_fn
         self.tz = tz
         self._running: set[str] = set()
-        # 她把日程里后面才做的事说早了：async (bot, umo, entry, said, now)，由 service 接上去叫她改口
-        self.on_early = None
-        self._early: list = []
-        self._early_seen: set[str] = set()
 
     # ---------- 配置 ----------
 
@@ -469,18 +463,6 @@ class Recorder:
         return ("家里的吃的（存货，按第 18 条记；每件前面是程序发的编号）：\n" + store.food_list(flat, shelf, self.label)
                 + "\n\n家里的东西（吃的以外，按第 19 条记；每件前面是程序发的编号）：\n" + store.item_list(flat, shelf, self.label))
 
-    def _since(self, items, now: datetime.datetime) -> datetime.datetime:
-        """这批消息里最早那条的时刻（不带时区的本地时间）；拿不到就用现在。"""
-        stamps = []
-        for item in items or []:
-            try:
-                stamps.append(float(item.get("ts")))
-            except Exception:
-                pass
-        if not stamps:
-            return now.replace(tzinfo=None)
-        return datetime.datetime.fromtimestamp(min(stamps), self.tz).replace(tzinfo=None)
-
     @property
     def world_notes(self) -> str:
         """配置里写的故事固定事实（藏经阁在哪、门关不关这类），一行一条。"""
@@ -550,7 +532,6 @@ class Recorder:
             self.world.set_cursor(umo, last_ts, _digest(last.get("text")))
             self.world.clear_error("recorder")
             logger.info("[super_enhance/world] 记录员处理了 %d 条（%s）", len(items), umo)
-            await self._flush_early(moment)
             return True
         except Exception as e:
             logger.error("[super_enhance/world] 记录员失败：%s", e)
@@ -682,12 +663,9 @@ class Recorder:
         batch = list(items or [])
         flat_now = now.replace(tzinfo=None)
         bots = set(self.raw_log.enabled_bots())
-        state = self.batch = RecorderBatch(
-            keep={str(x.get("entry") or "").strip() for x in data.get("early") or [] if isinstance(x, dict)}
-        )
+        state = self.batch = RecorderBatch()
         # 先定对不上的那几段怎么收场（收尾、做完、交接要几分钟），再记这次的新条目：免得新条目先把手上的事一刀截断
-        self._collect_early(data.get("early") or [], umo, items, now)
-        state.free_at = self._apply_stale(data.get("stale") or [], data.get("early") or [], now)
+        state.free_at = self._apply_stale(data.get("stale") or [], now)
         self._apply_entries(data.get("entries") or [], umo, now, items, bots, state.free_at, flat_now)
         if batch and not any(str(x.get("role") or "") == "user" for x in batch):
             # 这批全是她主动发的、主人一句没说：规矩和打算都不可能从这里来（主动消息里的不记）
@@ -852,49 +830,6 @@ class Recorder:
                 else:
                     self._make_room(record, now)
 
-    def _collect_early(self, raws, umo: str, items, now: datetime.datetime) -> None:
-        """记录员标出的「说早了」：核对那段确实在这批消息之后才排着，攒起来等 run 里叫她改口。"""
-        since = self._since(items, now)
-        bots = set(self.raw_log.enabled_bots())
-        for raw in raws:
-            if not isinstance(raw, dict):
-                continue
-            who = str(raw.get("who") or "").strip()
-            entry_id = str(raw.get("entry") or "").strip()
-            if who not in bots or not entry_id or entry_id in self._early_seen:
-                continue
-            date_text = self.world.date_of(entry_id, who, since)
-            entry = next((x for x in self.world.entries(date_text, who) if str(x.get("id")) == entry_id), None) if date_text else None
-            start = parse_time(entry.get("start")) if entry else None
-            if entry is None or start is None or start <= since:
-                logger.info("[super_enhance/world] 记录员说%s说早了 %s，对不上日程，不管", who, entry_id)
-                continue
-            if str(entry.get("source") or "") != "step":
-                # 对话里记的、她自己用 start_doing 写的，都是她说了才有的，谈不上说早了
-                logger.info("[super_enhance/world] 记录员说%s说早了 %s，但那段不是补写排的，不管", who, entry_id)
-                continue
-            said_at = self._said_at(items, raw.get("said"))
-            if said_at is not None and said_at >= start:
-                logger.info("[super_enhance/world] 记录员说%s说早了 %s，可那句话是 %s 说的，那段已经开始了，不管",
-                            who, entry_id, said_at.strftime("%H:%M"))
-                continue
-            self._early_seen.add(entry_id)
-            self._early.append((who, umo, dict(entry), clean_text(raw.get("said"), 120)))
-
-    def _said_at(self, items, said) -> datetime.datetime | None:
-        """记录员摘的那句原话是哪条消息说的：那条消息的时刻（不带时区的本地时间）；找不到就 None。"""
-        probe = "".join(str(said or "").split())
-        if len(probe) < 4:
-            return None
-        for item in items or []:
-            text = "".join(str(item.get("text") or "").split())
-            if text and (probe in text or text in probe):
-                try:
-                    return datetime.datetime.fromtimestamp(float(item.get("ts")), self.tz).replace(tzinfo=None)
-                except Exception:
-                    return None
-        return None
-
     def _make_room(self, intention: dict, now: datetime.datetime) -> None:
         """新记了一条带时间段的打算：她那段时间里补写排好的事让开——没开始的撤掉，跨进来的截到打算开始的那一刻；
         对方写着和她一起的那几段也一样。空出来的由补写把打算排进去（顺带上对方）。
@@ -1056,7 +991,7 @@ class Recorder:
         """这次改到了她的现在（记了她现在的事、手上那段收了场、答应了现在就去做）：她 since 以后补写排的段全撤掉，
         由补写按新的情况从头排。另一个人补写排的、写着和她一起的段：还没开始的撤掉，对方从那一段起往后补写排的也撤掉
         （那些是接着两人一起的事排的）；正在做的，她真走了（改完以后她那边不再一直写着和对方一起）只把她去掉、
-        写一句她中途走了，对方照旧接着做。手动写的、聊天里记的、这次刚记的、说早了要留着改口的、已经睡下的觉都不动。"""
+        写一句她中途走了，对方照旧接着做。手动写的、聊天里记的、这次刚记的、已经睡下的觉都不动。"""
         flat = now.replace(tzinfo=None)
         bots = set(self.raw_log.enabled_bots())
         fresh = self.batch.fresh
@@ -1071,7 +1006,7 @@ class Recorder:
                     owner, iid = str(item.get("who") or ""), str(item.get("id") or "")
                     if owner not in bots or str(item.get("source") or "") != "step" or is_event(item):
                         continue
-                    if iid in self.batch.mentioned or iid in self.batch.keep or iid in fresh:
+                    if iid in self.batch.mentioned or iid in fresh:
                         continue
                     start = parse_time(item.get("start"))
                     if start is None or (is_sleep(item) and start <= flat):
@@ -1236,7 +1171,7 @@ class Recorder:
             return "没做"
         return next((v for k, v in cls.HOWS if k in text), "放下")
 
-    def _apply_stale(self, raws, early, now: datetime.datetime) -> dict:
+    def _apply_stale(self, raws, now: datetime.datetime) -> dict:
         """记录员说对不上了的段（补写排的、主人让做的、之前从聊天里记的；手动写的不动），照它定的收场办（how）：
         做完（先做完再走，算做完）、收尾（先关火盛出来这种再走，算没做完）、交给（交给另一个人接着做）、放下（到此刻为止）、
         没做（压根没做，整段撤掉；要是从补写排的那段挪过来的，原来那段恢复）、接着做（一起做的另一个人一个人接着做）。
@@ -1246,8 +1181,6 @@ class Recorder:
         返回 {谁: 什么时候腾出手来}（收尾、做完、交接完的时刻），这次的新条目从那时开始。"""
         flat = now.replace(tzinfo=None)
         bots = set(self.raw_log.enabled_bots())
-        # 同一段又被说成「说早了」的：要叫她改口，那段得留着
-        keep = {str(x.get("entry") or "").strip() for x in early if isinstance(x, dict)}
         mentioned = {str(x.get("entry") or "").strip() for x in raws if isinstance(x, dict)}
         self.batch.mentioned |= mentioned
         free_at, pending, orphans = {}, [], []
@@ -1255,7 +1188,7 @@ class Recorder:
         for raw in [x for x in raws if isinstance(x, dict) and self._how(x) != "接着做"] + later:
             who = str(raw.get("who") or "").strip()
             entry_id = str(raw.get("entry") or "").strip()
-            if who not in bots or not entry_id or entry_id in keep:
+            if who not in bots or not entry_id:
                 continue
             how = self._how(raw)
             why = clean_text(raw.get("why"), 60)
@@ -1470,17 +1403,6 @@ class Recorder:
         if done:
             logger.info("[super_enhance/world] %s的 %s 没做成，靠它的后续段跟着撤：%s（%s）", self.label(who) or who,
                         before.get("id"), "、".join(done), why)
-
-    async def _flush_early(self, now: datetime.datetime) -> None:
-        """攒下的「说早了」逐条交出去叫她改口；出错不影响记录员。"""
-        pending, self._early = self._early, []
-        if self.on_early is None:
-            return
-        for who, umo, entry, said in pending:
-            try:
-                await self.on_early(who, umo, entry, said, now)
-            except Exception:
-                logger.warning("[super_enhance/world] 叫她改口没排上", exc_info=True)
 
     def _apply_promises(self, items, now: datetime.datetime, umo: str = "") -> None:
         book = getattr(self, "promises", None)

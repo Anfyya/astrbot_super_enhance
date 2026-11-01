@@ -107,8 +107,6 @@ class LifeStateService:
         self.recorder.abilities = self.abilities
         # 记录员看到对话里「练成了」也走同一条路：标练成、写进能力清单
         self.recorder.finish_fn = self._finish_training
-        # 她把日程里后面才做的事说早了：叫她给主人改口
-        self.recorder.on_early = functools.partial(loop_mod.on_early, self)
         # 账本里的时间用本地时间（容器系统时区是 UTC）
         set_ledger_timezone(self.timezone)
         self.life_step = LifeStep(

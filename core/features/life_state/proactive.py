@@ -59,7 +59,6 @@ class Kind:
 
 # 并成一条时留哪条、怎么叫她、哪些必须发 / 容易被主人没回挡住，都在一处定。
 KINDS = {
-    "correct": Kind(5, "改口", must_send=True),
     "asked": Kind(5, "接下的事做完"),
     "intent": Kind(5, "打算做完", must_send=True),
     "training": Kind(4, "练成", must_send=True),
@@ -535,35 +534,6 @@ class ProactivePlanner:
                         str(entry.get("doing") or "")[:20], at.strftime("%H:%M:%S"))
         return created
 
-    async def fire_correct(self, bot: str, target: str, entry: dict, said: str,
-                           now: datetime.datetime | None = None) -> bool:
-        """世界线 live：她把日程里后面才做的事说成已经做了 / 正在做，叫她一次改口（必须发）。"""
-        if not self.enabled or target not in self._targets(bot):
-            return False
-        cron = self._cron()
-        if cron is None:
-            return False
-        self.install_gate()
-        real_now = timeutil.now(self.timezone)
-        local_now = max((now or real_now).astimezone(self.timezone), real_now)
-        at = (local_now + datetime.timedelta(seconds=DONE_DELAY_SECONDS)).replace(microsecond=0)
-        meta = {
-            "kind": "correct", "bot": bot, "date": at.date().isoformat(),
-            "minute": at.hour * 60 + at.minute, "postponed": 0,
-            "correct": {
-                "said": clean_line(said, 120),
-                "doing": str(entry.get("doing") or entry.get("place") or ""),
-                "start": str(entry.get("start") or ""),
-                "end": str(entry.get("end") or ""),
-            },
-        }
-        ok = await self._add_job(cron, meta, target, at)
-        if ok:
-            logger.info("[super_enhance/life] [%s] 说早了「%s」（日程 %s 才%s），%s 叫她改口",
-                        bot, clean_line(said, 30), str(entry.get("start") or "")[11:16],
-                        clean_line(entry.get("doing"), 20), at.strftime("%H:%M:%S"))
-        return ok
-
     def _targets(self, bot: str) -> list[str]:
         """该机器人的主动对话目标会话（配置里要填完整 UMO）。"""
         out: list[str] = []
@@ -610,8 +580,6 @@ class ProactivePlanner:
             out["se_training"] = meta["training"]
         if meta.get("done"):
             out["se_done"] = meta["done"]
-        if meta.get("correct"):
-            out["se_correct"] = meta["correct"]
         return out
 
     def _meta_of(self, job, payload: dict) -> dict:
@@ -641,10 +609,8 @@ class ProactivePlanner:
             postponed = 0
         training = payload.get("se_training")
         done = payload.get("se_done")
-        correct = payload.get("se_correct")
         return {
             "done": done if isinstance(done, dict) else None,
-            "correct": correct if isinstance(correct, dict) else None,
             "kind": kind,
             "bot": bot,
             "date": date_text,
@@ -770,11 +736,10 @@ class ProactivePlanner:
                     meta["bot"], label, self._planned_text(meta), TIMELY_STALE_MINUTES,
                 )
                 return None
-            if meta["kind"] == "correct" and not self._correct_pending(meta, timeutil.now(self.timezone)):
-                logger.info(
-                    "[super_enhance/life] [%s] 主动对话（%s，原定 %s）：那件事已经轮到她做了，用不着改口，不发了",
-                    meta["bot"], label, self._planned_text(meta),
-                )
+            if str(payload.get("se_kind") or "") == "correct":
+                # 旧版排的「说早了」改口：这个机制已经去掉，剩下的不发
+                logger.info("[super_enhance/life] [%s] 主动对话（改口，原定 %s）：改口已经不用了，不发了",
+                            meta["bot"], self._planned_text(meta))
                 return None
             quiet = ASKED_QUIET_SECONDS if meta["kind"] in ("asked", "intent") else QUIET_SECONDS
             busy_since = None if meta["kind"] == "manual" else self._busy_since(target, now_ts, quiet)
@@ -1056,26 +1021,8 @@ class ProactivePlanner:
             text += "，主人还没回的主动消息 %d 条" % len(chat["unreplied"])
         return text
 
-    def _correct_pending(self, meta: dict, now: datetime.datetime) -> bool:
-        """改口那件事是不是还没到点（到点了就不用专门改口）。"""
-        start = _parse_iso(str((meta.get("correct") or {}).get("start") or "").replace(" ", "T"), self.timezone)
-        return start is None or now.astimezone(self.timezone) < start
-
     def _kind_line(self, meta: dict, now: datetime.datetime, chat: dict | None) -> str:
         kind = meta.get("kind")
-        if kind == "correct":
-            info = meta.get("correct") or {}
-            if not self._correct_pending(meta, now):
-                return (
-                    "你之前跟主人说「%s」的时候，这件事其实还没做（按安排 %s 才开始）；现在已经轮到了，"
-                    "不用专门改口，照常说就行。" % (info.get("said") or "", str(info.get("start") or "")[11:16])
-                )
-            return (
-                "你刚才跟主人说「%s」，可这件事其实还没做：按安排是 %s–%s 才%s，现在还没到。你说早了。"
-                "马上给主人发一句改口：说清楚其实还没做、什么时候去做；不要找理由，也不要装作没说过。"
-                % (info.get("said") or "", str(info.get("start") or "")[11:16], str(info.get("end") or "")[11:16],
-                   info.get("doing") or "")
-            )
         if kind in ("out", "back", "meal"):
             done = meta.get("done") or {}
             head = {"out": "你刚出了宿舍", "back": "你刚回到宿舍", "meal": "开饭了"}[kind]
@@ -1159,8 +1106,8 @@ class ProactivePlanner:
             for moment, text, replied in sent:
                 lines.append("- %s %s%s" % (moment.strftime("%H:%M"), text, "" if replied else "（主人还没回）"))
         lines.append("")
-        if kind in MUST_SEND and (kind != "correct" or self._correct_pending(meta, now)):
-            lines.append("调用 send_message_to_user 发出去（这次是改口、约定到点、刚练成或打算做完，必须发，除非主人定的规矩不许）。")
+        if kind in MUST_SEND:
+            lines.append("调用 send_message_to_user 发出去（这次是约定到点、刚练成或打算做完，必须发，除非主人定的规矩不许）。")
         else:
             lines.append("要发就调用 send_message_to_user 发出去；不想发就直接结束。")
         extra = str(self.cfg.get("proactive_extra_requirements") or "").strip()

@@ -97,12 +97,6 @@ async def notify_done(service, now: datetime.datetime) -> None:
     await _planner_notify_done(service.planner, service.world, service.enabled_bots(), now, service._meal_notified)
 
 
-async def on_early(service, bot: str, umo: str, entry: dict, said: str, now) -> None:
-    """记录员发现她把日程里后面才做的事说早了：live 下叫她给主人改口。"""
-    if not service.planner.enabled:
-        return
-    await service.planner.fire_correct(bot, umo, entry, said, now)
-
 async def settle_live(service, now: datetime.datetime) -> None:
     """世界线模式：每隔几分钟结一次账，练够时长当场算练成（不用等到 0 点）。"""
     last = getattr(service, "_settle_at", None)
