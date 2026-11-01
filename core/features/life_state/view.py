@@ -8,6 +8,7 @@ import datetime
 from astrbot.api import logger
 
 from ...common import timeutil
+from . import raw_log as raw_log_mod
 from .world import WorldStore, detail_of, doing_text, is_event, parse_time, progress_of, public_of, real_stop, result_text, staged_of, visible_to
 
 WEEKDAYS_CN = timeutil.WEEKDAYS_CN
@@ -147,8 +148,12 @@ def build_world_text(
     now: datetime.datetime,
     label,
     recent: int = 12,
+    elsewhere: list | None = None,
 ) -> str:
-    """拼出【世界线】块；viewer 是当前机器人的平台 id。"""
+    """拼出【世界线】块；viewer 是当前机器人的平台 id。
+
+    elsewhere：主人最近在别的机器人那边的聊天 [(机器人, 第一句时刻, 最后一句时刻)]。
+    """
     # 世界线里的时间都不带时区，统一口径免得比较报错
     now = now.replace(tzinfo=None)
     today = now.date()
@@ -245,7 +250,12 @@ def build_world_text(
     masters = world.master_trail(date_text)
     item, text = _latest_visible(masters, viewer, now)
     if item is not None:
-        line = "主人：%s（%s）" % (_master_text(item, text, label, viewer), _when(item))
+        # 一下子的事（「吃完了」「到了」）只写那一刻，不写成「13:04 起」挂着；
+        # 老数据里没地点、没结束的主人条目也照这样算
+        moment = is_event(item) or (
+            str(item.get("who") or "") == "master" and not item.get("end") and not str(item.get("place") or "").strip())
+        line = "主人：%s（%s）" % (
+            _master_text(item, text, label, viewer), str(item.get("start"))[11:16] if moment else _when(item))
         if not str(item.get("place") or "").strip():
             # 最近这条没写他在哪：补上他最后一次说到的地方（之后没说离开就还在那儿）
             placed = [x for x in masters if str(x.get("place") or "").strip()]
@@ -259,6 +269,10 @@ def build_world_text(
         lines.append(line)
     else:
         lines.append("主人：今天还没说过他自己在哪、在干什么")
+    # 主人在别的机器人那边聊着（只给从几点起、和谁、最近一句几点，不给说了什么）
+    for bot, first, last in elsewhere or []:
+        lines.append("主人 %s 起在和%s聊天，最近一句是 %s" % (
+            first.strftime("%m-%d %H:%M"), label(bot) or bot, last.strftime("%m-%d %H:%M")))
     # 主人说过的他自己之后的安排（只给听到的人看；过了那天程序自己撤）
     for plan in world.intentions("master"):
         heard = [str(x) for x in (plan.get("heard_by") or [])]
@@ -277,8 +291,15 @@ def world_text(service, bot: str, now: datetime.datetime) -> str:
         recent = int(service.cfg.get("world_inject_recent", 12) or 12)
     except Exception:
         recent = 12
+    elsewhere = []
     try:
-        head = build_world_text(service.world, bot, now, service.bots.label_for, recent=recent)
+        tz = service.timezone
+        for other, first, last in raw_log_mod.master_chats_elsewhere(service, bot, now):
+            elsewhere.append((other, datetime.datetime.fromtimestamp(first, tz), datetime.datetime.fromtimestamp(last, tz)))
+    except Exception:
+        logger.warning("[super_enhance/life] 查主人在别处的聊天失败", exc_info=True)
+    try:
+        head = build_world_text(service.world, bot, now, service.bots.label_for, recent=recent, elsewhere=elsewhere)
     except Exception:
         logger.warning("[super_enhance/life] 世界线渲染失败", exc_info=True)
         head = ""
