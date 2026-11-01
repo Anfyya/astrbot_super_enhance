@@ -538,6 +538,29 @@ def _same_name(a, b) -> bool:
     return bool(a and b) and (a == b or a in b or b in a)
 
 
+# 认「名字里的共同词」时不算的字：数、量词、大小新旧、的了这类虚字、来法动词（「翻到的」「买的」不算共同词）
+NAME_FILLER = set("一二两三四五六七八九十几半整个只枚块根条张片串把颗粒对双份些点段截"
+                  "大小新旧老的了和与及跟同还又也都在里上下中买捡翻拣到来回送收做好拿给")
+
+
+def name_words(name, kinds=()) -> set:
+    """名字里的两字词：「X的Y」只看 Y（「主人的」「亚托莉的」不算共同词）；种类那个词（围巾、窗花、书签）不算；
+    去掉虚字、数、量词以后，剩下连着的字两两一组（「三个小齿轮」→ {齿轮}，「旧齿轮铜丝」→ {齿轮, 轮铜, 铜丝}）。"""
+    text = re.sub(r"[\s\W\d_]+", " ", str(name or ""))
+    text = text.rsplit("的", 1)[1] if "的" in text and text.rsplit("的", 1)[1].strip() else text
+    for kind in kinds:
+        kind = re.sub(r"\s+", "", str(kind or ""))
+        if len(kind) >= 2:
+            text = text.replace(kind, " ")
+    runs = re.split("[%s]+" % re.escape("".join(sorted(NAME_FILLER))), text)
+    return {run[i:i + 2] for part in runs for run in part.split() for i in range(len(run) - 1)}
+
+
+def close_name(a, b, kinds=()) -> bool:
+    """两个名字说的可能是同一件：一样、一个包着另一个，或者有共同的两字词（不算数、量词、虚字、种类那个词）。"""
+    return _same_name(a, b) or bool(name_words(a, kinds) & name_words(b, kinds))
+
+
 MAX_BY = 4  # 一步最多记几个人
 
 
@@ -671,14 +694,35 @@ def usable(source: dict, at: str) -> bool:
     return end_at is None or end_at >= moment - datetime.timedelta(minutes=10)
 
 
-def find_same(items, name, what: str, lo: datetime.datetime, hi: datetime.datetime) -> dict | None:
-    """同名、同一种来法（买回来 / 收到 / 做好了）、有它的时刻在 lo~hi 之间的那件。"""
+def _same_kind(a, b, cat: str) -> bool:
+    """种类对得上：一样或一个包着另一个；有一边没写（吃的没写是「别的吃的」）就不拿种类挡。"""
+    a, b = re.sub(r"\s+", "", str(a or "")), re.sub(r"\s+", "", str(b or ""))
+    blank = ("", DEFAULT_KIND) if cat == CAT_FOOD else ("",)
+    return a in blank or b in blank or a == b or a in b or b in a
+
+
+def find_same(items, name, what: str, lo: datetime.datetime, hi: datetime.datetime, kind: str = "",
+              cat: str = CAT_FOOD, skip=()) -> dict | None:
+    """有它的时刻在 lo~hi 之间、种类对得上、名字说的是同一件的那件；先认名字一样、包着的，
+    东西（cat=item）再认名字里有共同词的（close_name，种类那个词不算）。吃的只认名字一样、包着的：
+    同一顿里的「清炒青菜」「清炒丝瓜」、几样豆腐菜种类一样、又有共同词，却是不同的菜。
+    不看来法：同一件东西一边记成「捡到」、一边记成「买回来」是常事；只有「原来就有」和别的来法不算同一件
+    （家里本来有的盐和刚买回来的盐是两件）。skip 里的编号（这一批里刚记的）不认。"""
+    picked = []
     for item in items:
+        if str(item.get("id")) in skip:
+            continue
         first = (item.get("stages") or [{}])[0]
         when = parse_time(first.get("at"))
-        if when is not None and first.get("what") == what and lo <= when <= hi and _same_name(item.get("name"), name):
+        if when is None or not lo <= when <= hi or not _same_kind(item.get("kind"), kind, cat):
+            continue
+        if (first.get("what") == "原来就有") != (what == "原来就有"):
+            continue
+        if _same_name(item.get("name"), name):
             return item
-    return None
+        if cat == CAT_ITEM and close_name(item.get("name"), name, (item.get("kind"), kind)):
+            picked.append(item)
+    return picked[0] if picked else None
 
 
 class View(dict):
@@ -1056,8 +1100,12 @@ class ThingStore:
             return
         src = {"entry": ref}
 
+        # 这一段里另发的编号：老数据里同一个编号给过两件不同名的东西（补写两件都写了 x1），这一段的那件另认一个编号
+        local: dict = {}
+
         def resolve(token) -> str:
             key = str(token or "").strip()
+            key = local.get(key, key)
             key = alias.get(key, key)
             return key if key in items else ""
 
@@ -1075,15 +1123,23 @@ class ThingStore:
             if not isinstance(step, dict) or not step.get("new"):
                 continue
             tid = str(step["new"])
+            cat = CAT_ITEM if step.get("cat") == CAT_ITEM else CAT_FOOD
+            what = norm_step(step.get("what"), cat)
+            name = clean_text(step.get("name"), MAX_NAME)
+            taken = items.get(tid) if tid not in alias else None
+            if taken is not None and taken.get("wl") and taken.get("wl") != ref and name \
+                    and not _same_name(taken.get("name"), name):
+                # 别的一段已经用这个编号记了另一件（名字对不上）：这件另起一个编号，不并进那件、也不丢
+                other = "%s~%s" % (tid, ref[5:].replace("/", "~"))
+                logger.warning("[super_enhance/things] 编号 %s 已经是 %s（%s），%s 的「%s」另记成 %s",
+                               tid, taken.get("name"), taken.get("wl"), ref, name, other)
+                local[tid] = tid = other
             if tid in items or tid in alias:
                 # 聊天里已经认过它（存下来了），或者早认成了别的那件；是这一段做出来的，用料那头照样补「用掉」
                 known = items.get(alias.get(tid, tid))
                 if known is not None and known.get("wl") == ref and known not in made:
                     made.append(known)
                 continue
-            cat = CAT_ITEM if step.get("cat") == CAT_ITEM else CAT_FOOD
-            what = norm_step(step.get("what"), cat)
-            name = clean_text(step.get("name"), MAX_NAME)
             if what not in steps_of(cat)[0] or not name:
                 continue
             key = self._name_key(name)
@@ -1097,7 +1153,9 @@ class ThingStore:
                     norm_kind(step.get("kind")) not in MEASURED_KINDS or had_before(items.values(), name) is not None):
                 continue  # 只有从没记过的常备调料能「原来就有」；用完了的得买
             same = find_same([x for x in items.values() if cat_of(x) == cat], name, what,
-                             start - datetime.timedelta(minutes=SEG_SAME_MINUTES), moment + datetime.timedelta(minutes=SEG_SAME_MINUTES))
+                             start - datetime.timedelta(minutes=SEG_SAME_MINUTES), moment + datetime.timedelta(minutes=SEG_SAME_MINUTES),
+                             kind=step.get("kind") if cat == CAT_ITEM else norm_kind(step.get("kind")), cat=cat,
+                             skip={str(x.get("id")) for x in made})
             if same is not None:
                 alias[tid] = str(same["id"])
                 continue

@@ -17,7 +17,7 @@ from ...common import llm, timeutil
 from ...common.text import strip_inline_system
 from .models import bot_of_umo
 from .things import (CAT_FOOD, CAT_ITEM, KEEPS, KINDS, SAME_NEW_MINUTES, SAME_STEP_MINUTES, SPOTS, STEPS, USE_STEPS, cat_of,
-                     checked_place, find_same, norm_step, usable)
+                     checked_place, find_same, norm_kind, norm_step, usable)
 from .world import (WorldStore, clean_steps, clean_text, doing_text, fit_steps, fmt_time, is_event, is_sleep, parse_time,
                     result_text, step_minutes, wind_up)
 from .things import reached_steps
@@ -113,11 +113,13 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
    - 每一步写：at（发生的时刻 YYYY-MM-DD HH:MM）、what（{steps}）、left（这一步之后还剩多少，比如「两块」「小半锅」；用完、吃完写空——用完、吃完必须单独写一步，what 填「用完了」或「吃完了」，别把「吃完了」塞进 left 里）、amount / used（按量记的才写，见上）、place（搁在哪，写法见下一条）、keep（怎么放：{keeps}）、spot（放在哪，管冷热：{spots}；屋里常温的不用写）、state（整的 / 切开了 / 碰伤了 / 没熟透）、by（谁：napcat / napcat2 / master，别人写名字）、into（用掉是做进了哪盘菜）、quote（摘原文里说这件事的那句话）。place、keep、spot、state 跟上一步一样的不用写。剩菜回锅、凉了热一热记一步「热了一下」；端回锅里重新煎透、煮透、再蒸一下、回炉也是「热了一下」（她说已经下锅了就记，不用等做完）；聊天里说出来中间没熟、夹生、没煎透的，在说出来的那一刻给那件记一步「清点」，state 写「没熟透」，left 照原样；开始腌、晒、熏记「腌上了」「晒上了」「熏上了」（晒、熏写上 spot，比如太阳底下、屋外）。
    - place 拆开写，别连成一句：area 是在哪间屋、哪个地方（不在宿舍的写那个地方，例如「镇外梯田的农家灶房」）；at 是搁在那儿的什么上、什么里（矮桌、柜格、案上、灶上、水盆、书架、窗台……）；detail 是再细一点的哪一格、哪个容器里（桌角、第二格、竹筛里、锅里），说不上来就空着。area 和 at 都得有，光写一间屋不算。例如 {{"area": "堂屋", "at": "矮桌", "detail": "桌角"}}、{{"area": "灶房", "at": "案上", "detail": "竹筛里"}}、{{"area": "灶房", "at": "柜格", "detail": ""}}。拿在手上、揣在身上的：area 写谁，at 写手上、袖子里、菜篮里，例如 {{"area": "亚托莉", "at": "手上", "detail": ""}}。聊天里没说搁在哪的，照常理挑一处（剩菜盖好搁灶上或柜格，点心、糖搁堂屋柜里或盒子里，米面调料在灶房柜格）；没挪地方的不写 place。
    - 「记错了」只用在清单里确实记错了的那件（根本没这回事）。
+   - 聊天里主人或她说吃了、吃完了、用了、用完了清单上的某件（世界线里做的、算进清单的也算），就给那件记一步（吃了一部分 / 吃完了 / 用掉一部分 / 用完了），别漏：没点名的（主人只说「吃完了」），按前面几句在说哪件认（刚提醒他吃的、刚端给他的那件），例如前面说「蒸鸡蛋糕切好码在盘里了」，主人说「吃完了」，就给蒸鸡蛋糕记「吃完了」或「吃了一部分」，别记到别的菜上；认不出是哪件的不记。
 19. 家里的东西（吃的以外的：衣裳围巾、书册本子、纸条信、画和窗花、布偶摆件、工具器物、首饰小物……）：每件一个编号（p 开头），写进 items，记它从哪来、经过谁手、搁在哪、变成什么样。只记聊天里说已经发生了的，规矩和第 18 条一样。
    - 新的一件（上面「家里的东西」里没有的）：写 new（这一批里的临时代号 x1、x2……；编号由程序发）、name（叫得出区别的名字，例如「深青围巾」「兔子窗花」「压在茶壶底下的纸条」，别只写「围巾」「纸条」）、kind（它是什么，一个词：围巾、窗花、纸条、布偶、书……）、look（样子：颜色、材料、大小、上面有什么，能和同一种的别的那件分清）、owner（归谁：napcat / napcat2 / master，大家一起用的留空）、origin（哪来的）、from（用清单里哪几件做的），再加上它的第一步。第一步只能是「买回来」「收到」「捡到」「开始做」（起了个头、还没做完）「做好了」「原来就有」（家里本来就有、清单里还没记的）。
    - 已有的那件又发生了一步：写 id（清单里的编号）和这一步，what 从这几样挑：挪地方 / 交给（交到谁手上）/ 用了 / 做了一截（没做完的接着做）/ 做好了（没做完的那件做完了）/ 变了样（修好了、弄脏了、洗干净了）/ 送人了 / 丢了 / 坏了扔了 / 用完了 / 记错了。
    - 每一步写：at、what、place（搁在哪，和第 18 条一样拆开写，例如 {{"area": "卧房", "at": "针线笸箩", "detail": ""}}、{{"area": "堂屋", "at": "书架", "detail": "第二格"}}）、holder（在谁手上、身上：napcat / napcat2 / master，别人写名字；放下搁着就留空）、state（这一步之后它什么样，例如「织到一半」「织好了」「补上了耳朵」）、by（谁弄的）、owner（归属换了才写，例如送给主人了写 master）、quote。跟上一步一样的不用写。
    - 同一种东西有好几件的（清单里标着「长得像，认准编号」），看清是谁做的、什么样、在哪再记；对不上是哪一件就不记，别记到别的那件上，也别为它另建一件。
+   - 聊天里主人或她说用了、交给谁了、挪了地方、用完了清单上的某件，就给那件记一步，别漏；清单里已经有的（世界线里买回来、捡到、做的也算），不管那边记的是「买回来」还是「捡到」，都记在那件上，不要另建。
 {world_notes}
 输出这个 JSON（没有的字段留空数组）：
 
@@ -1616,8 +1618,11 @@ class Recorder:
                 continue
             moment = parse_time(stage["at"])
             gap = datetime.timedelta(minutes=SAME_NEW_MINUTES)
+            # 去重不看来法（一边「捡到」一边「买回来」常是同一件），看时段、种类和名字（东西还认名字里的共同词，见 find_same）；这一批里刚记的不算
             same = find_same([x for x in view.values() if cat_of(x) == cat], raw.get("name"),
-                             norm_step(stage.get("what"), cat), moment - gap, moment + gap)
+                             norm_step(stage.get("what"), cat), moment - gap, moment + gap,
+                             kind=raw.get("kind") if cat == CAT_ITEM else norm_kind(raw.get("kind")), cat=cat,
+                             skip=set(keys.values()))
             if same is not None:
                 keys[key] = resolve(same.get("id"))
                 logger.info("[super_enhance/things] %s 已经有了（%s），不再新建", raw.get("name"), same.get("id"))
