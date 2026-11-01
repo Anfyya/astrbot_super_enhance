@@ -80,7 +80,7 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
      · 手上那件写进 stale（第 16 条）定怎么收场，照常理和她自己的本事来：在足汤先擦干脚、穿好鞋，在外面吃东西先赶紧吃完，在做饭先关火，坐着摩天轮得等它转完下来（丛雨能穿墙、能飘，可以直接飘下来；亚托莉不行）；手上闲着、随时能停的写放下。
      · 她人不在做那件事的地方的，再记一段 activity 写她往那边去（例如「从温泉街往宿舍走，回去给主人做饭」）：start 写她答应的那条消息的时间（程序会挪到收完尾以后），end 照路程估，今天清单里走过同一条路的照那个时长，没走过的按常理。人已经在那儿的，不用记这段。
      · 她说已经到了、已经做上了，才照上一条记成她在做那件事。之后她的话要是说明其实没去、改了主意、或者被叫去干别的了，按第 16 条把那段写进 stale，打算按第 14 条撤。
-   - "event"：做手上的事当中顺带发生的一件事（递了个东西、被摸了头、答应了什么），只有一个时刻，不写 end，不打断手上那件。
+   - "event"：做手上的事当中顺带发生的一件事（递了个东西、被摸了头、答应了什么），只有一个时刻，不写 end，不打断手上那件。主人生她的气、训她、骂她、跟她闹别扭、冷着她这类会让她心里放不下的事，也记一条 event，再写 upset: true（程序会让补写把她后面的安排照这件事重排）；主人说气消了、原谅她了、和好了的，不写 upset。
    她只是边做事边跟人说话，或者说的就是「今天的简略世界线」里标着「正在做」的那件，什么都不用记：聊天本身不算一件事。她说自己做了什么、在做什么，就算做了（哪怕听着像编的）。
    只有和她手上那件真冲突，才记一段新的 activity 把它换掉。真冲突是指：她说人在别的地方；她说那件事停下了、做完了；她说正在做的事和手上那件不可能同时做。只是没提手上那件、只提了其中一部分、或者说了件能同时做的小事，都不算冲突：能记成 event 就记 event，不然什么都不记。没说不等于没做。
    手上那段标着「闲着」的：她说开始做了一件具体的事（看书、出门、做饭……），就记一段新的 activity。
@@ -124,7 +124,7 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
 {{
   "entries": [
     {{"who": "napcat", "kind": "activity", "start": "2026-10-11 09:00", "end": "2026-10-11 09:40", "place": "", "doing": "",
-      "public": "", "with": [], "training": "", "seen_by": [], "asked": false, "quote": "摘一句原文"}}
+      "public": "", "with": [], "training": "", "seen_by": [], "asked": false, "upset": false, "quote": "摘一句原文"}}
   ],
   "constraints": [
     {{"who": "napcat", "text": "练成收放之前不许出藏经阁", "public": "在藏经阁闭关练功",
@@ -206,6 +206,9 @@ def _digest(text: str) -> str:
 FREE_SHIFT_MINUTES = 10
 # 两人「一起」做的同一件新事：两边开始的时刻差这么多分钟以内才算是同一件（两边各自收尾的时间可能不一样）
 PAIR_NEAR_MINUTES = 15
+# 主人生她气、训她这类事（记录员没写 upset 时按 doing 认）；说的是气消了、原谅了的不算
+UPSET_WORDS = re.compile(r"训斥|训了|训她|挨训|挨骂|骂了|骂她|数落|责备|责怪|呵斥|教训|发火|发脾气|生.{0,3}气|动了?气|恼了|冷着|闹别扭|赌气|不理她")
+UPSET_OFF = re.compile(r"气消|消气|不生.{0,3}气了|原谅|和好|哄好")
 
 
 @dataclass
@@ -750,8 +753,23 @@ class Recorder:
                 # 补记很早以前的事不算；记的是现在、刚才的事才算改了她的现在
                 if stop is None or stop > flat_now - datetime.timedelta(minutes=FREE_SHIFT_MINUTES):
                     self._touch(who, parse_time(record.get("start")))
+            if record is not None and kind == "event" and who in bots and self._upset(raw):
+                # 主人训她、生她气：她后面补写排的、还没开始的段撤掉，由补写顺着这件事重排（手上那段照旧，按原来的规则收场）
+                at = parse_time(record.get("start"))
+                if at is not None and at >= self._since(items, now) - datetime.timedelta(minutes=FREE_SHIFT_MINUTES):
+                    logger.info("[super_enhance/world] 记录员记了%s的 %s「%s」，影响心情：后面排好的撤掉重排",
+                                self.label(who) or who, record.get("id"), clean_text(record.get("doing"), 30))
+                    self._touch(who, max(at, flat_now))
         # 记录员写了她和对方一起、却只给她记了：两人本来就在一起的，给对方也记上
         self._pair_up(records, umo, now)
+
+    @staticmethod
+    def _upset(raw: dict) -> bool:
+        """这件事是不是主人训她、生她气这类会影响心情的：记录员标了 upset 就算；没标的按 doing 里的字认（说气消了的不算）。"""
+        if raw.get("upset") is True or str(raw.get("upset") or "").strip().lower() == "true":
+            return True
+        text = str(raw.get("doing") or "")
+        return bool(UPSET_WORDS.search(text)) and not UPSET_OFF.search(text)
 
     def _apply_constraints(self, data: dict, umo: str, now: datetime.datetime, batch: list) -> None:
         """记新规矩、撤规矩。谁的规矩变了，两个人后面补写排的、还没开始的段都撤掉，由补写按新规矩重排
