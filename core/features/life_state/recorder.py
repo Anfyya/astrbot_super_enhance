@@ -464,6 +464,18 @@ class Recorder:
         return ("家里的吃的（存货，按第 18 条记；每件前面是程序发的编号）：\n" + store.food_list(flat, shelf, self.label)
                 + "\n\n家里的东西（吃的以外，按第 19 条记；每件前面是程序发的编号）：\n" + store.item_list(flat, shelf, self.label))
 
+    def _since(self, items, now: datetime.datetime) -> datetime.datetime:
+        """这批消息里最早那条的时刻（不带时区的本地时间）；拿不到就用现在。"""
+        stamps = []
+        for item in items or []:
+            try:
+                stamps.append(float(item.get("ts")))
+            except Exception:
+                pass
+        if not stamps:
+            return now.replace(tzinfo=None)
+        return datetime.datetime.fromtimestamp(min(stamps), self.tz).replace(tzinfo=None)
+
     @property
     def world_notes(self) -> str:
         """配置里写的故事固定事实（藏经阁在哪、门关不关这类），一行一条。"""
