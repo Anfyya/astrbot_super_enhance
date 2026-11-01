@@ -319,6 +319,10 @@ SCAN_DAYS = 31
 SEG_SAME_MINUTES = 30
 # 往后推「撑到几点」最多推这么多天，再久就是「放得住」
 LOOKAHEAD_DAYS = 45
+# 端到主人跟前的吃的（这一步放的地方写着「主人·跟前」，补写、记录员按第 18 条这么写）：
+# 之后这么多分钟没人再动它，就当主人吃完了（补写、记录员不替主人写他吃没吃完，程序补这一步；只在现算时补，不存）
+MASTER_DONE_MINUTES = 60
+MASTER_PLACE_RE = re.compile(r"主人·?跟前")
 # 老化到「能放多久」的几成：还新鲜 / 还行 / 快不行了 / 坏了
 SOON_AT = 0.5
 HURRY_AT = 0.8
@@ -464,6 +468,33 @@ def is_ended(item: dict) -> dict | None:
     if info is not None and info["zero"] is not None:
         return dict(info["zero"], what="用完了", _auto=True)
     return None
+
+
+def master_done(items: dict, now: datetime.datetime) -> int:
+    """现算的存货里：吃的最后一步放在主人跟前（MASTER_PLACE_RE），过了 MASTER_DONE_MINUTES 分钟没人再动，
+    补一步「吃完了」（by master，带 _auto，不存进 things.json）。之后要是有人又动了它，那一步落在补的这步前面就不补了。
+    返回补了几件。"""
+    done = 0
+    for item in items.values():
+        if cat_of(item) != CAT_FOOD or is_ended(item) is not None:
+            continue
+        stages = item.get("stages") or []
+        if not stages:
+            continue
+        last = max(stages, key=lambda s: str(s.get("at") or ""))
+        if not MASTER_PLACE_RE.search(str(last.get("place") or "")):
+            continue
+        moment = parse_time(last.get("at"))
+        if moment is None:
+            continue
+        due = moment + datetime.timedelta(minutes=MASTER_DONE_MINUTES)
+        if due > now:
+            continue
+        stages.append({"at": fmt_time(due), "what": "吃完了", "left": "", "place": last.get("place") or "", "by": "master",
+                       "keep": last.get("keep") or "", "spot": last.get("spot") or "", "state": last.get("state") or "",
+                       "note": "到主人跟前 %d 分钟没人再动，程序当主人吃完了" % MASTER_DONE_MINUTES, "_auto": True})
+        done += 1
+    return done
 
 
 def _counts(text) -> list:
@@ -1265,6 +1296,7 @@ class ThingStore:
         for seg in self.segments(flat):
             if seg["ref"] not in settled:
                 self._apply_segment(items, alias, seg)
+        master_done(items, flat)
         result = View(items, alias)
         current_revision = self.world.revision() if self.world is not None and hasattr(self.world, "revision") else 0
         self._view_cache = ((fmt_time(flat), current_revision, self._revision), result)
