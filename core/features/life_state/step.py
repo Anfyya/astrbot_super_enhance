@@ -13,7 +13,7 @@ import datetime
 
 from astrbot.api import logger
 
-from ...common import jsonio, llm
+from ...common import jsonio, llm, timeutil
 
 from .models import profile_umo_for_bot
 from .recorder import norm_time
@@ -51,6 +51,8 @@ FILL_LOOK_HOURS = 24
 FILL_STRETCH_MINUTES = 30
 # 网页上刚改过世界线，补写等这么久再看（秒）
 MANUAL_HOLD_SECONDS = 180
+# 她们自己的打算挂了这么多天没动（从记下、或上回补写推过它算起），补写这次要排一件事把它往前推或了结
+STALE_INTENT_DAYS = 3
 
 STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，由你来安排。
 
@@ -92,6 +94,7 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
    丛雨一般人看不见：她一个人在外面时，店家、摊主、路人都看不见她，不会跟她说话、招呼她、夸她、把东西递给她；买东西照常把钱搁在柜台上、自己拿。
 11. 段里是在练「在练的事」里的某件，training 填它的编号（例如 "#2"）；不是在练就留空，不要往里写别的。
 12. 段里做的是「各自的打算」里她的某一条，intent 填那条的编号（例如 "i2"）；不是就留空。标着「现在就去」的，是她刚答应马上去做的：这次就从给你的时刻起先排它，别排在别的事后面；她人还不在做这件事的地方、世界线上也还没在往那边去的，先写一段走过去；可以分成几段（比如先去买、再回来做），每段 intent 都填这个编号。
+   标着「挂了几天了」的打算，一直搁着没动：这次给她排一件事把它往前推或了结，照她的性子和眼下的实际情况挑，别每回都是同一种办法。比如：要等主人定日子的，去问主人一句什么时候方便；自己能做的，自己去做了；换个人一起、换个做法；想了想觉得算了，放下了。去问主人只写她去问了，主人怎么答不许替他编。再在 intent_moves 里用编号写这条后来怎样：做完了、放下了的写 "done": true，排它的那几段 intent 填这个编号；还没了结、往前推了一步的写 "done": false，text 写推进以后的打算（照原来的写法：做什么、跟谁、怎么说起的，再加一句这次推进了什么，例如「11-01 问过主人什么时候去，等他回话」），有了新的哪天、几点就写 date、window，排它的那几段 intent 留空。没标的打算不写。
 13. 每段写 from：这段是照上面哪一样写的。照「可能碰上的小事」「手边的消遣」「闲着的样子」「今天会碰上一件意外」里的某一样写的，照抄那一样的原文；照打算、约定、规矩、在练的事、作息（起床、三餐、睡觉）写的，写「打算」「约定」「规矩」「在练」「作息」；接着前面已经做过的某件事往下写的，写「接着：」再加那件事；都不是、自己想的，写「自己想的」。
 14. 接着前面已经写过的事往下写时，前面写定的东西照原样沿用：写过的内容、放在哪、做出来的是什么，都和前面写的一致。前面留下的也要有交代：吃完饭剩下的饭菜，收尾那步按常理收好（盖好、放到该放的地方，写进 things）；做了一半的东西，后面合适的时候可以接着做，不打算做了就收起来。
 15. **同一类事一天里做过一次就不要再排**（比如今天已经做过点心、炖过汤，就别再排第二次）；主人对做出来的东西提的意见（「甜度再多一点」「汤有点淡」）**不等于叫她现在去做**——当天不重做，想改的留到以后（改配方、下次做的时候再试），现在照常排别的事。
@@ -115,13 +118,14 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
    - 同一种东西有好几件的（清单里标着「长得像，认准编号」），照清单认准是哪一件。
 {world_notes}
 {step_notes}
-注意：**不要输出 intentions，也不要写任何「接下来打算」**。上面「各自的打算」里如果有，是之前说好要做的，照着走就行。
+注意：**不要输出 intentions，也不要写任何「接下来打算」**。上面「各自的打算」里如果有，是之前说好要做的，照着走就行；标着「挂了几天了」的，只在 intent_moves 里写它后来怎样（第 12 条）。
 
-输出 JSON（end_current 只给上面说了「先定做完时刻」的人写）：
+输出 JSON（end_current 只给上面说了「先定做完时刻」的人写；intent_moves 只写标着「挂了几天了」的打算，没有就留空）：
 
 {{
   "end_current": {{"napcat": "{example_end}"}},
   "stopped_results": {{}},
+  "intent_moves": {{"i3": {{"done": false, "text": "推进以后的打算", "date": "", "window": ""}}}},
   "segments": {{
     "napcat": [{{"start": "{example_start}", "end": "{example_end}", "place": "", "doing": "一句话写这件事", "steps": [{{"text": "这一阵子她一直在干什么", "minutes": 5}}, {{"text": "第二步", "minutes": 15}}, {{"text": "收尾：用过的东西收好、归位", "minutes": 5}}], "result": "这件事的结果", "state": "做事", "importance": 2, "at_home": true, "meal": false, "public": "", "with": [], "training": "", "intent": "", "from": "照上面哪一样写的", "things": [], "items": []}},
                {{"start": "{example_end}", "end": "{example_end2}", "place": "", "doing": "下一件事", "steps": [{{"text": "第一步", "minutes": 10}}, {{"text": "收尾", "minutes": 5}}], "result": "这件事的结果", "state": "做事", "importance": 2, "at_home": true, "meal": false, "public": "", "with": [], "training": "", "intent": "", "from": "照上面哪一样写的", "things": [], "items": []}}],
@@ -178,6 +182,20 @@ def origin_of(value, bot: str, seed, intent: str = "", training: str = "") -> di
     if text.startswith("接着"):
         return {"kind": "continue", "text": text[2:].lstrip("：:").strip()}
     return {"kind": "unmatched", "text": text}
+
+
+def stale_days(item: dict, today: datetime.date) -> int:
+    """她们自己的打算挂了几天没动（从记下、或上回补写推过它那天算起），到 STALE_INTENT_DAYS 才算挂太久；
+    不到、主人的、定了今天以后哪天做的、刚答应现在就去的，返回 0。"""
+    if str(item.get("who") or "") == "master" or item.get("now_at"):
+        return 0
+    if str(item.get("date") or "")[:10] >= today.isoformat():
+        return 0
+    since = parse_time(item.get("pushed")) or parse_time(item.get("created"))
+    if since is None:
+        return 0
+    days = (today - since.date()).days
+    return days if days >= STALE_INTENT_DAYS else 0
 
 
 STATE_WORDS = {"做事": "do", "do": "do", "闲着": "idle", "idle": "idle", "睡觉": "sleep", "sleep": "sleep"}
@@ -304,7 +322,9 @@ class LifeStep:
         moods = seed.get("moods") or {}
         if moods:
             lines.append(
-                "- 各人今天的心情（自然地透在做的事里，不用每段都点明）：%s"
+                "- 各人今天的心情（自然地透在做的事里，不用每段都点明；要写为什么是这个心情时，"
+                "写清是谁对谁说了、做了什么，照聊天记录和世界线的原样，别把谁说的谁做的弄反；"
+                "是前几天的事就写日期，例如「10-31 晚上主人说她……」，不写「昨晚」「昨天」）：%s"
                 % "；".join("%s：%s" % (labels.get(bot) or bot, mood) for bot, mood in moods.items())
             )
         names = [name for name in labels.values() if name]
@@ -450,8 +470,8 @@ class LifeStep:
             out.append({k: v for k, v in step.items() if v not in ("", None, [])})
         return out
 
-    def _intention_line(self, item: dict) -> str:
-        """补写看到的一条打算：编号（谁，和主人一起，哪天 几点）：内容。"""
+    def _intention_line(self, item: dict, today: datetime.date | None = None) -> str:
+        """补写看到的一条打算：编号（谁，和主人一起，哪天 几点，挂了几天）：内容。"""
         who = str(item.get("who") or "")
         tags = [self.label(who) or who]
         if "master" in (item.get("with") or []):
@@ -460,7 +480,11 @@ class LifeStep:
         if when:
             tags.append(when)
         if item.get("now_at"):
-            tags.append("现在就去，%s 刚答应的" % str(item.get("now_at"))[11:16])
+            tags.append("现在就去，%s 刚答应的" % timeutil.day_hm(item.get("now_at")))
+        days = stale_days(item, today) if today is not None else 0
+        if days:
+            tags.append("从 %s 挂到现在 %d 天了，这次要往前推或了结（见第 12 条）" % (
+                timeutil.day_hm(item.get("pushed") or item.get("created")), days))
         return "- %s（%s）：%s" % (item.get("id"), "，".join(tags), item.get("text"))
 
     def _intent_with_master(self, intent_id: str) -> bool:
@@ -668,18 +692,23 @@ class LifeStep:
             meals = "、".join(base.get("meals") or []) or "（没定）"
             # 今天的种子抽了吃哪几顿，就只写那几顿（老种子没抽，照旧写三餐时段）
             today = meal_slots((self._seed_for(now.date().isoformat()) or {}).get("meals"), list(base.get("meals") or []))
-            sleep = "今天定的 %s" % (plan.get("sleep") or "?")
+            day0, day1 = now.date().isoformat()[5:], (now.date() + datetime.timedelta(days=1)).isoformat()[5:]
+            sleep = "%s 定的 %s" % (day0, plan.get("sleep") or "?")
             wake_at = parse_time("%s %s" % (now.date().isoformat(), plan.get("wake"))) if plan.get("wake") else None
             if wake_at is not None and now.replace(tzinfo=None) < wake_at:
-                # 过了半夜、还没到今天起床的时候：这会儿还是昨晚那一觉，别把今晚的入睡当成还没到
-                last = self.world.day_plan(bot, (now.date() - datetime.timedelta(days=1)).isoformat())
-                sleep = "昨晚定的 %s；现在是夜里，还没到今天定的起床时刻" % (last.get("sleep") or "?")
+                # 过了半夜、还没到这天起床的时候：这会儿还是前一晚那一觉，别把这天晚上的入睡当成还没到
+                last_day = now.date() - datetime.timedelta(days=1)
+                last = self.world.day_plan(bot, last_day.isoformat())
+                sleep = "%s 晚上定的 %s；现在是夜里，还没到 %s 定的起床时刻" % (
+                    last_day.isoformat()[5:], last.get("sleep") or "?", day0)
             lines.append(
-                "- %s：起床 %s（今天定的 %s，明天定的 %s）、入睡 %s（%s）、%s%s"
+                "- %s：起床 %s（%s 定的 %s，%s 定的 %s）、入睡 %s（%s）、%s%s"
                 % (
                     self.label(bot) or bot,
                     base.get("wake") or "?",
+                    day0,
                     plan.get("wake") or "?",
+                    day1,
                     tomorrow.get("wake") or "?",
                     base.get("sleep") or "?",
                     sleep,
@@ -723,6 +752,44 @@ class LifeStep:
             self.world.update(date_text, str(entry.get("id")), stop_result=text)
             logger.info("[super_enhance/world] 被打断的 %s「%s」后来：%s", entry.get("id"), clean_text(entry.get("doing"), 20), text)
 
+    def _intent_moves(self, raw, tasks: dict, flat: datetime.datetime) -> dict:
+        """补写给挂太久的打算写的「后来怎样」：只认这次要写的人、标着挂太久的那几条。
+        返回 {编号: {"done": bool, "text", "date", "window"}}；落库在 _apply_intent_moves（段排完以后）。"""
+        if not isinstance(raw, dict):
+            return {}
+        stale = {str(x.get("id")): x for x in self.world.intentions()
+                 if str(x.get("who")) in tasks and stale_days(x, flat.date())}
+        out = {}
+        for key, move in raw.items():
+            item = stale.get(str(key).strip().lower()) or stale.get(str(key).strip())
+            if item is None or not isinstance(move, dict):
+                continue
+            done = move.get("done") is True or str(move.get("done")).strip().lower() == "true"
+            day = str(move.get("date") or "").strip()[:10]
+            out[str(item.get("id"))] = {"done": done, "text": clean_text(move.get("text"), 300),
+                                        "date": day if len(day) == 10 and day[4] == "-" else "",
+                                        "window": clean_text(move.get("window"), 60)}
+        return out
+
+    def _apply_intent_moves(self, moves: dict, written: dict, flat: datetime.datetime) -> None:
+        """挂太久的打算落库：做完 / 放下了的，有段挂着它就等那段做完照常撤（proactive 里），没段挂着就现在撤；
+        往前推了的改写内容、记下这次推过（pushed），从这天起重新算挂了几天。
+        没写 intent_moves、可这次有段挂着它的，也算推过，免得下回又催。"""
+        carried = {str(x.get("intent")) for rows in written.values() for x in rows if x.get("intent")}
+        for intent_id, move in moves.items():
+            if move["done"]:
+                if intent_id not in carried and self.world.drop_intention(intent_id):
+                    logger.info("[super_enhance/world] 补写了结了挂太久的打算 %s，撤掉", intent_id)
+                elif intent_id in carried:
+                    self.world.update_intention(intent_id, pushed=fmt_time(flat), source=None)
+                continue
+            self.world.update_intention(intent_id, text=move["text"] or None, window=move["window"] or None,
+                                        date=move["date"] or None, pushed=fmt_time(flat), source=None)
+            logger.info("[super_enhance/world] 补写把挂太久的打算 %s 往前推了：%s", intent_id, move["text"] or "（内容没改）")
+        for item in self.world.intentions():
+            if str(item.get("id")) in carried and str(item.get("id")) not in moves and stale_days(item, flat.date()):
+                self.world.update_intention(str(item.get("id")), pushed=fmt_time(flat), source=None)
+
     @staticmethod
     def _things_moment(tasks: dict | None, flat: datetime.datetime) -> datetime.datetime:
         """家里的吃的按这次补写的起点算（几个人起点不同取最晚的），不早于此刻。"""
@@ -742,12 +809,11 @@ class LifeStep:
                         continue
                     if is_event(item):
                         lines.append("- %s %s（顺带的事）%s" % (
-                            self.label(bot) or bot, str(item.get("start"))[11:], item.get("doing") or item.get("place")))
+                            self.label(bot) or bot, timeutil.day_hm(item.get("start")), item.get("doing") or item.get("place")))
                         continue
-                    lines.append("- %s %s~%s %s %s%s" % (
+                    lines.append("- %s %s %s %s%s" % (
                         self.label(bot) or bot,
-                        str(item.get("start"))[11:],
-                        str(item.get("end"))[11:] or "…",
+                        timeutil.span_text(item.get("start"), item.get("end"), date_prefix=True, ongoing="~…"),
                         item.get("place") or "",
                         doing_text(item),
                         result_text(item),
@@ -759,7 +825,7 @@ class LifeStep:
             for item in master:
                 lines.append(
                     "- 主人 %s %s（%s）"
-                    % (str(item.get("start"))[11:], item.get("place"), item.get("doing") or "")
+                    % (timeutil.day_hm(item.get("start")), item.get("place"), item.get("doing") or "")
                 )
             if lines:
                 blocks.append("【%s 已经发生的】\n%s" % (date_text, "\n".join(lines)))
@@ -777,8 +843,9 @@ class LifeStep:
                 end = parse_time(item.get("end")) if item.get("end") else None
                 if end is None or end > flat or not real_stop(item) or item.get("stop_result"):
                     continue
-                stops.append("- %s %s %s~%s %s" % (item.get("id"), self.label(bot) or bot, str(item.get("start"))[11:16],
-                                                    str(item.get("end"))[11:16], doing_text(item)))
+                stops.append("- %s %s %s %s" % (item.get("id"), self.label(bot) or bot,
+                                                 timeutil.span_text(item.get("start"), item.get("end"), date_prefix=True),
+                                                 doing_text(item)))
         if stops:
             parts.append("被打断、还没交代后来怎么样的事（最前面是编号）：\n" + "\n".join(stops))
         now_lines = []
@@ -791,8 +858,8 @@ class LifeStep:
             now_lines.append("- %s：%s %s%s（%s 起%s%s）" % (
                 self.label(bot) or bot, cur.get("place") or "", cur.get("doing") or "",
                 "（闲着）" if cur.get("idle") else "（睡着）" if is_sleep(cur) else steps_text(cur) + result_text(cur),
-                str(cur.get("start"))[11:16],
-                "，预计 %s 做完" % str(cur.get("end"))[11:16] if cur.get("end") else "，还没定什么时候做完",
+                timeutil.day_hm(cur.get("start")),
+                "，预计 %s 做完" % timeutil.day_hm(cur.get("end")) if cur.get("end") else "，还没定什么时候做完",
                 "，做了 %d%%" % pct if pct is not None else "",
             ))
         parts.append("她们此刻手上的事：\n" + "\n".join(now_lines))
@@ -810,10 +877,9 @@ class LifeStep:
                     start = parse_time(item.get("start"))
                     if start is None or start <= flat or is_event(item) or (upto is not None and start >= upto):
                         continue
-                    planned.append("- %s %s~%s %s %s%s" % (
+                    planned.append("- %s %s %s %s%s" % (
                         self.label(bot) or bot,
-                        str(item.get("start"))[5:16],
-                        str(item.get("end"))[11:16] or "…",
+                        timeutil.span_text(item.get("start"), item.get("end"), date_prefix=True, ongoing="~…"),
                         item.get("place") or "",
                         (item.get("doing") or "") + result_text(item),
                         "（和%s）" % "、".join(self.label(x) or x for x in item["with"]) if item.get("with") else "",
@@ -831,7 +897,7 @@ class LifeStep:
             )
         intentions = [x for x in self.world.intentions() if str(x.get("who")) != "master"]
         if intentions:
-            parts.append("各自的打算：\n" + "\n".join(self._intention_line(x) for x in intentions))
+            parts.append("各自的打算：\n" + "\n".join(self._intention_line(x, flat.date()) for x in intentions))
         plans = self.world.intentions("master")
         if plans:
             parts.append(
@@ -847,7 +913,7 @@ class LifeStep:
             try:
                 # 按这次补写的起点现算：世界线里那时已经做完的段标的吃的算进去（提前几分钟补写时，正在收尾那段做的菜也算）
                 moment = self._things_moment(tasks, flat)
-                when = "此刻" if moment <= flat else "到 %s" % moment.strftime("%H:%M")
+                when = "此刻" if moment <= flat else "到 %s" % timeutil.day_hm(moment)
                 shelf = self._shelf_at(moment)
                 parts.append("家里的吃的（%s；每件前面是编号）：\n" % when + store.food_list(moment, shelf, self.label))
                 parts.append("家里的东西（吃的以外，%s；每件前面是编号）：\n" % when + store.item_list(moment, shelf, self.label))
@@ -875,7 +941,7 @@ class LifeStep:
                 + (
                     "；最后一次说到他在哪：%s %s（之后没说过离开）"
                     % (str(where.get("start"))[5:16], where.get("place"))
-                    if where is not None else "；今天还没说过他在哪"
+                    if where is not None else "；%s 以来还没说过他在哪" % (flat.date() - datetime.timedelta(days=1)).isoformat()[5:]
                 )
             )
         book = getattr(self, "trainings", None)
@@ -901,7 +967,7 @@ class LifeStep:
                 lines.append(
                     "- %s：手上「%s」（%s 起）还没定什么时候做完。先在 end_current 里给它定一个做完的时刻"
                     "（不早于此刻之后五分钟），再从那个时刻往下写。"
-                    % (name, clean_text(cur.get("doing") or cur.get("place"), 60), str(cur.get("start"))[11:16])
+                    % (name, clean_text(cur.get("doing") or cur.get("place"), 60), timeutil.day_hm(cur.get("start")))
                 )
             elif info["mode"] == "fill":
                 later = info.get("next") or {}
@@ -909,22 +975,22 @@ class LifeStep:
                 lines.append(
                     "- %s：%s 到 %s 这一截空着（原来排的撤掉了），把它补上：从 %s 开始写，最后一段在 %s 结束，"
                     "接上后面已经排好的「%s」（%s 起%s，这段不改）。%s"
-                    % (name, fmt_time(info["start"])[11:], fmt_time(info["until"])[11:], fmt_time(info["start"]),
+                    % (name, timeutil.day_hm(info["start"]), timeutil.day_hm(info["until"]), fmt_time(info["start"]),
                        fmt_time(info["until"]), clean_text(later.get("doing") or later.get("place"), 60),
-                       fmt_time(info["until"])[11:], "，在%s" % place if place else "",
+                       timeutil.day_hm(info["until"]), "，在%s" % place if place else "",
                        self._where(self.world.last_activity(bot, info["start"] - datetime.timedelta(minutes=1)), "空着之前那段"))
                 )
             elif info["mode"] == "after":
                 lines.append(
                     "- %s：已经排到 %s（最后一段「%s」），从 %s 开始往下写；在那之前排好的不改。%s"
-                    % (name, fmt_time(info["start"])[11:], clean_text(cur.get("doing") or cur.get("place"), 60),
+                    % (name, timeutil.day_hm(info["start"]), clean_text(cur.get("doing") or cur.get("place"), 60),
                        fmt_time(info["start"]), self._where(cur))
                 )
             elif info["mode"] == "next":
                 lines.append(
                     "- %s：手上「%s」%s 做完，从 %s 开始往下写。%s"
                     % (name, clean_text(cur.get("doing") or cur.get("place"), 60),
-                       fmt_time(info["start"])[11:], fmt_time(info["start"]), self._where(cur))
+                       timeutil.day_hm(info["start"]), fmt_time(info["start"]), self._where(cur))
                 )
             else:
                 last = self.world.last_activity(bot, info["start"])
@@ -1132,6 +1198,7 @@ class LifeStep:
         flat = now.replace(tzinfo=None)
         date_text = flat.date().isoformat()
         self._apply_stop_results(data.get("stopped_results"), date_text)
+        moves = self._intent_moves(data.get("intent_moves"), tasks, flat)
         segments = data.get("segments") if isinstance(data.get("segments"), dict) else {}
         end_current = data.get("end_current") if isinstance(data.get("end_current"), dict) else {}
         bots = list(self.raw_log.enabled_bots())
@@ -1200,6 +1267,8 @@ class LifeStep:
                 if until is not None:
                     seg_end = min(seg_end, until)
                 intent = "" if idle else self.intent_id(raw.get("intent"), bot)
+                if intent in moves and not moves[intent]["done"]:
+                    intent = ""  # 只是往前推了一步（比如去问主人），这段做完不算打算做完，别撤
                 training = self.training_id(raw.get("training"), bot)
                 # 和主人一起：模型这段写了 master，且挂的是「和主人一起」的打算、或紧接着上一段和主人一起（同一趟里接着逛）
                 # 不强塞：打算里她自己先做的准备（先把围巾织完）不算和主人一起
@@ -1250,4 +1319,5 @@ class LifeStep:
             written[bot] = rows
             if cursor <= flat or (until is not None and not rows):
                 missed.append(self.label(bot) or bot)
+        self._apply_intent_moves(moves, written, flat)
         return written, missed

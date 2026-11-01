@@ -812,8 +812,9 @@ class WorldStore:
         self._save_state()
         return record
 
-    def update_intention(self, intention_id: str, text=None, window=None) -> bool:
-        """按编号改一条打算（网页手动）。"""
+    def update_intention(self, intention_id: str, text=None, window=None, date=None, pushed=None,
+                         source="manual") -> bool:
+        """按编号改一条打算（网页手动）。补写推进挂太久的打算时也用：pushed 记下这次推过的时刻，source 传 None 不改来源。"""
         if not intention_id:
             return False
         state = self._load_state()
@@ -828,7 +829,13 @@ class WorldStore:
                     item["text"] = body
             if window is not None:
                 item["window"] = clean_text(window, 60)
-            item["source"] = "manual"
+            day = str(date or "").strip()[:10]
+            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
+                item["date"] = day
+            if parse_time(pushed) is not None:
+                item["pushed"] = str(pushed)[:16]
+            if source is not None:
+                item["source"] = source
             hit = True
             break
         if hit:
@@ -1359,7 +1366,8 @@ def staged_of(entry: dict, now: datetime.datetime) -> str:
 
 
 def _master_plan_expired(item: dict, today: datetime.date) -> bool:
-    """主人的打算过期没有：写了哪天的，那天过完；没写的，记下那天的第二天过完。她们自己的打算不过期。"""
+    """主人的打算过期没有：写了哪天的，那天过完；没写的，记下那天的第二天过完。
+    她们自己的打算不过期：挂太久的由补写排件事往前推或了结（step.STALE_INTENT_DAYS）。"""
     if str(item.get("who") or "") != "master":
         return False
     day = str(item.get("date") or "")[:10] or str(item.get("created") or "")[:10]

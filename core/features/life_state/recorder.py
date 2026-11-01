@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 
 from astrbot.api import logger
 
-from ...common import llm
+from ...common import llm, timeutil
 from ...common.text import strip_inline_system
 from .models import bot_of_umo
 from .things import (CAT_FOOD, CAT_ITEM, KEEPS, KINDS, SAME_NEW_MINUTES, SAME_STEP_MINUTES, SPOTS, STEPS, USE_STEPS, cat_of,
@@ -385,7 +385,7 @@ class Recorder:
             if when:
                 tags.append(when)
             if item.get("now_at"):
-                tags.append("%s 答应现在就去" % str(item.get("now_at"))[11:16])
+                tags.append("%s 答应现在就去" % timeutil.day_hm(item.get("now_at")))
             parts.append("- 打算 %s（%s）：%s" % (item.get("id"), "，".join(tags), item.get("text")))
         book = getattr(self, "trainings", None)
         if book is not None:
@@ -427,9 +427,7 @@ class Recorder:
                     start = parse_time(item.get("start"))
                     if start is None or start < day0 or start > horizon:
                         continue
-                    hm = str(item.get("start"))[11:16]
-                    if item.get("end"):
-                        hm += "–%s" % str(item.get("end"))[11:16]
+                    hm = timeutil.span_text(item.get("start"), item.get("end"), date_prefix=True, ongoing="")
                     flags = []
                     if who != "master" and str(item.get("id")) == current_ids.get(who):
                         flags.append("正在做")

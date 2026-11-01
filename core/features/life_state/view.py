@@ -101,8 +101,8 @@ def merge_close(items: list, gap_minutes: int = FRAGMENT_MINUTES) -> list:
 
 
 def _when(item: dict) -> str:
-    """「09:00–10:40」或「10:40 起」。"""
-    return timeutil.span_text(item.get("start"), item.get("end"))
+    """「11-01 09:00–10:40」或「11-01 10:40 起」：时刻一律带日期，不说今天昨天。"""
+    return timeutil.span_text(item.get("start"), item.get("end"), date_prefix=True)
 
 
 def _latest_visible(items: list, viewer: str, now: datetime.datetime):
@@ -121,13 +121,13 @@ def _latest_visible(items: list, viewer: str, now: datetime.datetime):
 
 
 def _plan_when(item: dict, today: datetime.date) -> str:
-    """打算的「今天 / 明天 / 10-20」加钟点。"""
+    """打算的「10-20」加钟点：一律写日期，不说今天明天。"""
     day = str(item.get("date") or "")[:10]
     word = ""
     if day:
         try:
-            delta = (datetime.date.fromisoformat(day) - today).days
-            word = {0: "今天", 1: "明天", -1: "昨天"}.get(delta, day[5:])
+            datetime.date.fromisoformat(day)
+            word = day[5:]
         except ValueError:
             word = day
     return " ".join(x for x in (word, str(item.get("window") or "").strip()) if x)
@@ -220,7 +220,7 @@ def build_world_text(
         if when:
             tags.append(when)
         if item.get("now_at"):
-            tags.append("%s 答应了现在就去" % str(item.get("now_at"))[11:16])
+            tags.append("%s 答应了现在就去" % timeutil.day_hm(item.get("now_at")))
         lines.append("你说过的打算：%s%s" % (item.get("text"), "（%s）" % "，".join(tags) if tags else ""))
     for item in world.constraints(viewer, active_only=True):
         lines.append("主人定的规矩：%s（%s 起%s）" % (
@@ -251,14 +251,14 @@ def build_world_text(
             placed = [x for x in masters if str(x.get("place") or "").strip()]
             where, _text = _latest_visible(placed, viewer, now)
             if where is not None:
-                line += "；最后说在%s（%s）" % (where.get("place"), str(where.get("start"))[11:16])
+                line += "；最后说在%s（%s）" % (where.get("place"), timeutil.day_hm(where.get("start")))
         # 那条早就结束了：只是他最后一次说到的，不一定是他现在的样子（他走了没说也不知道）
         anchor = parse_time(item.get("end")) if item.get("end") else parse_time(item.get("start"))
         if anchor is not None and now - anchor > datetime.timedelta(minutes=MASTER_STALE_MINUTES):
             line += "；这之后他没再说过自己在哪、在干什么"
         lines.append(line)
     else:
-        lines.append("主人：今天还没说过他自己在哪、在干什么")
+        lines.append("主人：%s 还没说过他自己在哪、在干什么" % date_text[5:])
     # 主人说过的他自己之后的安排（只给听到的人看；过了那天程序自己撤）
     for plan in world.intentions("master"):
         heard = [str(x) for x in (plan.get("heard_by") or [])]

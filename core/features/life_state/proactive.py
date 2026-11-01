@@ -1068,12 +1068,12 @@ class ProactivePlanner:
             if not self._correct_pending(meta, now):
                 return (
                     "你之前跟主人说「%s」的时候，这件事其实还没做（按安排 %s 才开始）；现在已经轮到了，"
-                    "不用专门改口，照常说就行。" % (info.get("said") or "", str(info.get("start") or "")[11:16])
+                    "不用专门改口，照常说就行。" % (info.get("said") or "", timeutil.day_hm(info.get("start")))
                 )
             return (
                 "你刚才跟主人说「%s」，可这件事其实还没做：按安排是 %s–%s 才%s，现在还没到。你说早了。"
                 "马上给主人发一句改口：说清楚其实还没做、什么时候去做；不要找理由，也不要装作没说过。"
-                % (info.get("said") or "", str(info.get("start") or "")[11:16], str(info.get("end") or "")[11:16],
+                % (info.get("said") or "", timeutil.day_hm(info.get("start")), timeutil.day_hm(info.get("end")),
                    info.get("doing") or "")
             )
         if kind in ("out", "back", "meal"):
@@ -1083,7 +1083,7 @@ class ProactivePlanner:
                 head,
                 "%s，" % done["place"] if done.get("place") and done["place"] not in str(done.get("doing") or "") else "",
                 done.get("doing") or "",
-                str(done.get("start") or "")[11:16],
+                timeutil.day_hm(done.get("start")),
                 "这之前刚做完：%s。" % done["prev"] if done.get("prev") else "",
             )
         if kind == "asked":
@@ -1092,8 +1092,8 @@ class ProactivePlanner:
                 "%s，" % done["place"] if done.get("place") and done["place"] not in str(done.get("doing") or "") else "",
                 done.get("doing") or "",
                 "，结果：%s" % done["result"] if done.get("result") else "",
-                str(done.get("start") or "")[11:16],
-                str(done.get("end") or "")[11:16],
+                timeutil.day_hm(done.get("start")),
+                timeutil.day_hm(done.get("end")),
             )
         if kind == "intent":
             done = meta.get("done") or {}
@@ -1101,8 +1101,8 @@ class ProactivePlanner:
                 "%s，" % done["place"] if done.get("place") and done["place"] not in str(done.get("doing") or "") else "",
                 done.get("doing") or "",
                 "，结果：%s" % done["result"] if done.get("result") else "",
-                str(done.get("start") or "")[11:16],
-                str(done.get("end") or "")[11:16],
+                timeutil.day_hm(done.get("start")),
+                timeutil.day_hm(done.get("end")),
             )
         if kind == "done":
             done = meta.get("done") or {}
@@ -1110,8 +1110,8 @@ class ProactivePlanner:
                 "%s，" % done["place"] if done.get("place") and done["place"] not in str(done.get("doing") or "") else "",
                 done.get("doing") or "",
                 "，结果：%s" % done["result"] if done.get("result") else "",
-                str(done.get("start") or "")[11:16],
-                str(done.get("end") or "")[11:16],
+                timeutil.day_hm(done.get("start")),
+                timeutil.day_hm(done.get("end")),
             )
         if kind == "training":
             training = meta.get("training") or {}
@@ -1157,7 +1157,7 @@ class ProactivePlanner:
             lines.append("")
             lines.append("你今天主动发过的话：")
             for moment, text, replied in sent:
-                lines.append("- %s %s%s" % (moment.strftime("%H:%M"), text, "" if replied else "（主人还没回）"))
+                lines.append("- %s %s%s" % (timeutil.day_hm(moment), text, "" if replied else "（主人还没回）"))
         lines.append("")
         if kind in MUST_SEND and (kind != "correct" or self._correct_pending(meta, now)):
             lines.append("调用 send_message_to_user 发出去（这次是改口、约定到点、刚练成或打算做完，必须发，除非主人定的规矩不许）。")
