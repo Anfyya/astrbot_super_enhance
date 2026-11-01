@@ -10,6 +10,7 @@
 """
 
 import datetime
+import re
 
 from astrbot.api import logger
 
@@ -17,8 +18,9 @@ from ...common import jsonio, llm
 
 from .models import profile_umo_for_bot
 from .recorder import norm_time
-from .things import (CAT_ITEM, END_STEPS, ITEM_END_STEPS, ITEM_MID_STEPS, ITEM_START_STEPS, KEEPS, KINDS, MEASURED_KINDS, MID_STEPS,
-                     SPOTS, START_STEPS, checked_place, had_before, norm_kind, norm_state, norm_step, split_keep, step_no)
+from .things import (CAT_FOOD, CAT_ITEM, END_STEPS, ITEM_END_STEPS, ITEM_MID_STEPS, ITEM_START_STEPS, KEEPS, KINDS, MEASURED_KINDS, MID_STEPS,
+                     SPOTS, START_STEPS, _same_name, cat_of, checked_place, had_before, is_ended, norm_kind, norm_state,
+                     norm_step, split_keep, step_no)
 from .menu import meal_slots, meals_text
 from .variety import default_pools, twists_of, when_map, with_when
 from .world import (WorldStore, clean_text, doing_text, fmt_time, is_event, is_sleep, parse_steps, parse_time, progress_of, real_stop, result_text,
@@ -99,7 +101,7 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
 17. **亚托莉做饭的写法**：家常那几样练熟的照常做好；做没做过的新菜、或者复杂的大菜时，偶尔留一个小岔子（盐搁重了、火候偏了、形状歪了这种）；平时做饭也有小概率失手——一处就够，「笨手笨脚」落在过程和学新东西上，不是做成黑暗料理。翻车了多半由丛雨接手收拾（接过勺补救、或者干脆重做一道），把灶上收拾干净就翻篇。她嘴上怪火候怪锅，下次照旧认真学，别写成她怕进厨房。
 18. **家里的吃的**：上面「家里的吃的」是此刻家里有的（编号、剩多少、放在哪、还能放到什么时候）。段里动到家里的吃的，写进这段的 things（没动到就是空数组）：
    - 用了、吃了家里有的：写 id（编号）、what（用掉一部分 / 用完了 / 吃了一部分 / 吃完了）、left（这段做完还剩多少，用完、吃完写空——用完、吃完必须单独写一步，what 填「用完了」或「吃完了」，别把「吃完了」塞进 left 里）；做进了这一次新做的菜，into 写那盘菜的临时代号。换了地方或放法、切开了：what 写「挪地方」或「切开了」，写上新的 place / keep（怎么放）/ spot（放在哪）/ state。剩菜回锅、凉了热一热：what 写「热了一下」。开始腌、晒、熏：what 写「腌上了」「晒上了」「熏上了」，晒、熏写上 spot（晒在太阳底下、挂在屋外风干、搁灶上熏）。扔掉：what 写「丢了」或「坏了扔了」。
-   - 做出来的菜、买回来的、别人给的：写 new（临时代号 n1、n2……，这一次里每件一个；编号由程序发）、name、kind、what（做好了 / 买回来 / 收到）、left、place、keep、spot；做的菜 from 写用了哪几件（编号或这一次的临时代号），买来的 origin 写在哪买的。
+   - 做出来的菜、买回来的、别人给的：写 new（临时代号 n1、n2……，这一次里每件一个，两个人、几段之间也不重复；编号由程序发）、name、kind、what（做好了 / 买回来 / 收到）、left、place、keep、spot；做的菜 from 写用了哪几件（编号或这一次的临时代号），买来的 origin 写在哪买的。
    - place 拆开写，别连成一句：area 是在哪间屋、哪个地方（不在宿舍的写那个地方，例如「镇外梯田的农家灶房」）；at 是搁在那儿的什么上、什么里（矮桌、柜格、案上、灶上、水盆、书架、窗台……）；detail 是再细一点的哪一格、哪个容器里（桌角、第二格、竹筛里、锅里），说不上来就空着。area 和 at 都得有，光写一间屋不算。例如 {{"area": "堂屋", "at": "矮桌", "detail": "桌角"}}、{{"area": "灶房", "at": "案上", "detail": "竹筛里"}}、{{"area": "灶房", "at": "柜格", "detail": ""}}。拿在手上、揣在身上的：area 写谁，at 写手上、袖子里、菜篮里，例如 {{"area": "亚托莉", "at": "手上", "detail": ""}}。这是东西搁在哪，不是人在哪，别照抄这段的 place；挑的时候照常理（剩菜盖好搁灶上或柜格，点心、糖搁堂屋柜里或盒子里，米面调料在灶房柜格）；没挪地方的不写 place。
    - 每一步都写 step：这件事发生在这段分步里的第几步（从 1 数，例如第 2 步「下锅炒」用掉鸡蛋、做好蛋炒饭就写 2，第 3 步吃完就写 3）。这段要是中途被打断，只有做到了的那几步才算数。
    - 这一次里先做好、后面又吃掉的菜，吃饭那段也要写一步：id 填它的临时代号（n1 这种），what 写吃完了或吃了一部分，left 写还剩多少（比如给主人留的那份）。
@@ -109,7 +111,7 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
 19. **被打断的事后来怎么样了**：上面「被打断、还没交代后来怎么样的事」里每一件，在 stopped_results 里用编号写一句后来怎么样了：撂下不做了、交给谁接着做完了、等手上的事忙完回头接着做完了、或者赶紧几下做完了，挑合情理的写。只写这个人自己怎么处理这件事，不替别人定事实：别人那件做没做完、做出了什么，以世界线上别人那段写的为准（标着「做到……先放下了」的就是没做完），拿不准就写撂下了或者等回头再说。要和你这次排的段对得上：写了回头接着做，就把接着做的那段排上；写了交给对方，对方那段就是接着做这件事。没列出来的不写。
 20. **家里的东西**（吃的以外）：上面「家里的东西」是此刻家里有的（编号、样子、在哪、在谁手上）。段里做了、用了、挪了、交给别人了、接着做了一截的东西，写进这段的 items（没动到就是空数组）：
    - 已有的写 id、what（挪地方 / 交给 / 用了 / 做了一截 / 做好了 / 变了样 / 送人了 / 丢了 / 坏了扔了 / 用完了）、place、holder（交到谁手上）、state（这段做完它什么样，比如「织到两尺长」）。接着做没做完的那件（比如接着织那条围巾），就是清单里那一件，写「做了一截」或「做好了」，不要另建一件。清单里标着「已做好」的已经做完了，不要再排接着做它，也别给它写「做了一截」「做好了」；想再做一样的，就另起一件新的。
-   - 新做出来的、买回来的、捡到的写 new（临时代号 x1、x2……）、name（叫得出区别的名字，例如「兔子窗花」）、kind（它是什么，一个词：窗花、围巾……）、look（样子）、owner（归谁）、what（开始做 / 做好了 / 买回来 / 收到 / 捡到）、place、state。清单里还没有、可前面早就有了的（比如前几天起了头的围巾），也写 new，what 写「原来就有」，state 写它现在的样子。
+   - 新做出来的、买回来的、捡到的写 new（临时代号 x1、x2……，这一次里每件一个，两个人、几段之间也不重复：丛雨那段用了 x1，亚托莉那段的新东西就从 x2 起）、name（叫得出区别的名字，例如「兔子窗花」）、kind（它是什么，一个词：窗花、围巾……）、look（样子）、owner（归谁）、what（开始做 / 做好了 / 买回来 / 收到 / 捡到）、place、state。清单里还没有、可前面早就有了的（比如前几天起了头的围巾），也写 new，what 写「原来就有」，state 写它现在的样子。
    - place 和第 18 条一样拆开写，例如 {{"area": "卧房", "at": "针线笸箩", "detail": ""}}、{{"area": "堂屋", "at": "书架", "detail": "第二格"}}。
    - 每一步也写 step（第几步，同第 18 条）。
    - 同一种东西有好几件的（清单里标着「长得像，认准编号」），照清单认准是哪一件。
@@ -178,6 +180,58 @@ def origin_of(value, bot: str, seed, intent: str = "", training: str = "") -> di
     if text.startswith("接着"):
         return {"kind": "continue", "text": text[2:].lstrip("：:").strip()}
     return {"kind": "unmatched", "text": text}
+
+
+# ---------- 补写写完后核一遍：步骤里写到的家里的吃的、东西，things / items 里有没有标 ----------
+
+# 一句里有这些字眼的，不是在动它（写日志、聊天、回想、打算、看看够不够），这一句不核
+MENTION_SKIP = ("写", "记", "说", "聊", "讲", "提起", "提到", "想", "梦", "念叨", "打算", "商量", "问", "盘算", "惦记",
+                "回味", "夸", "看看", "瞧瞧", "看一遍", "够不够", "剩多少", "还剩几")
+# 菜名前头的做法：「清炒丝瓜」写成「丝瓜」也认
+COOK_HEADS = ("清炒", "红烧", "清蒸", "凉拌", "爆炒", "干煸", "水煮", "糖醋", "油焖", "小炒",
+              "蒸", "炒", "煮", "炖", "煎", "炸", "烤", "卤", "拌", "焖")
+# 太泛的叫法，步骤里写到不算点了哪一件
+GENERIC_NAMES = {"点心", "零嘴", "零食", "饭菜", "剩菜", "剩饭", "早饭", "午饭", "晚饭", "夜宵", "东西", "纸条", "本子",
+                 "盒子", "袋子", "篮子", "书本"}
+# 「蒸好的饭」「剩下的饭」说的是家里那锅米饭（「做好的饭菜」不算）
+RICE_WORDS = re.compile(r"(蒸|煮|焖|剩|热)(好|下)?的饭(?![菜桌点后前盒碗勺])")
+CLAUSE_SPLIT = re.compile(r"[，,。；;！!？?\n]")
+
+
+def name_keys(name, food: bool) -> list:
+    """一件的名字在步骤文字里怎么认：全名；「X的Y」也认 Y；菜名去掉前头的做法也认（清炒丝瓜 → 丝瓜）。
+    一个字的（盐、葱、姜）和太泛的（点心、纸条）不认，免得误伤。"""
+    full = re.sub(r"\s+", "", str(name or ""))
+    out = [full]
+    if "的" in full:
+        out.append(full.rsplit("的", 1)[1])
+    if food:
+        head = next((h for h in COOK_HEADS if full.startswith(h)), "")
+        if head:
+            out.append(full[len(head):])
+    return [x for x in dict.fromkeys(out) if len(x) >= 2 and x not in GENERIC_NAMES]
+
+
+def mentioned(text: str, known: dict) -> set:
+    """文字里写到了 known（认的字 → 那一组）里的哪几个字。一句一句看，有 MENTION_SKIP 字眼的那句跳过；
+    长的先认，短的落在长的里面不算（「鸡蛋糕」里的「鸡蛋」、「麻婆豆腐」里的「豆腐」）。"""
+    keys = sorted(known, key=len, reverse=True)
+    out = set()
+    for clause in CLAUSE_SPLIT.split(str(text or "")):
+        if not clause or any(w in clause for w in MENTION_SKIP):
+            continue
+        taken = []
+        for key in keys:
+            at = clause.find(key)
+            while at >= 0:
+                end = at + len(key)
+                if not any(at < b and a < end for a, b in taken):
+                    taken.append((at, end))
+                    out.add(key)
+                at = clause.find(key, at + 1)
+        if "米饭" in known and RICE_WORDS.search(clause):
+            out.add("米饭")
+    return out
 
 
 STATE_WORDS = {"做事": "do", "do": "do", "闲着": "idle", "idle": "idle", "睡觉": "sleep", "sleep": "sleep"}
@@ -358,8 +412,29 @@ class LifeStep:
         text = str(value or "").strip().lstrip("#＃").strip()
         return text if text.isdigit() else ""
 
-    def _thing_steps(self, raws, keys: dict, shelf) -> list:
-        """补写给一段标的吃的：临时代号换成程序发的编号（这一次里同一个代号是同一件）；
+    @staticmethod
+    def _claim(keys: dict, key: str, name: str, bot: str, reserve) -> str:
+        """新的一件的临时代号换成编号：这一次里同一个代号、名字也对得上的是同一件（两个人一起做的那盘菜）；
+        同一个代号名字对不上（模型给两件都写了 x1），是另一件，另发一个号，这个人后面的段里这个代号指它。"""
+        names = keys.setdefault(("names",), {})
+        mine = (bot, key)
+        if mine in keys and names.get(keys[mine]) is not None and _same_name(names[keys[mine]], name):
+            return keys[mine]
+        if key in keys and _same_name(names.get(keys[key]), name):
+            keys[mine] = keys[key]
+            return keys[key]
+        new_id = reserve()
+        if key in keys:
+            logger.warning("[super_enhance/world] 补写给「%s」和「%s」写了同一个临时代号 %s，「%s」另发编号 %s",
+                           names.get(keys[key]), name, key, name, new_id)
+        else:
+            keys[key] = new_id
+        keys[mine] = new_id
+        names[new_id] = name
+        return new_id
+
+    def _thing_steps(self, raws, keys: dict, shelf, bot: str = "") -> list:
+        """补写给一段标的吃的：临时代号换成程序发的编号（这一次里同一个代号、名字对得上的是同一件，名字对不上另发号）；
         用了、吃了的得是家里有的（此刻现算的存货）或这一次里新做 / 新买的，对不上的那步丢掉。"""
         store = getattr(self, "things", None)
         if store is None or shelf is None or not isinstance(raws, list):
@@ -367,6 +442,8 @@ class LifeStep:
 
         def resolve(token) -> str:
             text = str(token or "").strip()
+            if (bot, text) in keys:
+                return keys[(bot, text)]
             if text in keys:
                 return keys[text]
             item = shelf.find(text)
@@ -385,9 +462,7 @@ class LifeStep:
                 kind = norm_kind(raw.get("kind"))
                 if what == "原来就有" and (kind not in MEASURED_KINDS or had_before(shelf.values(), name) is not None):
                     continue  # 只有从没记过的米面油盐、调料能「原来就有」；别的、用完了的得先买
-                if key not in keys:
-                    keys[key] = store.reserve_id()
-                step = {"new": keys[key], "name": name, "kind": kind,
+                step = {"new": self._claim(keys, key, name, bot, store.reserve_id), "name": name, "kind": kind,
                         "origin": clean_text(raw.get("origin"), 60),
                         "from": [x for x in dict.fromkeys(resolve(t) for t in raw.get("from") or []) if x]}
             else:
@@ -407,8 +482,8 @@ class LifeStep:
             out.append({k: v for k, v in step.items() if v not in ("", None, []) or k == "left"})
         return out
 
-    def _item_steps(self, raws, keys: dict, shelf) -> list:
-        """补写给一段标的东西（吃的以外，段里的 items）：临时代号（x1、x2……）换成程序发的 p 编号；
+    def _item_steps(self, raws, keys: dict, shelf, bot: str = "") -> list:
+        """补写给一段标的东西（吃的以外，段里的 items）：临时代号（x1、x2……）换成程序发的 p 编号（同号不同名另发号，见 _claim）；
         已有的得是清单里的（此刻现算）或这一次里新记的，对不上的那步丢掉。存进那段的 things，带 cat=item。"""
         store = getattr(self, "things", None)
         if store is None or shelf is None or not isinstance(raws, list):
@@ -416,6 +491,8 @@ class LifeStep:
 
         def resolve(token) -> str:
             text = str(token or "").strip()
+            if (bot, text) in keys:
+                return keys[(bot, text)]
             if text in keys:
                 return keys[text]
             item = shelf.find(text)
@@ -431,9 +508,7 @@ class LifeStep:
                 name = clean_text(raw.get("name"), 30)
                 if what not in ITEM_START_STEPS or not name:
                     continue
-                if key not in keys:
-                    keys[key] = store.reserve_id(CAT_ITEM)
-                step = {"new": keys[key], "cat": CAT_ITEM, "name": name, "kind": clean_text(raw.get("kind"), 10),
+                step = {"new": self._claim(keys, key, name, bot, lambda: store.reserve_id(CAT_ITEM)), "cat": CAT_ITEM, "name": name, "kind": clean_text(raw.get("kind"), 10),
                         "look": clean_text(raw.get("look"), 60), "owner": clean_text(raw.get("owner"), 12),
                         "origin": clean_text(raw.get("origin"), 60),
                         "from": [x for x in dict.fromkeys(resolve(t) for t in raw.get("from") or []) if x]}
@@ -449,6 +524,100 @@ class LifeStep:
                          "state": clean_text(raw.get("state"), 40), "step": step_no(raw.get("step")) or ""})
             out.append({k: v for k, v in step.items() if v not in ("", None, [])})
         return out
+
+    def _unmarked(self, data: dict, tasks: dict, shelf, date_text: str) -> list:
+        """补写写完后核一遍：段里的 doing / steps / result 写到了家里清单上的吃的、东西（或这一次里新添的），
+        这段（和一起做这件事的另一个人同一时候那段）的 things / items 里却没标它，返回一行行的问题；没有就空。
+        名字怎么认见 name_keys / mentioned。同名的几件（好几锅米饭）标了其中一件就算。"""
+        if shelf is None or not isinstance(data, dict):
+            return []
+        segments = data.get("segments") if isinstance(data.get("segments"), dict) else {}
+        groups: dict = {}  # 认的字 → {那几件的编号或临时代号}；没了的那几件只占住字（「蛋炒饭」吃完了，里面的「炒饭」也不另算）
+        names: dict = {}   # 编号 / 临时代号 → 名字（问题里写给模型看）
+
+        def add(token, name, food: bool, alive: bool) -> None:
+            names[token] = name
+            for key in name_keys(name, food):
+                group = groups.setdefault(key, set())
+                if alive:
+                    group.add(token)
+
+        for item in shelf.values():
+            add(str(item.get("id")), item.get("name"), cat_of(item) == CAT_FOOD, is_ended(item) is None)
+        for rows in segments.values():
+            for raw in rows if isinstance(rows, list) else []:
+                for field, food in (("things", True), ("items", False)):
+                    for step in (raw.get(field) if isinstance(raw, dict) else None) or []:
+                        if isinstance(step, dict) and str(step.get("new") or "").strip() and step.get("name"):
+                            add(str(step["new"]).strip(), clean_text(step.get("name"), 30), food, True)
+
+        def tokens(raw: dict) -> tuple:
+            """这段标了的：编号 / 临时代号，和新添的那几件的名字。"""
+            ids, made = set(), []
+            for field in ("things", "items"):
+                for step in raw.get(field) or []:
+                    if not isinstance(step, dict):
+                        continue
+                    for key in ("id", "new", "into"):
+                        text = str(step.get(key) or "").strip()
+                        if text:
+                            found = shelf.find(text) if key != "new" else None
+                            ids.add(str(found.get("id")) if found else text)
+                    for text in step.get("from") or []:
+                        ids.add(str(text).strip())
+                    if step.get("new") and step.get("name"):
+                        made.append(str(step["name"]))
+            return ids, made
+
+        def span(raw: dict):
+            """这段大约的起止（没写结束、写反了的按半小时算）；开始认不出是 (None, None)。"""
+            lo = parse_time(norm_time(raw.get("start"), date_text))
+            if lo is None:
+                return None, None
+            hi = parse_time(norm_time(raw.get("end"), date_text)) if raw.get("end") else None
+            return lo, hi if hi is not None and hi > lo else lo + datetime.timedelta(minutes=30)
+
+        problems = []
+        for bot in tasks:
+            for raw in segments.get(bot) or []:
+                if not isinstance(raw, dict) or state_of(raw) != "do":
+                    continue
+                _texts, _mins = parse_steps(raw.get("steps"))
+                text = "\n".join([str(raw.get("doing") or "")] + [str(x) for x in _texts] + [str(raw.get("result") or "")])
+                hits = [k for k in mentioned(text, groups) if groups.get(k)]
+                if not hits:
+                    continue
+                ids, made = tokens(raw)
+                lo, hi = span(raw)
+                # 一起做的另一个人同一时候那段（这次写的、或者已经排好的）标了也算：两人一起的饭 things 只写在一个人那段里
+                partners = [x for x in (raw.get("with") or []) if x != bot and x != "master"]
+                for other in partners:
+                    for row in segments.get(other) or []:
+                        o_lo, o_hi = span(row) if isinstance(row, dict) else (None, None)
+                        if lo and o_lo and o_lo < hi and lo < o_hi:
+                            more, more_made = tokens(row)
+                            ids |= more
+                            made += more_made
+                    if lo is not None:
+                        for item in self.world.entries(lo.date().isoformat(), other):
+                            s0 = parse_time(item.get("start"))
+                            s1 = parse_time(item.get("end")) if item.get("end") else None
+                            if s0 is not None and s1 is not None and s0 < hi and lo < s1:
+                                more, more_made = tokens(item)
+                                ids |= more
+                                made += more_made
+                missing, told = [], set()
+                for key in sorted(hits, key=lambda k: (-len(k), k)):
+                    if groups[key] & ids or groups[key] & told or any(_same_name(key, name) for name in made):
+                        continue
+                    told |= groups[key]
+                    missing.append("「%s」（%s）" % (key, "、".join(
+                        "%s %s" % (t, names.get(t, "")) for t in sorted(groups[key]))))
+                if missing:
+                    problems.append("- %s %s「%s」：步骤里写到了 %s，这段 things / items 里没标" % (
+                        self.label(bot) or bot, str(raw.get("start") or "")[-5:], clean_text(raw.get("doing"), 30),
+                        "、".join(missing)))
+        return problems
 
     def _intention_line(self, item: dict) -> str:
         """补写看到的一条打算：编号（谁，和主人一起，哪天 几点）：内容。"""
@@ -1095,6 +1264,7 @@ class LifeStep:
                 self.world.set_last_step_attempt(fmt_time(moment))
                 return False
             self._save_thought(moment, thought, True)
+            data = await self._recheck_things(data, prompt, text, tasks, moment)
             written, missed = self.apply(data, tasks, moment)
             if missed:
                 self.world.note_error("step", "%s 没写到此刻之后" % "、".join(missed))
@@ -1119,6 +1289,50 @@ class LifeStep:
         finally:
             self.running = False
             self._run_cache = {}
+
+    async def _recheck_things(self, data: dict, prompt: str, text: str, tasks: dict, moment: datetime.datetime) -> dict:
+        """步骤里写到了家里的吃的、东西却没标（_unmarked）：把问题列给模型，叫它照原样重写一遍，只打回一次。
+        重写的不是 JSON、或者调用出错，照用第一次的；重写完还有没标的，记一行日志照用。"""
+        date_text = moment.date().isoformat()
+        try:
+            shelf = self._shelf_at(self._things_moment(tasks, moment))
+            problems = self._unmarked(data, tasks, shelf, date_text)
+        except Exception:
+            logger.warning("[super_enhance/world] 补写核对标的吃的、东西失败", exc_info=True)
+            return data
+        if not problems:
+            return data
+        logger.info("[super_enhance/world] 补写步骤里写到的吃的、东西没标，打回重写：\n%s", "\n".join(problems))
+        retry = (
+            prompt
+            + "\n\n你上一次的输出：\n" + str(text or "").strip()
+            + "\n\n程序核对出这些段的步骤里写到了家里清单上的吃的、东西（或这一次里新添的），things / items 里却没标：\n"
+            + "\n".join(problems)
+            + "\n照第 18、20 条改：真用到了、吃了、做进了菜、挪了、交给别人了，给那段补上那一步（写 id、what、step；"
+            "做进了菜的也写进那盘菜的 from）；同一件事两个人一起做的，标在其中一个人那段里就行；只是顺嘴提到、其实没动它的，"
+            "把那句改成不提它。别的照上一次的原样，重新输出完整的 JSON。"
+        )
+        try:
+            again, _thought = await llm.text_chat(
+                self.context, retry, provider_id=str(self.cfg.get("llm_provider_id") or "").strip(),
+                timeout=self.timeout, session_id="super_enhance_lifestep", system_prompt=SYSTEM_PROMPT,
+                attempts=1, log_label="补写重写",
+            )
+        except Exception as e:
+            logger.warning("[super_enhance/world] 补写重写失败，照用第一次的：%s", e)
+            return data
+        self._run_cache = {}
+        fixed = llm.extract_json(again)
+        if not isinstance(fixed, dict) or not isinstance(fixed.get("segments"), dict):
+            logger.warning("[super_enhance/world] 补写重写的不是 JSON，照用第一次的")
+            return data
+        try:
+            left = self._unmarked(fixed, tasks, self._shelf_at(self._things_moment(tasks, moment)), date_text)
+        except Exception:
+            left = []
+        if left:
+            logger.warning("[super_enhance/world] 补写重写以后还有没标的，照用：\n%s", "\n".join(left))
+        return fixed
 
     def _limit(self, start: datetime.datetime, end, sleepy: bool) -> datetime.datetime:
         """结束时间缺了、早于开始、或长得离谱时规整一下（睡觉那段放宽到 MAX_SLEEP_HOURS）。"""
@@ -1230,8 +1444,8 @@ class LifeStep:
                     "intent": intent,
                     # 溯源：这段是照什么写的（抽到的哪一条 / 打算 / 作息 / 接着前面 / 自己想的），程序对照当天抽到的核过
                     "origin": origin_of(raw.get("from"), bot, seed, intent=intent, training=training),
-                    "things": (self._thing_steps(raw.get("things"), thing_keys, shelf)
-                               + self._item_steps(raw.get("items"), item_keys, shelf)) if state == "do" else [],
+                    "things": (self._thing_steps(raw.get("things"), thing_keys, shelf, bot)
+                               + self._item_steps(raw.get("items"), item_keys, shelf, bot)) if state == "do" else [],
                     "seen_by": [bot] + with_list,
                     "source": "step",
                     "created": fmt_time(flat),
