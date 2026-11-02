@@ -1107,7 +1107,7 @@ def draw_seed(
         "accident": accident,
         "when": {t: w for t, w in when_map(pools).items()
                  if any(t in items for items in (*twists.values(), *night_twists.values(), together))},
-        "meals": draw_meals(date_text, history, meals_rng or random.Random()),
+        "meals": draw_meals(date_text, history, meals_rng or random.Random(), home),
     }
 
 class SeedLog:

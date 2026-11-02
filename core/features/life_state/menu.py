@@ -11,7 +11,8 @@
 - 当季的（【秋】【冬】）在那几个月乘 ``SEASON_BOOST``。
 
 池子一行一行写：「菜名【标记】（组：某组、某组）｜……」；行前给了组的，这一行没写组的菜都归它。
-标记：辣、费工、秋、冬、买、剩（只给补写看，【秋】【冬】还管权重）。
+标记：辣、费工、秋、冬、买、剩、稀（只给补写看，【秋】【冬】【稀】还管权重）。
+住在海边小镇时抽 SEA_POOLS（draw_meals 的 home），别处抽 POOLS。
 """
 
 from __future__ import annotations
@@ -32,6 +33,8 @@ BREAKFAST_COOLDOWN = {0: 0.05, 1: 0.2, 2: 0.5, 3: 0.85}
 COOL_LOOKBACK = 10
 SEASON_BOOST = 1.6
 SEASON_MONTHS = {"秋": (9, 10, 11), "冬": (12, 1, 2)}
+# 标【稀】的（海边难弄到的鲜肉、鸡蛋、豆腐、罐头）权重乘这个
+RARE_FACTOR = 0.15
 
 # (这一行默认的组, 行文)
 _BREAKFAST = (
@@ -99,6 +102,67 @@ _ONEPOT = (
     ("", "大阪烧【费工】｜御好烧｜春饼卷菜【费工】"),
 )
 
+# 海边小镇的菜单（住在海边时抽这张，穗织那张不动）：镇上停电、没冰箱，靠打捞和卖鱼过日子，补给船隔几天来一趟。
+# 天天有的是鱼虾贝、海带海草、鱼干咸鱼，坡上菜地的番薯萝卜豆子青菜，米面和罐头；
+# 鲜肉、鸡蛋、豆腐、罐头难得，标【稀】，权重乘 RARE_FACTOR。只有船上一口小灶，烤箱、油炸大锅这类菜不写。
+# 行前不给默认组：鱼天天吃，按「鱼」一组冷却就成了吃一回鱼好几天不吃；只给真是同一回事的几样编组（几种泡饭、几种鱼汤）
+_SEA_BREAKFAST = (
+    ("", "鱼片粥｜鱼干粥｜番薯粥｜海带粥｜蛤蜊粥｜虾干粥｜萝卜丝粥｜芋头粥【秋】｜南瓜粥【秋】｜咸鱼粥｜青菜粥｜豆子粥"
+           "｜皮蛋粥【稀】｜鸡蛋粥【稀】（组：粥、鸡蛋）"),
+    ("", "鱼汤泡饭（组：泡饭）｜鱼干茶泡饭（组：泡饭）｜海苔茶泡饭（组：泡饭）｜海鲜杂炊（组：杂炊）｜番薯杂炊（组：杂炊）"
+         "｜烤饭团配鱼干（组：饭团）｜海带饭团（组：饭团）｜咸鱼饭团（组：饭团）｜鲣鱼片饭团（组：饭团）"),
+    ("", "蒸番薯（组：番薯早饭）｜烤番薯（组：番薯早饭）｜番薯饼（组：番薯早饭）｜煮芋头【秋】（组：芋头）｜蒸土豆｜煮豆子配米饭"
+         "｜海鱼汤配米饭（组：鱼汤）｜味噌汤配米饭、腌萝卜（组：味噌汤）｜蛤蜊味噌汤配米饭（组：味噌汤）"),
+    ("", "鱼汤面（组：面）｜海带汤面（组：面）｜虾干汤面（组：面）｜葱油拌细面（组：面）｜番薯面疙瘩汤｜萝卜丝煎饼（组：煎饼）｜葱花烙饼（组：煎饼）｜煎鱼饼（组：煎饼）"
+         "｜罐头鱼拌饭【稀】（组：罐头）｜煎蛋配米饭【稀】（组：鸡蛋）｜鸡蛋饼【稀】（组：鸡蛋）"),
+)
+_SEA_MAIN = (
+    ("", "盐烤鲭鱼｜盐烤竹荚鱼｜盐烤沙丁鱼｜炭火烤秋刀鱼【秋】｜炭烤小黄鱼｜干煎带鱼｜煎小鲳鱼｜香煎马鲛鱼｜干煎比目鱼"
+           "｜红烧海鱼｜红烧鱼块｜酱焖小杂鱼｜豆瓣鱼【辣】｜糖醋小黄鱼｜葱烧鲫鱼｜家常烧鱼｜萝卜烧鱼｜番薯焖鱼"
+           "｜清蒸鱼｜豉汁蒸鱼｜酱油煮鱼（煮付け）｜味噌煮鲭鱼｜梅干煮沙丁鱼｜生姜煮小鱼｜鱼头炖豆腐【稀】（组：豆腐）"
+           "｜鱼丸烧萝卜（组：鱼丸）｜浅油炸小鱼（组：炸）｜鱼块裹面糊煎（组：炸）｜醋腌小鱼（南蛮渍）"
+           "｜刚上岸的生鱼片【稀】｜鱼肉松拌饭（一次做一罐）"),
+    ("", "咸鱼蒸肉末【稀】（组：咸鱼干、肉）｜咸鱼烧茄子｜咸鱼炒青菜｜煎咸鱼｜鱼干炒辣椒【辣】｜烤鱼干｜鱼干焖萝卜｜虾干炒青菜"),
+    ("", "清酒蒸蛤蜊｜辣炒蛤蜊【辣】｜蛤蜊蒸蛋【稀】（组：鸡蛋）｜葱爆海螺｜煮海螺蘸酱｜蒜蓉蒸贻贝｜贻贝煮番薯｜烤扇贝【稀】"
+           "｜炒花蛤｜蒸牡蛎｜海肠炒韭菜【稀】"),
+    ("", "盐水虾｜白灼海虾｜油焖虾｜椒盐小虾｜虾干炒韭菜｜蒸梭子蟹｜炒小蟹｜葱姜炒蟹｜香辣蟹【辣】｜醉蟹【费工】｜酱蟹"),
+    ("", "炒鱿鱼｜鱿鱼炖萝卜｜酱爆鱿鱼须｜烤鱿鱼干｜白灼章鱼｜章鱼炒青菜｜墨鱼炖豆子｜辣炒墨鱼仔【辣】"),
+    ("", "午餐肉煎片【稀】｜午餐肉炒青菜【稀】｜罐头鱼烧萝卜【稀】｜罐头鱼炖豆子【稀】｜罐头牛肉炖土豆【稀】（组：罐头、肉）"
+             "｜罐头番茄炖鱼【稀】"),
+    ("", "咸肉炒青菜【稀】｜腊肉蒸番薯【稀】｜咸肉炖萝卜【稀】｜海边的红烧肉【稀】【费工】｜海边的土豆炖肉【稀】｜鸡肉炖萝卜【稀】"),
+    ("", "葱花炒蛋【稀】｜海带炒蛋【稀】｜虾干炒蛋【稀】｜海边的番茄炒蛋【稀】｜蒸蛋羹【稀】"),
+)
+_SEA_VEG = (
+    ("", "番薯炖豆子｜炒番薯丝｜番薯叶炒蒜｜拔丝番薯【费工】【稀】｜番薯烧肉【稀】（组：肉）"),
+    ("", "海带丝炖萝卜｜萝卜丝炒虾干｜萝卜干炒辣椒【辣】｜醋拌萝卜丝｜萝卜缨炒豆子｜自家腌的萝卜"),
+    ("", "海边的凉拌海带丝｜海带炖豆子｜海带结烧萝卜｜炒海带丝｜凉拌海草｜海草煎饼（组：煎饼）｜炒裙带菜｜紫菜拌黄瓜"
+                 "｜海苔煎蛋【稀】（组：鸡蛋）"),
+    ("", "煮毛豆｜炒豌豆｜炖黄豆｜红豆煮番薯｜豆子焖青菜｜煮蚕豆｜炒豆子当下饭菜"),
+    ("", "清炒小青菜｜炒空心菜｜清炒白菜｜海边的醋溜白菜｜炒包菜｜蒜蓉苋菜｜凉拌黄瓜｜炒茄子（组：茄子）｜炒南瓜【秋】"
+             "｜南瓜炖豆子【秋】｜煮芋头蘸酱【秋】（组：芋头）｜炒土豆丝｜煎土豆片｜土豆炖豆子"),
+    ("", "海边的家常豆腐【稀】｜海边的冷豆腐【稀】｜海边的煎豆腐【稀】｜虾干烧豆腐【稀】"),
+    ("", "腌菜炒豆子｜酱菜｜咸菜炒番薯丝｜自家腌的梅干"),
+)
+_SEA_SOUP = (
+    ("", "鱼汤（组：鱼汤）｜鱼头汤（组：鱼汤）｜小杂鱼汤（组：鱼汤）｜鱼骨熬的白汤（组：鱼汤）｜鱼丸汤（组：鱼汤、鱼丸）"
+         "｜蛤蜊汤｜海螺汤｜贻贝汤｜海带汤｜海带排骨汤【稀】（组：肉）"
+         "｜紫菜虾干汤｜裙带菜汤｜萝卜鱼丸汤（组：鱼丸）｜萝卜虾干汤"
+         "｜番薯汤｜番薯叶汤｜豆子汤｜青菜汤｜南瓜汤【秋】"
+         "｜海鲜味噌汤（组：味噌汤）｜海边的海带味噌汤（组：味噌汤）｜海边的蛤蜊味噌汤（组：味噌汤）｜番薯味噌汤（组：味噌汤）"
+         "｜蛋花汤【稀】（组：鸡蛋）｜酸辣鱼汤【辣】（组：鱼汤）｜蟹汤｜墨鱼汤"),
+)
+_SEA_ONEPOT = (
+    ("", "海鲜焖饭（组：焖饭）｜鱼干焖饭（组：焖饭）｜番薯焖饭（组：焖饭）｜蛤蜊焖饭（组：焖饭）｜豆子焖饭（组：焖饭）"
+         "｜罐头焖饭【稀】（组：焖饭、罐头）｜鱼盖饭（组：盖饭）｜生鱼片盖饭【稀】（组：盖饭）｜烤鱼盖饭（组：盖饭）｜虾盖饭（组：盖饭）"
+         "｜海鲜炒饭（组：炒饭）｜咸鱼炒饭（组：炒饭）｜鸡蛋炒饭【稀】（组：炒饭、鸡蛋）｜番薯炒饭（组：炒饭）｜蟹肉炒饭（组：炒饭）"),
+    ("", "海边的鱼汤面（组：面）｜海鲜面（组：面）｜虾干炒面（组：面）｜海边的海带汤面（组：面）｜鱼丸面（组：面、鱼丸）｜海鲜乌冬（组：面）"
+         "｜炒面片（组：面）｜番薯粉条炖鱼（组：面）"),
+    ("", "包鱼肉饺子【费工】（组：饺子）｜虾仁馄饨（组：饺子）｜海草煎饺（组：饺子）｜蒸鱼肉包子【费工】（组：饺子）"),
+    ("", "鱼杂锅｜海鲜一锅煮｜番薯鱼块一锅炖｜萝卜海带鱼丸锅｜石狩锅（鲑鱼味噌锅）【秋】｜豆子鱼干一锅炖｜海鲜关东煮【秋】"
+             "｜鱼头砂锅【稀】（组：锅物、豆腐）｜罐头杂烩锅【稀】（组：锅物、罐头）"),
+    ("", "海鲜煎饼（组：煎饼）｜生蚝煎饼（组：煎饼）｜番薯面糊煎饼（组：煎饼）"),
+)
+
 _TAG_RE = re.compile(r"【([^】]+)】")
 _GROUP_RE = re.compile(r"（组：([^）]+)）")
 
@@ -125,7 +189,17 @@ POOLS = {
     "soup": _parse(_SOUP),
     "onepot": _parse(_ONEPOT),
 }
-_BY_NAME = {dish["name"]: dish for pool in POOLS.values() for dish in pool}
+SEA_POOLS = {
+    "breakfast": _parse(_SEA_BREAKFAST),
+    "meat": _parse(_SEA_MAIN),
+    "veg": _parse(_SEA_VEG),
+    "soup": _parse(_SEA_SOUP),
+    "onepot": _parse(_SEA_ONEPOT),
+}
+# 住在哪 -> 用哪张菜单；没写的（穗织、空）用 POOLS
+POOLS_BY_HOME = {"海边小镇": SEA_POOLS}
+# 两张菜单的菜名不能重名（重名会把标记、组取错，海边那张跟穗织重的名字前面加了「海边的」）
+_BY_NAME = {dish["name"]: dish for pools in (POOLS, SEA_POOLS) for pool in pools.values() for dish in pool}
 
 
 def cool_keys(name: str) -> list[str]:
@@ -199,15 +273,18 @@ def _pick(pool: list, seen: dict, rng: random.Random, month: int, table: dict) -
     for dish in pool:
         keys = cool_keys(dish["name"])
         cool = min(table.get(seen[k], 1.0) if k in seen else 1.0 for k in keys)
-        weights[dish["name"]] = _season_factor(dish, month) * cool / sizes[keys[0]]
+        rare = RARE_FACTOR if "稀" in dish["tags"] else 1.0
+        weights[dish["name"]] = _season_factor(dish, month) * rare * cool / sizes[keys[0]]
     name = _choice(weights, rng)
     for key in cool_keys(name):
         seen[key] = 0
     return name
 
 
-def draw_meals(date_text: str, history: dict | None = None, rng: random.Random | None = None) -> dict:
-    """抽今天的饭：{"count": 几顿, "menu": {"午饭": [菜, ...], ...}}（按早、午、晚的顺序）。"""
+def draw_meals(date_text: str, history: dict | None = None, rng: random.Random | None = None, home: str = "") -> dict:
+    """抽今天的饭：{"count": 几顿, "menu": {"午饭": [菜, ...], ...}}（按早、午、晚的顺序）。
+    home 是现在住在哪（配置 world_home）：海边小镇用 SEA_POOLS，别的用 POOLS。"""
+    pools = POOLS_BY_HOME.get(str(home or "").strip(), POOLS)
     rng = rng or random.Random()
     history = history or {}
     month = int(str(date_text)[5:7])
@@ -224,21 +301,22 @@ def draw_meals(date_text: str, history: dict | None = None, rng: random.Random |
         if meal not in chosen:
             continue
         if meal == "早饭":
-            menu[meal] = [_pick(POOLS["breakfast"], seen, rng, month, BREAKFAST_COOLDOWN)]
+            menu[meal] = [_pick(pools["breakfast"], seen, rng, month, BREAKFAST_COOLDOWN)]
         elif rng.random() < ONEPOT_CHANCE:
-            menu[meal] = [_pick(POOLS["onepot"], seen, rng, month, MAIN_COOLDOWN)]
+            menu[meal] = [_pick(pools["onepot"], seen, rng, month, MAIN_COOLDOWN)]
         else:
-            dishes = [_pick(POOLS["meat"], seen, rng, month, MAIN_COOLDOWN), _pick(POOLS["veg"], seen, rng, month, MAIN_COOLDOWN)]
+            dishes = [_pick(pools["meat"], seen, rng, month, MAIN_COOLDOWN), _pick(pools["veg"], seen, rng, month, MAIN_COOLDOWN)]
             if rng.random() < SOUP_CHANCE:
-                dishes.append(_pick(POOLS["soup"], seen, rng, month, MAIN_COOLDOWN))
+                dishes.append(_pick(pools["soup"], seen, rng, month, MAIN_COOLDOWN))
             menu[meal] = dishes
     return {"count": count, "menu": menu}
 
 
 def dish_text(name: str) -> str:
     dish = _BY_NAME.get(name)
-    tags = [t for t in (dish["tags"] if dish else []) if t in ("辣", "费工", "买", "剩")]
-    return name + ("（%s）" % "、".join({"辣": "辣口", "费工": "费工夫", "买": "出门买现成的", "剩": "能用上剩饭剩菜"}[t] for t in tags)
+    tags = [t for t in (dish["tags"] if dish else []) if t in ("辣", "费工", "买", "剩", "稀")]
+    return name + ("（%s）" % "、".join({"辣": "辣口", "费工": "费工夫", "买": "出门买现成的", "剩": "能用上剩饭剩菜",
+                                         "稀": "难得吃上一回的"}[t] for t in tags)
                    if tags else "")
 
 
