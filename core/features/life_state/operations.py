@@ -143,7 +143,7 @@ def weathers(service) -> dict:
 def tool_look_things(service, umo: str, kind: str = "food", thing_id: str = "") -> str:
     """看家里的东西：kind=food 列出家里现有的吃的，kind=item 列出吃的以外的东西；填了编号看那一件的来龙去脉。这一刻现算。"""
     now = service._now().replace(tzinfo=None)
-    shelf = service.things.view(now)
+    shelf = service.things.here(service.things.view(now), now)
     key = str(thing_id or "").strip()
     if key:
         item = shelf.find(key)

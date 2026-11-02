@@ -58,6 +58,9 @@ async def world_loop(service) -> None:
             else:
                 await review_if_due(service, now)
             service.world.tick(now)
+            # 面板里改了「住在哪」：从这一刻起记成换了住处（存货按它分两处，见 ThingStore.here）
+            if service.world.note_home(service.life_step.home, now.replace(tzinfo=None)):
+                logger.info("[super_enhance/life] 住处换成 %s（%s 起）", service.life_step.home, now.strftime("%m-%d %H:%M"))
             for umo in service.recorder.sessions():
                 items = service.recorder.pending(umo, now)
                 if items:

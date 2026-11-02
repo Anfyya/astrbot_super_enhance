@@ -1309,6 +1309,58 @@ class ThingStore:
         self._view_cache = ((fmt_time(flat), current_revision, self._revision), result)
         return result
 
+    # ---------- 存货分两处：住在哪（world.home_at）变了，留在原来那处的东西拿不到 ----------
+
+    # 放的地方开头是这几个（谁手上、身上）就算带在身上，跟着人走；别的按放下那一刻住在哪算在哪一处
+    CARRIED_AREAS = ("丛雨", "亚托莉", "主人", "napcat", "napcat2", "master")
+    # 带在身上的只算换住处前这么久以内递到手上、揣上的（出发前收拾带上的）；更早就在谁手上的留在原来那处
+    CARRY_ALONG_HOURS = 2
+
+    def where_of(self, item: dict, now: datetime.datetime) -> str:
+        """这件此刻在哪一处（住处名）；空串 = 带在身上、跟着人走，哪儿都算。
+        放下的：按最后一次放下（有地方的那一步）时住在哪。
+        在谁手上、身上的：那以后没换过住处，就是跟着人走；换过的，只有换住处前 CARRY_ALONG_HOURS 小时以内递到手上的
+        算带过去了，更早的留在递到手上那时住的那一处。没记过住处变更（world.homes 空）返回空串（不分）。"""
+        world = self.world
+        if world is None or not hasattr(world, "home_at") or not world.homes():
+            return ""
+        flat = now.replace(tzinfo=None)
+        last_kind, last_at = None, ""
+        for stage in sorted(item.get("stages") or [], key=lambda s: str(s.get("at") or "")):
+            if str(stage.get("at") or "") > fmt_time(flat):
+                break
+            place, holder = str(stage.get("place") or ""), str(stage.get("holder") or "")
+            if holder or place.split("·")[0] in self.CARRIED_AREAS:
+                if last_kind != "carried":
+                    last_kind, last_at = "carried", str(stage.get("at") or "")
+            elif place or last_kind is None:
+                last_kind, last_at = "placed", str(stage.get("at") or "")
+        if last_kind is None:
+            return ""
+        if last_kind == "placed":
+            return world.home_at(last_at)
+        moves = [m for m in world.moves_after(last_at) if m[0] <= fmt_time(flat)]
+        if not moves:
+            return ""
+        start = parse_time(last_at)
+        first = parse_time(moves[0][0])
+        if start is not None and first is not None and first - start <= datetime.timedelta(hours=self.CARRY_ALONG_HOURS):
+            return ""
+        return world.home_at(last_at)
+
+    def here(self, view: View, now: datetime.datetime) -> View:
+        """给模型看的存货：只留此刻住的这一处的、和带在身上的。住处没变过（或没记过）就原样返回。
+        网页上照旧看全部（view），补写、记录员、她自己查（look_things）用这个，免得隔着千里拿到另一处的东西。"""
+        world = self.world
+        if world is None or not hasattr(world, "home_at") or not world.homes():
+            return view
+        home = world.home_at(now.replace(tzinfo=None))
+        keep = {k: v for k, v in view.items() if self.where_of(v, now) in ("", home)}
+        if len(keep) == len(view):
+            return view
+        alias = {a: k for a, k in view.alias.items() if k in keep}
+        return View(keep, alias)
+
     def future(self, now: datetime.datetime) -> list:
         """世界线里还没做完的段要新添的（要买回来、要做好的……）：编号是补写 / 网页先发好的，那段做完才算进存货（view），
         这之前网页上列在「未来」里。每件：{id, cat, step（那段里新添它的那一步）, made（哪一段添的）, later（之后几段排好的去向）}。

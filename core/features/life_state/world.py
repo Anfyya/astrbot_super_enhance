@@ -142,6 +142,44 @@ class WorldStore:
     def _save_state(self, quiet: bool = False) -> None:
         self._write_json(self.root / STATE_NAME, self._load_state(), quiet=quiet)
 
+    # ---------- 住在哪的变更历史（存货按这个分两处：住海边小镇时看不到穗织宿舍里的东西） ----------
+
+    def homes(self) -> list:
+        """[{"since": "YYYY-MM-DD HH:MM", "home": 住处}]，按时间排；没记过是空的。"""
+        rows = [x for x in self._load_state().get("homes") or [] if isinstance(x, dict) and x.get("home")]
+        return sorted(rows, key=lambda x: str(x.get("since") or ""))
+
+    def home_at(self, moment) -> str:
+        """那一刻住在哪：最后一条 since 不晚于这一刻的；比第一条还早的算第一条那处；没记过返回空串。"""
+        text = fmt_time(moment) if isinstance(moment, datetime.datetime) else str(moment or "")[:16]
+        rows = self.homes()
+        if not rows:
+            return ""
+        found = rows[0]["home"]
+        for row in rows:
+            if str(row.get("since") or "") <= text:
+                found = row["home"]
+        return str(found)
+
+    def moves_after(self, moment) -> list:
+        """这一刻以后（不含）换住处的那几次：[(since, home)]。"""
+        text = fmt_time(moment) if isinstance(moment, datetime.datetime) else str(moment or "")[:16]
+        return [(str(r.get("since") or ""), str(r["home"])) for r in self.homes() if str(r.get("since") or "") > text]
+
+    def note_home(self, home: str, since) -> bool:
+        """配置里的住处和记着的最后一处不一样：从 since 起换成 home（只往后加，不改以前的）。"""
+        value = str(home or "").strip()
+        if not value:
+            return False
+        rows = self.homes()
+        if rows and rows[-1]["home"] == value:
+            return False
+        state = self._load_state()
+        stamp = fmt_time(since) if isinstance(since, datetime.datetime) else str(since)[:16]
+        state["homes"] = rows + [{"since": stamp, "home": value}]
+        self._save_state()
+        return True
+
     def _day_path(self, date_text: str) -> Path:
         return self.dir / ("%s.json" % str(date_text).strip())
 

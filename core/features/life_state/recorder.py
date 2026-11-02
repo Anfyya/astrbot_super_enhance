@@ -462,7 +462,7 @@ class Recorder:
         if store is None:
             return ""
         flat = now.replace(tzinfo=None)
-        shelf = store.view(flat)
+        shelf = store.here(store.view(flat), flat)
         return ("家里的吃的（存货，按第 18 条记；每件前面是程序发的编号）：\n" + store.food_list(flat, shelf, self.label)
                 + "\n\n家里的东西（吃的以外，按第 19 条记；每件前面是程序发的编号）：\n" + store.item_list(flat, shelf, self.label))
 
@@ -1588,7 +1588,7 @@ class Recorder:
             return
         flat = now.replace(tzinfo=None)
         day = str((items[0].get("date") if items else "") or flat.date().isoformat())
-        view = store.view(flat)
+        view = store.here(store.view(flat), flat)
         keys: dict[str, str] = {}
         dishes = []
 

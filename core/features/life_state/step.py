@@ -332,7 +332,8 @@ class LifeStep:
         shelves = cache.setdefault("shelves", {})
         if key not in shelves:
             store = getattr(self, "things", None)
-            shelves[key] = store.view(moment) if store is not None else None
+            # 只给此刻住的这一处的和带在身上的（住处换过以后，另一处的东西补写看不到、也标不上）
+            shelves[key] = store.here(store.view(moment), moment) if store is not None else None
         return shelves[key]
 
     @property
