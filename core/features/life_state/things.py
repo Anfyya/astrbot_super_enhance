@@ -45,6 +45,7 @@ from . import weathering
 from .world import clean_steps, clean_text, fmt_time, parse_time, real_stop
 
 FILE_NAME = "things.json"
+_WARNED_CLASH: set = set()  # 编号撞车只在每次启动后第一次碰到时警告（清单每次重算都会再碰到同一处，之前每 2 分钟刷一对）
 CAT_FOOD = "food"
 CAT_ITEM = "item"
 # 编号的头一个字母：吃的 w1、w2……，别的东西 p1、p2……；各一套只增不减的号（存在 seq / seq_item）
@@ -1171,8 +1172,11 @@ class ThingStore:
                     and not _same_name(taken.get("name"), name):
                 # 别的一段已经用这个编号记了另一件（名字对不上）：这件另起一个编号，不并进那件、也不丢
                 other = "%s~%s" % (tid, ref[5:].replace("/", "~"))
-                logger.warning("[super_enhance/things] 编号 %s 已经是 %s（%s），%s 的「%s」另记成 %s",
-                               tid, taken.get("name"), taken.get("wl"), ref, name, other)
+                clash = (tid, ref, name)
+                log = logger.debug if clash in _WARNED_CLASH else logger.warning
+                _WARNED_CLASH.add(clash)
+                log("[super_enhance/things] 编号 %s 已经是 %s（%s），%s 的「%s」另记成 %s",
+                    tid, taken.get("name"), taken.get("wl"), ref, name, other)
                 local[tid] = tid = other
             if tid in items or tid in alias:
                 # 聊天里已经认过它（存下来了），或者早认成了别的那件；是这一段做出来的，用料那头照样补「用掉」

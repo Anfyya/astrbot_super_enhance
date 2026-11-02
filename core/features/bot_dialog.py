@@ -315,6 +315,7 @@ class BotDialogFeature:
         sender, platform = identity.sender, identity.bot
         if sender not in self.master_ids or not platform:
             return
+        master_umo = identity.umo  # 回报发回主人派活的这个会话（10-28 阶段5 误删了这一行）
 
         session = str((tool_args or {}).get("session") or "").strip()
         parts = session.split(":", 2)
