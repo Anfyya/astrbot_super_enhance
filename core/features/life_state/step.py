@@ -21,6 +21,7 @@ from .recorder import norm_time
 from .things import (CAT_FOOD, CAT_ITEM, END_STEPS, ITEM_END_STEPS, ITEM_MID_STEPS, ITEM_START_STEPS, KEEPS, KINDS, MEASURED_KINDS, MID_STEPS,
                      SPOTS, START_STEPS, _same_name, cat_of, checked_place, had_before, is_ended, norm_kind, norm_state,
                      norm_step, split_keep, step_no)
+from .homewords import localize
 from .menu import meal_slots, meals_text
 from .variety import default_pools, twists_of, when_map, with_when
 from .world import (WorldStore, clean_text, doing_text, fmt_time, is_event, is_sleep, parse_steps, parse_time, progress_of, real_stop, result_text,
@@ -1198,7 +1199,7 @@ class LifeStep:
         seed_text = self._seed_text(seed, labels, night) if seed else ""
         first = next(iter(tasks.values()))
         example_start = first["start"] or (now + datetime.timedelta(minutes=10))
-        return STEP_TEMPLATE.format(
+        return localize(STEP_TEMPLATE.format(
             now=fmt_time(now),
             roster=roster,
             personas=await self._personas(bots),
@@ -1221,7 +1222,7 @@ class LifeStep:
             example_end=fmt_time(example_start + datetime.timedelta(minutes=25)),
             example_end2=fmt_time(example_start + datetime.timedelta(minutes=40)),
             horizon=fmt_time(max(min(x["start"] or now for x in tasks.values()), now) + datetime.timedelta(hours=HORIZON_HOURS)),
-        )
+        ), self.home)
 
 
     # ---------- 执行 ----------

@@ -23,6 +23,7 @@ import time
 from dataclasses import dataclass
 from astrbot.api import logger
 
+from .homewords import localize
 from ...common import timeutil
 
 from .ledger import promise_with_for
@@ -1022,7 +1023,7 @@ class ProactivePlanner:
         kind = meta.get("kind")
         if kind in ("out", "back", "meal"):
             done = meta.get("done") or {}
-            head = {"out": "你刚出了宿舍", "back": "你刚回到宿舍", "meal": "开饭了"}[kind]
+            head = localize({"out": "你刚出了宿舍", "back": "你刚回到宿舍", "meal": "开饭了"}[kind], str(self.cfg.get("world_home") or ""))
             return "%s：%s%s（%s 起）。%s" % (
                 head,
                 "%s，" % done["place"] if done.get("place") and done["place"] not in str(done.get("doing") or "") else "",
