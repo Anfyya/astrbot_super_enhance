@@ -312,6 +312,10 @@ def world_text(service, bot: str, now: datetime.datetime) -> str:
         blocks.append(service._training_text(bot, now))
     except Exception:
         logger.warning("[super_enhance/life] 在练的事注入失败", exc_info=True)
+    if head and service.cfg.get("world_map_inject", True):
+        # 她们住的这一带有哪些地方（固定事实那份地图，补写、记录员也照它写）：聊天时也知道，
+        # 主人提到哪儿她认得，不会说「没有这个地方」（2026-11-02；之前只给了补写和记录员）
+        blocks.append(map_text(service.cfg))
     if head and service.cfg.get("world_no_repeat", True):
         # 放在整块最后、紧挨着世界线：不然她每句都捎带「我手上正在干嘛」（2026-10-15 测过，放人设里没用）
         blocks.append(NO_REPEAT_NOTE)
@@ -330,6 +334,22 @@ def world_text(service, bot: str, now: datetime.datetime) -> str:
         if service.cfg.get("world_voice_note", True):
             blocks.append(VOICE_NOTES.get(service.bots.label_for(bot) or "", ""))
     return "\n".join(x for x in blocks if x)
+
+def map_text(cfg) -> str:
+    """配置里的固定事实（住的这一带的地图、哪扇门关着这类），给聊天时的她看；没写就空。"""
+    text = str(cfg.get("world_notes") or "").strip()
+    lines = [x.strip().lstrip("-• ").strip() for x in text.splitlines() if x.strip()]
+    # 「某某的地图（她们现在住在这一带，写地点从这里挑）：」这种标题是写给补写看的，聊天这份不要
+    lines = [x for x in lines if "写地点从这里挑" not in x]
+    if not lines:
+        return ""
+    return (MAP_HEAD % (str(cfg.get("world_home") or "").strip() or "穗织")) + "\n".join("- " + x for x in lines)
+
+
+MAP_HEAD = (
+    "你们住的这一带（你都熟，主人提到哪儿你认得；平常不用挨个说出来，"
+    "聊到、要去的时候照这里的样子说，别编出这里没有的地方，也别说这里有的地方不存在）。你们现在住在%s：\n"
+)
 
 # ---------- 世界线注入尾注 ----------
 

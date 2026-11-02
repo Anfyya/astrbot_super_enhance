@@ -202,6 +202,12 @@
                         },
                         "default": 12
                     },
+                    "world_map_inject": {
+                        "description": "聊天时也给她看地图",
+                        "type": "bool",
+                        "hint": "把「故事设定 → 固定事实」（住的这一带的地图）也放进聊天时的世界线块，主人提到哪儿她认得。",
+                        "default": true
+                    },
                     "world_no_repeat": {
                         "description": "别每句都说手上在干嘛",
                         "type": "bool",
