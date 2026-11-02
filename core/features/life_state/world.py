@@ -25,6 +25,7 @@
 """
 
 import datetime
+import functools
 import hashlib
 import random
 import re
@@ -66,7 +67,15 @@ def clean_text(value, limit: int) -> str:
 
 def parse_time(value) -> datetime.datetime | None:
     """2026-10-11 09:00 这种字符串 → datetime；解析不了返回 None。"""
+    if isinstance(value, str):
+        return _parse_time_text(value)
     return timeutil.parse_time(value)
+
+
+@functools.lru_cache(maxsize=8192)
+def _parse_time_text(text: str) -> datetime.datetime | None:
+    # 世界线、存货、模拟里同一个时刻字符串要反复解析（strptime 慢）；datetime 不可变，解析过的记住
+    return timeutil.parse_time(text)
 
 
 def fmt_time(moment: datetime.datetime) -> str:

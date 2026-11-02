@@ -166,8 +166,8 @@ class RequestSnapshotStore:
         ts_ms = int(float(snapshot.get("ts") or time.time()) * 1000)
         umo = _SAFE_RE.sub("_", str(snapshot.get("umo") or "unknown"))[:60]
         name = "req_%d__%s.json" % (ts_ms, umo)
-        body = json.dumps(snapshot, ensure_ascii=False, default=str)
-        jsonio.save(self.dir / name, snapshot, default=str)
+        # 字节数用写进去的那份正文量（jsonio.save 的 dumps 参数和原来单独量的那次一样），整份快照不再多序列化一遍
+        body = jsonio.save(self.dir / name, snapshot, default=str)
 
         items = self._load_index()
         items = [it for it in items if it.get("id") != name]
@@ -221,7 +221,6 @@ class RequestSnapshotFeature:
         self.context = context
         self.config = config
         self.store = RequestSnapshotStore(data_dir)
-        self._inflight = False
 
     @property
     def enabled(self) -> bool:

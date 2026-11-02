@@ -27,8 +27,10 @@
 
 import copy
 import datetime
+import hashlib
 import json
 import re
+from collections import OrderedDict
 from pathlib import Path
 
 from astrbot.api import logger
@@ -775,6 +777,9 @@ class View(dict):
 class ThingStore:
     """存货的全部读写。文件不存在就当作空的；只加不删。"""
 
+    # 跨 view 复用的模拟结果最多留这么多件（一次存货清单三四十件，留几个时刻的量）
+    _sim_cache_max = 512
+
     def __init__(self, path, weather_fn=None) -> None:
         self.path = Path(path)
         # () -> {日期: 天气原文}（daily_seeds 里抽的那句）；没有就按「多云」算
@@ -786,6 +791,8 @@ class ThingStore:
         self._revision = 1
         self._view_cache: tuple | None = None
         self._weather_cache: tuple | None = None
+        # 跨 view 的模拟结果（见 profile）：键带上影响结果的全部输入，有上限
+        self._sim_cache: OrderedDict = OrderedDict()
 
     # ---------- 读写 ----------
 
@@ -1497,10 +1504,20 @@ class ThingStore:
         weathers = self._weathers(flat)
         known = [weathers[k] for k in sorted(weathers) if k <= flat.date().isoformat()]
         fallback = known[-1] if known else "多云"
-        return lambda day: str(weathers.get(day.isoformat()) or fallback)
+        # 模拟每半小时一片问一次；同一次模拟里 weathers 不变，按日子记住
+        memo: dict = {}
+
+        def weather_of(day):
+            text = memo.get(day)
+            if text is None:
+                text = memo[day] = str(weathers.get(day.isoformat()) or fallback)
+            return text
+
+        return weather_of
 
     def profile(self, item: dict, now: datetime.datetime, view=None) -> dict:
-        """一次模拟同时得到新鲜度和口感；同一个 view 里同一件只算一次。"""
+        """一次模拟同时得到新鲜度和口感；同一个 view 里同一件只算一次。
+        view 重建了（世界线、存货的 revision 变了）但这件、整个存货、天气、此刻都没变的，复用上一次模拟的结果。"""
         flat = now.replace(tzinfo=None)
         cache = getattr(view, "_food_profiles", None) if view is not None else None
         if cache is None:
@@ -1510,9 +1527,17 @@ class ThingStore:
         key = (fmt_time(flat), str(item.get("id") or id(item)), id(item), self._revision)
         if key in cache:
             return cache[key]
+        index = self._index(view, flat)
+        weather_of = self._weather_fn(flat)
+        sim_key = self._sim_key(item, flat, view)
+        if sim_key is not None and sim_key in self._sim_cache:
+            self._sim_cache.move_to_end(sim_key)
+            value = copy.deepcopy(self._sim_cache[sim_key])
+            cache[key] = value
+            return value
         hours, word = KINDS.get(str(item.get("kind") or ""), KINDS[DEFAULT_KIND])
         sim = simulate(
-            item, hours, flat, self._weather_fn(flat), index=self._index(view, flat),
+            item, hours, flat, weather_of, index=index,
             quality=True, lookahead_days=LOOKAHEAD_DAYS,
         )
         fresh = {
@@ -1533,7 +1558,39 @@ class ThingStore:
             taste = {"rows": sim.get("quality") or [], "left": sim.get("texture")}
         value = {"fresh": fresh, "taste": taste}
         cache[key] = value
+        if sim_key is not None:
+            self._sim_cache[sim_key] = copy.deepcopy(value)
+            while len(self._sim_cache) > self._sim_cache_max:
+                self._sim_cache.popitem(last=False)
         return value
+
+    @staticmethod
+    def _digest(value) -> str | None:
+        """内容指纹（json 排好键的 sha1）；dumps 不了（键的类型混着这种）返回 None，调用方就不走缓存。"""
+        try:
+            text = json.dumps(value, ensure_ascii=False, sort_keys=True, default=repr)
+        except Exception:
+            return None
+        return hashlib.sha1(text.encode("utf-8")).hexdigest()
+
+    def _sim_key(self, item: dict, flat: datetime.datetime, view) -> tuple | None:
+        """跨 view 复用模拟结果的键：此刻（原值）+ 这件 + 东西之间的影响用的那份存货（同 _index 建索引时的 view）+ 天气表。
+        simulate 的输入就这些（类别时长由 item.kind 定，别的是常量）；任何一样变了键就变。算不出指纹返回 None。"""
+        if view is None:
+            shelf = ""
+        else:
+            cached = getattr(view, "_food_digest", None)
+            if cached is None or cached[0] != flat:
+                cached = (flat, self._digest([[repr(k), v] for k, v in view.items()]))
+                view._food_digest = cached
+            shelf = cached[1]
+            if shelf is None:
+                return None
+        mine = self._digest(item)
+        weathers = self._digest(self._weathers(flat))
+        if mine is None or weathers is None:
+            return None
+        return (flat, mine, shelf, weathers)
 
     def freshness(self, item: dict, now: datetime.datetime) -> dict:
         """按每一步现算（food.simulate）：x = 坏到了这一类能放多久的几成（腌、晒、熏好了能放多久跟着变）。
@@ -1646,7 +1703,8 @@ class ThingStore:
         if where:
             parts.append(where)
         parts.append(came)
-        parts.append(self.fresh_text(item, now))
+        # 新鲜度跟东西之间的影响（index）无关，和口感共用这个 view 里的那一次模拟
+        parts.append(self.fresh_text(item, now, self.profile(item, now, view)["fresh"]))
         taste = self.taste_text(self.quality(item, now, view), 3)
         if taste:
             parts.append("口感：" + taste)
@@ -1690,7 +1748,7 @@ class ThingStore:
         made = [x for x in view.values() if str(item.get("id")) in (x.get("from") or [])]
         if made:
             lines.append("用它做了：%s" % "、".join("%s %s" % (x.get("id"), x.get("name")) for x in made))
-        now_text = self.fresh_text(item, now)
+        now_text = self.fresh_text(item, now, self.profile(item, now, view)["fresh"])
         if info is not None and not is_ended(item):
             now_text = "%s｜%s（平常一次用 %s 上下）" % (self.left_text(item), now_text, fmt_amount(info["per_use"], info["unit"]))
         taste = self.taste_text(self.quality(item, now, view), 6)
@@ -1862,7 +1920,7 @@ class ThingStore:
         for item in foods:
             end = is_ended(item)
             if end is None:
-                (bad if self.freshness(item, flat)["level"] == "坏了" else rows).append(self.line(item, flat, view, label_fn))
+                (bad if self.profile(item, flat, view)["fresh"]["level"] == "坏了" else rows).append(self.line(item, flat, view, label_fn))
                 continue
             when = parse_time(end.get("at"))
             if when is not None and flat - when <= datetime.timedelta(hours=gone_hours):

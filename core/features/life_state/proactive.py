@@ -90,9 +90,6 @@ MEAL_NOTIFY_GAP_MINUTES = 90
 # 排期时刻的随机偏移（分钟）：起床后、睡前、时段开始后
 MORNING_DELAY = (3, 15)
 NIGHT_LEAD = (5, 20)
-MIDDLE_DELAY = (5, 25)
-# 白天那几条和别的主动对话之间至少隔这么久（分钟）
-MIN_GAP_MINUTES = 30
 # 早于这个钟点的消息算「昨天夜里」，不算今天已经说过话
 DAY_START_HOUR = 4
 # 给她看的「今天主动发过的话」最多列几条、每条截多长

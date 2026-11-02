@@ -15,10 +15,6 @@ WEEKDAYS_CN = timeutil.WEEKDAYS_CN
 TAG = "【世界线】"
 
 
-def _span(item: dict) -> str:
-    return timeutil.span_text(item.get("start"), item.get("end"), date_prefix=True)
-
-
 # 碎条目：记录员把一句话记成一条，常常只有一两分钟。只把这种碎条连成一段，
 # 正常的时段（补写写的几十分钟一段）保持原样，免得整天被合成一条。
 FRAGMENT_MINUTES = 10
@@ -212,7 +208,7 @@ def build_world_text(
                     continue
                 # 没写结束的那条到下一条开始为止；只有最后一条才算「起」
                 shown = dict(item, end=item.get("end") or item.get("_eff_end") or "")
-                today_lines.append("- %s %s" % (_span(shown), text))
+                today_lines.append("- %s %s" % (_when(shown), text))
         if today_lines:
             lines.append("你今天：")
             lines.extend(today_lines)

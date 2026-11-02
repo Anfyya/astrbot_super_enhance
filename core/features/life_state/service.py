@@ -3,7 +3,6 @@
 import asyncio
 import datetime
 import functools
-import time
 from pathlib import Path
 
 from astrbot.api import logger
@@ -48,8 +47,6 @@ PROMISE_FILE_NAME = "promises.json"
 TRAINING_FILE_NAME = "trainings.json"
 # 约定注入时往后看几天
 PROMISE_LOOKAHEAD_DAYS = 7
-# 同一个人这么久之内只叫一次开饭（被截停的那顿饭又被重排时，别再叫一次）（分钟）
-MEAL_NOTIFY_GAP_MINUTES = 90
 # 主动消息再加一句（2026-10-19）：主动找主人时别报家务清单
 PROACTIVE_VOICE_NOTE = "（主动找主人的时候，说你这会儿想跟他说的事，别报家务清单：洗了什么、收了什么、菜温在哪、几点开饭，主人问起再说。）"
 # 这两种主动消息就是来告诉主人那件事做完了（接下的事、说好的打算）：不带上面那句，
@@ -84,11 +81,6 @@ class LifeStateService:
         # 会话 → 最近一次有人说话（主人发来或 Bot 发出）的时刻；主动消息真正发出的时刻
         self._activity: dict[str, float] = {}
         self._proactive_sent: dict[str, float] = {}
-        # 聊天时发现缺日程：后台补生成，不让聊天等（见 _kick_background）
-        self._bg_task: asyncio.Task | None = None
-        self._bg_failed_at = 0.0
-        # 0 点任务正在跑（回查 + 生成），这期间聊天不另起生成
-        self._daily_running = False
         # 世界线（见 world.py / recorder.py / step.py / view.py）
         self.world = WorldStore(self.data_dir)
         self.world.tz = self.timezone
@@ -382,14 +374,8 @@ class LifeStateService:
     def _told_master(self, bot: str, since: datetime.datetime) -> bool:
         return training_calc._told_master(self, bot, since)
 
-    def _training_label(self, entry) -> str:
-        return training_calc._training_label(self, entry)
-
     def _training_text(self, bot: str, now: datetime.datetime) -> str:
         return training_calc._training_text(self, bot, now)
-
-    def training_plan_lines(self, bots: list, date_text: str) -> str:
-        return training_calc.training_plan_lines(self, bots, date_text)
 
     async def training_finished(self, bot: str, tid: str) -> bool:
         return await training_calc.training_finished(self, bot, tid)

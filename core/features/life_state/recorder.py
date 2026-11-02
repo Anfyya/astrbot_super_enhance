@@ -31,7 +31,6 @@ SYSTEM_PROMPT = llm.SYSTEM_PROMPT
 # 新打算腾地方：时间段超过这么久就当说得太笼统，不动排好的
 MAKE_ROOM_HOURS = 3
 PLANNED_HOURS = 6
-PLANNED_MAX = 8
 
 def same_place(a, b) -> bool:
     """两个地点说的是不是同一处（去掉「穗织·」、空白后一样，或者一个包着另一个）。"""

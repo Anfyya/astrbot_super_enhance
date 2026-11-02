@@ -178,9 +178,10 @@ def search(world: WorldStore, viewer: str, label, now: datetime.datetime,
                 lo, hi = span
                 if not (a <= hi and max(a, b) >= lo):
                     continue  # 和要看的时间段不沾边（只给一个钟点就看覆盖那一刻的）
-            text = _text(item, level, full=True)
-            if terms and not all(t in text or t in str(item.get("src_quote") or "") for t in terms):
-                continue
+            if terms:
+                text = _text(item, level, full=True)
+                if not all(t in text or t in str(item.get("src_quote") or "") for t in terms):
+                    continue
             hits.append("- %s %s %s：%s" % (_ref(one, item), _span_text(item, one), _who(item, viewer, label),
                                          _clip(_text(item, level))))
         total += len(hits)

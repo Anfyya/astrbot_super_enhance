@@ -42,8 +42,8 @@ def save(
     default=None,
     ensure_ascii: bool = False,
     encoding: str = "utf-8",
-) -> None:
-    """先写同目录临时文件，再原子替换目标；存完告诉网页这块变了（live）。"""
+) -> str:
+    """先写同目录临时文件，再原子替换目标；存完告诉网页这块变了（live）。返回写进去的 JSON 正文。"""
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     temp = target.with_name(target.name + ".tmp")
@@ -56,3 +56,4 @@ def save(
     temp.write_text(body, encoding=encoding)
     os.replace(temp, target)
     live.file_saved(target)
+    return body

@@ -17,6 +17,7 @@
 """
 
 import datetime
+import functools
 import math
 import re
 
@@ -152,7 +153,12 @@ LUKEWARM_TEMP = 38.0
 
 def weather_kind(text) -> str:
     """天气原文 → 当天实际的天气：「昨天是「X」，今天慢慢转成「Y」」取 Y，「和昨天差不多（昨天是「X」）」取 X。"""
-    text = str(text or "")
+    return _weather_kind(str(text or ""))
+
+
+@functools.lru_cache(maxsize=256)
+def _weather_kind(text: str) -> str:
+    # 模拟每半小时一片都要认一次当天天气，原文就那几句：认过的记住
     m = re.search(r"转成「([^」]+)」", text)
     if m:
         return m.group(1)
@@ -200,12 +206,29 @@ def _swing(moment: datetime.datetime) -> float:
 
 def room_temp(moment: datetime.datetime, weather_text) -> float:
     """屋里这一刻的气温：当天平均 + 天气 + 一天里的起伏（下午两点最暖、凌晨两点最凉）。"""
+    if isinstance(weather_text, str):
+        return _room_temp(moment, weather_text)
     shift, amp = weather_shift(weather_text)
     return month_temp(moment) + shift + amp * _swing(moment)
 
 
 def outdoor_temp(moment: datetime.datetime, weather_text) -> float:
     """屋外背阴处：跟屋里一样的平均，起伏大（夜里更冷、白天更暖）；冬天夜里会冻上。"""
+    if isinstance(weather_text, str):
+        return _outdoor_temp(moment, weather_text)
+    shift, amp = weather_shift(weather_text)
+    return month_temp(moment) + shift + amp * OUTDOOR_SWING * _swing(moment)
+
+
+# 模拟往后推的那段从「此刻」起每半小时一片，所有吃的走的是同一套时刻：同一时刻、同一天气的气温记住（纯函数）
+@functools.lru_cache(maxsize=8192)
+def _room_temp(moment: datetime.datetime, weather_text: str) -> float:
+    shift, amp = weather_shift(weather_text)
+    return month_temp(moment) + shift + amp * _swing(moment)
+
+
+@functools.lru_cache(maxsize=8192)
+def _outdoor_temp(moment: datetime.datetime, weather_text: str) -> float:
     shift, amp = weather_shift(weather_text)
     return month_temp(moment) + shift + amp * OUTDOOR_SWING * _swing(moment)
 

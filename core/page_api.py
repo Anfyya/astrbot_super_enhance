@@ -139,6 +139,23 @@ def _picture_id(url: str) -> str:
     return "pic_" + hashlib.sha256(url.encode("utf-8")).hexdigest()[:20]
 
 
+def _item_sig(item: Any) -> str:
+    """一条历史的签名（网页拿它认最后一条变没变）。"""
+    return hashlib.sha1(json.dumps(item, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+
+
+def _last_sig(history: list) -> str:
+    return _item_sig(history[-1]) if history else ""
+
+
+def _mtime_ns(path: Path) -> int:
+    """文件改动时间（纳秒），拿不到就 0：网页缓存和轮询按它认数据文件变没变。"""
+    try:
+        return path.stat().st_mtime_ns
+    except Exception:
+        return 0
+
+
 def _pictures(item: dict) -> list[str]:
     """这条里存着的图（AstrBot 存在历史里的 data URI），网页直接拿来显示。"""
     out = []
@@ -897,19 +914,13 @@ class ContextPageApi:
 
             store = life.things
             now = life._now().replace(tzinfo=None)
-            def stamp(path: Path) -> int:
-                try:
-                    return path.stat().st_mtime_ns
-                except Exception:
-                    return 0
-
             world_stamp = tuple(
-                sorted((path.name, stamp(path)) for path in life.world.dir.glob("*.json"))
+                sorted((path.name, _mtime_ns(path)) for path in life.world.dir.glob("*.json"))
             ) if life.world.dir.exists() else ()
             key = (
                 now.strftime("%Y-%m-%d %H:%M"),
-                stamp(store.path),
-                stamp(life.data_dir / "daily_seeds.json"),
+                _mtime_ns(store.path),
+                _mtime_ns(life.data_dir / "daily_seeds.json"),
                 world_stamp,
             )
             cached = getattr(self, "_things_cache", None)
@@ -943,6 +954,23 @@ class ContextPageApi:
                         row["left_shown"] = "用了 %s，剩 %s" % (things_mod.fmt_amount(used, unit), things_mod.fmt_amount(left, unit))
                 return row
 
+            # 「用它做的」：先扫一遍记下每个编号被哪几件当成用料（按 shelf 原先后），别每一件都把整个 shelf 再扫一遍。
+            # from 不全是字符串列表的（理论上没有）就照原来的写法每件现扫，结果一样
+            made_by: dict = {}
+            plain_from = True
+            for x in shelf.values():
+                sources = x.get("from") or []
+                if not isinstance(sources, list) or not all(isinstance(s, str) for s in sources):
+                    plain_from = False
+                    break
+                for s in dict.fromkeys(sources):
+                    made_by.setdefault(s, []).append(x)
+
+            def made_list(item: dict) -> list:
+                if not plain_from:
+                    return [name_of(x.get("id")) for x in shelf.values() if str(item.get("id")) in (x.get("from") or [])]
+                return [name_of(x.get("id")) for x in made_by.get(str(item.get("id")), ())]
+
             items, objects = [], []
             for item in shelf.values():
                 if things_mod.cat_of(item) == things_mod.CAT_ITEM:
@@ -969,7 +997,7 @@ class ContextPageApi:
                     "virtual": bool(item.get("virtual")),
                     "wl": item.get("wl") or "",
                     "from": [name_of(x) for x in item.get("from") or []],
-                    "made": [name_of(x.get("id")) for x in shelf.values() if str(item.get("id")) in (x.get("from") or [])],
+                    "made": made_list(item),
                     "stages": [stage_row(x) for x in stages],
                     "voided": [dict(stage_row(x), vidx=i) for i, x in enumerate((stored or {}).get("voided") or [])],
                     "ended": stage_row(end) if end else None,
@@ -1021,7 +1049,7 @@ class ContextPageApi:
                     "virtual": bool(item.get("virtual")),
                     "wl": item.get("wl") or "",
                     "from": [name_of(x) for x in item.get("from") or []],
-                    "made": [name_of(x.get("id")) for x in shelf.values() if str(item.get("id")) in (x.get("from") or [])],
+                    "made": made_list(item),
                     "stages": [stage_row(x) for x in stages],
                     "voided": [dict(stage_row(x), vidx=i) for i, x in enumerate((stored or {}).get("voided") or [])],
                     "ended": stage_row(end) if end else None,
@@ -1188,18 +1216,12 @@ class ContextPageApi:
             today = life._today()
             bots = [{"id": bot, "label": life.bots.label_for(bot) or bot} for bot in life.enabled_bots() or []]
             labels = {b["id"]: b["label"] for b in bots}
-            def stamp(path: Path) -> int:
-                try:
-                    return path.stat().st_mtime_ns
-                except Exception:
-                    return 0
-
             key = (
                 today,
                 _POOL_SIMS,
                 tuple((b["id"], b["label"]) for b in bots),
-                stamp(life.pool_store.path),
-                stamp(life.seed_log.path),
+                _mtime_ns(life.pool_store.path),
+                _mtime_ns(life.seed_log.path),
             )
             cached = getattr(self, "_pool_cache", None)
             if cached is None or cached[0] != key:
@@ -1489,19 +1511,14 @@ class ContextPageApi:
         key = (int(conv.updated_at or 0), _as_int(conv.token_usage))
         life = self.plugin.life
         data_dir = life.data_dir
-        def stamp(path):
-            try:
-                return path.stat().st_mtime_ns
-            except Exception:
-                return 0
         today = life._today()
         versions = {
-            "world": stamp(data_dir / "world" / (today + ".json")),
-            "state": stamp(data_dir / "world_state.json"),
-            "things": stamp(data_dir / "things.json"),
-            "pools": stamp(data_dir / "pools.json"),
-            "seeds": stamp(data_dir / "daily_seeds.json"),
-            "requests": stamp(data_dir / "request_snapshots" / "index.json"),
+            "world": _mtime_ns(data_dir / "world" / (today + ".json")),
+            "state": _mtime_ns(data_dir / "world_state.json"),
+            "things": _mtime_ns(data_dir / "things.json"),
+            "pools": _mtime_ns(data_dir / "pools.json"),
+            "seeds": _mtime_ns(data_dir / "daily_seeds.json"),
+            "requests": _mtime_ns(data_dir / "request_snapshots" / "index.json"),
         }
         convs = await self.manager.get_conversations()
         conv_sig = "|".join("%s:%s" % (c.cid, c.updated_at) for c in convs)
@@ -1514,7 +1531,7 @@ class ContextPageApi:
         last = history[-1] if history else None
         sig = ""
         if last is not None:
-            sig = hashlib.sha1(json.dumps(last, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+            sig = _item_sig(last)
         state = {
             "key": key,
             "total": len(history),
@@ -1731,7 +1748,7 @@ class ContextPageApi:
                 "has_more": start > 0,
                 "estimate_tokens": self._conversation_stats(conv, history)["estimate_tokens"],
                 "token_usage": _as_int(conv.token_usage),
-                "last_sig": hashlib.sha1(json.dumps(history[-1], ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")).hexdigest() if history else "",
+                "last_sig": _last_sig(history),
                 "content_max": self._limit_tokens(conv.user_id),
                 "open_tool_calls": _open_tool_calls(history),
                 "items": items,
@@ -1788,7 +1805,7 @@ class ContextPageApi:
                 "total": len(kept),
                 "estimate_tokens": tokens,
                 "token_usage": tokens,
-                "last_sig": hashlib.sha1(json.dumps(kept[-1], ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")).hexdigest() if kept else "",
+                "last_sig": _last_sig(kept),
                 "backup": backup,
             }
         )
@@ -1891,7 +1908,7 @@ class ContextPageApi:
                 "estimate_tokens": tokens,
                 "token_usage": tokens,
                 "total": len(history),
-                "last_sig": hashlib.sha1(json.dumps(history[-1], ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")).hexdigest() if history else "",
+                "last_sig": _last_sig(history),
                 "item": self._history_row(item, index, self._tool_names(history), drawer),
             }
         )
@@ -2071,6 +2088,8 @@ class ContextPageApi:
             cid,
             len(merged),
         )
+        tool_names = self._tool_names(merged)
+        drawer = getattr(self.plugin, "image_gen", None)
         return _ok(
             {
                 "added": len(new_items),
@@ -2079,9 +2098,9 @@ class ContextPageApi:
                 "total": len(merged),
                 "estimate_tokens": tokens,
                 "token_usage": tokens,
-                "last_sig": hashlib.sha1(json.dumps(merged[-1], ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")).hexdigest() if merged else "",
+                "last_sig": _last_sig(merged),
                 "items": [
-                    self._history_row(row, pos + offset, self._tool_names(merged), getattr(self.plugin, "image_gen", None))
+                    self._history_row(row, pos + offset, tool_names, drawer)
                     for offset, row in enumerate(new_items)
                 ],
                 "backup": backup,

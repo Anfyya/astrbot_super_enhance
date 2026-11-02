@@ -280,28 +280,6 @@ def _training_text(service, bot: str, now: datetime.datetime) -> str:
         blocks.append("【刚练成】\n" + "\n".join(fresh))
     return "\n".join(blocks)
 
-def training_plan_lines(service, bots: list, date_text: str) -> str:
-    """给日程生成用：这几位还在练的事（编号、标准、怎么练、还差多少）。"""
-    if not service.training_enabled:
-        return ""
-    now = service._now()
-    lines = []
-    for bot in bots:
-        for item in service.trainings.open_for(bot):
-            prog = service.training_progress(item, now)
-            lines.append(
-                "- [%s] #%s %s｜练成的标准：%s｜怎么练：%s｜还差约 %s 小时"
-                % (
-                    service.bots.label_for(bot),
-                    item.get("id"),
-                    item.get("what"),
-                    item.get("standard") or "（没写）",
-                    item.get("arrangement") or "（没特别安排，按她自己的性子排）",
-                    fmt_hours(prog.left_minutes),
-                )
-            )
-    return "\n".join(lines)
-
 async def training_finished(service, bot: str, tid: str) -> bool:
     await service.settle_trainings(bot)
     item = service.trainings.get(tid)
