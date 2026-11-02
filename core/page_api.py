@@ -963,12 +963,21 @@ class ContextPageApi:
                 now.strftime("%Y-%m-%d %H:%M"),
                 _mtime_ns(store.path),
                 _mtime_ns(life.data_dir / "daily_seeds.json"),
+                _mtime_ns(life.world.root / "world_state.json"),
                 world_stamp,
             )
             cached = getattr(self, "_things_cache", None)
             if cached is not None and cached[0] == key:
                 return _ok(cached[1])
             shelf = await asyncio.to_thread(store.view, now)
+            # 在哪一处（分两处以后才有）：where 空 = 带在身上，跟着人走；没记过住处变更时 homes 空，网页不显示这一组
+            home_rows = life.world.homes() if hasattr(life.world, "homes") else []
+            here_home = life.world.home_at(now) if home_rows else ""
+
+            def where_text(item: dict) -> str:
+                if not home_rows:
+                    return ""
+                return store.where_of(item, now) or "带在身上"
 
             def name_of(tid) -> dict:
                 found = shelf.find(tid)
@@ -1034,6 +1043,7 @@ class ContextPageApi:
                     "id": item.get("id"),
                     "name": item.get("name"),
                     "kind": item.get("kind"),
+                    "where": where_text(item),
                     "origin": item.get("origin") or "",
                     "created": item.get("created"),
                     "virtual": bool(item.get("virtual")),
@@ -1082,6 +1092,7 @@ class ContextPageApi:
                     "id": item.get("id"),
                     "name": item.get("name"),
                     "kind": item.get("kind") or "",
+                    "where": where_text(item),
                     "look": item.get("look") or "",
                     "owner": owner,
                     "owner_label": self._thing_who(life, owner) if owner else "",
@@ -1106,6 +1117,8 @@ class ContextPageApi:
             bots = list(life.enabled_bots() or [])
             data = {
                 "now": now.strftime("%Y-%m-%d %H:%M:%S"),
+                "home": here_home,
+                "homes": list(dict.fromkeys(str(r["home"]) for r in home_rows)),
                 "items": items,
                 "future": future,
                 "kinds": [{"key": k, "hours": v[0], "word": v[1]} for k, v in things_mod.KINDS.items()],
