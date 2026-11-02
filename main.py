@@ -455,9 +455,11 @@ class SuperEnhance(Star):
 
     # 10-24：画的是她眼前看到的、她自己不在画里；说明里不写「相机」「拍照」这类字：她会照抄进 prompt，画图模型就真画出一台相机。
     # 同天又补「也没有你的手、东西摆着画」「不写第一人称、POV」：「从你站的地方看过去」让她写成第一人称、两只手举着东西
+    # 11-02：加 characters。画面里有亚托莉 / 丛雨就填名字、程序带官方立绘，prompt 不写长相（模型自己记不准亚托莉长什么样，写长相也画不像）
     @filter.llm_tool(name="draw_image")
     async def draw_image(
-        self, event: AstrMessageEvent, prompt: str, size: str = "", use_sent_images: bool = False, use_last_image: bool = False
+        self, event: AstrMessageEvent, prompt: str, size: str = "", use_sent_images: bool = False, use_last_image: bool = False,
+        characters: str = "",
     ) -> str:
         """画一张你这会儿眼前的景象，先给你自己看：主人想看看你那边什么样、想看看什么东西、叫你照着他发的图改的时候用。画出来不会直接发给主人。
 
@@ -469,16 +471,19 @@ class SuperEnhance(Star):
 
         画图的模型看不到聊天记录和你的设定，只看 prompt、参考图和分辨率：prompt 只写画面里看得见的东西（有什么、在哪、什么样、光线天色、离得多近、从高处往下看还是平着看），写具体；不写是谁在看、拿什么看的，也不写第一人称、POV 这类说法；画面里没有的东西就别提（写了「没有手」反而容易画出手）。
 
+        画面里有亚托莉或丛雨（包括画你自己、画你们俩、画一张画着她的画），一定把名字填进 characters，程序会把她的官方立绘一起给画图模型照着画。这时 prompt 里只写她的名字和她在做什么、什么表情、什么姿势、在哪；她的长相（头发、眼睛、脸、身材、平时那身衣服）一个字都别写，画图模型照立绘画，你写了反而画不像。要她换一身衣服才写穿什么。
+
         Args:
             prompt (string): 画面描述，写具体。
             size (string): 分辨率，写成 宽x高，比例照着出。最长边不超过 1280 出 1K 的图，不超过 2560 出 2K，再大出 4K（越大越慢）。常用：1024x1024（方）、1280x720（横）、720x1280（竖）；2K 如 2560x1440，4K 如 3840x2160。空着让模型自己定。
             use_sent_images (boolean): true 就把主人发的图给模型参考（他这条消息里的、他回复的那条里的，没有就用他半小时内发过的最近几张）。
             use_last_image (boolean): true 就把你上一次画的那张给模型，在它上面接着改。
+            characters (string): 画面里出现的人，填名字，几个人用顿号隔开，比如「亚托莉」「丛雨、亚托莉」。画面里没有人就空着。
 
         Returns:
             画好没有、图的编号。
         """
-        return await self.image_gen.draw(event, prompt, size, use_sent_images, use_last_image)
+        return await self.image_gen.draw(event, prompt, size, use_sent_images, use_last_image, characters)
 
     @filter.llm_tool(name="send_image")
     async def send_image(self, event: AstrMessageEvent, id: str = "") -> str:

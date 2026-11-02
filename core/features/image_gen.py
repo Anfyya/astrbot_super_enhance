@@ -7,6 +7,10 @@
   和 1K / 2K / 4K 档（最长边不超过 1280 / 2560 / 更大），系统提示、工具、思考都不往上游带；
   参考图只认 base64 的 data URI（http 链接会被跳过），出来的图夹在回复里：![…](data:image/jpeg;base64,…)。
 - 参考图：主人这条消息里的图、他回复的那条里的图；都没有就用他在这个会话里半小时内发过的最近几张。也能拿她上一次画的那张接着改。
+- 人物参考图（2026-11-02）：画面里有亚托莉 / 丛雨时，她把名字填进 characters，程序带上那个人的官方立绘
+  （插件数据目录 images/refs/<名字>.png，不进公开仓库），提示词前面写明第几张是谁，prompt 里只写名字、动作、场景，不写长相。
+  起因：只写名字时模型记不准亚托莉的长相（实测画成粉发、蓝发，问它她是蓝眼睛短发），只带官方立绘、不写长相两张都画对了。
+- 出来的图有的中转夹在回复正文里（us-gemini），有的放在 message.images 里、正文为空（tw-gemini），两种都认。
 
 画好的图怎么给她看：chat 接口的工具消息里不能带图，所以工具只回文字；图缩成一张小预览挂在这一轮的事件上，
 她下一次向模型要回复之前（包 ToolLoopAgentRunner._iter_llm_responses_with_fallback），作为一条用户消息放进这一轮的上下文，
@@ -42,6 +46,11 @@ ID_RE = re.compile(r"img\d+", re.IGNORECASE)
 SENT_KEEP_SECONDS = 30 * 60  # 主人发过的图，半小时内还算「刚发的」
 SENT_MAX = 4  # 每个会话记最近几张
 REF_MAX = 4  # 一次最多带几张参考图
+REFS_DIR = "refs"  # 人物官方立绘：images/refs/<名字>.png
+CHARACTER_ALIASES = {  # 她填的名字 → 立绘文件名（不含扩展名）
+    "亚托莉": "亚托莉", "亚托利": "亚托莉", "atri": "亚托莉", "アトリ": "亚托莉",
+    "丛雨": "丛雨", "从雨": "丛雨", "murasame": "丛雨", "ムラサメ": "丛雨",
+}
 PREVIEW_SIDE = 768  # 给她看的预览最长边
 EXT = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
 EXTRA_KEY = "super_enhance_drawn"  # 这一轮画好、还没给她看的图（挂在事件上，不会串到别的轮次）
@@ -202,9 +211,59 @@ class ImageGenFeature:
                 notes.append("你之前没画过图，没法接着改")
         return refs
 
+    def _character_refs(self, characters, notes: list) -> tuple[list, list]:
+        """她填的人物 → ([(名字, mime, base64)], 认不出的名字)。"""
+        names = characters if isinstance(characters, list) else re.split(r"[,，、/\s]+", str(characters or ""))
+        out, seen, missing = [], set(), []
+        for raw in names:
+            raw = str(raw or "").strip()
+            if not raw:
+                continue
+            name = CHARACTER_ALIASES.get(raw.lower(), raw)
+            if name in seen:
+                continue
+            seen.add(name)
+            path = next((p for p in (self.dir / REFS_DIR / (name + ext) for ext in (".png", ".jpg", ".webp")) if p.exists()), None)
+            data = path.read_bytes() if path else b""
+            if mime_of(data):
+                out.append((name, mime_of(data), base64.b64encode(data).decode()))
+            else:
+                missing.append(raw)
+        if missing:
+            have = sorted({v for v in CHARACTER_ALIASES.values() if any((self.dir / REFS_DIR / (v + e)).exists() for e in (".png", ".jpg", ".webp"))})
+            notes.append("没有「%s」的立绘，现在有的：%s" % ("、".join(missing), "、".join(have) or "没有"))
+        return out[:REF_MAX], missing
+
+    @staticmethod
+    def _lead(chars: list, others: int) -> str:
+        """写在 prompt 前面：第几张参考图是谁。"""
+        if not chars:
+            return ""
+        parts = ["第%d张参考图是「%s」的官方立绘" % (i + 1, name) for i, (name, _, _) in enumerate(chars)]
+        text = "；".join(parts) + "。画里的%s照着立绘画（脸、发型、发色、瞳色、身材、平时穿的衣服都照图），下面另说了穿什么就换成那身。" % (
+            "、".join("「%s」" % n for n, _, _ in chars))
+        if others:
+            text += "后面的参考图是要照着画或者接着改的画面。"
+        return text + "\n\n"
+
+    @staticmethod
+    def images_in(message) -> list:
+        """回复里的图：[(mime, base64)]。正文里夹的 data URI，和 message.images 里的都认。"""
+        text = str(getattr(message, "content", "") or "")
+        found = [(m.group(1).lower(), re.sub(r"\s+", "", m.group(2))) for m in DATA_IMAGE.finditer(text)]
+        extra = getattr(message, "images", None) or (getattr(message, "model_extra", None) or {}).get("images") or []
+        for item in extra if isinstance(extra, list) else []:
+            url = item.get("image_url") if isinstance(item, dict) else getattr(item, "image_url", None)
+            url = url.get("url") if isinstance(url, dict) else (getattr(url, "url", None) or url)
+            m = re.match(r"data:(image/[\w.+-]+);base64,([A-Za-z0-9+/=\s]+)$", str(url or "").strip())
+            if m:
+                found.append((m.group(1).lower(), re.sub(r"\s+", "", m.group(2))))
+        return found
+
     # ---------- 工具 ----------
 
-    async def draw(self, event, prompt: str, size: str = "", use_sent: bool = False, use_last: bool = False) -> str:
+    async def draw(self, event, prompt: str, size: str = "", use_sent: bool = False, use_last: bool = False,
+                   characters="") -> str:
         """画一张，存起来、挂在这一轮的事件上等着给她看；不发。返回给模型看的结果（只写事实）。"""
         if not self.enabled:
             return "画图没开。"
@@ -221,8 +280,10 @@ class ImageGenFeature:
         want = clean_size(size)
         if str(size or "").strip() and not want:
             notes.append("分辨率「%s」没看懂，按模型默认的" % str(size).strip())
-        refs = await self._refs(event, umo, bot, use_sent, use_last, notes)
-        content = [{"type": "text", "text": prompt}] + [
+        chars, _ = self._character_refs(characters, notes)
+        refs = (await self._refs(event, umo, bot, use_sent, use_last, notes))[:max(0, REF_MAX - len(chars))]
+        refs = [(mime, b64) for _, mime, b64 in chars] + refs
+        content = [{"type": "text", "text": self._lead(chars, len(refs) - len(chars)) + prompt}] + [
             {"type": "image_url", "image_url": {"url": "data:%s;base64,%s" % (mime, b64)}} for mime, b64 in refs
         ]
         kwargs = {"model": provider.get_model(), "messages": [{"role": "user", "content": content}],
@@ -232,13 +293,14 @@ class ImageGenFeature:
         began = time.time()
         try:
             resp = await client.chat.completions.create(**kwargs)
-            text = str(resp.choices[0].message.content or "")
+            message = resp.choices[0].message
+            text = str(message.content or "")
+            found = self.images_in(message)
         except Exception as e:
             logger.warning("[super_enhance/image] [%s] 画图失败（%.0f 秒）：%s", bot, time.time() - began, e)
             if "timeout" in type(e).__name__.lower():
                 return "没画出来：等了 %d 秒模型还没出图（图越大越慢）。" % self.timeout
             return "没画出来：图像模型出错了（%s）。" % str(e)[:80]
-        found = [(m.group(1).lower(), re.sub(r"\s+", "", m.group(2))) for m in DATA_IMAGE.finditer(text)]
         if not found:
             said = " ".join(ANY_IMAGE.sub("", text).split())[:120]
             logger.info("[super_enhance/image] [%s] 模型没给图：%s", bot, said or "（空）")
@@ -259,6 +321,7 @@ class ImageGenFeature:
             view_mime, view_b64, dims = await asyncio.to_thread(preview_of, data)
             self._keep_view(image_id, name, view_mime, view_b64)
             index["items"][image_id] = {"bot": bot, "file": name, "prompt": prompt[:300], "size": dims,
+                                        "characters": [n for n, _, _ in chars],
                                         "at": stamp.strftime("%Y-%m-%d %H:%M"), "sent": []}
             drawn.append({"id": image_id, "mime": view_mime, "b64": view_b64})
             ids.append(image_id)

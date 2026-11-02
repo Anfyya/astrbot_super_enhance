@@ -742,7 +742,7 @@
                 "description": "图像模型",
                 "type": "string",
                 "_special": "select_provider",
-                "hint": "要 OpenAI 兼容接口、把图夹在回复里返回的模型。",
+                "hint": "要 OpenAI 兼容接口、能出图的模型。图夹在回复正文里、或者放在 message.images 里都认。人物立绘放插件数据目录 images/refs/<名字>.png（亚托莉、丛雨）。",
                 "condition": {
                     "enabled": true
                 },
