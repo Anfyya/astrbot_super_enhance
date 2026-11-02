@@ -1259,7 +1259,8 @@
     if (n < 1000) { return String(Math.round(n)); }
     return (n / 1000).toFixed(n >= 100000 ? 0 : 1) + "k";
   }
-  function pad(n) { return (n < 10 ? "0" : "") + n; }
+  // 补成两位：数和字（"8"、"08"）都认；先转成数，免得 "08" 补成 "008"
+  function pad(n) { n = +n; return (n < 10 ? "0" : "") + n; }
   function fmtTs(ts, withSec) {
     var t = Number(ts);
     if (!t) { return ""; }
