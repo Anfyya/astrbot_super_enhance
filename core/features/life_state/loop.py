@@ -139,7 +139,8 @@ async def world_daily(service, today: datetime.date) -> None:
             from .variety import draw_seed
 
             labels = {b: (service.bots.label_for(b) or b) for b in service.enabled_bots()}
-            seed = draw_seed(date_text, labels=labels, history=service.seed_log.load(), pools=service.pool_store.load())
+            seed = draw_seed(date_text, labels=labels, history=service.seed_log.load(), pools=service.pool_store.load(),
+                             home=service.life_step.home)
             service.seed_log.save(date_text, seed)
             service._debug("世界线：已抽今天的随机起点")
     except Exception:

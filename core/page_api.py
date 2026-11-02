@@ -1222,13 +1222,15 @@ class ContextPageApi:
                 tuple((b["id"], b["label"]) for b in bots),
                 _mtime_ns(life.pool_store.path),
                 _mtime_ns(life.seed_log.path),
+                life.life_step.home,
             )
             cached = getattr(self, "_pool_cache", None)
             if cached is None or cached[0] != key:
                 pools = life.pool_store.load()
                 history = life.seed_log.load() or {}
                 # 模拟几百次抽签要零点几秒，放到线程里，别卡住收发消息
-                outlook = await asyncio.to_thread(variety.pool_outlook, pools, history, today, labels, _POOL_SIMS)
+                outlook = await asyncio.to_thread(variety.pool_outlook, pools, history, today, labels, _POOL_SIMS,
+                                                  life.life_step.home)
                 groups = variety.group_map(pools)
                 data = {
                     "today": today,
@@ -1297,6 +1299,8 @@ class ContextPageApi:
                 raw = payload.get("item")
                 if isinstance(raw, dict) and "when" not in raw:
                     raw = dict(raw, when=rows[index].get("when") or "")  # 网页没有这一栏：改别的时候留着原来的
+                if isinstance(raw, dict) and "where" not in raw:
+                    raw = dict(raw, where=rows[index].get("where") or "")  # 「在哪」同上
                 item = variety.clean_pool_item(kind, raw)
                 if exists(rows, item["text"], index):
                     raise ValueError("这个池子里已经有这一条了")

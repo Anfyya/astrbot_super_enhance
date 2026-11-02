@@ -3448,6 +3448,9 @@
     var off = !(r.base > 0);
     var row = h("div", { class: "pl-row" + (editing ? " on" : "") + (off ? " pl-off" : ""), "data-text": it.text });
     var meta = h("div", { class: "pl-m" });
+    if (it.where) {
+      meta.appendChild(h("span", { class: "tag", title: "只在住在「" + it.where + "」时才抽得到", text: "只在" + it.where }));
+    }
     if (it.group) {
       meta.appendChild(h("span", { class: "tag grp " + groupHue(it.group),
         title: r.split > 1 ? "同组的 " + r.split + " 条算同一回事：一起冷却，在这个池子里合起来只算一条的分量" : "同组的算同一回事，一起冷却",

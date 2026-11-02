@@ -125,6 +125,18 @@ TWISTS = (
     ("有点累，找了个地方歇了好一会儿", 0.5, 0.4),
     ("想通了一件之前一直没想明白的事", 0.5, 0.5),
     ("被人认错了，或者自己认错了人", 0, 0.4),
+    # 11-02 加的：住在海边小镇时才抽得到（POOL_WHERE），地点照固定事实里那张海边地图
+    ("退潮了，下到浅滩翻石头、捡冲上来的旧东西", 0.8, 1.0),
+    ("在海堤上望着远处半截露出水面的旧城区，看了好久", 0.8, 0.8),
+    ("码头有打捞船靠岸卸货，凑过去看了半天", 0.6, 0.8),
+    ("去半淹的车站，在站前的龙头接水", 0.4, 0.6),
+    ("爬上山丘上的灯塔那边吹风、看海", 0.8, 0.6),
+    ("去半沉的学校转了转，从二楼进去看了看", 0.5, 0.5),
+    ("在旧零件铺或废铁堆里淘到一样旧时代的小东西", 0, 0.8),
+    ("潮水涨得比平常高，木廊底下全是水声", 0.6, 0.6),
+    ("有人喊她帮着把打捞上来的东西搬上岸", 0, 0.6),
+    ("在集市上挑鱼，跟摊主讲了半天价", 0, 0.6),
+    ("潜下去看了看沉没的街道，摸回来一样小东西", 0, 0.5),
 )
 
 # 两人一起：当天一份
@@ -144,6 +156,10 @@ TOGETHER_TWISTS = (
     ("两人一起把家里一处地方收拾一遍", 0.5),
     ("两人比了一场，谁也不服谁", 0.5),
     ("一个人教另一个人一样东西", 0.5),
+    # 海边小镇
+    ("两人一起退潮时下到浅滩，翻石头、捡冲上来的东西", 0.8),
+    ("两人一起沿着海堤走到山丘上的灯塔", 0.6),
+    ("两人一起去集市买菜买鱼", 0.8),
 )
 
 # 晚上（天黑以后）的小事：都是在家里或附近能做的，补写写晚上的段时只拿这些
@@ -174,6 +190,10 @@ NIGHT_TWISTS = (
     ("夜里天气变了，起来收拾了一下", 0.4, 0.5),
     ("一个人想了好些以前的事", 0.6, 0.4),
     ("睡前发现一件事还没做完，又爬起来做完", 0.4, 0.5),
+    # 海边小镇
+    ("夜里停电了，点起蜡烛做事", 0.6, 0.6),
+    ("躺着听潮水一下下拍木廊，半天睡不着", 0.6, 0.6),
+    ("夜里去海堤上站了一会儿，远处旧城区一点灯也没有", 0.6, 0.4),
 )
 
 # 手边的消遣：在家闲下来时拿起来做的习惯，跟插曲（「今天发生了一件事」）不一样：
@@ -234,6 +254,9 @@ IDLES = (
     ("蹲在院子角落看地上的蚂蚁搬东西", 0.5, 0.6),
     ("坐在灶房门槛上歇着", 0.3, 0.6),
     ("坐在廊下，数院子里的竹子", 0.5, 0.5),
+    # 海边小镇
+    ("坐在木廊上，看海", 1.0, 1.0),
+    ("坐在小码头边上晃着腿，看船进进出出", 0.7, 0.7),
 )
 
 # 天黑以后闲着的样子：补写写天黑以后的「闲着」照这份。和白天那份分开抽、说法也分开（冷却不互相牵扯）
@@ -254,6 +277,9 @@ NIGHT_IDLES = (
     ("在院子里站一会儿，吸几口凉气", 0.5, 0.5),
     ("趴在铺上，脸埋在枕头里", 0.5, 0.5),
     ("坐在廊下，听远处的虫叫", 0.6, 0.6),
+    # 海边小镇
+    ("坐在木廊上，听浪声", 0.7, 0.7),
+    ("靠在窗边，看月光落在海面上", 0.6, 0.6),
 )
 
 # 说的是同一回事的几条：冷却按组算（抽到其中一条，同组的一起打折），在一个池子里合起来也只算一条的分量。
@@ -372,23 +398,48 @@ POOL_TEXT_MAX = 80
 POOL_GROUP_MAX = 12
 POOL_WEIGHT_MAX = 5.0
 POOL_WHEN_MAX = 20
+POOL_WHERE_MAX = 12
 # 只在特定时候才做得自然的那几条：补写看到的是「插曲（什么时候）」，排进对的时段，
 # 不用为了塞进别的时段把内容扭成别的事（10-15「学做一道新菜」被排进下午，补写把它改成了点心）
 DEFAULT_WHEN = {
     "学做一道新菜，认真尝了好几遍味道": "三餐做饭的时候",
 }
+# 只在住在某一处时才抽得到的那几条（值对上配置里的「住在哪」world_home 才抽；没写的哪儿都能抽）。
+# 写着具体地方的（神社、温泉街、商店街、学院、竹林……）跟着那处走；只说一类事的不限地方
+_SUIZHI = (
+    "镇上有店铺推出新东西或搞活动", "在河边待了好久，看水、看鱼或打水漂", "去温泉街逛了一圈，看了看新鲜东西",
+    "去鹈茅学院转了转，看学生上课", "在神社里转了一圈，看看手水舍、绘马和御神木", "跟芳乃或茉子说了一会儿话",
+    "惦记着田心屋的芭菲或布丁，绕过去看了一眼", "在神社后山的竹林里走了走", "偷看绘马上别人写的愿望，看得入了神",
+    "被一阵怪声或晃动的影子吓了一跳，结果是风吹竹林", "神社里来的游客做了件好笑的事，没人看得见她，她在旁边看了半天",
+    "在商店街的橱窗前看中一样东西，惦记了一路", "去圣域那边看看御神体，静静待了一会儿", "看巫女在神乐殿练舞，跟着比划",
+    "在朝武家的温泉边待着，泉水的灵力舒服得不想动", "去神社求签或许个愿",
+    "在商店街的旧货铺或钟表铺淘到一样旧时代的小东西（机械表、发条玩具之类）", "在河边看了好久的水，想起了海",
+    "两人一起去商店街买东西", "两人一起去温泉街或河边走走", "两人一起帮神社干了半天活",
+    "夜里风吹得竹林沙沙响，疑神疑鬼不敢一个人待着", "在神社里巡了一圈夜", "坐在廊下，数院子里的竹子",
+)
+_SEASIDE = (
+    "退潮了，下到浅滩翻石头、捡冲上来的旧东西", "在海堤上望着远处半截露出水面的旧城区，看了好久",
+    "码头有打捞船靠岸卸货，凑过去看了半天", "去半淹的车站，在站前的龙头接水", "爬上山丘上的灯塔那边吹风、看海",
+    "去半沉的学校转了转，从二楼进去看了看", "在旧零件铺或废铁堆里淘到一样旧时代的小东西",
+    "潮水涨得比平常高，木廊底下全是水声", "有人喊她帮着把打捞上来的东西搬上岸", "在集市上挑鱼，跟摊主讲了半天价",
+    "潜下去看了看沉没的街道，摸回来一样小东西", "两人一起退潮时下到浅滩，翻石头、捡冲上来的东西",
+    "两人一起沿着海堤走到山丘上的灯塔", "两人一起去集市买菜买鱼", "夜里停电了，点起蜡烛做事",
+    "躺着听潮水一下下拍木廊，半天睡不着", "夜里去海堤上站了一会儿，远处旧城区一点灯也没有",
+    "坐在木廊上，看海", "坐在小码头边上晃着腿，看船进进出出", "坐在木廊上，听浪声", "靠在窗边，看月光落在海面上",
+)
+DEFAULT_WHERE = {**{t: "穗织" for t in _SUIZHI}, **{t: "海边小镇" for t in _SEASIDE}}
 
 
 def default_pools() -> dict:
     def per(rows):
         return [{"text": t, "w": dict(zip(TWIST_PEOPLE, ws)), "group": _DEFAULT_GROUP.get(t, ""),
-                 "when": DEFAULT_WHEN.get(t, "")} for t, *ws in rows]
+                 "when": DEFAULT_WHEN.get(t, ""), "where": DEFAULT_WHERE.get(t, "")} for t, *ws in rows]
 
     return {
         "twists": per(TWISTS),
         "night_twists": per(NIGHT_TWISTS),
-        "together": [{"text": t, "w": w, "group": _DEFAULT_GROUP.get(t, ""), "when": DEFAULT_WHEN.get(t, "")}
-                     for t, w in TOGETHER_TWISTS],
+        "together": [{"text": t, "w": w, "group": _DEFAULT_GROUP.get(t, ""), "when": DEFAULT_WHEN.get(t, ""),
+                      "where": DEFAULT_WHERE.get(t, "")} for t, w in TOGETHER_TWISTS],
         "pastimes": per(PASTIMES),
         "idles": per(IDLES),
         "night_idles": per(NIGHT_IDLES),
@@ -432,7 +483,10 @@ def clean_pool_item(kind: str, item: dict) -> dict:
     when = re.sub(r"\s+", " ", str(item.get("when") or "")).strip()
     if len(when) > POOL_WHEN_MAX:
         raise ValueError("「什么时候」太长（最多 %d 字）" % POOL_WHEN_MAX)
-    return {"text": text, "w": weight, "group": group, "when": when}
+    where = re.sub(r"\s+", "", str(item.get("where") or ""))
+    if len(where) > POOL_WHERE_MAX:
+        raise ValueError("「在哪」太长（最多 %d 字）" % POOL_WHERE_MAX)
+    return {"text": text, "w": weight, "group": group, "when": when, "where": where}
 
 
 def normalize_pools(data) -> dict:
@@ -472,11 +526,15 @@ def group_map(pools: dict) -> dict:
     return {item["text"]: item.get("group") or "" for kind in POOL_KINDS for item in pools.get(kind) or []}
 
 
-def rows_for(items: list, name: str) -> list:
+def rows_for(items: list, name: str, home: str = "") -> list:
     """池子里这个人的那份 [(原文, 权重)]，权重 0 的不要。两人一起的权重就一个数。
-    没在 TWIST_PEOPLE 里的角色按每条里最大的那个权重算。"""
+    没在 TWIST_PEOPLE 里的角色按每条里最大的那个权重算。
+    home 是现在住在哪（配置 world_home）：写了「在哪」、又不是这一处的不要；home 空着就不按地方挑（老调用照旧）。"""
     out = []
     for item in items or []:
+        where = str(item.get("where") or "")
+        if home and where and where != home:
+            continue
         w = item.get("w")
         if isinstance(w, dict):
             weight = w.get(name) if name in TWIST_PEOPLE else max(list(w.values()) or [0])
@@ -494,10 +552,10 @@ def _base_weight(item: dict, name: str) -> float:
     return float(w or 0)
 
 
-def pool_outlook(pools: dict, history: dict, date_text: str, labels: dict, sims: int = 400) -> dict:
+def pool_outlook(pools: dict, history: dict, date_text: str, labels: dict, sims: int = 400, home: str = "") -> dict:
     """给网页看的：下一次抽（date_text 的第二天）时每人每条的初始权重、乘了冷却的现在权重、同组几条分摊、
     几天前抽到（同组算）、明天抽中的机会（照 draw_seed 的抽法模拟 sims 次，种子固定，刷新不跳），
-    以及 date_text 当天给每人抽到的。"""
+    以及 date_text 当天给每人抽到的。home 同 draw_seed：不是这一处的那几条初始权重算 0（网页上显示成关着的）。"""
     pools = normalize_pools(pools)
     groups = group_map(pools)
     day = datetime.date.fromisoformat(str(date_text))
@@ -506,7 +564,7 @@ def pool_outlook(pools: dict, history: dict, date_text: str, labels: dict, sims:
     counts = {bot: {kind: collections.Counter() for kind in POOL_KINDS} for bot in labels}
     rng = random.Random("pool_outlook:" + nxt)
     for _ in range(max(1, int(sims))):
-        seed = draw_seed(nxt, labels=labels, history=history, rng=rng, pools=pools)
+        seed = draw_seed(nxt, labels=labels, history=history, rng=rng, pools=pools, home=home)
         for bot in labels:
             for kind in ("twists", "night_twists", "pastimes", "idles", "night_idles"):
                 counts[bot][kind].update(seed[kind].get(bot) or [])
@@ -525,7 +583,7 @@ def pool_outlook(pools: dict, history: dict, date_text: str, labels: dict, sims:
         for kind in POOL_KINDS:
             shared = kind == "together"
             who = "" if shared else name
-            live = rows_for(pools[kind], who)
+            live = rows_for(pools[kind], who, home)
             size = collections.Counter(cool_key(t, groups) for t, _w in live)
             cool = both if shared else seen[bot]
             table = PASTIME_COOLDOWN if kind == "pastimes" else None
@@ -533,7 +591,8 @@ def pool_outlook(pools: dict, history: dict, date_text: str, labels: dict, sims:
             for i, item in enumerate(pools[kind]):
                 text = item["text"]
                 key = cool_key(text, groups)
-                base = _base_weight(item, who)
+                elsewhere = bool(home and item.get("where") and item.get("where") != home)
+                base = 0.0 if elsewhere else _base_weight(item, who)
                 factor = cool_factor(cool.get(key), table) if base > 0 else 0.0
                 days = [ago[b].get(key) for b in labels] if shared else [ago[bot].get(key)]
                 days = [d for d in days if d is not None]
@@ -770,6 +829,7 @@ def draw_seed(
     rng: random.Random | None = None,
     pools: dict | None = None,
     meals_rng: random.Random | None = None,
+    home: str = "",
 ) -> dict:
     """抽当天的随机起点：天气（接着昨天变）、基调、小插曲、每人的心情、偶尔一个意外，还有今天的饭（``menu.draw_meals``）。
 
@@ -778,6 +838,7 @@ def draw_seed(
     插曲和消遣按这个人隔了几天没抽到打折（``cool_factor``，同组算一条；消遣按 ``PASTIME_COOLDOWN``，轻得多）；
     昨天的基调今天不再抽，30 天内碰过的意外不再碰。pools 是网页改过的池子（``PoolStore.load()``），不给用默认的。
     饭用另一个随机数（meals_rng，不给就新开一个），不动 rng 原来的抽法（网页「明天抽中」按固定 rng 模拟）。
+    home 是现在住在哪（配置 world_home）：池子里标了「在哪」、不是这一处的那几条不抽（见 rows_for）。
     """
     rng = rng or random.Random()
     history = history or {}
@@ -807,18 +868,18 @@ def draw_seed(
         for bot in labels:
             for key, days in seen[bot].items():
                 both[key] = min(days, both.get(key, days))
-        together = _pick_cooled(rows_for(pools["together"], ""), both, TOGETHER_PICK, rng, groups)
+        together = _pick_cooled(rows_for(pools["together"], "", home), both, TOGETHER_PICK, rng, groups)
         for bot in labels:
             for text in together:
                 seen[bot][cool_key(text, groups)] = 0
     twists, night_twists, pastimes, idles, night_idles = {}, {}, {}, {}, {}
     for bot, name in labels.items():
-        twists[bot] = _pick_cooled(rows_for(pools["twists"], name), seen[bot], DAY_PICK, rng, groups)
-        night_twists[bot] = _pick_cooled(rows_for(pools["night_twists"], name), seen[bot], NIGHT_PICK, rng, groups)
-        pastimes[bot] = _pick_cooled(rows_for(pools["pastimes"], name), seen[bot], PASTIME_PICK, rng, groups,
+        twists[bot] = _pick_cooled(rows_for(pools["twists"], name, home), seen[bot], DAY_PICK, rng, groups)
+        night_twists[bot] = _pick_cooled(rows_for(pools["night_twists"], name, home), seen[bot], NIGHT_PICK, rng, groups)
+        pastimes[bot] = _pick_cooled(rows_for(pools["pastimes"], name, home), seen[bot], PASTIME_PICK, rng, groups,
                                      PASTIME_COOLDOWN)
-        idles[bot] = _pick_cooled(rows_for(pools["idles"], name), seen[bot], IDLE_PICK, rng, groups, PASTIME_COOLDOWN)
-        night_idles[bot] = _pick_cooled(rows_for(pools["night_idles"], name), seen[bot], NIGHT_IDLE_PICK, rng, groups,
+        idles[bot] = _pick_cooled(rows_for(pools["idles"], name, home), seen[bot], IDLE_PICK, rng, groups, PASTIME_COOLDOWN)
+        night_idles[bot] = _pick_cooled(rows_for(pools["night_idles"], name, home), seen[bot], NIGHT_IDLE_PICK, rng, groups,
                                         PASTIME_COOLDOWN)
     accident = ""
     if rng.random() < ACCIDENT_CHANCE:
