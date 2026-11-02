@@ -133,12 +133,24 @@ def tool_recall(service, umo: str, keyword: str = "", date: str = "", time: str 
     return recall.search(service.world, bot, service.bots.label_for, now, keyword, date, time)
 
 def weathers(service) -> dict:
-    """每天抽到的天气：{日期: 天气原文}（算吃的放了多久坏用）。"""
+    """每天抽到的天气：{日期: 天气原文}（算吃的放了多久坏用）。
+    那天住在别处（不是穗织、记过住处变更）的，原文前面加「住处::」，存货按那一处的气温算（food.split_home）。"""
     try:
         seeds = service.seed_log.load() or {}
     except Exception:
         return {}
-    return {day: str(seed.get("weather") or "") for day, seed in seeds.items() if isinstance(seed, dict)}
+    world = getattr(service, "world", None)
+    out = {}
+    for day, seed in seeds.items():
+        if not isinstance(seed, dict):
+            continue
+        text = str(seed.get("weather") or "")
+        try:
+            home = world.home_at("%s 12:00" % day) if world is not None else ""
+        except Exception:
+            home = ""
+        out[day] = "%s::%s" % (home, text) if home and home != "穗织" else text
+    return out
 
 def tool_look_things(service, umo: str, kind: str = "food", thing_id: str = "") -> str:
     """看家里的东西：kind=food 列出家里现有的吃的，kind=item 列出吃的以外的东西；填了编号看那一件的来龙去脉。这一刻现算。"""

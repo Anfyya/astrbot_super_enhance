@@ -131,8 +131,27 @@ def split_keep(keep, spot="", place="") -> tuple:
 
 # 穗织是山里的温泉镇：各月平均气温（摄氏度），按月中取值、日子之间线性插
 MONTH_TEMP = (2, 3, 7, 12, 17, 21, 25, 26, 22, 15, 9, 4)
+# 海边小镇照铫子（千叶县，太平洋边上）的各月平均气温：气象厅平年值 1991-2020，四舍五入到 0.5 度
+SEA_MONTH_TEMP = (6.5, 7.0, 9.5, 14.0, 17.5, 20.0, 23.5, 25.5, 23.5, 19.0, 14.5, 9.5)
+# 天气原文前面带「住处::」时按那一处的气温算（operations.weathers 给住在别处的日子加上；没带的照穗织）
+TEMP_BY_HOME = {"海边小镇": SEA_MONTH_TEMP}
+HOME_TAG = "::"
+
+
+def split_home(text) -> tuple:
+    """「海边小镇::阴天」→ ("海边小镇", "阴天")；没带住处的 → ("", 原文)。"""
+    value = str(text or "")
+    if HOME_TAG in value:
+        home, rest = value.split(HOME_TAG, 1)
+        return home, rest
+    return "", value
+
+
+def _table_of(weather_text) -> tuple:
+    return TEMP_BY_HOME.get(split_home(weather_text)[0], MONTH_TEMP)
 # 天气（daily_seeds 里抽的那几种）→（比平常高几度，屋里一天里上下差几度）；按顺序认，先认细的
 WEATHER_SHIFT = (
+    ("台风", -2, 1.5), ("冷雨", -3, 1.5), ("连着下雨", -2, 1.5), ("海上起雾", -1, 2),
     ("晴热", 4, 4), ("闷热", 5, 2.5), ("回暖", 3, 4), ("暖阳", 2, 4), ("晴冷", -1, 4),
     ("大风降温", -5, 3), ("寒风", -3, 3), ("降温", -4, 3),
     ("雨夹雪", -2, 1.5), ("小雪", -2, 1.5), ("暴雨", -2, 1.5), ("雷阵雨", -1, 2), ("春雨", -1, 1.5),
@@ -158,6 +177,7 @@ def weather_kind(text) -> str:
 
 @functools.lru_cache(maxsize=256)
 def _weather_kind(text: str) -> str:
+    text = split_home(text)[1]
     # 模拟每半小时一片都要认一次当天天气，原文就那几句：认过的记住
     m = re.search(r"转成「([^」]+)」", text)
     if m:
@@ -185,17 +205,18 @@ def sunny(text) -> bool:
     return not any(w in kind for w in ("雨", "雪", "阴", "雾"))
 
 
-def month_temp(moment: datetime.datetime) -> float:
-    """这一天的平均气温：各月按月中取值，日子之间线性插。"""
+def month_temp(moment: datetime.datetime, table: tuple | None = None) -> float:
+    """这一天的平均气温：各月按月中取值，日子之间线性插。table 不给用穗织的 MONTH_TEMP。"""
+    temps = table or MONTH_TEMP
     mid = datetime.datetime(moment.year, moment.month, 15)
     if moment >= mid:
         month2 = moment.month % 12 + 1
         other = datetime.datetime(moment.year + (moment.month == 12), month2, 15)
-        lo, hi, frac = MONTH_TEMP[moment.month - 1], MONTH_TEMP[month2 - 1], (moment - mid) / (other - mid)
+        lo, hi, frac = temps[moment.month - 1], temps[month2 - 1], (moment - mid) / (other - mid)
     else:
         month0 = (moment.month - 2) % 12 + 1
         other = datetime.datetime(moment.year - (moment.month == 1), month0, 15)
-        lo, hi, frac = MONTH_TEMP[month0 - 1], MONTH_TEMP[moment.month - 1], (moment - other) / (mid - other)
+        lo, hi, frac = temps[month0 - 1], temps[moment.month - 1], (moment - other) / (mid - other)
     return lo + (hi - lo) * frac
 
 
@@ -209,7 +230,7 @@ def room_temp(moment: datetime.datetime, weather_text) -> float:
     if isinstance(weather_text, str):
         return _room_temp(moment, weather_text)
     shift, amp = weather_shift(weather_text)
-    return month_temp(moment) + shift + amp * _swing(moment)
+    return month_temp(moment, _table_of(weather_text)) + shift + amp * _swing(moment)
 
 
 def outdoor_temp(moment: datetime.datetime, weather_text) -> float:
@@ -217,20 +238,20 @@ def outdoor_temp(moment: datetime.datetime, weather_text) -> float:
     if isinstance(weather_text, str):
         return _outdoor_temp(moment, weather_text)
     shift, amp = weather_shift(weather_text)
-    return month_temp(moment) + shift + amp * OUTDOOR_SWING * _swing(moment)
+    return month_temp(moment, _table_of(weather_text)) + shift + amp * OUTDOOR_SWING * _swing(moment)
 
 
 # 模拟往后推的那段从「此刻」起每半小时一片，所有吃的走的是同一套时刻：同一时刻、同一天气的气温记住（纯函数）
 @functools.lru_cache(maxsize=8192)
 def _room_temp(moment: datetime.datetime, weather_text: str) -> float:
     shift, amp = weather_shift(weather_text)
-    return month_temp(moment) + shift + amp * _swing(moment)
+    return month_temp(moment, _table_of(weather_text)) + shift + amp * _swing(moment)
 
 
 @functools.lru_cache(maxsize=8192)
 def _outdoor_temp(moment: datetime.datetime, weather_text: str) -> float:
     shift, amp = weather_shift(weather_text)
-    return month_temp(moment) + shift + amp * OUTDOOR_SWING * _swing(moment)
+    return month_temp(moment, _table_of(weather_text)) + shift + amp * OUTDOOR_SWING * _swing(moment)
 
 
 def daytime(moment: datetime.datetime) -> bool:
@@ -244,9 +265,9 @@ def spot_temp(spot: str, moment: datetime.datetime, weather_text, warm_hours=Non
     if spot == "冻着":
         return -18.0
     if spot == "地窖":
-        return 10.0 + (month_temp(moment) - 15.0) * 0.15
+        return 10.0 + (month_temp(moment, _table_of(weather_text)) - 15.0) * 0.15
     if spot == "井里":
-        return 14.0 + (month_temp(moment) - 15.0) * 0.1
+        return 14.0 + (month_temp(moment, _table_of(weather_text)) - 15.0) * 0.1
     if spot == "屋外":
         return outdoor_temp(moment, weather_text)
     if spot == "太阳底下":

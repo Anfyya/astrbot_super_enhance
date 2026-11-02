@@ -25,6 +25,15 @@ WEATHER_BY_SEASON = {
     "autumn": ("秋高气爽的晴天", "多云", "小雨", "清早起雾", "大风降温", "阴天微凉"),
     "winter": ("晴冷", "阴天", "小雪", "寒风", "雨夹雪", "冬日暖阳"),
 }
+# 海边小镇的天气（住在海边时抽这份）：照铫子的平年值（气象厅 1991-2020），太平洋边上冬天不冷、几乎不下雪，
+# 夏天湿闷，9、10 月雨最多；海上常起雾、起风，夏秋偶尔台风
+SEA_WEATHER_BY_SEASON = {
+    "spring": ("晴", "多云", "春雨绵绵", "海上起雾", "起风", "阴天"),
+    "summer": ("晴热", "闷热", "雷阵雨", "午后暴雨", "海上起雾", "傍晚起了凉风"),
+    "autumn": ("秋高气爽的晴天", "多云", "连着下雨", "台风过境，风大雨大", "海上起雾", "阴天微凉"),
+    "winter": ("晴冷", "阴天", "寒风", "海上起雾", "冷雨", "冬日暖阳"),
+}
+WEATHER_BY_HOME = {"海边小镇": SEA_WEATHER_BY_SEASON}
 
 # 插曲池：一份池子，每条给每个人一个权重（1 是一般；越大越常碰上，越小越难得——熟人串门隔几天就有，
 # 修旧东西亚托莉比丛雨常做；0 = 不给她）。丛雨能摸东西、能做事，只是大多数人看不见她：
@@ -1013,12 +1022,12 @@ def _pick(pool, used: set, count: int, rng: random.Random, weights: dict | None 
     return out
 
 
-def _weather(date_text: str, prev_weather: str, rng: random.Random) -> str:
+def _weather(date_text: str, prev_weather: str, rng: random.Random, home: str = "") -> str:
     try:
         month = int(str(date_text)[5:7])
     except Exception:
         month = 1
-    choices = WEATHER_BY_SEASON[_season(month)]
+    choices = WEATHER_BY_HOME.get(str(home or "").strip(), WEATHER_BY_SEASON)[_season(month)]
     prev = str(prev_weather or "").strip()
     if not prev:
         return rng.choice(choices)
@@ -1095,7 +1104,7 @@ def draw_seed(
     if rng.random() < ACCIDENT_CHANCE:
         accident = _pick(ACCIDENTS, used("accident", ACCIDENT_LOOKBACK), 1, rng)[0]
     return {
-        "weather": _weather(date_text, prev_weather, rng),
+        "weather": _weather(date_text, prev_weather, rng, home),
         "tone": _pick(TONES, used("tone", 1), 1, rng)[0],
         "twists": twists,
         "night_twists": night_twists,
