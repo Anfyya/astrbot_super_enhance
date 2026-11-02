@@ -199,7 +199,7 @@ def simulate(item: dict, now: datetime.datetime, day_text, home_at, food: bool =
             continue
         # 淋雨
         catch = {"open": 1.0, "semi": 0.8 if wind >= 6 else 0.35, "covered": 0.1 if wind >= 8 else 0.0,
-                 "inside": 0.05 if wind >= 10 and rain >= 8 else 0.0}.get(exposure, 0.0)
+                 "inside": 0.01 if wind >= 10 and rain >= 8 else 0.0}.get(exposure, 0.0)  # 10 级以上风雨，船舱窗缝渗一点
         if rain > 0 and catch > 0:
             soak = (0.3 if rain < 1 else 2.0 if rain < 2.5 else 6.0 if rain < 8 else 15.0) * catch
             if st["wet"] < 0.3 and soak * dt >= 0.3:
