@@ -748,6 +748,17 @@
                 },
                 "default": "gemini/gemini-3.1-flash-image"
             },
+            "fallback_provider_ids": {
+                "description": "备用图像模型",
+                "type": "list",
+                "items": {"type": "string"},
+                "_special": "select_providers",
+                "hint": "主模型报错、超时、没给图时，按顺序换这些模型接着画（一共等「最多等几秒」那么久，后面的分剩下的时间）。",
+                "condition": {
+                    "enabled": true
+                },
+                "default": []
+            },
             "timeout": {
                 "description": "最多等几秒",
                 "type": "int",

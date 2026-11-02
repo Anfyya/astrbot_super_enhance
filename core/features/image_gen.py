@@ -11,6 +11,8 @@
   （插件数据目录 images/refs/<名字>.png，不进公开仓库），提示词前面写明第几张是谁，prompt 里只写名字、动作、场景，不写长相。
   起因：只写名字时模型记不准亚托莉的长相（实测画成粉发、蓝发，问它她是蓝眼睛短发），只带官方立绘、不写长相两张都画对了。
 - 出来的图有的中转夹在回复正文里（us-gemini），有的放在 message.images 里、正文为空（tw-gemini），两种都认。
+- 备用模型（2026-11-02）：主模型报错、超时、没给图，就按 fallback_provider_ids 的顺序换下一个接着画，
+  一共等 timeout 秒（AstrBot 调一个工具 120 秒就掐断）。后面还有备用的，这一个最多等到只剩 RESERVE 秒，留给下一个。
 
 画好的图怎么给她看：chat 接口的工具消息里不能带图，所以工具只回文字；图缩成一张小预览挂在这一轮的事件上，
 她下一次向模型要回复之前（包 ToolLoopAgentRunner._iter_llm_responses_with_fallback），作为一条用户消息放进这一轮的上下文，
@@ -46,6 +48,7 @@ ID_RE = re.compile(r"img\d+", re.IGNORECASE)
 SENT_KEEP_SECONDS = 30 * 60  # 主人发过的图，半小时内还算「刚发的」
 SENT_MAX = 4  # 每个会话记最近几张
 REF_MAX = 4  # 一次最多带几张参考图
+RESERVE = 30  # 后面还有备用模型时，给它留的秒数（1K 图约 20 秒）
 REFS_DIR = "refs"  # 人物官方立绘：images/refs/<名字>.png
 CHARACTER_ALIASES = {  # 她填的名字 → 立绘文件名（不含扩展名）
     "亚托莉": "亚托莉", "亚托利": "亚托莉", "atri": "亚托莉", "アトリ": "亚托莉",
@@ -119,6 +122,19 @@ class ImageGenFeature:
     @property
     def provider_id(self) -> str:
         return str(self.config.get("provider_id") or "gemini/gemini-3.1-flash-image").strip()
+
+    @property
+    def provider_ids(self) -> list[str]:
+        """主模型在前，备用的按填的顺序，去重。"""
+        extra = self.config.get("fallback_provider_ids") or []
+        if isinstance(extra, str):
+            extra = re.split(r"[,，\s]+", extra)
+        out = []
+        for pid in [self.provider_id] + list(extra):
+            pid = str(pid or "").strip()
+            if pid and pid not in out:
+                out.append(pid)
+        return out
 
     @property
     def timeout(self) -> int:
@@ -262,6 +278,49 @@ class ImageGenFeature:
 
     # ---------- 工具 ----------
 
+    async def _ask(self, bot: str, content: list, want: str, began: float) -> tuple[list, str, list]:
+        """按主模型、备用模型的顺序要图，要到就停。返回 (图, 哪个模型画的, 每个没画出来的原因)。"""
+        why = []
+        ids = self.provider_ids
+        for n, pid in enumerate(ids):
+            left = self.timeout - (time.time() - began)
+            if left < 10:
+                why.append("没时间试 %s 了" % "、".join(ids[n:]))
+                break
+            if n < len(ids) - 1:
+                left = max(20, left - RESERVE)
+            provider = llm.resolve_provider(self.context, pid, fallback=False)
+            client = getattr(provider, "client", None)
+            if client is None:
+                why.append("找不到图像模型 %s（或者它不是 OpenAI 格式的源）" % pid)
+                continue
+            kwargs = {"model": provider.get_model(), "messages": [{"role": "user", "content": content}],
+                      "stream": False, "timeout": left}
+            if want:
+                kwargs["extra_body"] = {"size": want}
+            t0 = time.time()
+            try:
+                resp = await asyncio.wait_for(client.chat.completions.create(**kwargs), timeout=left)
+                message = resp.choices[0].message
+                text = str(message.content or "")
+                found = self.images_in(message)
+            except Exception as e:
+                logger.warning("[super_enhance/image] [%s] %s 画图失败（%.0f 秒）：%s", bot, pid, time.time() - t0, e)
+                timed_out = isinstance(e, asyncio.TimeoutError) or "timeout" in type(e).__name__.lower()
+                why.append("%s 等了 %d 秒还没出图" % (pid, time.time() - t0) if timed_out else "%s 出错了（%s）" % (pid, str(e)[:80]))
+                continue
+            if found:
+                if n:
+                    logger.info("[super_enhance/image] [%s] 主模型没画出来，用备用的 %s 画好了", bot, pid)
+                return found, pid, why
+            said = " ".join(ANY_IMAGE.sub("", text).split())[:120]
+            logger.info("[super_enhance/image] [%s] %s 没给图：%s", bot, pid, said or "（空）")
+            if URL_IMAGE.search(text):
+                why.append("%s 给的是图片链接，这个工具只认直接给出的图" % pid)
+            else:
+                why.append("%s 没给图%s" % (pid, "，它说：%s" % said if said else "（多半是提示词被拦了）"))
+        return [], "", why
+
     async def draw(self, event, prompt: str, size: str = "", use_sent: bool = False, use_last: bool = False,
                    characters="") -> str:
         """画一张，存起来、挂在这一轮的事件上等着给她看；不发。返回给模型看的结果（只写事实）。"""
@@ -272,10 +331,6 @@ class ImageGenFeature:
             return "没画：prompt 要写清楚画什么。"
         umo = str(getattr(event, "unified_msg_origin", "") or "")
         bot = platform_of(umo) or "bot"
-        provider = llm.resolve_provider(self.context, self.provider_id, fallback=False)
-        client = getattr(provider, "client", None)
-        if client is None:
-            return "没画：找不到图像模型 %s（或者它不是 OpenAI 格式的源）。" % self.provider_id
         notes = []
         want = clean_size(size)
         if str(size or "").strip() and not want:
@@ -286,27 +341,10 @@ class ImageGenFeature:
         content = [{"type": "text", "text": self._lead(chars, len(refs) - len(chars)) + prompt}] + [
             {"type": "image_url", "image_url": {"url": "data:%s;base64,%s" % (mime, b64)}} for mime, b64 in refs
         ]
-        kwargs = {"model": provider.get_model(), "messages": [{"role": "user", "content": content}],
-                  "stream": False, "timeout": self.timeout}
-        if want:
-            kwargs["extra_body"] = {"size": want}
         began = time.time()
-        try:
-            resp = await client.chat.completions.create(**kwargs)
-            message = resp.choices[0].message
-            text = str(message.content or "")
-            found = self.images_in(message)
-        except Exception as e:
-            logger.warning("[super_enhance/image] [%s] 画图失败（%.0f 秒）：%s", bot, time.time() - began, e)
-            if "timeout" in type(e).__name__.lower():
-                return "没画出来：等了 %d 秒模型还没出图（图越大越慢）。" % self.timeout
-            return "没画出来：图像模型出错了（%s）。" % str(e)[:80]
+        found, used, why = await self._ask(bot, content, want, began)
         if not found:
-            said = " ".join(ANY_IMAGE.sub("", text).split())[:120]
-            logger.info("[super_enhance/image] [%s] 模型没给图：%s", bot, said or "（空）")
-            if URL_IMAGE.search(text):
-                return "没画出来：模型给的是图片链接，这个工具只认直接给出的图。"
-            return "没画出来：模型没给图%s。" % ("，它说：%s" % said if said else "（多半是提示词被拦了，换个说法再试）")
+            return "没画出来：%s。" % "；".join(why)
         index = self._load_index()
         drawn = list(event.get_extra(EXTRA_KEY) or []) if hasattr(event, "get_extra") else []
         stamp = datetime.datetime.now()
@@ -321,7 +359,7 @@ class ImageGenFeature:
             view_mime, view_b64, dims = await asyncio.to_thread(preview_of, data)
             self._keep_view(image_id, name, view_mime, view_b64)
             index["items"][image_id] = {"bot": bot, "file": name, "prompt": prompt[:300], "size": dims,
-                                        "characters": [n for n, _, _ in chars],
+                                        "characters": [n for n, _, _ in chars], "model": used,
                                         "at": stamp.strftime("%Y-%m-%d %H:%M"), "sent": []}
             drawn.append({"id": image_id, "mime": view_mime, "b64": view_b64})
             ids.append(image_id)
@@ -329,8 +367,8 @@ class ImageGenFeature:
         self._save_index(index)
         if hasattr(event, "set_extra"):
             event.set_extra(EXTRA_KEY, drawn)
-        logger.info("[super_enhance/image] [%s] 画了 %s（%s，参考图 %d 张，%.0f 秒）：%s", bot, "、".join(ids),
-                    "、".join(sizes), len(refs), time.time() - began, prompt[:40])
+        logger.info("[super_enhance/image] [%s] 画了 %s（%s，%s，参考图 %d 张，%.0f 秒）：%s", bot, "、".join(ids),
+                    "、".join(sizes), used, len(refs), time.time() - began, prompt[:40])
         return ("画好了：%s（%s）。图在下一条消息里给你看，主人还没看到。满意就用 send_image 发给他（id 填编号）；"
                 "不满意就改 prompt 再画，或者 use_last_image=true 在这张上接着改，画到你觉得好了再发%s。") % (
             "、".join(ids), "、".join(sizes), "；" + "；".join(notes) if notes else "")
