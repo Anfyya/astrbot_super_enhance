@@ -40,6 +40,8 @@ from ...common import jsonio
 from .food import (DEFAULT_KEEP, DEFAULT_SHIFT, DEFAULT_SPOT, DEFAULT_STATE, KEEPS, MONTH_TEMP, PROCESS_STEPS, SLICE_MINUTES,
                    SPOTS, STATES, WEATHER_SHIFT, SpaceIndex, month_temp, norm_keep, norm_spot, norm_state, room_temp,
                    simulate, split_keep, weather_kind, weather_shift, VAGUE_PLACE)
+from . import weather as weather_mod
+from . import weathering
 from .world import clean_steps, clean_text, fmt_time, parse_time, real_stop
 
 FILE_NAME = "things.json"
@@ -1304,10 +1306,66 @@ class ThingStore:
             if seg["ref"] not in settled:
                 self._apply_segment(items, alias, seg)
         master_done(items, flat)
+        try:
+            self._weathering(items, flat)
+        except Exception:
+            logger.warning("[super_enhance/things] 算风吹日晒雨淋失败", exc_info=True)
         result = View(items, alias)
         current_revision = self.world.revision() if self.world is not None and hasattr(self.world, "revision") else 0
         self._view_cache = ((fmt_time(flat), current_revision, self._revision), result)
         return result
+
+    # ---------- 风吹日晒雨淋（weathering.py）：现算，不存 ----------
+
+    def _weathering(self, items: dict, flat: datetime.datetime) -> None:
+        """这一处的东西（和带在身上的）按每个钟头的天气算此刻什么样：写进 item["_weather"]（一句话，列清单时带上）；
+        被风吹走的补一步（_auto，不存）：吃的吹进海里就没了，东西吹进海里搁在「海里」（捞回来时她们记一步挪地方）。"""
+        weathers = self._weathers(flat)
+        known = sorted(weathers)
+        homes = self.world.homes() if self.world is not None and hasattr(self.world, "homes") else []
+        here = self.world.home_at(flat) if homes else ""
+
+        def day_text(day):
+            key = day.isoformat()
+            if key in weathers:
+                return weathers[key]
+            older = [k for k in known if k <= key]
+            return weathers[older[-1]] if older else "多云"
+
+        def home_at(moment):
+            if not homes or moment is None:
+                return ""
+            text = fmt_time(moment)
+            found = homes[0]["home"]
+            for row in homes:
+                if str(row.get("since") or "") <= text:
+                    found = row["home"]
+            return str(found)
+
+        for item in items.values():
+            if is_ended(item) is not None:
+                continue
+            if here and self.where_of(item, flat) not in ("", here):
+                continue  # 留在另一处的：那边的天气这里不知道，不算
+            food = cat_of(item) == CAT_FOOD
+            state = weathering.simulate(item, flat, day_text, home_at, food=food)
+            text = weathering.describe(state, food=food)
+            if not text:
+                continue
+            item["_weather"] = text
+            moved = state.get("moved")
+            if moved:
+                stages = item.setdefault("stages", [])
+                at = fmt_time(moved["at"])
+                note = "%d 级风把它吹%s（程序按天气算的）" % (moved["wind"], "进海里了" if moved["sea"] else "到角落里了")
+                if food and moved["sea"]:
+                    stages.append({"at": at, "what": "丢了", "left": "", "place": "海里", "by": "", "note": note, "_auto": True})
+                else:
+                    last = stages[-1] if stages else {}
+                    place = "海里（被风吹落的）" if moved["sea"] else "%s·角落（被风吹过去的）" % str(last.get("place") or "外头").split("·")[0]
+                    stages.append({"at": at, "what": "挪地方", "place": place, "holder": "", "by": "",
+                                   "state": "被 %d 级风吹%s" % (moved["wind"], "进海里了" if moved["sea"] else "到角落里了"),
+                                   "note": note, "_auto": True})
 
     # ---------- 存货分两处：住在哪（world.home_at）变了，留在原来那处的东西拿不到 ----------
 
@@ -1560,12 +1618,31 @@ class ThingStore:
         memo: dict = {}
 
         def weather_of(day):
+            if isinstance(day, datetime.datetime):
+                key = (day.date(), day.hour)
+                text = memo.get(key)
+                if text is None:
+                    text = memo[key] = weather_mod.hourly_text(weather_of(day.date()), day)
+                return text
             text = memo.get(day)
             if text is None:
                 text = memo[day] = str(weathers.get(day.isoformat()) or fallback)
             return text
 
         return weather_of
+
+    @staticmethod
+    def _weather_at(weather_of, home: str):
+        """天气原文换成 home 那一处（「住处::」换掉；穗织不带前缀）。"""
+        tag = "" if home in ("", "穗织") else "%s::" % home
+
+        def other(day):
+            text = str(weather_of(day) or "")
+            if "::" in text:
+                text = text.split("::", 1)[1]
+            return tag + text
+
+        return other
 
     def profile(self, item: dict, now: datetime.datetime, view=None) -> dict:
         """一次模拟同时得到新鲜度和口感；同一个 view 里同一件只算一次。
@@ -1581,6 +1658,11 @@ class ThingStore:
             return cache[key]
         index = self._index(view, flat)
         weather_of = self._weather_fn(flat)
+        if self.world is not None and hasattr(self.world, "homes") and self.world.homes():
+            where = self.where_of(item, flat)
+            if where and where != self.world.home_at(flat):
+                # 留在另一处的（住海边时宿舍里的东西）：照那一处的气候算，不按住的这一处（那边哪天什么天不知道，天色照这边的）
+                weather_of = self._weather_at(weather_of, where)
         sim_key = self._sim_key(item, flat, view)
         if sim_key is not None and sim_key in self._sim_cache:
             self._sim_cache.move_to_end(sim_key)
@@ -1760,6 +1842,8 @@ class ThingStore:
         taste = self.taste_text(self.quality(item, now, view), 3)
         if taste:
             parts.append("口感：" + taste)
+        if item.get("_weather"):
+            parts.append("按天气算，此刻：%s" % item["_weather"])
         return "%s %s〔%s〕：%s" % (item.get("id"), item.get("name"), "；".join(tags), "｜".join(parts))
 
     def history(self, item: dict, now: datetime.datetime, view: View, label_fn=None) -> str:
@@ -1863,6 +1947,8 @@ class ThingStore:
             look = "%s %s%s" % (str(made.get("at"))[5:16], made.get("what"), "：" + done if done else "")
         parts = [x for x in (look, "" if state and state in look else state, self._where(last, label_fn), came,
                              "归%s" % self._who(owner, label_fn) if owner else "") if x]
+        if item.get("_weather"):
+            parts.append("按天气算，此刻：%s" % item["_weather"])
         return "%s %s〔%s〕：%s" % (item.get("id"), item.get("name"), "；".join(tags), "｜".join(parts))
 
     def item_history(self, item: dict, view: View, label_fn=None) -> str:
@@ -1911,6 +1997,8 @@ class ThingStore:
             owner = self.owner_of(item)
             now_bits = [x for x in (self._where(last, label_fn), last.get("state"),
                                     "归%s" % self._who(owner, label_fn) if owner else "") if x]
+            if item.get("_weather"):
+                now_bits.append("按天气算，此刻：%s" % item["_weather"])
             lines.append("现在：%s" % ("｜".join(now_bits) or "在家里，在哪没说"))
         return "\n".join(lines)
 

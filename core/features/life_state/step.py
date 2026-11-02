@@ -21,6 +21,7 @@ from .recorder import norm_time
 from .things import (CAT_FOOD, CAT_ITEM, END_STEPS, ITEM_END_STEPS, ITEM_MID_STEPS, ITEM_START_STEPS, KEEPS, KINDS, MEASURED_KINDS, MID_STEPS,
                      SPOTS, START_STEPS, _same_name, cat_of, checked_place, had_before, is_ended, norm_kind, norm_state,
                      norm_step, split_keep, step_no)
+from . import weather as weather_mod
 from .homewords import localize
 from .menu import meal_slots, meals_text
 from .variety import default_pools, twists_of, when_map, with_when
@@ -268,6 +269,9 @@ def state_of(raw: dict) -> str:
     return "sleep" if is_sleep({"doing": raw.get("doing")}) else "do"
 
 
+WEATHER_RULE = ('天气是程序按钟点算好的，补写、记录员、聊天时的她、家里东西的样子用的都是这一份：排出门、晾晒、收东西、在外头干活，照着几点下雨、几点起风写，不要跟它对不上（这时候在下大雨，就别写在甲板上晒太阳）。「家里的吃的」「家里的东西」里写着「按天气算，此刻：……」的（淋湿了、生锈了、受潮了、被风吹走了），是程序照天气算出来的现在的样子；她们动手处理了（晾干、擦干、除锈、洗干净、收进来、下水捞回来），照常给那件写一步，state 写成处理后的样子（例如「晾干了」「锈擦掉了」），程序从那一步起重新算；吹进海里、捞不回来的就别写她还在用。')
+
+
 class LifeStep:
     """补写。"""
 
@@ -368,6 +372,33 @@ class LifeStep:
         if not lines:
             return ""
         return "注意事项（务必照做）：\n" + "\n".join("   - " + x for x in lines)
+
+    def _weather_text_of(self):
+        """日子 → 那天抽到的天气原文（没抽到的照最近一天；都没有就多云）。"""
+        seeds = (self.seed_log.load() or {}) if self.seed_log is not None else {}
+        known = sorted(k for k, v in seeds.items() if isinstance(v, dict) and v.get("weather"))
+
+        def text_of(day):
+            key = day.isoformat()
+            older = [k for k in known if k <= key]
+            return str(seeds[older[-1]]["weather"]) if older else "多云"
+
+        return text_of
+
+    def _weather_block(self, start: datetime.datetime, now: datetime.datetime) -> str:
+        """这次要写的那段时间按钟点的天气 + 要提前防着的。"""
+        start = min(start, now).replace(tzinfo=None)
+        flat = now.replace(tzinfo=None)
+        until = max(start, flat) + datetime.timedelta(hours=HORIZON_HOURS + 1)
+        text_of = self._weather_text_of()
+        home = self.home
+        lines = ["\n- 按钟点的天气（%s 到 %s）：" % (start.strftime("%H:%M"), until.strftime("%m-%d %H:%M")),
+                 weather_mod.timeline_text(start, until, text_of, home)]
+        warns = weather_mod.warnings(flat, until + datetime.timedelta(hours=3), text_of, home)
+        if warns:
+            lines.append("- 要提前防着的：\n" + "\n".join("  - " + x for x in warns))
+        lines.append("- " + WEATHER_RULE)
+        return "\n".join(lines)
 
     @staticmethod
     def _seed_text(seed: dict, labels: dict, night: bool = False) -> str:
@@ -1197,6 +1228,10 @@ class LifeStep:
         first = min((x["start"] for x in tasks.values() if x.get("start")), default=None) or now
         night = first.hour >= NIGHT_FROM or first.hour < NIGHT_UNTIL
         seed_text = self._seed_text(seed, labels, night) if seed else ""
+        try:
+            seed_text += self._weather_block(min((x["start"] for x in tasks.values() if x.get("start")), default=None) or now, now)
+        except Exception:
+            logger.warning("[super_enhance/step] 天气时间线没拼上", exc_info=True)
         first = next(iter(tasks.values()))
         example_start = first["start"] or (now + datetime.timedelta(minutes=10))
         return localize(STEP_TEMPLATE.format(

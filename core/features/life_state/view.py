@@ -300,6 +300,11 @@ def world_text(service, bot: str, now: datetime.datetime) -> str:
         logger.warning("[super_enhance/life] 世界线渲染失败", exc_info=True)
         head = ""
     blocks = [head]
+    if head:
+        try:
+            blocks.append(weather_now_text(service, now))
+        except Exception:
+            logger.warning("[super_enhance/life] 天气注入失败", exc_info=True)
     try:
         blocks.append(service._promise_text(bot, now))
     except Exception:
@@ -334,6 +339,23 @@ def world_text(service, bot: str, now: datetime.datetime) -> str:
         if service.cfg.get("world_voice_note", True):
             blocks.append(VOICE_NOTES.get(service.bots.label_for(bot) or "", ""))
     return "\n".join(x for x in blocks if x)
+
+def weather_now_text(service, now: datetime.datetime) -> str:
+    """此刻外头的天气（程序按钟点算的，跟补写、存货用的是同一份）。"""
+    from . import weather as weather_mod
+    seeds = service.seed_log.load() or {}
+    known = sorted(k for k, v in seeds.items() if isinstance(v, dict) and v.get("weather"))
+
+    def text_of(day):
+        key = day.isoformat()
+        older = [k for k in known if k <= key]
+        return str(seeds[older[-1]]["weather"]) if older else "多云"
+
+    home = str(service.cfg.get("world_home") or "").strip() or "穗织"
+    flat = now.replace(tzinfo=None)
+    return "外头的天气（%s）%s。说到天气、要不要出门、晾的东西时照这个说。" % (
+        flat.strftime("%H:%M"), weather_mod.now_text(flat, text_of, home))
+
 
 def map_text(cfg) -> str:
     """配置里的固定事实（住的这一带的地图、哪扇门关着这类），给聊天时的她看；没写就空。"""

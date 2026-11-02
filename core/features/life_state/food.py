@@ -178,6 +178,9 @@ def weather_kind(text) -> str:
 @functools.lru_cache(maxsize=256)
 def _weather_kind(text: str) -> str:
     text = split_home(text)[1]
+    # 存货模拟按钟点给的天气：「当天原文|这个钟头的一句」（weather.hourly_text），认这个钟头的
+    if "|" in text:
+        return text.split("|", 1)[1]
     # 模拟每半小时一片都要认一次当天天气，原文就那几句：认过的记住
     m = re.search(r"转成「([^」]+)」", text)
     if m:
@@ -187,7 +190,8 @@ def _weather_kind(text: str) -> str:
 
 
 def weather_shift(text) -> tuple:
-    kind = weather_kind(text)
+    # 冷热按当天那句天气算（「晴热」「大风降温」），钟头那句不管冷热
+    kind = weather_kind(str(text or "").split("|", 1)[0])
     for key, shift, amp in WEATHER_SHIFT:
         if key in kind:
             return shift, amp
@@ -303,6 +307,11 @@ VEG = VEG_LEAFY + ("茄果瓜豆菜", "菌菇类", "耐储根茎瓜菜", "葱姜
 FRUIT = ("娇嫩浆果", "普通水果", "耐放硬果")
 PRODUCE = VEG + FRUIT
 RAW_MEAT = ("生内脏", "生鱼虾水产", "生肉禽肉")
+# 住在海边潮：这几类返潮、长霉、生虫快这么多倍（夏天 6–9 月更潮）
+HUMID_HOMES = ("海边小镇",)
+HUMID_KINDS = ("干货调料粮食", "坚果炒货", "耐放糕饼点心", "腊肉腊肠咸鱼")
+HUMID_FACTOR = 1.5
+HUMID_SUMMER = 2.0
 COOKED = ("熟菜炒菜", "熟汤羹粥", "熟饭熟面", "熟肉卤味")
 STARCH = ("熟饭熟面", "馒头面包主食", "鲜肉软点心")  # 会回生发硬的
 SOY = ("鲜水豆腐", "豆干千张", "鲜豆浆豆芽")
@@ -416,6 +425,11 @@ def smoke_life(kind: str, base: float, salted: bool) -> float:
     return max(base * 3, 240.0)
 
 
+def _wind_of(kind: str) -> int:
+    m = re.search(r"(\d+)级风", str(kind or ""))
+    return int(m.group(1)) if m else 2
+
+
 def dry_rate(spot: str, keep: str, moment: datetime.datetime, weather_text) -> float:
     """这一刻晒干了多少：大太阳底下一个钟头算 1，阴天、多云少些，夜里、屋里几乎不走；下雨天晒在外头的返潮（倒退）。"""
     kind = weather_kind(weather_text)
@@ -423,13 +437,14 @@ def dry_rate(spot: str, keep: str, moment: datetime.datetime, weather_text) -> f
     if exposed and wet_weather(weather_text):
         return -1.0
     if spot == "太阳底下":
+        gust = 1 + 0.06 * _wind_of(kind)
         if not daytime(moment):
-            return 0.2
+            return 0.2 * gust
         if any(w in kind for w in ("晴热", "暖阳", "回暖", "晴")) and sunny(weather_text):
-            return 1.3
-        return 0.6 if any(w in kind for w in ("多云", "阴", "雾")) else 1.0
+            return 1.3 * gust
+        return (0.6 if any(w in kind for w in ("多云", "阴", "雾")) else 1.0) * gust
     if spot == "屋外" or keep == "挂着通风":
-        return 0.35 * (0.3 if "雾" in kind else 1.0)
+        return 0.35 * (0.3 if "雾" in kind else 1.0) * (1 + 0.1 * _wind_of(kind))
     if spot == "灶上温着":
         return 0.3
     return 0.08 if keep in ("敞着放", "罩着放") else 0.02
@@ -953,6 +968,29 @@ class Sim:
             rate *= 1.3
         return rate
 
+    def rain_ruins(self, weather) -> bool:
+        """露天没盖着，这个钟头下着小雨以上（1 毫米/小时以上）。"""
+        if not isinstance(weather, str) or self.cover in ("收着放", "泡在水里", "活养着"):
+            return False
+        kind = weather_kind(weather)
+        if not any(w in kind for w in ("小雨", "中雨", "大雨", "暴雨")):
+            return False
+        from .weathering import exposure_of
+        return exposure_of(self.place, self.spot, self.cover) == "open"
+
+    def weather_factor(self, moment: datetime.datetime, weather) -> float:
+        """天气让它坏得更快：露天没盖着淋了雨（熟菜淋了雨就不能吃了）；住海边潮，干货、炒货、点心、腊货返潮。"""
+        factor = 1.0
+        if isinstance(weather, str) and wet_weather(weather) and self.cover not in ("收着放", "泡在水里", "活养着"):
+            from .weathering import exposure_of
+            where = exposure_of(self.place, self.spot, self.cover)
+            if where in ("open", "semi"):
+                factor *= (6.0 if self.kind in COOKED else 2.0) * (1.0 if where == "open" else 0.5)
+        if isinstance(weather, str) and split_home(weather)[0] in HUMID_HOMES and self.kind in HUMID_KINDS \
+                and self.spot not in ("冰箱", "冻着"):
+            factor *= HUMID_SUMMER if moment.month in (6, 7, 8, 9) else HUMID_FACTOR
+        return factor
+
     def run(self, until: datetime.datetime, quality_until: datetime.datetime | None = None, stop_bad: bool = False) -> None:
         """从上一次推到的地方推到 until；quality_until 以前的片才攒口感（往后推只为算还能放到几点）。"""
         cur = getattr(self, "_cur", None)
@@ -963,10 +1001,12 @@ class Sim:
             nxt = min(cur + step, until)
             mid = cur + (nxt - cur) / 2
             dt = (nxt - cur).total_seconds() / 3600.0
-            weather = self.weather_of(mid.date())
+            weather = self.weather_of(mid)
             temp = self.temp_at(mid, weather)
             self._process(mid, dt, temp, weather)
-            self.frac += self.spoil_rate(temp) * dt / self.life
+            self.frac += self.spoil_rate(temp) * self.weather_factor(mid, weather) * dt / self.life
+            if self.kind in COOKED and self.rain_ruins(weather):
+                self.frac = max(self.frac, 1.0)  # 熟菜露天没盖着淋了一阵雨：泡了雨水，不能吃了
             if self.bad_since is None and self.frac >= 1.0:
                 self.bad_since = nxt
             if self.cover == "活养着":
