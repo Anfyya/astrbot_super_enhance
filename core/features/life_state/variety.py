@@ -914,7 +914,8 @@ class SeedLog:
         version = self.path.stat().st_mtime_ns
         if self._cache is not None and self._cache[0] == version:
             return self._cache[1]
-        data = jsonio.load(self.path, {})
+        # 读坏了就抛（10-28 以前也是抛）：调用方当今天没抽、再存一次会把整份抽签历史冲掉
+        data = jsonio.load(self.path, {}, strict=True)
         data = data if isinstance(data, dict) else {}
         self._cache = (version, data)
         return data

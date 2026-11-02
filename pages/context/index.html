@@ -1846,8 +1846,7 @@
       return;
     }
     if (S.histErr) {
-      box.appendChild(h("div", { class: "empty-state" }, h("div", { class: "big", text: "历史读取失败" }), h("div", { text: S.histErr }),
-        h("button", { class: "btn sm", type: "button", text: "重试", onclick: function () { loadHistory("fresh"); } })));
+      box.appendChild(errState("历史读取失败", S.histErr, function () { loadHistory("fresh"); }));
       updateSelBar();
       return;
     }
@@ -2474,6 +2473,7 @@
         S.items.forEach(function (row, k) { if (row.i === it.i) { S.items[k] = editResult.item; } });
         renderStream();
         renderHead();
+        renderSide();
         openMsg(it.i);
         return;
       }
@@ -2482,6 +2482,18 @@
       btn.disabled = false;
       toast("保存失败：" + errMsg(e), { err: true });
     });
+  }
+
+  // 删 / 插完：后端回的条数、签名、token 记到页面上，重画列表、标题和侧栏（不整段重读）
+  function applyCounts(r) {
+    S.total = r.total;
+    if (S.range) { S.range.total = S.range.end = r.total; }
+    S.lastSig = r.last_sig || S.lastSig;
+    var conv = curConv();
+    if (conv) { conv.items = r.total; conv.estimate_tokens = r.estimate_tokens; conv.token_usage = r.token_usage; }
+    renderStream();
+    renderHead();
+    renderSide();
   }
 
   function doDelete(indexes) {
@@ -2499,13 +2511,7 @@
           row.i -= indexes.filter(function (i) { return i < row.i; }).length;
           return row;
         });
-        S.total = r.total;
-        if (S.range) { S.range.total = S.range.end = r.total; }
-        S.lastSig = r.last_sig || S.lastSig;
-        var conv = curConv();
-        if (conv) { conv.items = r.total; conv.estimate_tokens = r.estimate_tokens; conv.token_usage = r.token_usage; }
-        renderStream();
-        renderHead();
+        applyCounts(r);
         return;
       }
       return loadHistory("keep");
@@ -2917,13 +2923,7 @@
         S.items.forEach(function (row) { if (row.i >= r.start) { row.i += r.items.length; } });
         var start = (S.range && S.range.start) || 0;
         S.items = S.items.slice(0, Math.max(0, r.start - start)).concat(r.items, S.items.slice(Math.max(0, r.start - start)));
-        S.total = r.total;
-        if (S.range) { S.range.total = S.range.end = r.total; }
-        S.lastSig = r.last_sig || S.lastSig;
-        var conv = curConv();
-        if (conv) { conv.items = r.total; conv.estimate_tokens = r.estimate_tokens; conv.token_usage = r.token_usage; }
-        renderStream();
-        renderHead();
+        applyCounts(r);
         openMsg(at);
         scrollToItem(at, true);
         return;
@@ -3056,8 +3056,7 @@
     if (!REQ_TABS.some(function (t) { return t[0] === r.tab; })) { r.tab = "inject"; }
     if (!curConv()) { box.appendChild(h("div", { class: "empty-state" }, h("div", { class: "big", text: "选一个会话" }))); return; }
     if (r.err) {
-      box.appendChild(h("div", { class: "empty-state" }, h("div", { class: "big", text: "读取失败" }), h("div", { text: r.err }),
-        h("button", { class: "btn sm", type: "button", text: "重试", onclick: loadRequests })));
+      box.appendChild(errState("读取失败", r.err, loadRequests));
       return;
     }
     if (r.loading && !r.data) {
@@ -3212,7 +3211,18 @@
   };
   var POOL_SORTS = [["chance", "按明天抽中"], ["base", "按初始权重"], ["order", "原顺序"]];
 
-  function loadAuxPage(path, key, view, render, silent) {
+  // 读不出来时那一块：大字标题、原因、重试按钮
+  function errState(title, why, retry) {
+    return h("div", { class: "empty-state" }, h("div", { class: "big", text: title }), h("div", { text: why }),
+      h("button", { class: "btn sm", type: "button", text: "重试", onclick: retry }));
+  }
+  // 还没读到时的灰色占位条：wrap 是外面那层的 class，styles 每条一个
+  function skeleton(wrap, styles) {
+    return h("div", { class: wrap }, styles.map(function (s) { return h("div", { class: "sk", style: s }); }));
+  }
+
+  // 读一页（插曲与消遣、能力与约定、家里的吃的）：正在读就不重复发；失败的提示前面写 errHead（默认「读取失败：」）
+  function loadAuxPage(path, key, view, render, silent, errHead) {
     var loading = key + "Loading", err = key + "Err";
     if (S[loading]) { return Promise.resolve(); }
     S[loading] = true;
@@ -3227,7 +3237,7 @@
       S[err] = errMsg(e);
       renderSide();
       if (S.view === view) { render(); }
-      if (!silent && S.view === view) { toast("读取失败：" + S[err], { err: true }); }
+      if (!silent && S.view === view) { toast((errHead || "读取失败：") + S[err], { err: true }); }
     });
   }
 
@@ -3295,10 +3305,9 @@
     var d = S.pools;
     if (!d) {
       if (S.poolsErr) {
-        box.appendChild(h("div", { class: "empty-state" }, h("div", { class: "big", text: "读取失败" }), h("div", { text: S.poolsErr }),
-          h("button", { class: "btn sm", type: "button", text: "重试", onclick: function () { loadPools(); } })));
+        box.appendChild(errState("读取失败", S.poolsErr, function () { loadPools(); }));
       } else {
-        box.appendChild(h("div", { class: "plw" }, h("div", { class: "sk", style: "height:90px;margin-bottom:16px" }), h("div", { class: "sk", style: "height:360px" })));
+        box.appendChild(skeleton("plw", ["height:90px;margin-bottom:16px", "height:360px"]));
       }
       return;
     }
@@ -3606,10 +3615,9 @@
     var d = S.ledger;
     if (!d) {
       if (S.ledgerErr) {
-        box.appendChild(h("div", { class: "empty-state" }, h("div", { class: "big", text: "读取失败" }), h("div", { text: S.ledgerErr }),
-          h("button", { class: "btn sm", type: "button", text: "重试", onclick: function () { loadLedger(); } })));
+        box.appendChild(errState("读取失败", S.ledgerErr, function () { loadLedger(); }));
       } else {
-        box.appendChild(h("div", { class: "people" }, h("div", { class: "sk", style: "height:180px" }), h("div", { class: "sk", style: "height:180px" })));
+        box.appendChild(skeleton("people", ["height:180px", "height:180px"]));
       }
       return;
     }
@@ -4327,12 +4335,16 @@
   function worldReveal(wk, flash) {
     var el = worldItem(wk);
     if (!el) { return; }
-    var sc = worldScroller(), r = el.getBoundingClientRect(), top0 = sc.getBoundingClientRect().top;
+    revealIn(worldScroller(), el);
+    if (flash) { worldFlash(el); }
+  }
+  // 在滚动框 sc 里把 el 露出来（世界线、家里的吃的共用）
+  function revealIn(sc, el) {
+    var r = el.getBoundingClientRect(), top0 = sc.getBoundingClientRect().top;
     var top = r.top - top0, bottom = r.bottom - top0, pad = 12, by = 0;
     if (top < pad) { by = top - pad; }
     else if (bottom > sc.clientHeight - pad) { by = Math.min(bottom - (sc.clientHeight - pad), top - pad); }
     if (Math.abs(by) > 1) { sc.scrollTo({ top: sc.scrollTop + by, behavior: "smooth" }); }
-    if (flash) { worldFlash(el); }
   }
 
   function worldFlash(el) {
@@ -4567,10 +4579,9 @@
     var d = S.world;
     if (!d) {
       if (S.worldErr) {
-        box.appendChild(h("div", { class: "empty-state" }, h("div", { class: "big", text: "世界线读取失败" }), h("div", { text: S.worldErr }),
-          h("button", { class: "btn sm", type: "button", text: "重试", onclick: function () { loadWorld(); } })));
+        box.appendChild(errState("世界线读取失败", S.worldErr, function () { loadWorld(); }));
       } else {
-        box.appendChild(h("div", { class: "people" }, h("div", { class: "sk", style: "height:200px" }), h("div", { class: "sk", style: "height:320px" })));
+        box.appendChild(skeleton("people", ["height:200px", "height:320px"]));
       }
       return;
     }
@@ -5704,7 +5715,6 @@
   // 编号由程序发、改不了；这里什么都不真删：某一步作废是挪到「作废的」里留着，整件记错了是加一步「记错了」。
   var THING_TONE = { "还新鲜": "ok", "还行": "acc", "快不行了": "warn", "坏了": "bad", "活养着": "acc" };
   var THING_RANK = { "坏了": 0, "快不行了": 1, "还行": 2, "还新鲜": 3, "活养着": 4 };
-  var T_MAP = "tEdit";
 
   function thingTone(it) { return it.ended ? "gone" : (THING_TONE[(it.fresh || {}).level] || "ok"); }
   // 排在前面的：坏了 > 快不行了、余量不多 > 还行 > 还新鲜 > 活养着；没了的最后
@@ -5762,23 +5772,7 @@
   function thingIsStart(what) { return !!S.things && S.things.steps.start.indexOf(what) >= 0; }
   function thingIsEnd(what) { return !!S.things && S.things.steps.end.indexOf(what) >= 0; }
 
-  function loadThings(silent) {
-    if (S.thingsLoading) { return Promise.resolve(); }
-    S.thingsLoading = true;
-    return api("ctx/things").then(function (d) {
-      S.thingsLoading = false;
-      S.things = d;
-      S.thingsErr = "";
-      renderSide();
-      if (S.view === "things") { renderThings(); }
-    }).catch(function (e) {
-      S.thingsLoading = false;
-      S.thingsErr = errMsg(e);
-      renderSide();
-      if (S.view === "things") { renderThings(); }
-      if (!silent && S.view === "things") { toast("家里的吃的读取失败：" + S.thingsErr, { err: true }); }
-    });
-  }
+  function loadThings(silent) { return loadAuxPage("ctx/things", "things", "things", renderThings, silent, "家里的吃的读取失败："); }
 
   function thingPost(body, okMsg, done, focusId) {
     return post("ctx/things/edit", body).then(function (r) {
@@ -5816,13 +5810,7 @@
     delete S.tEdit[key];
     renderThings();
   }
-  function thingsReveal(el) {
-    var sc = thingsScroller(), top0 = sc.getBoundingClientRect().top, r = el.getBoundingClientRect(), pad = 12, by = 0;
-    var top = r.top - top0, bottom = r.bottom - top0;
-    if (top < pad) { by = top - pad; }
-    else if (bottom > sc.clientHeight - pad) { by = Math.min(bottom - (sc.clientHeight - pad), top - pad); }
-    if (Math.abs(by) > 1) { sc.scrollTo({ top: sc.scrollTop + by, behavior: "smooth" }); }
-  }
+  function thingsReveal(el) { revealIn(thingsScroller(), el); }
 
   /* ---------- 重画时保住位置 ---------- */
   function thingsScroller() { return $("thingsBody").parentNode; }
@@ -5880,10 +5868,9 @@
     var d = S.things;
     if (!d) {
       if (S.thingsErr) {
-        box.appendChild(h("div", { class: "empty-state" }, h("div", { class: "big", text: (objectMode ? "家里的东西" : "家里的吃的") + "读取失败" }), h("div", { text: S.thingsErr }),
-          h("button", { class: "btn sm", type: "button", text: "重试", onclick: function () { loadThings(); } })));
+        box.appendChild(errState((objectMode ? "家里的东西" : "家里的吃的") + "读取失败", S.thingsErr, function () { loadThings(); }));
       } else {
-        box.appendChild(h("div", { class: "people" }, h("div", { class: "sk", style: "height:120px" }), h("div", { class: "sk", style: "height:260px" })));
+        box.appendChild(skeleton("people", ["height:120px", "height:260px"]));
       }
       return;
     }
@@ -5907,7 +5894,7 @@
     });
     bar.appendChild(seg);
     var q = h("input", { class: "inp", type: "text", placeholder: objectMode ? "搜名字、编号、样子、在哪" : "搜名字、编号、哪来的", value: objectMode ? S.objQ : S.thingsQ });
-    q.addEventListener("input", function () { setQuery(q.value); (objectMode ? drawObjList : drawThingList)(); });
+    q.addEventListener("input", function () { setQuery(q.value); drawDataList(); });
     bar.appendChild(h("label", { class: "search" }, thingSearchIcon(), q));
     bar.appendChild(h("div", { class: "grow" }));
     bar.appendChild(h("button", { class: "btn sm", type: "button", onclick: function () {
@@ -5937,7 +5924,7 @@
     }
     box.appendChild(sum);
     box.appendChild(h("div", { class: "tlist" }, h("div", { class: "pc", id: objectMode ? "objList" : "thingsList" })));
-    (objectMode ? drawObjList : drawThingList)();
+    drawDataList();
     thingsAfterDraw(anchor, opt);
   }
 
@@ -5974,7 +5961,7 @@
     var card = $(objectMode ? "objList" : "thingsList");
     if (!card || !S.things) { return; }
     clear(card);
-    if (S.tEdit[objectMode ? "onew" : "new"]) { card.appendChild(objectMode ? objNewForm(S.things) : thingNewForm(S.things)); }
+    if (S.tEdit[objectMode ? "onew" : "new"]) { card.appendChild(dataNewForm(S.things, objectMode)); }
     var q = String((objectMode ? S.objQ : S.thingsQ) || "").trim().toLowerCase();
     var filter = objectMode ? S.objFilter : S.thingsFilter;
     if (filter === "future") { card.appendChild(futureRows(objectMode ? "item" : "food", q)); return; }
@@ -6029,8 +6016,6 @@
     }
     card.appendChild(rows);
   }
-
-  function drawThingList() { return drawDataList(); }
 
   /* ---------- 未来：世界线里还没做完的段要添的（要买回来、要做好的……） ---------- */
   // 编号是补写 / 网页先发好的，那一段做完才算进下面的清单。吃的在这里能改：改的就是世界线那一段（两边同一份），存了那段算手动
@@ -6343,14 +6328,6 @@
     return row;
   }
 
-  function thingStageRow(it, st, vidx, pos) {
-    return dataStageRow(it, st, false, vidx, undefined, pos);
-  }
-
-  function objStageRow(it, st, vidx, isFirst, pos) {
-    return dataStageRow(it, st, true, vidx, isFirst, pos);
-  }
-
   function dataDetail(it, objectMode) {
     var box = h("div", { class: "tdetail" });
     if (objectMode && it.note) { box.appendChild(h("div", { class: "muted", style: "font-size:12.5px", text: it.note })); }
@@ -6358,9 +6335,9 @@
     it.stages.forEach(function (st, i) {
       var key = thingStageKey(it, st, i, objectMode);
       if (S.tEdit[key]) {
-        list.appendChild(h("li", null, objectMode ? objStageForm(it, st, i) : thingStageForm(it, st, i)));
+        list.appendChild(h("li", null, dataStageForm(it, st, i, objectMode)));
       } else {
-        list.appendChild(objectMode ? objStageRow(it, st, undefined, i === 0, i) : thingStageRow(it, st, undefined, i));
+        list.appendChild(dataStageRow(it, st, objectMode, undefined, objectMode ? i === 0 : undefined, i));
       }
     });
     box.appendChild(list);
@@ -6371,14 +6348,14 @@
       } }, open ? "收起作废的" : "作废的 " + it.voided.length + " 步"));
       if (open) {
         var vl = h("ol", { class: "tsteps" });
-        it.voided.forEach(function (st) { vl.appendChild(objectMode ? objStageRow(it, st, st.vidx, false) : thingStageRow(it, st, st.vidx)); });
+        it.voided.forEach(function (st) { vl.appendChild(dataStageRow(it, st, objectMode, st.vidx, objectMode ? false : undefined)); });
         box.appendChild(vl);
       }
     }
     var stageKey = (objectMode ? "os:" : "s:") + it.id;
     var itemKey = (objectMode ? "oi:" : "i:") + it.id;
-    if (S.tEdit[stageKey]) { box.appendChild(objectMode ? objStageForm(it, null) : thingStageForm(it, null)); }
-    if (S.tEdit[itemKey]) { box.appendChild(objectMode ? objItemForm(it) : thingItemForm(it)); }
+    if (S.tEdit[stageKey]) { box.appendChild(dataStageForm(it, null, undefined, objectMode)); }
+    if (S.tEdit[itemKey]) { box.appendChild(dataItemForm(it, objectMode)); }
     var foot = h("div", { class: "tfoot" });
     if (!it.ended && !S.tEdit[stageKey]) {
       foot.appendChild(h("button", { class: "btn sm", type: "button", onclick: function () {
@@ -6405,8 +6382,6 @@
     box.appendChild(foot);
     return box;
   }
-
-  function thingDetail(it) { return dataDetail(it, false); }
 
   /* ---------- 表单 ---------- */
   // 时间：今天的只写钟点，昨天、前天写成字，别的写「10-18 08:30」；存的时候补全
@@ -6547,10 +6522,6 @@
     }, function () { return worldDirty(f); });
   }
 
-  function thingNewForm(d) { return dataNewForm(d, false); }
-
-  function objNewForm(d) { return dataNewForm(d, true); }
-
   function dataStageForm(it, st, pos, objectMode) {
     var wl = !!st && thingWlStep(st);
     var key = st ? thingStageKey(it, st, pos, objectMode) : (objectMode ? "os:" : "s:") + it.id;
@@ -6626,10 +6597,6 @@
     }, function () { return worldDirty(f); });
   }
 
-  function thingStageForm(it, st, pos) { return dataStageForm(it, st, pos, false); }
-
-  function objStageForm(it, st, pos) { return dataStageForm(it, st, pos, true); }
-
   function dataItemForm(it, objectMode) {
     var key = (objectMode ? "oi:" : "i:") + it.id;
     var f = S.tEdit[key];
@@ -6654,8 +6621,6 @@
     }, function () { return worldDirty(f); });
   }
 
-  function thingItemForm(it) { return dataItemForm(it, false); }
-  function objItemForm(it) { return dataItemForm(it, true); }
   function objFind(id) {
     var key = String(id || "").toLowerCase();
     return ((S.things && S.things.objects) || []).filter(function (x) { return String(x.id).toLowerCase() === key; })[0] || null;
@@ -6686,9 +6651,6 @@
     return w.firstChild;
   }
 
-  // 同一种东西（kind 一样）有好几件的先列，组头提醒认准编号；只有一件的列在后面
-  function drawObjList() { return drawDataList(); }
-
   function thingRow(it) {
     var tone = thingTone(it);
     return dataRow(it, {
@@ -6696,7 +6658,7 @@
       head: function (x) { return [h("span", { class: "tid", text: x.id }), h("span", { class: "tname", text: x.name }), h("span", { class: "tag", text: x.kind })]; },
       meta: function (x) { var w = [x.place, x.keep, thingSpotShown(x.spot), x.state && x.state !== "整的" ? x.state : ""].filter(Boolean).join("，"); return !x.ended && w ? h("div", { class: "tmeta", text: w }) : null; },
       body: function (x) { return x.ended ? h("div", { class: "tfresh " + tone, text: x.fresh.text }) : thingGauges(x); },
-      fromLabel: "用料", detail: thingDetail
+      fromLabel: "用料", detail: function (x) { return dataDetail(x, false); }
     });
   }
 
@@ -6710,10 +6672,9 @@
         else { var now = [x.state && String(x.look || "").indexOf(x.state) < 0 ? x.state : "", objWhere(x)].filter(Boolean).join(" · "); if (now) { out.push(h("div", { class: "tmeta", text: now })); } }
         return out;
       },
-      body: null, fromLabel: "用什么做的", detail: objDetail
+      body: null, fromLabel: "用什么做的", detail: function (x) { return dataDetail(x, true); }
     });
   }
-  function objDetail(it) { return dataDetail(it, true); }
 
   // 东西某一步要填的一格。c：{ first 第一步（怎么来的）, exceptId 它自己, af 光标先放第一格 }
   var OBJ_FIELDS = { place: "搁在哪", holder: "在谁手上", state: "什么样", owner: "归谁" };
@@ -6768,7 +6729,7 @@
 
   /* ================= 自动刷新 ================= */
   // 历史：每 4 秒只问一次「最后一条」，变了才整段重读；请求快照：有新快照且正看最新一份时自动换上
-  var POLL_MS = 4000, pollBusy = false, pollAgain = false, newCount = 0;
+  var POLL_MS = 4000, pollBusy = false, pollAgain = false, pollRetryT = null, newCount = 0;
   function nearBottom() {
     var sc = $("histScroll");
     return sc.scrollHeight - sc.scrollTop - sc.clientHeight < 80;
@@ -6788,45 +6749,6 @@
   });
   $("histScroll").addEventListener("scroll", function () { if (newCount && nearBottom()) { hideNewPill(); } });
 
-  function pollHistory() {
-    if (S.histLoading || !S.range || S.multi || (S.insp && S.insp.dirty) || !$("modal").hidden) { return; }
-    var cid = S.cid;
-    pollBusy = true;
-    api("ctx/history", { cid: cid, limit: 1 }).then(function (d) {
-      if (cid !== S.cid || !S.range || S.histLoading) { return; }
-      var last = S.items[S.items.length - 1], nl = ((d && d.items) || [])[0];
-      var same = d.total === S.range.total && !nl === !last &&
-        (!nl || (nl.i === last.i && nl.text === last.text && nl.think === last.think && nl.chars === last.chars));
-      if (same) { return; }
-      return loadHistory("poll", d.total - S.range.total);
-    }).catch(function () { /* 自动刷新失败不打扰，下一轮再试 */ }).then(function () { pollBusy = false; });
-  }
-
-  function pollRequests() {
-    var c = curConv();
-    if (!c || S.req.loading || S.req.err) { return; }
-    pollBusy = true;
-    api("ctx/requests", { umo: c.umo, limit: 30 }).then(function (d) {
-      if (!curConv() || curConv().umo !== c.umo || S.tab !== "requests") { return; }
-      var list = (d && d.items) || [];
-      var oldFirst = S.req.list[0] && S.req.list[0].id;
-      if (!list.length || list[0].id === oldFirst) { return; }
-      var curId = S.req.list[S.req.idx] && S.req.list[S.req.idx].id;
-      var following = S.req.idx === 0 || !curId;
-      S.req.list = list;
-      S.req.disabled = !!d.disabled;
-      delete toolCache[c.umo];
-      if (following) { S.req.idx = 0; renderReqBar(); loadSnap(true); }
-      else {
-        var k = -1;
-        list.forEach(function (x, j) { if (x.id === curId) { k = j; } });
-        S.req.idx = k >= 0 ? k : 0;
-        renderReqBar();
-        $("reqHint").textContent += " · 有新快照，点 › 查看";
-      }
-    }).catch(function () {}).then(function () { pollBusy = false; });
-  }
-
   function pollTick() {
     if (pollBusy) { pollAgain = true; return; }
     if (document.hidden || S.view !== "conv" || !S.cid) { return; }
@@ -6837,12 +6759,45 @@
       if (d.conversations_changed) { loadConvs(); }
       var sig = d.last && d.last.sig || "";
       if (d.total !== S.total || sig !== S.lastSig) {
-        return loadHistory("poll", Math.max(0, (d.total || 0) - (S.total || 0)));
+        // 历史还在读、还没读过、多选中、详情面板改了没存、弹窗开着：这一轮先不重读（下一轮照样发现）；
+        // 推送连着时不会再来一遍，等一会儿自己再看一次
+        var busy = S.multi || (S.insp && S.insp.dirty) || !$("modal").hidden;
+        if (!busy && !S.histLoading && S.range) {
+          return loadHistory("poll", Math.max(0, (d.total || 0) - (S.total || 0)));
+        }
+        if (busy && LIVE.on) { clearTimeout(pollRetryT); pollRetryT = setTimeout(pollTick, 1500); }
       }
-      if (S.tab === "requests" && d.versions && d.versions.requests !== S.requestVersion) { loadRequests(); }
+      if (S.tab === "requests" && d.versions && d.versions.requests !== S.requestVersion) { return pollRequests(); }
     }).catch(function () {}).then(function () {
       pollBusy = false;
       if (pollAgain) { pollAgain = false; pollTick(); }
+    });
+  }
+
+  // 请求快照有新的了：正看最新那份就换成新的（安静重读）；看的是旧的就停着，提示有新快照。
+  // 页面上还没有快照（第一次、空的、读错了）就整个重读
+  function pollRequests() {
+    var c = curConv();
+    if (!c || S.req.loading) { return; }
+    if (S.req.err || !S.req.list.length) { loadRequests(); return; }
+    return api("ctx/requests", { umo: c.umo, limit: 30 }).then(function (d) {
+      if (!curConv() || curConv().umo !== c.umo || S.tab !== "requests") { return; }
+      S.requestVersion = d && d.version || 0;
+      var list = (d && d.items) || [];
+      var oldFirst = S.req.list[0] && S.req.list[0].id;
+      if (!list.length || list[0].id === oldFirst) { return; }
+      var curId = S.req.list[S.req.idx] && S.req.list[S.req.idx].id;
+      var following = S.req.idx === 0 || !curId;
+      S.req.list = list;
+      S.req.disabled = !!d.disabled;
+      if (following) { S.req.idx = 0; renderReqBar(); loadSnap(true); }
+      else {
+        var k = -1;
+        list.forEach(function (x, j) { if (x.id === curId) { k = j; } });
+        S.req.idx = k >= 0 ? k : 0;
+        renderReqBar();
+        $("reqHint").textContent += " · 有新快照，点 › 查看";
+      }
     });
   }
 
@@ -6856,7 +6811,8 @@
   });
   setInterval(function () {
     if (document.hidden || LIVE.on) { return; }
-    if (S.view === "ledger") { loadLedger(true); }
+    // 有正在改的能力 / 在练的事就不重读：整页重画会把输入框重建，打断正在输入的内容
+    if (S.view === "ledger" && !Object.keys(S.ledEdit).length && !Object.keys(S.trEdit).length) { loadLedger(true); }
   }, 30000);
 
   /* ================= 实时推送 ================= */
@@ -6936,12 +6892,17 @@
 
 
   /* ================= 启动 ================= */
+  // 会话列表：按最近更新排好存起来（首屏和刷新会话列表共用）
+  function setConvs(d) {
+    var list = (d && d.conversations) || [];
+    list.sort(function (a, b) { return (b.updated_at || 0) - (a.updated_at || 0); });
+    S.convs = list;
+    S.convErr = "";
+    return list;
+  }
   function loadConvs() {
     return api("ctx/conversations").then(function (d) {
-      var list = (d && d.conversations) || [];
-      list.sort(function (a, b) { return (b.updated_at || 0) - (a.updated_at || 0); });
-      S.convs = list;
-      S.convErr = "";
+      setConvs(d);
       renderSide();
       if (S.view === "conv") { renderHead(); }
     }).catch(function (e) {
@@ -6962,13 +6923,10 @@
       el.insertBefore(icon(el.getAttribute("data-icon")), el.firstChild);
     });
     var b = bridge();
-    Promise.resolve(typeof b.ready === "function" ? b.ready() : null).then(function () {
+    Promise.resolve(typeof b.ready === "function" ? b.ready() : null).catch(function () {}).then(function () {
       return api("ctx/boot");
     }).then(function (d) {
-      var list = (d && d.conversations) || [];
-      list.sort(function (a, b) { return (b.updated_at || 0) - (a.updated_at || 0); });
-      S.convs = list;
-      S.convErr = "";
+      var list = setConvs(d);
       S.labels = {};
       (d.bots || []).forEach(function (x) { S.labels[x.id] = x.label; });
       renderSide();

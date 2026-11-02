@@ -494,6 +494,30 @@ class ContextPageApi:
         self._token_cache[cid] = (key, stats)
         return stats
 
+    def _list_stats(self, conv) -> tuple[int, dict[str, int]]:
+        """会话列表里一个会话的（条数, 字数与 token 估算）。
+
+        历史原文（JSON 字符串）跟上次一字不差、updated_at / token_usage 也没变，就用上次解析出的结果，
+        不再整段 json 解析：原文一样解析出来就一样，条数和统计都不会变，所以 _conversation_stats
+        的缓存键（updated_at、token_usage、条数）照旧成立。认「一字不差」用长度 + 字符串哈希；
+        原文不是字符串、或者对不上，就照原来的样子解析再算。
+        """
+        if not hasattr(self, "_list_cache"):
+            self._list_cache = {}
+        raw = getattr(conv, "history", None)
+        cid = str(getattr(conv, "cid", "") or "")
+        mark = None
+        if isinstance(raw, str):
+            mark = (len(raw), hash(raw), _as_int(getattr(conv, "updated_at", 0)), _as_int(getattr(conv, "token_usage", 0)))
+            cached = self._list_cache.get(cid)
+            if cached is not None and cached[0] == mark:
+                return cached[1], cached[2]
+        history = _history_of(raw)
+        stats = self._conversation_stats(conv, history)
+        if mark is not None:
+            self._list_cache[cid] = (mark, len(history), stats)
+        return len(history), stats
+
     # ---------- 世界线 ----------
 
     @staticmethod
@@ -532,7 +556,8 @@ class ContextPageApi:
                     rows.append(row)
                 days.append({"date": day, "entries": rows})
             constraints = []
-            for item in world.constraints(active_only=True):
+            # 已解除的也给：网页把它们收进「已解除的 N 条」
+            for item in world.constraints(active_only=False):
                 row = dict(item)
                 row["who_label"] = self._world_label(life, item.get("who"))
                 constraints.append(row)
@@ -564,8 +589,20 @@ class ContextPageApi:
             store = getattr(life, "things", None)
             if store is not None:
                 try:
+                    # 此刻现算的（存下来的 + 世界线里做完的段标的）、另发编号认成已有那件的、往后的段要做出来的
+                    shelf = await asyncio.to_thread(store.view, now)
+                    thing_names = {key: str(item.get("name") or "") for key, item in shelf.items()}
+                    for old_id, real in shelf.alias.items():
+                        if real in thing_names:
+                            thing_names[old_id] = thing_names[real]
+                    for row in store.future(now):
+                        thing_names.setdefault(row["id"], str(row["step"].get("name") or ""))
+                except Exception:
+                    logger.warning("[super_enhance/ctx] 世界线页算吃的名字失败", exc_info=True)
+                try:
+                    # 上面没算到的（比如已经用完的）再从存下来的那份补名字，不覆盖
                     for thing in store._load().get("items") or []:
-                        if thing.get("id"):
+                        if thing.get("id") and not thing_names.get(str(thing["id"])):
                             thing_names[str(thing["id"])] = str(thing.get("name") or "")
                 except Exception:
                     logger.warning("[super_enhance/ctx] 读取存货名称失败", exc_info=True)
@@ -573,7 +610,7 @@ class ContextPageApi:
                 for row in day.get("entries") or []:
                     for step in row.get("things") or []:
                         key = str(step.get("id") or step.get("new") or "")
-                        if key and step.get("name"):
+                        if key and step.get("name") and not thing_names.get(key):
                             thing_names[key] = str(step.get("name"))
             return _ok({
                 "date": date_text,
@@ -863,6 +900,7 @@ class ContextPageApi:
 
     @staticmethod
     def _entry_ref(life, ref: str, tid: str):
+        """ref = 日期/编号 → (日期, 那一段)；ref 认不出或没给编号时日期是 ""。"""
         m = re.fullmatch(r"(\d{4}-\d{2}-\d{2})/(.+)", ref)
         if not m or not tid:
             return "", None
@@ -874,6 +912,8 @@ class ContextPageApi:
         """改「未来」里的一件：找到世界线那一段（ref = 日期/编号）里添它的那一步，改完整段交给 entry_steps 规整，
         照网页手改存（manual_update：那段算手动，补写、记录员不再动它）。返回不收的原因。"""
         date_text, entry = cls._entry_ref(life, ref, tid)
+        if not date_text:
+            return "找不到世界线里那一段"
         if entry is None:
             return "世界线里那一段已经不在了"
         steps = [dict(x) for x in entry.get("things") or [] if isinstance(x, dict)]
@@ -895,6 +935,8 @@ class ContextPageApi:
         """改世界线那一段里标的某一步（家里的吃的、东西「每一步」里改）：ThingStore.edit_entry_step 认出那一步改好，
         照网页手改存（manual_update：那段算手动，补写、记录员不再动它）。返回不收的原因。"""
         date_text, entry = cls._entry_ref(life, ref, tid)
+        if not date_text:
+            return "找不到世界线里那一段"
         if entry is None:
             return "世界线里那一段已经不在了"
         steps, why = store.edit_entry_step(entry.get("things") or [], tid, guard if isinstance(guard, dict) else {},
@@ -1625,8 +1667,7 @@ class ContextPageApi:
 
         items = []
         for conv in convs:
-            history = _history_of(conv.history)
-            stats = self._conversation_stats(conv, history)
+            count, stats = self._list_stats(conv)
             texts_chars = stats["text_chars"]
             thinks_chars = stats["think_chars"]
             items.append(
@@ -1636,7 +1677,7 @@ class ContextPageApi:
                     "platform": conv.platform_id,
                     "persona_id": conv.persona_id or "",
                     "title": conv.title or "",
-                    "items": len(history),
+                    "items": count,
                     "chars": texts_chars + thinks_chars,
                     "text_chars": texts_chars,
                     "think_chars": thinks_chars,

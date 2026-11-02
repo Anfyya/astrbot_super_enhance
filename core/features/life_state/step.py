@@ -455,13 +455,10 @@ class LifeStep:
         names[new_id] = name
         return new_id
 
-    def _thing_steps(self, raws, keys: dict, shelf, bot: str = "") -> list:
-        """补写给一段标的吃的：临时代号换成程序发的编号（这一次里同一个代号、名字对得上的是同一件，名字对不上另发号）；
-        用了、吃了的得是家里有的（此刻现算的存货）或这一次里新做 / 新买的，对不上的那步丢掉。"""
-        store = getattr(self, "things", None)
-        if store is None or shelf is None or not isinstance(raws, list):
-            return []
-
+    @staticmethod
+    def _resolver(keys: dict, shelf, bot: str, cat: str = ""):
+        """补写写的 id / from / into 认成编号：先认这一次里她自己发的临时代号，再认别人的，最后在清单里找；
+        cat 给了（东西）就只认那一类的。认不出返回空串。"""
         def resolve(token) -> str:
             text = str(token or "").strip()
             if (bot, text) in keys:
@@ -469,7 +466,18 @@ class LifeStep:
             if text in keys:
                 return keys[text]
             item = shelf.find(text)
-            return str(item.get("id")) if item else ""
+            if not item or (cat and str(item.get("cat") or "") != cat):
+                return ""
+            return str(item.get("id"))
+        return resolve
+
+    def _thing_steps(self, raws, keys: dict, shelf, bot: str = "") -> list:
+        """补写给一段标的吃的：临时代号换成程序发的编号（这一次里同一个代号、名字对得上的是同一件，名字对不上另发号）；
+        用了、吃了的得是家里有的（此刻现算的存货）或这一次里新做 / 新买的，对不上的那步丢掉。"""
+        store = getattr(self, "things", None)
+        if store is None or shelf is None or not isinstance(raws, list):
+            return []
+        resolve = self._resolver(keys, shelf, bot)
 
         out = []
         for raw in raws:
@@ -510,15 +518,7 @@ class LifeStep:
         store = getattr(self, "things", None)
         if store is None or shelf is None or not isinstance(raws, list):
             return []
-
-        def resolve(token) -> str:
-            text = str(token or "").strip()
-            if (bot, text) in keys:
-                return keys[(bot, text)]
-            if text in keys:
-                return keys[text]
-            item = shelf.find(text)
-            return str(item.get("id")) if item and str(item.get("cat") or "") == CAT_ITEM else ""
+        resolve = self._resolver(keys, shelf, bot, CAT_ITEM)
 
         out = []
         for raw in raws:

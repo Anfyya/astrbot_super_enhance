@@ -123,8 +123,8 @@ class WorldStore:
         return timeutil.now(self.tz, naive=True)
 
     @staticmethod
-    def _write_json(path: Path, data: dict) -> None:
-        jsonio.save(path, data, indent=2)
+    def _write_json(path: Path, data: dict, quiet: bool = False) -> None:
+        jsonio.save(path, data, indent=2, quiet=quiet)
 
     @staticmethod
     def _read_json(path: Path, blank: dict) -> dict:
@@ -139,8 +139,8 @@ class WorldStore:
             )
         return self._state
 
-    def _save_state(self) -> None:
-        self._write_json(self.root / STATE_NAME, self._load_state())
+    def _save_state(self, quiet: bool = False) -> None:
+        self._write_json(self.root / STATE_NAME, self._load_state(), quiet=quiet)
 
     def _day_path(self, date_text: str) -> Path:
         return self.dir / ("%s.json" % str(date_text).strip())
@@ -210,12 +210,14 @@ class WorldStore:
         return None
 
     def interrupt(self, entry: dict, at, *, by: str = "", why: str = ""):
-        """截停一段：还没开始就删，正在做就截到 at；睡觉和手动条目不动。"""
-        if not isinstance(entry, dict) or is_event(entry) or is_sleep(entry) or str(entry.get("source") or "") == "manual":
+        """截停一段：还没开始就删，正在做就截到 at；手动条目不动，已经睡下的觉不动（还没睡下的觉照常撤，10-28 以前就是这样）。"""
+        if not isinstance(entry, dict) or is_event(entry) or str(entry.get("source") or "") == "manual":
             return None
         moment = parse_time(at) if not isinstance(at, datetime.datetime) else at.replace(tzinfo=None)
         start = parse_time(entry.get("start"))
         end = parse_time(entry.get("end")) if entry.get("end") else None
+        if is_sleep(entry) and (moment is None or start is None or start < moment):
+            return None
         if moment is None or start is None or (end is not None and end <= moment):
             return entry
         date_text = start.date().isoformat()
@@ -229,19 +231,20 @@ class WorldStore:
         return self.update(date_text, str(entry.get("id")), mode="normal", **fields)
 
     def clear_planned(self, who: str, after, keep=None) -> list:
-        """撤掉 after 以后还没开始的补写段；skip ids in keep、睡觉和手动段。"""
+        """撤掉 after 以后还没开始的补写段（今天、明天；keep 里的不撤）。还没睡下的觉也照撤（10-28 以前 start_now 就是这样，
+        撤了由补写按作息重排）；已经开始的段不在这里管。"""
         moment = parse_time(after) if not isinstance(after, datetime.datetime) else after.replace(tzinfo=None)
         if moment is None:
             return []
         kept = {str(value) for value in (keep or [])}
         removed = []
-        for back in (0, 1, 2):
+        for back in (0, 1):
             date_text = (moment.date() + datetime.timedelta(days=back)).isoformat()
             for item in list(self.entries(date_text, who)):
                 start = parse_time(item.get("start"))
                 if (
                     start is not None and start >= moment and str(item.get("id")) not in kept
-                    and str(item.get("source") or "") == "step" and not is_sleep(item) and not is_event(item)
+                    and str(item.get("source") or "") == "step" and not is_event(item)
                 ):
                     if self.delete_entry(date_text, str(item.get("id"))):
                         removed.append(item)
@@ -668,7 +671,7 @@ class WorldStore:
         if marks.get(str(who)) == value:
             return
         marks[str(who)] = value
-        self._save_state()
+        self._save_state(quiet=True)  # 通知游标网页上不显示：存盘但不推「世界线变了」，免得开着的世界线页每 30 秒整页重拉
 
     # ---------- 约束 ----------
 
