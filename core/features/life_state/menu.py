@@ -332,6 +332,8 @@ def meals_text(meals: dict) -> str:
     rows = ["  - %s：%s" % (meal, "、".join(dish_text(x) for x in dishes)) for meal, dishes in menu.items()]
     return ("- 今天的饭（系统随机抽的）：今天吃%s。%s\n%s\n"
             "  菜是这顿想做的起点：家里缺料就先排一段去买；主人点了菜、她们说过的吃饭打算、剩菜得先吃完，照那个来；"
+            "做出来的菜只能用家里清单里有的、或者这顿之前买回来的料，菜名照实际用的料写："
+            "比如抽到「蒸梭子蟹」，家里只有别的蟹、又没去买梭子蟹，菜名就照用的那种蟹写；"
             "主人在家要吃，没抽到的那顿也照样给他做。" % (
                 "、".join(menu),
                 ("她俩本来不用吃饭，%s不做不吃（那段时间不排做饭、吃饭、洗碗，该干嘛干嘛）。" % "、".join(skipped)) if skipped else "",
