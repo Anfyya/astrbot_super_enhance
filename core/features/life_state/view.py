@@ -329,6 +329,10 @@ def world_text(service, bot: str, now: datetime.datetime) -> str:
         # 她们住的这一带有哪些地方（固定事实那份地图，补写、记录员也照它写）：聊天时也知道，
         # 主人提到哪儿她认得，不会说「没有这个地方」（2026-11-02；之前只给了补写和记录员）
         blocks.append(map_text(service.cfg))
+        try:
+            blocks.append(service.world.arrived_text(now))
+        except Exception:
+            logger.warning("[super_enhance/life] 搬来几天注入失败", exc_info=True)
     if head and service.cfg.get("world_no_repeat", True):
         # 放在整块最后、紧挨着世界线：不然她每句都捎带「我手上正在干嘛」（2026-10-15 测过，放人设里没用）
         blocks.append(NO_REPEAT_NOTE)

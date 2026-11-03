@@ -352,6 +352,15 @@ class LifeStep:
             value = ""
         return value or "穗织"
 
+    def _arrived_line(self, now) -> str:
+        """「她们现在住的地方」后面接一句：哪天搬来的、来了第几天（没换过住处就空）。"""
+        try:
+            text = self.world.arrived_text(now.replace(tzinfo=None))
+        except Exception:
+            logger.warning("[super_enhance/step] 搬来几天没拼上", exc_info=True)
+            return ""
+        return ("\n- " + text) if text else ""
+
     @property
     def world_notes(self) -> str:
         """配置里写的故事固定事实，一行一条。"""
@@ -1252,7 +1261,7 @@ class LifeStep:
                 "- 她们住在【%s】。写出来的地点和活动都在%s这一带，具体去哪儿，从上面人设里这一带的地图里挑。\n"
                 "- 人设里写的其它地方（比如从前待过的镇子）只是背景，人现在不在那儿，不要写成此刻发生的事。"
                 % (self.home, self.home)
-            ),
+            ) + self._arrived_line(now),
             seed_text=seed_text,
             world_notes=self.world_notes,
             step_notes=self.step_notes,
