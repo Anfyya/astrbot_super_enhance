@@ -305,6 +305,10 @@ def world_text(service, bot: str, now: datetime.datetime) -> str:
             blocks.append(weather_now_text(service, now))
         except Exception:
             logger.warning("[super_enhance/life] 天气注入失败", exc_info=True)
+        try:
+            blocks.append(mood_now_text(service, bot, now))
+        except Exception:
+            logger.warning("[super_enhance/life] 心情注入失败", exc_info=True)
     try:
         blocks.append(service._promise_text(bot, now))
     except Exception:
@@ -355,6 +359,16 @@ def weather_now_text(service, now: datetime.datetime) -> str:
     flat = now.replace(tzinfo=None)
     return "外头的天气（%s）%s。说到天气、要不要出门、晾的东西时照这个说。" % (
         flat.strftime("%H:%M"), weather_mod.now_text(flat, text_of, home))
+
+
+def mood_now_text(service, bot: str, now: datetime.datetime) -> str:
+    """她今天的心情（每天 0 点抽的那份，跟补写看到的是同一份）；今天没抽到就空。"""
+    seeds = service.seed_log.load() or {}
+    seed = seeds.get(now.date().isoformat())
+    mood = str(((seed or {}).get("moods") or {}).get(bot) or "").strip() if isinstance(seed, dict) else ""
+    if not mood:
+        return ""
+    return "你今天的心情：%s。自然地透在说话的语气里，用不着说出来。" % mood
 
 
 def map_text(cfg) -> str:
