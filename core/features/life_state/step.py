@@ -22,6 +22,7 @@ from .things import (CAT_FOOD, CAT_ITEM, END_STEPS, ITEM_END_STEPS, ITEM_MID_STE
                      SPOTS, START_STEPS, _same_name, cat_of, checked_place, had_before, is_ended, norm_kind, norm_state,
                      norm_step, split_keep, step_no)
 from . import weather as weather_mod
+from . import supply as supply_mod
 from .homewords import localize
 from .menu import meal_slots, meals_text
 from .variety import default_pools, twists_of, when_map, with_when
@@ -399,6 +400,13 @@ class LifeStep:
         if warns:
             lines.append("- 要提前防着的：\n" + "\n".join("  - " + x for x in warns))
         lines.append("- " + WEATHER_RULE)
+        try:
+            power = supply_mod.step_text(start, until, text_of, home)
+        except Exception:
+            logger.warning("[super_enhance/step] 电和补给没拼上", exc_info=True)
+            power = ""
+        if power:
+            lines.append(power)
         return "\n".join(lines)
 
     @staticmethod

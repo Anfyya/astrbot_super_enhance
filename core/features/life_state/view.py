@@ -306,6 +306,10 @@ def world_text(service, bot: str, now: datetime.datetime) -> str:
         except Exception:
             logger.warning("[super_enhance/life] 天气注入失败", exc_info=True)
         try:
+            blocks.append(supply_now_text(service, now))
+        except Exception:
+            logger.warning("[super_enhance/life] 电和补给注入失败", exc_info=True)
+        try:
             blocks.append(mood_now_text(service, bot, now))
         except Exception:
             logger.warning("[super_enhance/life] 心情注入失败", exc_info=True)
@@ -369,6 +373,25 @@ def mood_now_text(service, bot: str, now: datetime.datetime) -> str:
     if not mood:
         return ""
     return "你今天的心情：%s。自然地透在说话的语气里，用不着说出来。" % mood
+
+
+def _weather_text_of(service):
+    seeds = service.seed_log.load() or {}
+    known = sorted(k for k, v in seeds.items() if isinstance(v, dict) and v.get("weather"))
+
+    def text_of(day):
+        key = day.isoformat()
+        older = [k for k in known if k <= key]
+        return str(seeds[older[-1]]["weather"]) if older else "多云"
+
+    return text_of
+
+
+def supply_now_text(service, now: datetime.datetime) -> str:
+    """此刻镇上有没有电、家里煤油够不够、补给船哪天来（只在住海边时有；跟补写用的是同一份）。"""
+    from . import supply as supply_mod
+    home = str(service.cfg.get("world_home") or "").strip() or "穗织"
+    return supply_mod.chat_text(now, _weather_text_of(service), home)
 
 
 def map_text(cfg) -> str:
