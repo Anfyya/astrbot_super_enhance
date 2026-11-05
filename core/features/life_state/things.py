@@ -463,6 +463,18 @@ def checked_place(value, new: bool, what: str = "") -> str:
     return "%s（%s）" % (text, VAGUE_PLACE) if new and text else ""
 
 
+def manual_notes(item: dict) -> tuple[str, str]:
+    """这件东西有没有手写的保鲜 / 口感：从最后一条往上找，写了就用它，程序不再算。"""
+    for stage in reversed(item.get("stages") or []):
+        if not isinstance(stage, dict):
+            continue
+        fresh = str(stage.get("fresh_note") or "").strip()
+        taste = str(stage.get("taste_note") or "").strip()
+        if fresh or taste:
+            return fresh, taste
+    return "", ""
+
+
 def is_ended(item: dict) -> dict | None:
     """这件已经没了：返回那一步；还在就 None。按量记的扣到 0 也算（返回一个「用完了」的那一步，带 _auto）。"""
     _start, _mid, ends = steps_of(cat_of(item))
@@ -1660,6 +1672,19 @@ class ThingStore:
         key = (fmt_time(flat), str(item.get("id") or id(item)), id(item), self._revision)
         if key in cache:
             return cache[key]
+        fresh_note, taste_note = manual_notes(item)
+        if (fresh_note or taste_note) and not is_ended(item):
+            rows = []
+            if taste_note:
+                rows.append({"key": "manual", "level": 0, "text": taste_note, "fix": "", "danger": False})
+            value = {
+                "fresh": {"x": 1.0, "level": "还新鲜", "word": "", "bad_since": None,
+                          "hurry_at": None, "bad_at": None, "events": [], "manual": True,
+                          "text": fresh_note},
+                "taste": {"rows": rows, "left": 1.0 if taste_note else None, "manual": True},
+            }
+            cache[key] = value
+            return value
         index = self._index(view, flat)
         weather_of = self._weather_fn(flat)
         if self.world is not None and hasattr(self.world, "homes") and self.world.homes():
@@ -1769,6 +1794,8 @@ class ThingStore:
     def fresh_text(self, item: dict, now: datetime.datetime, info: dict | None = None) -> str:
         """新鲜度的人话（不带该怎么办）。"""
         info = info or self.freshness(item, now)
+        if info.get("manual"):
+            return str(info.get("text") or "放得住")
         level, word = info["level"], info["word"]
         if level == "没了":
             end = is_ended(item) or {}
