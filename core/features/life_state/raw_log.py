@@ -26,6 +26,8 @@ from .proactive import is_proactive_event
 
 FOLDER_NAME = "raw_messages"
 KEEP_DAYS = 2  # 今天 + 昨天
+# 全部保留原始消息，不自动删除（手动改动，插件更新会被覆盖）
+KEEP_ALL = True
 # 记录员还没处理完的那几天先留着，但最多往前留这么多天
 MAX_KEEP_DAYS = 7
 # 同一个会话、同一角色、同样开头的话，前后这么久里只留一条（启动回补的时间只到分钟，跟实时记的那条常差一分钟）（秒）
@@ -188,6 +190,8 @@ class RawMessageLog:
 
     def cleanup(self) -> None:
         """只保留「今天 + 昨天」两个自然日；记录员还没处理完的那几天先留着（最多 MAX_KEEP_DAYS 天）。"""
+        if KEEP_ALL:
+            return
         try:
             if not self.folder.exists():
                 return

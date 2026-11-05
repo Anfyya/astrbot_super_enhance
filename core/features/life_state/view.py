@@ -260,7 +260,8 @@ def build_world_text(
                 line += "；最后说在%s（%s）" % (where.get("place"), timeutil.day_hm(where.get("start")))
         # 那条早就结束了：只是他最后一次说到的，不一定是他现在的样子（他走了没说也不知道）
         anchor = parse_time(item.get("end")) if item.get("end") else parse_time(item.get("start"))
-        if anchor is not None and now - anchor > datetime.timedelta(minutes=MASTER_STALE_MINUTES):
+        # 他没写结束（end 空着）就是默认人还在那儿，不用提醒；只有他自己说了会结束、又早过了的才提
+        if item.get("end") and anchor is not None and now - anchor > datetime.timedelta(minutes=MASTER_STALE_MINUTES):
             line += "；这之后他没再说过自己在哪、在干什么"
         lines.append(line)
     else:

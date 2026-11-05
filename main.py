@@ -21,6 +21,7 @@
    注入重复、/usage 输出两次），启用某一项前请先停用对应的旧插件。
 """
 
+import datetime
 from pathlib import Path
 
 from astrbot.api import logger
@@ -264,6 +265,138 @@ class SuperEnhance(Star):
         """压缩当前会话历史；/compact v2 为备忘+原话摘录版（先预览，enter 确认，undo 撤销）"""
         async for result in self.context_tools.compact(event):
             yield result
+
+    # ------------------------------------------------------------------
+    # 4.1 世界线原文：/世界线 或 /wls —— 哪个号发的，就看那个号自己那天的完整世界线
+    # ------------------------------------------------------------------
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("世界线")
+    async def worldline(self, event: AstrMessageEvent):
+        """看这个号今天的完整世界线；/世界线 昨天、/世界线 2026-11-03 看别的日子"""
+        texts, forward = self._worldline_chunks(event)
+        for text in texts:
+            yield self._worldline_node(event, text) if forward else text
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("wls")
+    async def worldline_short(self, event: AstrMessageEvent):
+        """同 /世界线"""
+        texts, forward = self._worldline_chunks(event)
+        for text in texts:
+            yield self._worldline_node(event, text) if forward else text
+
+    def _worldline_node(self, event, text: str):
+        """把整天的世界线包成一条合并转发的聊天记录：不看字数，永远是一张卡片。"""
+        from astrbot.core.message.components import Node, Plain
+
+        try:
+            sender = str(event.get_self_id() or "")
+        except Exception:
+            sender = ""
+        node = Node(uin=sender or "0", name="世界线", content=[Plain(text)])
+        return event.chain_result([node])
+
+    def _worldline_chunks(self, event) -> tuple:
+        """把某个号某一天的完整世界线排成人能看的样子；太长就切成几条发。"""
+        if not self.life.enabled:
+            return (["世界线没开。"], False)
+        umo = str(getattr(event, "unified_msg_origin", "") or "")
+        bot = umo.split(":", 1)[0].strip()
+        if not bot:
+            return (["这条消息看不出是哪个号发的。"], False)
+
+        words = str(getattr(event, "message_str", "") or "").strip().split()
+        arg = words[1].strip() if len(words) > 1 else ""
+        today = self.life.world.now_local().date()
+        if arg in ("", "今天", "today"):
+            day = today
+        elif arg in ("昨天", "昨日", "yesterday"):
+            day = today - datetime.timedelta(days=1)
+        elif arg == "前天":
+            day = today - datetime.timedelta(days=2)
+        else:
+            try:
+                day = datetime.date.fromisoformat(arg)
+            except Exception:
+                return (["日子看不懂：「%s」。写成 2026-11-03 这样，或者用 昨天 / 前天。" % arg], False)
+
+        date_text = day.isoformat()
+        name = self.life.bots.label_for(bot) or bot
+        try:
+            entries = self.life.world.entries(date_text, bot)
+        except Exception:
+            logger.error("[super_enhance] 读世界线失败", exc_info=True)
+            return (["读世界线失败，看日志。"], False)
+
+        if not entries:
+            return (["%s %s 的世界线是空的。" % (date_text, name)], False)
+
+        lines = ["%s %s 的世界线（%d 段）" % (date_text, name, len(entries)), ""]
+        for item in entries:
+            lines.extend(self._worldline_lines(item))
+        # 整天的世界线一次发出去：超过 forward_threshold（1500 字）时 AstrBot 会自动
+        # 把整条回复包成一条合并转发的聊天记录，所以这里不再自己切。
+        return ([chr(10).join(lines)], True)
+
+    @staticmethod
+    def _worldline_lines(item: dict) -> list:
+        """一段世界线排成：标题行 + 分步 + 结果。"""
+        start = str(item.get("start") or "")
+        end = str(item.get("end") or "")
+        clock = start[11:16] + ("–" + end[11:16] if end else "")
+        tags = []
+        if str(item.get("kind") or "") == "event":
+            tags.append("顺带")
+        if item.get("sleep"):
+            tags.append("睡")
+        if item.get("meal"):
+            tags.append("吃饭")
+        if item.get("idle"):
+            tags.append("闲着")
+        if item.get("at_home") is True:
+            tags.append("在家")
+        elif item.get("at_home") is False:
+            tags.append("出门")
+        if item.get("asked"):
+            tags.append("主人让做")
+        if item.get("intent"):
+            tags.append("打算")
+        if item.get("stopped"):
+            tags.append("被截停")
+        if item.get("training"):
+            tags.append("在练")
+        if item.get("importance"):
+            tags.append("重要度%s" % item.get("importance"))
+        head = "%s  %s  %s" % (
+            clock,
+            str(item.get("place") or "") or "－",
+            str(item.get("doing") or "") or "－",
+        )
+        if tags:
+            head += "  〔%s〕" % "，".join(tags)
+        out = [head]
+
+        steps = item.get("steps") or []
+        if isinstance(steps, list) and steps:
+            parts = []
+            for step in steps:
+                if not isinstance(step, dict):
+                    continue
+                text = str(step.get("text") or "").strip()
+                minutes = step.get("minutes")
+                if not text:
+                    continue
+                parts.append("%s（%s 分）" % (text, minutes) if minutes else text)
+            if parts:
+                out.append("    分步：" + " → ".join(parts))
+
+        result = str(item.get("result") or "").strip()
+        if result:
+            out.append("    结果：" + result)
+        quote = str(item.get("src_quote") or "").strip()
+        if quote:
+            out.append("    原话：" + quote)
+        return out
 
     # ------------------------------------------------------------------
     # 5. 跨会话上下文修复

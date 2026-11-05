@@ -21,8 +21,8 @@ from ..common import jsonio
 SNAPSHOT_DIR_NAME = "request_snapshots"
 INDEX_NAME = "index.json"
 
-MAX_FILES = 20
-MAX_TOTAL_BYTES = 40 * 1024 * 1024
+MAX_FILES = 200
+MAX_TOTAL_BYTES = 100 * 1024 * 1024
 _SAFE_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 # 钩子优先级：AstrBot 按 priority 降序执行（数字大的先跑），

@@ -38,8 +38,8 @@ from .world import fmt_time, is_event, is_sleep, parse_time
 JOB_PREFIX = "超级增强·主动对话"
 DEFAULT_TZ = "Asia/Shanghai"
 
-# 最近这么久内聊过就顺延（秒）
-QUIET_SECONDS = 300
+# 最近这么久内聊过就顺延（秒）—— 2026-11-04 按要求从 300（5 分钟）改成 120（2 分钟）
+QUIET_SECONDS = 120
 # 「现在去做」接下的事做完了：主人多半在等，只等这么久没人说话就发（秒）
 ASKED_QUIET_SECONDS = 60
 # 顺延至少等这么久，免得原地反复触发（秒）
@@ -61,6 +61,7 @@ class Kind:
 # 并成一条时留哪条、怎么叫她、哪些必须发 / 容易被主人没回挡住，都在一处定。
 KINDS = {
     "asked": Kind(5, "接下的事做完"),
+    "given": Kind(5, "给主人的东西弄好了", must_send=True),
     "intent": Kind(5, "打算做完", must_send=True),
     "training": Kind(4, "练成", must_send=True),
     "manual": Kind(4, "手动触发"),
@@ -79,6 +80,8 @@ CASUAL_KINDS = tuple(kind for kind, info in KINDS.items() if info.casual)
 TIMELY_KINDS = tuple(kind for kind, info in KINDS.items() if info.timely)
 MUST_SEND = tuple(kind for kind, info in KINDS.items() if info.must_send)
 HUSH_KINDS = tuple(kind for kind, info in KINDS.items() if info.hush)
+# 「主人今天没回她够几条就不发」这道门禁的总开关：2026-11-04 按要求关掉
+HUSH_ENABLE = False
 TIMELY_STALE_MINUTES = 10
 UNREPLIED_LIMIT = 2
 UNREPLIED_TOTAL_LIMIT = 3
@@ -140,6 +143,26 @@ def clean_line(text, limit: int) -> str:
     return value if len(value) <= limit else value[:limit] + "…"
 
 
+def gives_to_master(item: dict) -> bool:
+    """这段是不是给主人的东西：只看世界线补写的结构化字段 place。
+
+    提示词里定了规矩：端给主人的那一步，place 的 area 必须写「主人」，
+    归一化成字符串就是「主人·跟前」。不看 doing / result 里的措辞。
+    """
+    if not isinstance(item, dict):
+        return False
+    if str(item.get("src_umo") or "").strip():
+        return False  # 这条是照着聊天记下来的：主人当时就在场，别再专门叫他一次
+    for key in ("things", "items"):
+        rows = item.get(key)
+        if not isinstance(rows, list):
+            continue
+        for one in rows:
+            if str((one or {}).get("place") or "").startswith("主人"):
+                return True
+    return False
+
+
 def done_min_importance(cfg) -> int:
     """做完一件事要多重要（1–5）才叫她发主动消息。"""
     try:
@@ -170,6 +193,10 @@ async def notify_done(planner, world, bots: list[str], now: datetime.datetime, m
     def worth_telling(bot: str, item: dict) -> bool:
         if is_sleep(item) or item.get("idle"):
             return False
+        if gives_to_master(item):
+            logger.info("[super_enhance/life] [%s] 做完「%s」：是给主人的东西，不管重要程度，一定叫她",
+                        bot, str(item.get("doing") or "")[:20])
+            return True
         score = int(item.get("importance") or 0)
         if score < min_importance:
             logger.info(
@@ -257,8 +284,9 @@ async def notify_done(planner, world, bots: list[str], now: datetime.datetime, m
                 logger.warning("[super_enhance/life] 出门 / 到家 / 开饭的主动对话没排上", exc_info=True)
             continue
         if finished is not None:
+            kind = "given" if gives_to_master(finished) else "done"
             try:
-                await planner.fire_done(bot, finished, now)
+                await planner.fire_done(bot, finished, now, kind=kind)
             except Exception:
                 logger.warning("[super_enhance/life] 做完一件事的主动对话没排上", exc_info=True)
 
@@ -757,7 +785,9 @@ class ProactivePlanner:
                     return None
                 await self._postpone(cron, job, payload, meta, at_ts, busy_since)
                 return None
-            if meta["kind"] in HUSH_KINDS:
+            # 2026-11-04 按要求先关掉「主人没回就不发」：不管回没回都照常发。
+            # 想恢复就把 HUSH_ENABLE 改回 True，下面的判断原样都在。
+            if HUSH_ENABLE and meta["kind"] in HUSH_KINDS:
                 hush = self._hush_reason(target, now_ts)
                 if hush:
                     logger.info(
@@ -1057,6 +1087,18 @@ class ProactivePlanner:
                 "，结果：%s" % done["result"] if done.get("result") else "",
                 timeutil.day_hm(done.get("start")),
                 timeutil.day_hm(done.get("end")),
+            )
+        if kind == "given":
+            done = meta.get("done") or {}
+            return (
+                "你把给主人弄的东西弄好了，已经%s%s（%s–%s）。"
+                "立刻告诉主人一声，说清是什么、放在哪儿，别默默做完等着他来问。"
+                % (
+                    "%s，" % done["place"] if done.get("place") and done["place"] not in str(done.get("doing") or "") else "",
+                    done.get("doing") or "",
+                    timeutil.day_hm(done.get("start")),
+                    timeutil.day_hm(done.get("end")),
+                )
             )
         if kind == "training":
             training = meta.get("training") or {}
