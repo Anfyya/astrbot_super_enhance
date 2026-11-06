@@ -218,6 +218,8 @@ ITEM_STEP_WORDS = (
     ("交", "交给"), ("给", "交给"), ("递", "交给"), ("用", "用了"),
 )
 MAX_LOOK = 120
+# 封着的东西（寄来的信、没拆的包裹）里面是什么：补写写好存着，清单和世界线里不给，按编号看那一件才给、看了就算拆开（见 open_item）
+MAX_INSIDE = 300
 MAX_ITEM_STATE = 40
 MAX_ITEM_KIND = 10
 # 东西清单里写全多少件（再多的只列编号和名字，留最近动过的）
@@ -922,6 +924,32 @@ class ThingStore:
         self._save()
         return item, ""
 
+    @staticmethod
+    def is_sealed(item: dict) -> bool:
+        """封着、还没拆：补写给它写了里面是什么（inside），还没人按编号看过。"""
+        return bool((item or {}).get("inside")) and not (item or {}).get("_opened")
+
+    def open_item(self, item: dict, by: str, at: str) -> None:
+        """她按编号看了封着的那件，就算拆开了：记进 things.json 的 opened（编号 → 谁、几点），只记头一回。
+        单记一张表、不加成一步：世界线里现算的那件还没沉进 things.json，沉下来编号不变，照样对得上。"""
+        tid = str((item or {}).get("id") or "")
+        if not tid or not self.is_sealed(item):
+            return
+        info = {"at": at, "by": by}
+        self._load().setdefault("opened", {})[tid] = info
+        self._save()
+        item["_opened"] = info
+
+    def seal_text(self, item: dict, label_fn=None) -> str:
+        """清单里那一格：封着的写「封着没拆」，拆过的写谁几点拆的；没写里面的空串。"""
+        if not (item or {}).get("inside"):
+            return ""
+        info = item.get("_opened")
+        if not info:
+            return "封着没拆（里面写着什么，按编号看这一件才知道，一看就算拆开了）"
+        who = self._who(info.get("by"), label_fn)
+        return "%s %s拆开了" % (str(info.get("at"))[5:16], who)
+
     def add_stage(self, thing_id, stage: dict) -> str:
         """给存下来的一件加一步；返回不收的原因，收了返回空串。"""
         item = self.get(thing_id)
@@ -1232,6 +1260,8 @@ class ThingStore:
             if cat == CAT_ITEM:
                 item["look"] = clean_text(step.get("look"), MAX_LOOK)
                 item["owner"] = clean_text(step.get("owner"), 12)
+                if step.get("inside"):
+                    item["inside"] = clean_text(step.get("inside"), MAX_INSIDE)
             elif item["kind"] in MEASURED_KINDS:
                 got = parse_amount(first.get("amount")) or parse_amount(first.get("left"))
                 if got is not None and got[1]:
@@ -1321,6 +1351,9 @@ class ThingStore:
         for seg in self.segments(flat):
             if seg["ref"] not in settled:
                 self._apply_segment(items, alias, seg)
+        for tid, info in (data.get("opened") or {}).items():
+            if tid in items and isinstance(info, dict):
+                items[tid]["_opened"] = info
         master_done(items, flat)
         try:
             self._weathering(items, flat)
@@ -1972,13 +2005,16 @@ class ThingStore:
         came = item.get("origin") or "%s %s%s" % (str(first.get("at"))[5:16], self._who(first.get("by"), label_fn), first.get("what"))
         owner = self.owner_of(item)
         look, state = str(item.get("look") or ""), str(last.get("state") or "")
+        seal = self.seal_text(item, label_fn)
+        if seal and re.search(r"封|拆", state):
+            state = ""  # 补写写的「封着没拆」以 seal 为准，拆过就不对了
         made = self.progress_of(stages)
         if made is not None:
             done = str(made.get("state") or "").strip()
             if look:
                 came += "（起头时：%s）" % look
             look = "%s %s%s" % (str(made.get("at"))[5:16], made.get("what"), "：" + done if done else "")
-        parts = [x for x in (look, "" if state and state in look else state, self._where(last, label_fn), came,
+        parts = [x for x in (look, "" if state and state in look else state, seal, self._where(last, label_fn), came,
                              "归%s" % self._who(owner, label_fn) if owner else "") if x]
         if item.get("_weather"):
             parts.append("按天气算，此刻：%s" % item["_weather"])
@@ -2005,6 +2041,11 @@ class ThingStore:
             # 起头以后又做过的，样子是起头时记的，做到哪看下面每一步
             started = self.progress_of(item.get("stages") or []) is not None
             lines.append("%s：%s" % ("起头时的样子" if started else "样子", item["look"]))
+        seal = self.seal_text(item, label_fn)
+        if seal:
+            lines.append(seal)
+            if item.get("_opened"):
+                lines.append("里面：%s" % item["inside"])
         if item.get("from"):
             lines.append("用这几件做的：%s" % "、".join(self._name_of(view, x) for x in item["from"]))
         for stage in item.get("stages") or []:
@@ -2028,7 +2069,10 @@ class ThingStore:
         else:
             last = (item.get("stages") or [{}])[-1]
             owner = self.owner_of(item)
-            now_bits = [x for x in (self._where(last, label_fn), last.get("state"),
+            state = str(last.get("state") or "")
+            if seal and re.search(r"封|拆", state):
+                state = ""
+            now_bits = [x for x in (self._where(last, label_fn), state,
                                     "归%s" % self._who(owner, label_fn) if owner else "") if x]
             if item.get("_weather"):
                 now_bits.append("按天气算，此刻：%s" % item["_weather"])

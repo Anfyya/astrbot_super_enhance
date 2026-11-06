@@ -161,7 +161,11 @@ def tool_look_things(service, umo: str, kind: str = "food", thing_id: str = "") 
         item = shelf.find(key)
         if item is None:
             return "没有 %s 这一件。先不填编号看一遍清单。" % key
-        return service.things.history(item, now, shelf, service.bots.label_for)
+        opening = service.things.is_sealed(item)
+        if opening:
+            service.things.open_item(item, platform_of(umo), fmt_time(now))
+        text = service.things.history(item, now, shelf, service.bots.label_for)
+        return ("（这一看就拆开了。）\n" + text) if opening else text
     word = str(kind or "food").strip().lower()
     if word in ("item", "items", "东西", "物品", "物件"):
         return "家里的东西（吃的以外，%s）：\n%s" % (fmt_time(now), service.things.item_list(now, shelf, service.bots.label_for))

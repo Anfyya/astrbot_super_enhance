@@ -6825,6 +6825,7 @@
       head: function (x) { return [h("span", { class: "tid", text: x.id }), h("span", { class: "tname", text: x.name }), x.kind ? h("span", { class: "tag", text: x.kind }) : null, x.owner_label ? h("span", { class: "tag", text: "归" + x.owner_label }) : null]; },
       meta: function (x) {
         var out = x.look ? [h("div", { class: "tmeta", text: x.look })] : [];
+        if (x.inside) { out.push(h("div", { class: "tmeta", text: (x.opened ? "已拆（" + String(x.opened.at || "").slice(5, 16) + "）" : "封着") + "，里面：" + x.inside })); }
         if (x.ended) { out.push(h("div", { class: "tmeta", text: "已经没了：" + String(x.ended.at || "").slice(5, 16) + " " + x.ended.what })); }
         else { var now = [x.state && String(x.look || "").indexOf(x.state) < 0 ? x.state : "", objWhere(x)].filter(Boolean).join(" · "); if (now) { out.push(h("div", { class: "tmeta", text: now })); } }
         return out;

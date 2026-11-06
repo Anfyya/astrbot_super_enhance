@@ -1094,6 +1094,8 @@ class ContextPageApi:
                     "kind": item.get("kind") or "",
                     "where": where_text(item),
                     "look": item.get("look") or "",
+                    "inside": item.get("inside") or "",
+                    "opened": item.get("_opened") or None,
                     "owner": owner,
                     "owner_label": self._thing_who(life, owner) if owner else "",
                     "origin": item.get("origin") or "",
