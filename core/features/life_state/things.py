@@ -1677,10 +1677,12 @@ class ThingStore:
             rows = []
             if taste_note:
                 rows.append({"key": "manual", "level": 0, "text": taste_note, "fix": "", "danger": False})
+            last = (item.get("stages") or [{}])[-1]
+            live = str(last.get("keep") or "") == "活养着"
             value = {
-                "fresh": {"x": 1.0, "level": "还新鲜", "word": "", "bad_since": None,
-                          "hurry_at": None, "bad_at": None, "events": [], "manual": True,
-                          "text": fresh_note},
+                "fresh": {"x": 0.0, "level": "活养着" if live else "还新鲜", "word": "",
+                          "bad_since": None, "hurry_at": None, "bad_at": None,
+                          "events": [], "manual": True, "text": fresh_note},
                 "taste": {"rows": rows, "left": 1.0 if taste_note else None, "manual": True},
             }
             cache[key] = value
