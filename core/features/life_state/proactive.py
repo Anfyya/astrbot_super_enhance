@@ -60,6 +60,7 @@ class Kind:
 
 # 并成一条时留哪条、怎么叫她、哪些必须发 / 容易被主人没回挡住，都在一处定。
 KINDS = {
+    "question": Kind(6, "补写要问主人", must_send=True),
     "asked": Kind(5, "接下的事做完"),
     "given": Kind(5, "给主人的东西弄好了", must_send=True),
     "intent": Kind(5, "打算做完", must_send=True),
@@ -442,6 +443,30 @@ class ProactivePlanner:
         logger.info("[super_enhance/life] [%s] 网页手动发一条主动消息：%s", bot, "已排" if ok else "失败")
         return "已排：几秒后发出" if ok else "排任务失败（看日志）"
 
+    async def ask_now(self, bot: str, question: str) -> bool:
+        """补写要问主人一句（补写那边停着等回话）：几秒后让她把这句问出去，不顺延、必须发。"""
+        if not self.enabled:
+            return False
+        cron = self._cron()
+        targets = self._targets(bot)
+        if cron is None or not targets:
+            return False
+        self.install_gate()
+        now = timeutil.now(self.timezone)
+        at = now + datetime.timedelta(seconds=3)
+        meta = {
+            "kind": "question", "bot": bot, "date": now.date().isoformat(),
+            "minute": now.hour * 60 + now.minute, "postponed": 0,
+            "question": {"text": str(question or "")},
+        }
+        ok = await self._add_job(cron, meta, targets[0], at)
+        logger.info("[super_enhance/life] [%s] 补写要问主人「%s」：%s", bot, str(question or "")[:40], "已排" if ok else "排任务失败")
+        return ok
+
+    def targets_of(self, bot: str) -> list[str]:
+        """该机器人的主动对话目标会话（给补写等回话时找会话用）。"""
+        return self._targets(bot)
+
     async def sync_live(self, bot: str, date_text: str, wake: str, sleep: str,
                         now: datetime.datetime | None = None) -> int:
         """世界线 live：排当天的早安、晚安、约定。只补缺的，已经排了的不动（重启不会改时间）。"""
@@ -606,6 +631,8 @@ class ProactivePlanner:
             out["se_training"] = meta["training"]
         if meta.get("done"):
             out["se_done"] = meta["done"]
+        if meta.get("question"):
+            out["se_question"] = meta["question"]
         return out
 
     def _meta_of(self, job, payload: dict) -> dict:
@@ -635,8 +662,10 @@ class ProactivePlanner:
             postponed = 0
         training = payload.get("se_training")
         done = payload.get("se_done")
+        question = payload.get("se_question")
         return {
             "done": done if isinstance(done, dict) else None,
+            "question": question if isinstance(question, dict) else None,
             "kind": kind,
             "bot": bot,
             "date": date_text,
@@ -768,7 +797,8 @@ class ProactivePlanner:
                             meta["bot"], self._planned_text(meta))
                 return None
             quiet = ASKED_QUIET_SECONDS if meta["kind"] in ("asked", "intent") else QUIET_SECONDS
-            busy_since = None if meta["kind"] == "manual" else self._busy_since(target, now_ts, quiet)
+            # 网页手动发的、补写要问主人的（补写正停着等回话）：不顺延
+            busy_since = None if meta["kind"] in ("manual", "question") else self._busy_since(target, now_ts, quiet)
             if busy_since is not None:
                 at_ts = max(busy_since + quiet, now_ts + MIN_DELAY_SECONDS)
                 if self._stale(meta, at_ts):
@@ -1051,6 +1081,9 @@ class ProactivePlanner:
 
     def _kind_line(self, meta: dict, now: datetime.datetime, chat: dict | None) -> str:
         kind = meta.get("kind")
+        if kind == "question":
+            question = meta.get("question") or {}
+            return "你想问主人一件事：%s。用你自己的话问他这一句，问完等他回答，别替他答。" % (question.get("text") or "")
         if kind in ("out", "back", "meal"):
             done = meta.get("done") or {}
             head = localize({"out": "你刚出了宿舍", "back": "你刚回到宿舍", "meal": "开饭了"}[kind], str(self.cfg.get("world_home") or ""))
@@ -1146,7 +1179,9 @@ class ProactivePlanner:
             for moment, text, replied in sent:
                 lines.append("- %s %s%s" % (timeutil.day_hm(moment), text, "" if replied else "（主人还没回）"))
         lines.append("")
-        if kind in MUST_SEND:
+        if kind == "question":
+            lines.append("调用 send_message_to_user 把这句问出去（必须发）。")
+        elif kind in MUST_SEND:
             lines.append("调用 send_message_to_user 发出去（这次是约定到点、刚练成或打算做完，必须发，除非主人定的规矩不许）。")
         else:
             lines.append("要发就调用 send_message_to_user 发出去；不想发就直接结束。")

@@ -110,6 +110,8 @@ class LifeStateService:
         # 补写的人设后面接「后来的变化」：能力清单关着就不接
         self.life_step.abilities = self.abilities if self.abilities_enabled else None
         self.life_step.recorder = self.recorder
+        # 补写要问主人一句时，借主动对话把话发出去
+        self.life_step.planner = self.planner
         # 家里的吃的（存货）：记录员记聊天里说的，补写在世界线每段上标；只在要用的时候现算（见 things.py）
         self.things = ThingStore(self.data_dir / THINGS_FILE_NAME, weather_fn=functools.partial(operations_mod.weathers, self))
         self.things.world = self.world

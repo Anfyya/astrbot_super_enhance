@@ -7,10 +7,14 @@
 - 睡觉也是一段（从入睡写到第二天起床）；有钟点的约定要提前留出路上的时间。
 - 程序校验：首尾相接、第一段从给定时刻开始、最后一段的结束晚于此刻；不许出现主人。
 - 补写不撤规矩，规矩只由记录员撤。
+- 有该主人拿主意的（做给主人吃的怎么做、要不要一起去哪儿），补写在输出里填 ask_master：程序让她借主动对话问主人那一句，
+  补写停在这儿等回话（ASK_WAIT_SECONDS）；主人回了，把回话交给模型照着重写一遍；没回，就用第一次写的（她自己拿主意）。
 """
 
+import asyncio
 import datetime
 import re
+import time
 
 from astrbot.api import logger
 
@@ -58,6 +62,12 @@ FILL_STRETCH_MINUTES = 30
 MANUAL_HOLD_SECONDS = 180
 # 她们自己的打算挂了这么多天没动（从记下、或上回补写推过它算起），补写这次要排一件事把它往前推或了结
 STALE_INTENT_DAYS = 3
+# 补写要问主人（ask_master）：等她那句问话真发出去最多多久（主动消息要现场生成）、
+# 问出去以后等主人回话多久（2026-11-06 按要求定 120 秒，什么时候都问）、主人回了以后再等多久把连发的几句收齐、多久看一次（秒）
+ASK_SEND_SECONDS = 240
+ASK_WAIT_SECONDS = 120
+ASK_SETTLE_SECONDS = 15
+ASK_POLL_SECONDS = 3
 
 STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，由你来安排。
 
@@ -92,7 +102,9 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
    每段还要写 at_home 和 meal：at_home 是这段她人在不在宿舍（屋里、院子、廊下、门口、后头小屋都算 true；出了宿舍去别处、走在路上都算 false）；meal 是这段是不是正在吃饭（吃早饭午饭晚饭、夜宵算 true；做饭、摆碗筷、洗碗都不算）。
 5. 睡觉也是一段：到了她今天定的入睡时刻，就写一段睡觉，state 填「睡觉」，从入睡时刻一直写到第二天定的起床时刻；睡前那段要在入睡时刻结束。过了入睡时刻还醒着的（比如答应了陪主人熬夜），那件事做完就接着写睡觉，睡到起床时刻。
 6. 下面「还没做的约定」里有钟点的：到那个钟点她要已经在约定的地方、和约定的人在一起。要换地方的，在那之前写一段赶过去，留足路上的工夫；约定那件事从约定的钟点开始写。
-7. **不许生成主人的条目，也不许替主人编他做了什么、说了什么。** 主人在哪只看「主人最近的动向」：他最后说在哪、之后没说离开，就当他还在那儿，她们可以待在他身边、在他旁边做自己的事；他说了出门、去上课、睡了这类，就照那个写，别写他在场。只有一种例外：「各自的打算」里标着「和主人一起」的，是主人提的或答应了的，真做到和主人一起的那一步才写成她和主人一起做，with 里写上 "master"；她自己先做的准备（比如先把要送他的东西做完）是她一个人做，不写 master；同一趟里接着往下的段（比如逛夜市逛到一半换个摊子）也写上 "master"，直到这件事做完、两人分开。除此之外 with 里不写 master。「主人说过他要做的事」是他自己的安排：那段时间他人不在，别把她们写成和他在一起。
+7. **不许生成主人的条目，也不许替主人编他做了什么、说了什么。** 主人在哪只看「主人最近的动向」：他最后说在哪、之后没说离开，就当他还在那儿，她们可以待在他身边、在他旁边做自己的事；他说了出门、去上课、睡了这类，就照那个写，别写他在场。只有一种例外：「各自的打算」里标着「和主人一起」的，是主人提的或答应了的，真做到和主人一起的那一步才写成她和主人一起做，with 里写上 "master"；她自己先做的准备（比如先把要送他的东西做完）是她一个人做，不写 master；同一趟里接着往下的段（比如逛夜市逛到一半换个摊子）也写上 "master"，直到这件事做完、两人分开。在家吃饭默认是三个人一起吃：饭点那段主人在船屋（「主人最近的动向」里没说他出门、去上课、睡了），就写成她们和主人一起吃，with 里写上 "master"；主人不在家，就她们俩吃，给主人留一份收好。除此之外 with 里不写 master。
+   做给主人的、拿主人买回来的东西做的，那份是主人的：做好了端给主人或者给他留着，她们别再吃它、分它；主人吃没吃、剩下的给谁，后面聊天里定。
+   「主人说过他要做的事」分两种：只是他自己去做的（上课、出门办事），那段时间他人不在，别把她们写成和他在一起；写着要她们做、或者和她们一起做的（比如晚上和亚托莉一起吃帝王蟹），就是交给她们的事，照着排进去，到时候写成和主人一起，with 写上 "master"——这是照主人说过的写，不算替他编。
 8. 约束优先级最高：写着不许出门的，这段时间就得在屋里。
 9. public 是住在一起的人自然会知道的粗粒度信息（人在哪、大概在干哪类事），可以为空。doing 是细节。
 10. 两人在一起的时段，两边的 start/end 和共同的事要一致，with 互相写上对方的 key；对方手上的事还没做完的，别写成和她在一起。对方不在「这次要你写的」里时，她那段时间做什么以「她们此刻手上的事」和「已经排好、这次不改的」为准，你改不了：只有她那边写的也是这件事、也在这个地方，才能写成和她一起；不然就别把她写进来。
@@ -128,12 +140,15 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
 22. **丛雨怎么移动**：丛雨平时是飘着的，脚不沾地，赶路就飘过去，累了或者撒娇时才落地走两步。她那几段里换地方、出门、回来、凑到谁跟前，都照这个写。
 {world_notes}
 {step_notes}
+要问主人的（ask_master）：主人想吃的、叫她们做的、要和她们一起做的事，怎么做主人还没说定的（比如主人说想吃鱼，没说是蒸是煎还是炖；说要一起出去，没说去哪儿），就算有常见的做法，也先问主人一句：填 ask_master，who 写谁来问（key），question 写她要问的一句话。填了也照样把整份写完，这件事先照你觉得最合适的写；程序会让她去问主人、等他回话，主人说的跟你写的不一样，会把回话交给你再改。主人已经说定的、做好了直接端给主人的，不用问；没有要问的，ask_master 留空。
+
 注意：**不要输出 intentions，也不要写任何「接下来打算」**。上面「各自的打算」里如果有，是之前说好要做的，照着走就行；标着「挂了几天了」的，只在 intent_moves 里写它后来怎样（第 12 条）。
 
 输出 JSON（end_current 只给上面说了「先定做完时刻」的人写；intent_moves 只写标着「挂了几天了」的打算，没有就留空）：
 
 {{
   "end_current": {{"napcat": "{example_end}"}},
+  "ask_master": {{"who": "", "question": ""}},
   "stopped_results": {{}},
   "intent_moves": {{"i3": {{"done": false, "text": "推进以后的打算", "date": "", "window": ""}}}},
   "segments": {{
@@ -1126,7 +1141,7 @@ class LifeStep:
         plans = self.world.intentions("master")
         if plans:
             parts.append(
-                "主人说过他要做的事（他自己的安排，只作参考）：\n"
+                "主人说过他要做的事（写着和她们一起、要她们做的，照着排进去；里头怎么做还没说定的，先填 ask_master 问主人）：\n"
                 + "\n".join("- %s %s：%s" % (
                     str(x.get("date") or "")[5:] or "日子没说", x.get("window") or "", x.get("text")) for x in plans)
             )
@@ -1390,6 +1405,7 @@ class LifeStep:
                 self.world.set_last_step_attempt(fmt_time(moment))
                 return False
             self._save_thought(moment, thought, True)
+            data, text = await self._ask_master(data, prompt, text, tasks)
             data = await self._recheck_things(data, prompt, text, tasks, moment)
             written, missed = self.apply(data, tasks, moment)
             if missed:
@@ -1415,6 +1431,95 @@ class LifeStep:
         finally:
             self.running = False
             self._run_cache = {}
+
+    async def _ask_master(self, data: dict, prompt: str, text: str, tasks: dict):
+        """补写填了 ask_master：让她借主动对话问主人那一句，等主人回话；回了就把回话交给模型照着重写一遍。
+        没回、没问出去、出错，都照用第一次写的（她自己拿主意）。返回 (data, 模型原文)。"""
+        ask = data.get("ask_master")
+        question = clean_text(ask.get("question"), 120) if isinstance(ask, dict) else ""
+        if not question:
+            return data, text
+        bots = list(self.raw_log.enabled_bots())
+        who = str(ask.get("who") or "").strip()
+        if who not in bots:
+            who = next((bot for bot in tasks if bot in bots), bots[0] if bots else "")
+        planner = getattr(self, "planner", None)
+        targets = planner.targets_of(who) if planner is not None and planner.enabled and who else []
+        if not targets:
+            logger.info("[super_enhance/world] 补写想让%s问主人「%s」，可主动对话没开或没配会话，照第一次写的",
+                        self.label(who) or who, question)
+            return data, text
+        umo = targets[0]
+        since = time.time()
+        if not await planner.ask_now(who, question):
+            return data, text
+        asked = await self._wait_asked(umo, since)
+        if asked is None:
+            logger.warning("[super_enhance/world] 补写让%s问主人「%s」，%d 秒里没见她问出去，照第一次写的",
+                           self.label(who) or who, question, ASK_SEND_SECONDS)
+            return data, text
+        replies = await self._wait_replies(umo, float(asked.get("ts") or since))
+        name = self.label(who) or who
+        if not replies:
+            logger.info("[super_enhance/world] %s %s 问了主人「%s」，%d 秒里主人没回，照第一次写的（她自己拿主意）",
+                        name, asked.get("time") or "", clean_text(asked.get("text"), 60), ASK_WAIT_SECONDS)
+            return data, text
+        said = "；".join("%s「%s」" % (x.get("time") or "", clean_text(x.get("text"), 200)) for x in replies)
+        note = ("%s %s 问了主人：「%s」。主人回了：%s。照主人说的把整份 JSON 重新写出来（跟你原来写的一样就照原样），ask_master 留空。"
+                % (name, asked.get("time") or "", clean_text(asked.get("text"), 200), said))
+        logger.info("[super_enhance/world] 补写问主人有回话，照着重写：%s", note[:200])
+        retry = prompt + "\n\n你上一次的输出：\n" + str(text or "").strip() + "\n\n" + note
+        try:
+            again, _thought = await llm.text_chat(
+                self.context, retry, provider_id=str(self.cfg.get("llm_provider_id") or "").strip(),
+                timeout=self.timeout, session_id="super_enhance_lifestep", system_prompt=SYSTEM_PROMPT,
+                attempts=2, log_label="补写照主人回话重写",
+            )
+        except Exception as e:
+            logger.warning("[super_enhance/world] 补写照主人回话重写失败，照用第一次的：%s", e)
+            return data, text
+        self._run_cache = {}
+        fixed = llm.extract_json(again)
+        if not isinstance(fixed, dict) or not isinstance(fixed.get("segments"), dict):
+            logger.warning("[super_enhance/world] 补写照主人回话重写的不是 JSON，照用第一次的")
+            return data, text
+        return fixed, again
+
+    def _raw_after(self, umo: str, after_ts: float, role: str) -> list:
+        """原始记录里这个会话 after_ts 之后的消息（只看那天和今天）。"""
+        tz = self._now().tzinfo
+        days = sorted({datetime.datetime.fromtimestamp(after_ts, tz).date().isoformat(),
+                       datetime.datetime.fromtimestamp(time.time(), tz).date().isoformat()})
+        out = []
+        for day in days:
+            for item in self.raw_log.read_day(day):
+                if str(item.get("umo") or "") == str(umo) and item.get("role") == role and float(item.get("ts") or 0) > after_ts:
+                    out.append(item)
+        return sorted(out, key=lambda x: float(x.get("ts") or 0))
+
+    async def _wait_asked(self, umo: str, since: float):
+        """等她那句问话发出去（主动对话发出的，原始记录里标着 proactive）：返回那一条；等不到返回 None。"""
+        deadline = since + ASK_SEND_SECONDS
+        while time.time() < deadline:
+            sent = [x for x in self._raw_after(umo, since, "assistant") if x.get("src") == "proactive"]
+            if sent:
+                return sent[0]
+            await asyncio.sleep(ASK_POLL_SECONDS)
+        return None
+
+    async def _wait_replies(self, umo: str, asked_ts: float) -> list:
+        """她问出去以后等主人回话 ASK_WAIT_SECONDS 秒；回了就再等 ASK_SETTLE_SECONDS 秒把连发的几句收齐。"""
+        deadline = asked_ts + ASK_WAIT_SECONDS
+        while True:
+            replies = self._raw_after(umo, asked_ts, "user")
+            now_ts = time.time()
+            if replies:
+                last = float(replies[-1].get("ts") or now_ts)
+                if now_ts >= min(last + ASK_SETTLE_SECONDS, deadline + ASK_SETTLE_SECONDS):
+                    return replies
+            elif now_ts >= deadline:
+                return []
+            await asyncio.sleep(ASK_POLL_SECONDS)
 
     async def _recheck_things(self, data: dict, prompt: str, text: str, tasks: dict, moment: datetime.datetime) -> dict:
         """步骤里写到了家里的吃的、东西却没标（_unmarked）：把问题列给模型，叫它照原样重写一遍，只打回一次。
@@ -1548,8 +1653,10 @@ class LifeStep:
                 # 不强塞：打算里她自己先做的准备（先把围巾织完）不算和主人一起
                 prev = rows[-1] if rows else self.world.latest_for(bot, before=fmt_time(cursor))
                 prev_with_master = bool(prev) and "master" in (prev.get("with") or []) and not prev.get("sleep")
+                # 在家吃饭默认三个人一起吃（提示词第 7 条）：吃饭那段写了 master 也留着
+                at_meal = bool(raw.get("meal")) and raw.get("at_home") is not False
                 if not idle and not sleep and "master" in raw_with and (
-                    self._intent_with_master(intent) or prev_with_master
+                    self._intent_with_master(intent) or prev_with_master or at_meal
                 ):
                     with_list.append("master")
                 entry = {
