@@ -6039,7 +6039,7 @@
     bar.appendChild(h("div", { class: "grow" }));
     bar.appendChild(h("button", { class: "btn sm", type: "button", onclick: function () {
       var draft = objectMode
-        ? { name: "", kind: "", look: "", owner: "", origin: "", from: [], what: d.item_steps.start[0], at: thingAt(d.now), place: "", holder: "", state: "", by: [], note: "" }
+        ? { name: "", kind: "", look: "", inside: "", owner: "", origin: "", from: [], what: d.item_steps.start[0], at: thingAt(d.now), place: "", holder: "", state: "", by: [], note: "" }
         : { name: "", kind: "", origin: "", from: [], what: d.steps.start[0], at: thingAt(d.now), left: "", amount: "",
             place: "", keep: d.keeps[0], spot: (d.spots || [])[0] || "", state: d.states[0], by: [], note: "" };
       thingOpenForm(objectMode ? "onew" : "new", draft);
@@ -6119,7 +6119,7 @@
       if (!tPassAll(x, objectMode, "")) { return false; }
       if (!q) { return true; }
       var fields = objectMode
-        ? [x.id, x.name, x.kind, x.look, x.origin, x.place, x.holder_label, x.state, x.owner_label]
+        ? [x.id, x.name, x.kind, x.look, x.inside, x.origin, x.place, x.holder_label, x.state, x.owner_label]
         : [x.id, x.name, x.kind, x.origin, x.place];
       return fields.join(" ").toLowerCase().indexOf(q) >= 0;
     });
@@ -6448,6 +6448,8 @@
         thingSrc(st),
         objectMode && st.src && st.src.entry && !st.wl ? objEntryLink(st) : null,
         st.note ? h("span", { text: "备注：" + st.note }) : null,
+        st.fresh_note ? h("span", { text: "手写保鲜：" + st.fresh_note }) : null,
+        st.taste_note ? h("span", { text: "手写口感：" + st.taste_note }) : null,
         st.edited ? h("span", { text: "网页改过 " + String(st.edited).slice(5, 16) }) : null,
         isVoid ? h("span", { text: "作废于 " + String(st.void_at || "").slice(5, 16) + (st.void_why ? "：" + st.void_why : "") }) : null)));
     var acts = h("span", { class: "ts-a" });
@@ -6462,7 +6464,8 @@
               owner: st.owner || "", by: byList(st.by), into: st.into ? st.into.id : "", note: st.note || "" }
           : { what: st.what, at: thingAt(st.at), left: st.left || "", amount: st.amount || "", used: st.used || "",
               place: st.place || "", keep: st.keep || "", spot: st.spot || "", state: st.state || "",
-              by: byList(st.by), into: st.into ? st.into.id : "", note: st.note || "" };
+              by: byList(st.by), into: st.into ? st.into.id : "", note: st.note || "",
+              fresh_note: st.fresh_note || "", taste_note: st.taste_note || "" };
         thingOpenForm((objectMode ? "oe:" : "e:") + it.id + ":" + st.idx, draft);
       } }, icon("edit")));
       if (st.idx > 0) {
@@ -6488,6 +6491,15 @@
   function dataDetail(it, objectMode) {
     var box = h("div", { class: "tdetail" });
     if (objectMode && it.note) { box.appendChild(h("div", { class: "muted", style: "font-size:12.5px", text: it.note })); }
+    if (objectMode && it.inside) {
+      var seal = h("div", { class: "muted", style: "font-size:12.5px;line-height:1.7" },
+        h("div", { text: objSealText(it) + (it.opened ? "" : "：她按编号看这一件就算拆开了") }),
+        h("div", { text: "里面：" + it.inside }));
+      seal.appendChild(h("button", { class: "tlink", type: "button", onclick: function () {
+        thingPost({ action: "seal", id: it.id, opened: !it.opened, by: "master" }, it.opened ? "已改回没拆" : "已标成拆开了", null, it.id);
+      } }, it.opened ? "改回没拆" : "标成拆开了"));
+      box.appendChild(seal);
+    }
     var list = h("ol", { class: "tsteps" });
     it.stages.forEach(function (st, i) {
       var key = thingStageKey(it, st, i, objectMode);
@@ -6519,14 +6531,14 @@
         var draft = objectMode
           ? { what: S.things.item_steps.mid[0], at: thingAt(S.things.now), place: "", holder: "", state: "", owner: "", by: [], into: "", note: "" }
           : { what: it.measured ? "用掉一部分" : "吃了一部分", at: thingAt(S.things.now), left: "", amount: "", used: "",
-              place: "", keep: "", spot: "", state: "", by: [], into: "", note: "" };
+              place: "", keep: "", spot: "", state: "", by: [], into: "", note: "", fresh_note: "", taste_note: "" };
         thingOpenForm(stageKey, draft);
       } }, icon("plus"), "加一步"));
     }
     if (!S.tEdit[itemKey]) {
       foot.appendChild(h("button", { class: "btn sm", type: "button", onclick: function () {
         var draft = objectMode
-          ? { name: it.name, kind: it.kind, look: it.look || "", owner: it.owner || "", origin: it.origin || "", from: it.from.map(function (y) { return y.id; }) }
+          ? { name: it.name, kind: it.kind, look: it.look || "", inside: it.inside || "", owner: it.owner || "", origin: it.origin || "", from: it.from.map(function (y) { return y.id; }) }
           : { name: it.name, kind: it.kind, origin: it.origin || "", from: it.from.map(function (y) { return y.id; }) };
         thingOpenForm(itemKey, draft);
       } }, icon("edit"), objectMode ? "改名字和样子" : "改名字和来历"));
@@ -6606,6 +6618,7 @@
       var top = edProps();
       edRow(top, "是什么", edInput(f.kind, "一个词：围巾、窗花、纸条、书……", function (v) { f.kind = v; }), "同一种的排在一起，提醒认准编号");
       edRow(top, "样子", edInput(f.look, "颜色、材料、大小、上面有什么，能和同一种的别的那件分清", function (v) { f.look = v; }, { area: true }));
+      edRow(top, "封着的里面", edInput(f.inside, "寄来的信、没拆的包裹才写；空着就不是封着的", function (v) { f.inside = v; }, { area: true }), "她按编号看这一件才看得到、看了就算拆开");
       edRow(top, "归谁", edChips(edPeople("大家一起用"), f.owner, function (v) { f.owner = v; }));
       edRow(top, "哪来的", edInput(f.origin, "例如：丛雨给主人织的", function (v) { f.origin = v; }));
       box.appendChild(edSec(top));
@@ -6670,7 +6683,7 @@
       var at = fullTime(f.at, thingToday());
       if (at === null) { toast("时间写成 08:30、昨天 08:30 或 10-18 08:30", { err: true }); return null; }
       var body = objectMode
-        ? { action: "add", cat: "item", name: f.name, kind: f.kind, look: f.look, owner: f.owner, origin: f.origin, from: f.from,
+        ? { action: "add", cat: "item", name: f.name, kind: f.kind, look: f.look, inside: f.inside || "", owner: f.owner, origin: f.origin, from: f.from,
             stage: { what: f.what, at: at, place: f.place, holder: f.holder, state: f.state, by: (f.by || []).join(","), note: f.note } }
         : { action: "add", name: f.name, kind: f.kind, origin: f.origin, from: f.from,
             stage: { what: f.what, at: at, left: f.left, amount: f.amount, place: f.place, keep: f.keep, spot: f.spot, state: f.state, by: (f.by || []).join(","), note: f.note } };
@@ -6716,6 +6729,10 @@
       }
       main.forEach(function (k) { objectMode ? objFieldRow(p, f, k, c) : thingFieldRow(p, f, k, c); });
       if (!wl) { edRow(p, "备注", edInput(f.note, "可空", function (v) { f.note = v; })); }
+      if (!wl && !objectMode) {
+        edRow(p, "手写保鲜", edInput(f.fresh_note, "可空；写了就照这句显示，程序不再按时间算", function (v) { f.fresh_note = v; }));
+        edRow(p, "手写口感", edInput(f.taste_note, "可空；例如：凉透了，皮有点发硬", function (v) { f.taste_note = v; }));
+      }
       var sec = edSec(p);
       var rest = all.filter(function (k) { return main.indexOf(k) < 0; });
       if (rest.length) {
@@ -6745,7 +6762,8 @@
         ? { what: f.what, at: at || (st ? String(st.at || "").slice(0, 16) : ""), place: f.place, holder: f.holder, state: f.state,
             owner: f.owner, by: (f.by || []).join(","), into: f.into, note: f.note }
         : { what: f.what, at: at || (st ? String(st.at || "").slice(0, 16) : ""), left: f.left, amount: f.amount, used: f.used,
-            place: f.place, keep: f.keep, spot: f.spot, state: f.state, by: (f.by || []).join(","), into: f.into, note: f.note };
+            place: f.place, keep: f.keep, spot: f.spot, state: f.state, by: (f.by || []).join(","), into: f.into, note: f.note,
+            fresh_note: f.fresh_note || "", taste_note: f.taste_note || "" };
       if (st) {
         return thingPost({ action: "update_stage", id: it.id, index: st.idx, guard: { at: st.at, what: st.what }, fields: stage },
           "已保存", function () { delete S.tEdit[key]; }, it.id);
@@ -6766,6 +6784,7 @@
       : [edSelect(S.things.kinds.map(function (k) { return { key: k.key, label: k.key }; }), f.kind, function (v) { f.kind = v; }), h("span", { class: "ed-n", text: "决定能放多久" })],
       objectMode ? "同一种的排在一起，提醒认准编号" : null);
     if (objectMode) { edRow(p, "样子", edInput(f.look, "能和同一种的别的那件分清", function (v) { f.look = v; }, { area: true })); }
+    if (objectMode) { edRow(p, "封着的里面", edInput(f.inside, "寄来的信、没拆的包裹：里面写着什么、装着什么；空着就不是封着的", function (v) { f.inside = v; }, { area: true }), "清单里只显示封着，她按编号看这一件才看得到、看了就算拆开"); }
     if (objectMode) { edRow(p, "归谁", edChips(edPeople("大家一起用"), f.owner, function (v) { f.owner = v; })); }
     edRow(p, "哪来的", edInput(f.origin, "可空", function (v) { f.origin = v; }));
     edRow(p, objectMode ? "材料" : "用料", edPicker(f, "from", function () { return objectMode ? objCands(it.id) : thingCands(it.id); }, { add: objectMode ? "挑材料" : "挑用料", live: true }), objectMode ? "用家里哪几件东西做的；买来的、别人送的不用挑" : "做这道菜用了家里哪几件；买来的、别人送的不用挑");
@@ -6773,7 +6792,7 @@
     return worldFormFoot(box, function () { thingCloseForm(key); }, "保存", function () {
       if (!String(f.name || "").trim()) { toast("名字不能空", { err: true }); return null; }
       var body = { action: "update_item", id: it.id, name: f.name, kind: f.kind, origin: f.origin, from: f.from };
-      if (objectMode) { body.look = f.look; body.owner = f.owner; }
+      if (objectMode) { body.look = f.look; body.owner = f.owner; body.inside = f.inside || ""; }
       return thingPost(body, "已保存", function () { delete S.tEdit[key]; }, it.id);
     }, function () { return worldDirty(f); });
   }
@@ -6790,6 +6809,12 @@
     return x.place || "";
   }
   function objKind(x) { return x.kind || x.name || ""; }
+  // 封着的东西：「封着没拆」或「11-06 13:30 亚托莉拆开了」
+  function objSealText(x) {
+    if (!x.opened) { return "封着没拆"; }
+    var who = ((S.things && S.things.people) || []).filter(function (p) { return p.key === x.opened.by; })[0];
+    return String(x.opened.at || "").slice(5, 16) + " " + (who ? who.label : (x.opened.by || "")) + "拆开了";
+  }
   // 照世界线补登的那一步：点一下打开世界线里那一段
   function objEntryLink(st) {
     var m = /^(\d{4}-\d{2}-\d{2})\/(.+)$/.exec(String(st.src.entry));
@@ -6822,10 +6847,11 @@
   function objRow(it) {
     return dataRow(it, {
       dot: function (x) { return h("span", { class: "tdot " + (x.ended ? "gone" : "ok"), title: x.ended ? "没了" : "在家里" }); },
-      head: function (x) { return [h("span", { class: "tid", text: x.id }), h("span", { class: "tname", text: x.name }), x.kind ? h("span", { class: "tag", text: x.kind }) : null, x.owner_label ? h("span", { class: "tag", text: "归" + x.owner_label }) : null]; },
+      head: function (x) { return [h("span", { class: "tid", text: x.id }), h("span", { class: "tname", text: x.name }), x.kind ? h("span", { class: "tag", text: x.kind }) : null, x.owner_label ? h("span", { class: "tag", text: "归" + x.owner_label }) : null, x.secret ? h("span", { class: "tag", text: "私人物品", title: "记录员、世界线和补写不能替它添内容" }) : null, x.inside ? h("span", { class: "tag", text: x.opened ? "已拆" : "封着" }) : null]; },
       meta: function (x) {
         var out = x.look ? [h("div", { class: "tmeta", text: x.look })] : [];
-        if (x.inside) { out.push(h("div", { class: "tmeta", text: (x.opened ? "已拆（" + String(x.opened.at || "").slice(5, 16) + "）" : "封着") + "，里面：" + x.inside })); }
+        if (x.inside) { out.push(h("div", { class: "tmeta", text: objSealText(x) + "，里面：" + x.inside })); }
+        if (x.weather && !x.ended) { out.push(h("div", { class: "tmeta", text: "按天气算，此刻：" + x.weather })); }
         if (x.ended) { out.push(h("div", { class: "tmeta", text: "已经没了：" + String(x.ended.at || "").slice(5, 16) + " " + x.ended.what })); }
         else { var now = [x.state && String(x.look || "").indexOf(x.state) < 0 ? x.state : "", objWhere(x)].filter(Boolean).join(" · "); if (now) { out.push(h("div", { class: "tmeta", text: now })); } }
         return out;

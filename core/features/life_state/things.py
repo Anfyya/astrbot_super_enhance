@@ -651,6 +651,9 @@ def clean_stage(stage: dict, cat: str = CAT_FOOD) -> dict:
                 out[key] = value
             elif str(value or "").strip():
                 out[key] = clean_text(value, MAX_LEFT)
+        for key in ("fresh_note", "taste_note"):  # 手写的保鲜 / 口感（manual_notes）
+            if str(stage.get(key) or "").strip():
+                out[key] = clean_text(stage.get(key), MAX_NOTE)
     for key in ("into", "note", "recorded", "wl"):
         if stage.get(key):
             out[key] = clean_text(stage.get(key), MAX_NOTE)
@@ -876,7 +879,7 @@ class ThingStore:
     # ---------- 记录员记（存下来） ----------
 
     def create(self, name, kind, origin, sources, stage: dict, recorded: str = "", cat: str = CAT_FOOD,
-               look: str = "", owner: str = ""):
+               look: str = "", owner: str = "", inside: str = ""):
         """新的一件：第一步只能是来的那几种（吃的：买回来 / 收到 / 做好了 / 原来就有；东西另有捡到、开始做）。
         返回 (那件, 不收的原因)。别的东西另记 look（样子）、owner（归谁）；kind 是它是什么（围巾、窗花）。"""
         cat = CAT_ITEM if cat == CAT_ITEM else CAT_FOOD
@@ -916,6 +919,8 @@ class ThingStore:
         if cat == CAT_ITEM:
             item["look"] = clean_text(look, MAX_LOOK)
             item["owner"] = clean_text(owner, 12)
+            if str(inside or "").strip():
+                item["inside"] = clean_text(inside, MAX_INSIDE)
         elif item["kind"] in MEASURED_KINDS:
             got = parse_amount(first.get("amount")) or parse_amount(first.get("left"))
             if got is not None and got[1]:
@@ -939,6 +944,16 @@ class ThingStore:
         self._load().setdefault("opened", {})[tid] = info
         self._save()
         item["_opened"] = info
+
+    def set_opened(self, thing_id, opened: bool, by: str = "", at: str = "") -> None:
+        """网页上手动改拆没拆：opened=False 就从 opened 里去掉（又算封着），True 就记成谁、几点拆的。"""
+        table = self._load().setdefault("opened", {})
+        tid = str(thing_id or "")
+        if opened:
+            table[tid] = {"at": at, "by": by}
+        else:
+            table.pop(tid, None)
+        self._save()
 
     def seal_text(self, item: dict, label_fn=None) -> str:
         """清单里那一格：封着的写「封着没拆」，拆过的写谁几点拆的；没写里面的空串。"""
@@ -982,7 +997,7 @@ class ThingStore:
             source = view.find(sid)
             if source is not None and source.get("virtual"):
                 self.materialize(source, view)
-        record = {k: copy.deepcopy(v) for k, v in item.items() if k not in ("virtual", "stages")}
+        record = {k: copy.deepcopy(v) for k, v in item.items() if k not in ("virtual", "stages") and not str(k).startswith("_")}
         record["stages"] = [{k: v for k, v in copy.deepcopy((item.get("stages") or [{}])[0]).items() if k != "_i"}]
         record["from"] = [x for x in record.get("from") or [] if self.get(x)]
         self._load().setdefault("items", []).append(record)
@@ -992,7 +1007,8 @@ class ThingStore:
 
     # ---------- 网页上改（手动） ----------
 
-    def update_item(self, thing_id, name=None, kind=None, origin=None, sources=None, look=None, owner=None, now: str = "") -> str:
+    def update_item(self, thing_id, name=None, kind=None, origin=None, sources=None, look=None, owner=None, now: str = "",
+                    inside=None) -> str:
         """改名字 / 哪一类 / 哪来的 / 用料（编号改不了）；别的东西另能改样子、归谁。返回不收的原因，收了返回空串。
         吃的改了用料：新挑进来的料补一步用掉、去掉的料把网页当初补的那步作废（_sync_sources）。"""
         item = self.get(thing_id)
@@ -1012,6 +1028,12 @@ class ThingStore:
                 item["look"] = clean_text(look, MAX_LOOK)
             if owner is not None:
                 item["owner"] = clean_text(owner, 12)
+            if inside is not None:
+                text = clean_text(inside, MAX_INSIDE)
+                if text:
+                    item["inside"] = text
+                else:
+                    item.pop("inside", None)
         if sources is not None:
             picked = []
             for token in sources:
@@ -1081,7 +1103,8 @@ class ThingStore:
         if not 0 <= index < len(stages) or not self._same_stage(stages[index], guard):
             return "这一步已经变了，刷新一下再改"
         merged = dict(stages[index])
-        for key in ("at", "what", "left", "amount", "used", "place", "keep", "spot", "state", "holder", "owner", "by", "into", "note"):
+        for key in ("at", "what", "left", "amount", "used", "place", "keep", "spot", "state", "holder", "owner", "by", "into", "note",
+                    "fresh_note", "taste_note"):
             if fields.get(key) is not None:
                 merged[key] = fields[key]
         new = clean_stage(merged, cat_of(item))

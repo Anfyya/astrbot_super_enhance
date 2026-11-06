@@ -987,7 +987,8 @@ class ContextPageApi:
 
             def stage_row(stage: dict) -> dict:
                 row = {k: stage.get(k) for k in ("at", "what", "left", "amount", "used", "place", "keep", "spot", "state", "holder", "owner",
-                                                  "by", "note", "wl", "src", "recorded", "edited", "void_why", "void_at")}
+                                                  "by", "note", "wl", "src", "recorded", "edited", "void_why", "void_at",
+                                                  "fresh_note", "taste_note")}
                 row["by_label"] = self._thing_who(life, stage.get("by"))
                 row["idx"] = stage.get("_i")
                 if stage.get("into"):
@@ -1096,6 +1097,8 @@ class ContextPageApi:
                     "look": item.get("look") or "",
                     "inside": item.get("inside") or "",
                     "opened": item.get("_opened") or None,
+                    "secret": store.is_secret(item),
+                    "weather": item.get("_weather") or "",
                     "owner": owner,
                     "owner_label": self._thing_who(life, owner) if owner else "",
                     "origin": item.get("origin") or "",
@@ -1144,7 +1147,8 @@ class ContextPageApi:
     async def things_edit(self):
         """家里的吃的和别的东西（网页手动）：add 新的一件（cat=item 是吃的以外的东西）/ stage 加一步 / update_item 改名字类别来历用料
         （东西另有样子、归谁）/ update_stage 改某一步 / void_stage 作废某一步 / unvoid_stage 恢复 / void_item 整件记错了 /
-        keep 把世界线里现算的存下来 / plan_update 改「未来」里的一件 / wl_stage 改世界线那一段里标的某一步。
+        keep 把世界线里现算的存下来 / plan_update 改「未来」里的一件 / wl_stage 改世界线那一段里标的某一步 /
+        seal 封着的东西改拆没拆（opened true / false）。
         编号由程序发、改不了；什么都不真删。"""
         life = getattr(self.plugin, "life", None)
         if life is None or getattr(life, "things", None) is None:
@@ -1182,7 +1186,8 @@ class ContextPageApi:
                 if things_mod.parse_time(at) > now + datetime.timedelta(minutes=5):
                     return None, "不能晚于现在"
                 stage = {"at": at, "src": src, "recorded": stamp}
-                for key in ("what", "left", "amount", "used", "place", "keep", "spot", "state", "holder", "owner", "by", "note"):
+                for key in ("what", "left", "amount", "used", "place", "keep", "spot", "state", "holder", "owner", "by", "note",
+                            "fresh_note", "taste_note"):
                     if raw.get(key) is not None:
                         stage[key] = raw.get(key)
                 return stage, ""
@@ -1194,7 +1199,8 @@ class ContextPageApi:
                     sources = [x for x in (keep(t) for t in body.get("from") or []) if x]
                     cat = things_mod.CAT_ITEM if body.get("cat") == things_mod.CAT_ITEM else things_mod.CAT_FOOD
                     item, why = store.create(body.get("name"), body.get("kind"), body.get("origin"), sources, stage, stamp,
-                                             cat=cat, look=body.get("look") or "", owner=body.get("owner") or "")
+                                             cat=cat, look=body.get("look") or "", owner=body.get("owner") or "",
+                                             inside=body.get("inside") or "")
                     if item is not None:
                         tid = item["id"]
                         # 网页上加的菜：用料各补一步用掉（东西用什么做的只是来历，不补）
@@ -1221,7 +1227,8 @@ class ContextPageApi:
                 if isinstance(body.get("from"), list):
                     sources = [x for x in (keep(t) for t in body["from"]) if x]
                 why = store.update_item(tid, name=body.get("name"), kind=body.get("kind"), origin=body.get("origin"),
-                                        sources=sources, look=body.get("look"), owner=body.get("owner"), now=stamp) if tid else "没有这一件"
+                                        sources=sources, look=body.get("look"), owner=body.get("owner"), now=stamp,
+                                        inside=body.get("inside")) if tid else "没有这一件"
             elif action == "update_stage":
                 fields = dict(body.get("fields") or {})
                 if fields.get("at"):
@@ -1234,6 +1241,12 @@ class ContextPageApi:
                     fields["into"] = keep(fields["into"]) or str(fields["into"])
                 if not why:
                     why = store.update_stage(tid, _as_int(body.get("index"), -1), body.get("guard") or {}, fields, stamp)
+            elif action == "seal":
+                # 封着的东西：网页上改回没拆（opened=false）或标成拆开了；按编号记，世界线里现算的那件也不用先存下来
+                if shelf.find(tid) is None:
+                    why = "没有这一件"
+                else:
+                    store.set_opened(str(shelf.find(tid).get("id")), bool(body.get("opened")), by=str(body.get("by") or ""), at=stamp)
             elif action == "void_stage":
                 why = store.void_stage(tid, _as_int(body.get("index"), -1), body.get("guard") or {}, str(body.get("why") or ""), stamp)
             elif action == "unvoid_stage":
