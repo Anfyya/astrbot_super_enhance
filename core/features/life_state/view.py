@@ -396,7 +396,7 @@ def supply_now_text(service, now: datetime.datetime) -> str:
     """此刻镇上有没有电、家里煤油够不够、补给船哪天来（只在住海边时有；跟补写用的是同一份）。"""
     from . import supply as supply_mod
     home = str(service.cfg.get("world_home") or "").strip() or "穗织"
-    return supply_mod.chat_text(now, _weather_text_of(service), home)
+    return supply_mod.chat_text(now, _weather_text_of(service), home, world=getattr(service, "world", None))
 
 
 def map_text(cfg) -> str:

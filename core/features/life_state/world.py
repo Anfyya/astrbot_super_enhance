@@ -374,6 +374,10 @@ class WorldStore:
         }
         if entry.get("tool") == "start_doing" and kind != "event":
             record["tool"] = "start_doing"
+        if entry.get("lamp") and kind != "event":
+            record["lamp"] = True  # 补写标的点着煤油灯（supply.LAMP_OIL）
+        if entry.get("kerosene"):
+            record["kerosene"] = True  # 补写标的这段把补给船那桶煤油领回来了（supply.LAMP_OIL）
         if entry.get("stopped") and isinstance(entry.get("stop_at_step"), int):
             record["stop_at_step"] = entry["stop_at_step"]
         if entry.get("stopped") and str(entry.get("wrap") or "").strip():

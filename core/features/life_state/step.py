@@ -427,7 +427,7 @@ class LifeStep:
             lines.append("- 要提前防着的：\n" + "\n".join("  - " + x for x in warns))
         lines.append("- " + WEATHER_RULE)
         try:
-            power = supply_mod.step_text(start, until, text_of, home)
+            power = supply_mod.step_text(start, until, text_of, home, world=self.world)
         except Exception:
             logger.warning("[super_enhance/step] 电和补给没拼上", exc_info=True)
             power = ""
@@ -1674,6 +1674,9 @@ class LifeStep:
                     "importance": raw.get("importance"),
                     "at_home": raw.get("at_home"),
                     "meal": raw.get("meal"),
+                    # 点着煤油灯（supply.LAMP_OIL 开着时，程序照这个算煤油还剩多少）
+                    **({"lamp": True} if raw.get("lamp") in (True, "true") and not sleep else {}),
+                    **({"kerosene": True} if raw.get("kerosene") in (True, "true") else {}),
                     "public": raw.get("public"),
                     "with": with_list,
                     "training": training,
