@@ -9,7 +9,8 @@ from astrbot.api import logger
 
 from ...common import timeutil
 from . import raw_log as raw_log_mod
-from .world import WorldStore, detail_of, doing_text, is_event, parse_time, progress_of, public_of, real_stop, result_text, staged_of, visible_to
+from .world import (WorldStore, detail_of, doing_text, is_event, parse_time, plan_text, progress_of, public_of, real_stop,
+                    result_text, staged_of, visible_to)
 
 WEEKDAYS_CN = timeutil.WEEKDAYS_CN
 TAG = "【世界线】"
@@ -222,7 +223,8 @@ def build_world_text(
             tags.append(when)
         if item.get("now_at"):
             tags.append("%s 答应了现在就去" % timeutil.day_hm(item.get("now_at")))
-        lines.append("你说过的打算：%s%s" % (item.get("text"), "（%s）" % "，".join(tags) if tags else ""))
+        # 只给要做的事；怎么说起的（why，老打算是末尾带钟点的括号）不给她看，不然一遍遍提醒她当时的事
+        lines.append("你说过的打算：%s%s" % (plan_text(item), "（%s）" % "，".join(tags) if tags else ""))
     for item in world.constraints(viewer, active_only=True):
         lines.append("主人定的规矩：%s（%s 起%s）" % (
             item.get("text"),
@@ -276,7 +278,7 @@ def build_world_text(
         if heard and viewer not in heard:
             continue
         when = _plan_when(plan, today)
-        lines.append("主人说过他要：%s%s" % (plan.get("text"), "（%s）" % when if when else ""))
+        lines.append("主人说过他要：%s%s" % (plan_text(plan), "（%s）" % when if when else ""))
 
     return "\n".join(lines)
 

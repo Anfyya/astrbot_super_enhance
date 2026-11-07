@@ -91,8 +91,8 @@ def _count_chars(blob: Any) -> int:
         return len(str(blob))
 
 
-def build_snapshot(event: Any, req: Any) -> dict:
-    """把一次 LLM 请求装配成可读快照。"""
+def build_snapshot(event: Any, req: Any, kind: str = "") -> dict:
+    """把一次 LLM 请求装配成可读快照。kind 是「主动」时这次是她主动发消息（cron），不是回主人的话。"""
     conv = getattr(req, "conversation", None)
     contexts = getattr(req, "contexts", None) or []
     parts = _dump_parts(getattr(req, "extra_user_content_parts", None))
@@ -106,6 +106,7 @@ def build_snapshot(event: Any, req: Any) -> dict:
         "ts": now,
         "time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now)),
         "umo": str(getattr(event, "unified_msg_origin", "") or ""),
+        "kind": kind,
         "cid": str(getattr(conv, "cid", "") or "") if conv else "",
         "persona_id": str(getattr(conv, "persona_id", "") or "") if conv else "",
         "model": getattr(req, "model", None) or "",
@@ -148,6 +149,7 @@ def _index_item(name: str, snapshot: dict, size: int) -> dict:
         "ts": snapshot.get("ts"),
         "time": snapshot.get("time"),
         "umo": snapshot.get("umo"),
+        "kind": snapshot.get("kind") or "",
         "cid": snapshot.get("cid"),
         "model": snapshot.get("model"),
         "size": size,
@@ -219,9 +221,10 @@ class RequestSnapshotStore:
         match = _ID_RE.match(name)
         rel = "%s/%s.json" % (CHAT_DIR, match.group(2) if match else "unknown")
         stats = snapshot.get("stats") or {}
-        message = "%s %s\n\nid: %s\n消息 %s 条 · 工具 %s 个 · 注入 %s 块" % (
+        message = "%s %s%s\n\nid: %s\n消息 %s 条 · 工具 %s 个 · 注入 %s 块" % (
             snapgit.clock(snapshot.get("ts")),
             snapshot.get("umo") or "",
+            " %s" % snapshot["kind"] if snapshot.get("kind") else "",
             name,
             stats.get("context_messages", "?"),
             stats.get("tool_count", "?"),
@@ -329,11 +332,15 @@ class RequestSnapshotFeature:
     def enabled(self) -> bool:
         return bool(self.config.get("enabled", True))
 
-    async def capture(self, event: Any, req: Any) -> None:
+    async def capture_cron(self, event: Any, req: Any) -> None:
+        """主动发消息（cron）那次请求：cron 路径不走 on_llm_request，由 cron_context 在请求组好以后交过来。"""
+        await self.capture(event, req, kind="主动")
+
+    async def capture(self, event: Any, req: Any, kind: str = "") -> None:
         if not self.enabled:
             return
         try:
-            snapshot = build_snapshot(event, req)
+            snapshot = build_snapshot(event, req, kind)
         except Exception:
             logger.error("[super_enhance/snap] 组装快照失败", exc_info=True)
             return

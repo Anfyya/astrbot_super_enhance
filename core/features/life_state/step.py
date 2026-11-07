@@ -31,7 +31,7 @@ from .homewords import localize
 from .menu import meal_slots, meals_text
 from .variety import default_pools, twists_of, when_map, with_when
 from .world import (WorldStore, clean_text, doing_text, fmt_time, is_event, is_sleep, mood_text, parse_steps, parse_time, progress_of, real_stop,
-                    result_text, steps_text)
+                    result_text, steps_text, why_text)
 
 SYSTEM_PROMPT = llm.SYSTEM_PROMPT
 
@@ -727,7 +727,8 @@ class LifeStep:
         if days:
             tags.append("从 %s 挂到现在 %d 天了，这次要往前推或了结（见第 12 条）" % (
                 timeutil.day_hm(item.get("pushed") or item.get("created")), days))
-        return "- %s（%s）：%s" % (item.get("id"), "，".join(tags), item.get("text"))
+        # 怎么说起的（记录员写在 why 里）补写要看，聊天那边不给她看
+        return "- %s（%s）：%s%s" % (item.get("id"), "，".join(tags), item.get("text"), why_text(item))
 
     def _intent_with_master(self, intent_id: str) -> bool:
         if not intent_id:
@@ -1146,8 +1147,9 @@ class LifeStep:
         if plans:
             parts.append(
                 "主人说过他要做的事（写着和她们一起、要她们做的，照着排进去；里头怎么做还没说定的，先填 ask_master 问主人）：\n"
-                + "\n".join("- %s %s：%s" % (
-                    str(x.get("date") or "")[5:] or "日子没说", x.get("window") or "", x.get("text")) for x in plans)
+                + "\n".join("- %s %s：%s%s" % (
+                    str(x.get("date") or "")[5:] or "日子没说", x.get("window") or "", x.get("text"), why_text(x))
+                    for x in plans)
             )
         promises = self._promise_lines(flat)
         if promises:

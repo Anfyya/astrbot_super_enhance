@@ -4631,7 +4631,7 @@
       h("div", { class: "w-rules", "data-sec": "rules" }, worldConstraintSection(d, who)),
       h("div", { class: "w-intent", "data-sec": "intent" }, worldIntentionSection(d, who)),
       h("div", { class: "w-main" }, worldTimelineSection(d, who)),
-      h("div", { class: "w-routine", "data-sec": "routine" }, worldRoutineSection(d, bot), worldStepNotesSection(d))));
+      h("div", { class: "w-routine", "data-sec": "routine" }, worldSeedSection(d, who), worldRoutineSection(d, bot), worldStepNotesSection(d))));
   }
 
   /* ---------- 人物切换：固定在滚动区上面 ---------- */
@@ -5002,6 +5002,7 @@
       e.doing ? h("div", { class: "wdo", text: worldDoingText(e) }) : null,
       worldSteps(e, pct),
       (!(e.stop_shown !== undefined ? e.stop_shown : e.stopped) && e.result) ? h("div", { class: "wres", text: "结果：" + e.result }) : null,
+      e.mood ? h("div", { class: "wres", text: "心情：" + e.mood }) : null,
       worldThings(d, e, null),
       h("div", { class: "lm" },
         h("span", { class: "tag" + (e.source === "manual" ? " acc" : ""), text: WORLD_SRC[e.source] || e.source || "" }),
@@ -5018,7 +5019,7 @@
     edit.addEventListener("click", function () {
       worldOpen("e", e.id, { when: rangeText(e.start, e.end, date), place: e.place || "", doing: e.doing || "", steps: (e.steps || []).map(function (t, i) { var m = worldStepMins(e); return { text: t, minutes: m ? String(m[i]) : "" }; }),
         importance: +e.importance > 0 ? String(e.importance) : "",
-        result: e.result || "", "public": e["public"] || "",
+        result: e.result || "", mood: e.mood || "", "public": e["public"] || "",
         training: /^#?\d+$/.test(String(e.training || "").trim()) ? String(e.training).trim().replace(/^#/, "") : "",
         things: JSON.parse(JSON.stringify(e.things || [])) });
     });
@@ -5408,6 +5409,8 @@
       edRow(p, "谁", edChips(worldWhoList(d).map(function (w) { return { key: w.key, label: w.label }; }), f.who, function (v) { f.who = v; }));
     }
     edRow(p, "结果", edInput(f.result, "这件事最后怎样了，做完才给她看", function (v) { f.result = v; }, { area: true }));
+    edRow(p, "心情", edInput(f.mood, "这段她什么心情、因为什么，可空", function (v) { f.mood = v; }),
+      "聊天时她看的是已经开始的最近一段写的心情；空着就往前找");
     edRow(p, "别人看到", edInput(f["public"], "空着就只看到地点", function (v) { f["public"] = v; }),
       "别人只看到这一句粗略的说法；细节只有她自己和在场的人知道");
     edRow(p, "重要程度", [
@@ -5444,6 +5447,7 @@
         start: r.start, end: r.end, place: f.place, doing: f.doing, steps: stepList, "public": f["public"],
         importance: String(f.importance || "").trim() === "" ? 0 : +String(f.importance).trim(),
         result: String(f.result || ""),
+        mood: String(f.mood || ""),
         training: String(f.training || "").replace(/^#/, "").trim(),
         things: things ? f.things || [] : undefined
       }, e ? "已保存" : "已添加", function () { delete S.wEdit[key]; }, { from: wk, to: e ? wk : findNew });
@@ -5569,7 +5573,7 @@
         card.appendChild(h("div", { class: "muted", style: "font-size:13px", text: "现在没有打算。" }));
       }
       card.appendChild(h("button", { class: "addlink", type: "button", "data-wk": "i:" + who, onclick: function () {
-        worldOpen("i", who, { who: who, text: "", window: "" });
+        worldOpen("i", who, { who: who, text: "", window: "", why: "" });
       } }, icon("plus"), "替她写一条打算"));
     }
     sec.appendChild(card);
@@ -5580,13 +5584,14 @@
     var row = h("div", { class: "lrow", "data-wk": "i:" + it.who });
     row.appendChild(h("div", { class: "lt" },
       h("div", null, h("span", { class: "what", text: it.text })),
+      it.why ? h("div", { class: "lm" }, h("span", { text: "怎么说起的：" + it.why })) : null,
       h("div", { class: "lm" },
         it.window ? h("span", { text: "时间：" + it.window }) : null,
         it.created ? h("span", { text: String(it.created).slice(5, 16) + " 记的" }) : null,
         h("span", { class: "tag", text: WORLD_SRC[it.source] || it.source || "" }))));
     var acts = h("div", { class: "la" });
     var edit = h("button", { class: "btn quiet sm", type: "button", title: "编辑" }, icon("edit"));
-    edit.addEventListener("click", function () { worldOpen("i", it.who, { id: it.id || "", who: it.who, text: it.text || "", window: it.window || "" }); });
+    edit.addEventListener("click", function () { worldOpen("i", it.who, { id: it.id || "", who: it.who, text: it.text || "", window: it.window || "", why: it.why || "" }); });
     var del = h("button", { class: "btn quiet sm danger", type: "button", title: "删除" }, icon("trash"));
     armed(del, "确认删除", function () { worldPost({ kind: "intention", action: "delete", who: it.who, id: it.id || "" }, "已删除"); });
     acts.appendChild(edit);
@@ -5606,12 +5611,48 @@
       edRow(p, "谁的", edChips((d.bots || []).map(function (b) { return { key: b.key, label: b.label }; }), f.who, function (v) { f.who = v; }));
     }
     edRow(p, "什么时候", edInput(f.window, "可空，例如 13:00~16:00", function (v) { f.window = v; }), "大概什么时候去做；写了时间段，补写会把那段时间腾出来");
+    edRow(p, "怎么说起的", edInput(f.why, "可空，例如 15:11 她问今晚能不能去，主人答应了", function (v) { f.why = v; }, { area: true }),
+      "补写、记录员看；聊天时她只看到上面那句");
     box.appendChild(edSec(p));
     return worldFormFoot(box, function () { worldClose("i", key); }, "保存", function () {
       if (!String(f.text || "").trim()) { toast("打算不能空", { err: true }); return null; }
-      return worldPost({ kind: "intention", action: "set", id: f.id || "", who: f.who, text: f.text, window: f.window },
+      return worldPost({ kind: "intention", action: "set", id: f.id || "", who: f.who, text: f.text, window: f.window, why: String(f.why || "") },
         f.id ? "已保存" : "已添加", function () { delete S.iEdit[key]; }, { from: wk, to: wk });
     }, function () { return worldDirty(f); });
+  }
+
+  /* ---------- 这天抽的（每天 0 点抽好的那份，只看不改） ---------- */
+  var WORLD_SEED_ROWS = [["twists", "白天的小事"], ["night_twists", "晚上的小事"], ["pastimes", "消遣"],
+    ["idles", "白天闲着时"], ["night_idles", "晚上闲着时"]];
+  function worldSeedSection(d, who) {
+    var sec = h("div", { class: "lsec" }, lsecHead("这天抽的", "每天 0 点抽好，补写照着排；起床时的心情只是早上的底色，之后看每段写的心情"));
+    var seed = d.seed || {};
+    var card = h("div", { class: "pc", "data-wk": "s:" + who });
+    if (!Object.keys(seed).length) {
+      card.appendChild(h("div", { class: "muted", style: "font-size:13px", text: "这天还没抽。" }));
+      sec.appendChild(card);
+      return sec;
+    }
+    var mine = function (v) { return v && typeof v === "object" && !Array.isArray(v) ? v[who] : v; };
+    var rows = h("div", { class: "nlist" });
+    var line = function (label, value) {
+      if (value === undefined || value === null || value === "" || (Array.isArray(value) && !value.length)) { return; }
+      rows.appendChild(h("div", null, h("b", { text: label + "：" }), Array.isArray(value) ? value.join("；") : String(value)));
+    };
+    line("天气", seed.weather_day || seed.weather);
+    var hours = h("div", { class: "muted", style: "font-size:12px;line-height:18px;padding-left:14px" });
+    (seed.hourly || []).forEach(function (x) { hours.appendChild(h("div", { text: x.from + "–" + x.to + "　" + x.text })); });
+    if ((seed.hourly || []).length) { rows.appendChild(hours); }
+    line("起床时的心情", mine(seed.moods));
+    line("这天的基调", mine(seed.tone));
+    WORLD_SEED_ROWS.forEach(function (r) { line(r[1], mine(seed[r[0]])); });
+    line("两人一起", seed.together);
+    line("意外", mine(seed.accident));
+    var menu = (seed.meals || {}).menu || {};
+    Object.keys(menu).forEach(function (k) { line(k, menu[k]); });
+    card.appendChild(rows);
+    sec.appendChild(card);
+    return sec;
   }
 
   /* ---------- 补写注意事项（只给补写看） ---------- */

@@ -20,7 +20,7 @@ from .models import bot_of_umo
 from .things import (CAT_FOOD, CAT_ITEM, KEEPS, KINDS, SAME_NEW_MINUTES, SAME_STEP_MINUTES, SPOTS, STEPS, USE_STEPS, cat_of,
                      checked_place, find_same, norm_kind, norm_step, usable)
 from .world import (WorldStore, clean_steps, clean_text, doing_text, fit_steps, fmt_time, is_event, is_sleep, parse_time,
-                    result_text, step_minutes, wind_up)
+                    result_text, step_minutes, why_text, wind_up)
 from .things import reached_steps
 
 # 记录员停过一阵时，往前最多翻几天的原始消息（原始消息副本最多也只留这么久）
@@ -84,7 +84,7 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
    她只是边做事边跟人说话，或者说的就是「今天的简略世界线」里标着「正在做」的那件，什么都不用记：聊天本身不算一件事。她说自己做了什么、在做什么，就算做了（哪怕听着像编的）。
    只有和她手上那件真冲突，才记一段新的 activity 把它换掉。真冲突是指：她说人在别的地方；她说那件事停下了、做完了；她说正在做的事和手上那件不可能同时做。只是没提手上那件、只提了其中一部分、或者说了件能同时做的小事，都不算冲突：能记成 event 就记 event，不然什么都不记。没说不等于没做。
    手上那段标着「闲着」的：她说开始做了一件具体的事（看书、出门、做饭……），就记一段新的 activity。
-6. 之后要去做的一件具体的事（待会儿、下午、晚饭后、明天去做什么），记成 intentions（打算），不是条目：她自己说要去做的，和主人叫她过会儿去做的，都算。她答应现在就去做的（第 5 条）也记成打算：写 now: true，since 写她答应的那条消息的时间，window、date 留空；她向主人提议、主人还没答应的（「中午咱们去买豆腐呗」「要不要去后山」），不算，不记；主人明确答应了的，按第 3 条把他那条记成 master 的打算，她这边照常记一条 with 是 ["master"] 的打算。text 要写清楚，让没看过这段对话的人也能照着去做：做什么、在哪、跟谁、要带上或用到什么、做到什么样算完，最后用一句话交代是怎么说起的（几点谁说的、因为什么）；只用对话里有的信息补全，不编没说的。比如不要写「回头把体己数给主人看」，要写「把柜角小布袋里攒的铜板拿出来，当着主人的面一枚枚数给他看，说清是哪来的（10-17 晚上逛夜市时主人问她钱是哪来的，她说是香火铜板攒的，答应回头数给他）」。这件事要和主人一起做、而且是主人提的或主人答应了的，with 写 ["master"]；她一个人做的留空。date 写哪天做（YYYY-MM-DD，「明天」按对话日期换算；半夜 0 点到天亮前说的「明天」「明早」「天亮」指天亮以后的这一天，日期不加一），没说哪天留空；window 写钟点范围，没说就留空。打算可以同时有好几条，做完一条或哪条对不上了，就按编号撤那一条（见第 14 条）。往后都怎么做、往后注意什么（做法、原则），不是一件要去做的事，不记成打算：这话是主人说的，按第 4 条记成规矩；只是她自己说的，什么都不记。
+6. 之后要去做的一件具体的事（待会儿、下午、晚饭后、明天去做什么），记成 intentions（打算），不是条目：她自己说要去做的，和主人叫她过会儿去做的，都算。她答应现在就去做的（第 5 条）也记成打算：写 now: true，since 写她答应的那条消息的时间，window、date 留空；她向主人提议、主人还没答应的（「中午咱们去买豆腐呗」「要不要去后山」），不算，不记；主人明确答应了的，按第 3 条把他那条记成 master 的打算，她这边照常记一条 with 是 ["master"] 的打算。text 要写清楚，让没看过这段对话的人也能照着去做：做什么、在哪、跟谁、要带上或用到什么、做到什么样算完；只用对话里有的信息补全，不编没说的。怎么说起的（几点谁说的、因为什么）一句话写进 why，不写进 text：text 她每次聊天都看得到，前因写在里头，等于一遍遍提醒她当时的事。比如不要写「回头把体己数给主人看」，text 要写「把柜角小布袋里攒的铜板拿出来，当着主人的面一枚枚数给他看，说清是哪来的」，why 写「10-17 晚上逛夜市时主人问她钱是哪来的，她说是香火铜板攒的，答应回头数给他」。这件事要和主人一起做、而且是主人提的或主人答应了的，with 写 ["master"]；她一个人做的留空。date 写哪天做（YYYY-MM-DD，「明天」按对话日期换算；半夜 0 点到天亮前说的「明天」「明早」「天亮」指天亮以后的这一天，日期不加一），没说哪天留空；window 写钟点范围，没说就留空。打算可以同时有好几条，做完一条或哪条对不上了，就按编号撤那一条（见第 14 条）。往后都怎么做、往后注意什么（做法、原则），不是一件要去做的事，不记成打算：这话是主人说的，按第 4 条记成规矩；只是她自己说的，什么都不记。
 7. 两个角色之间的对话同样处理；另一个角色说的话，不能当成主人说的。认清每句话里的「你」「我」：主人话里的「我」是主人自己，「你」是这段私聊里的她（看上面「这段对话是谁和谁」）；她话里的「我」和她的自称是她自己。记谁做了什么、谁说了什么，照这个认主语，别把她做的事记成主人做的，也别反过来（例如主人说「饭你刚才也做好了」，是她做好的饭，不是主人做的）。拿不准是谁做的，就不写是谁做的。
    条目的 with 里写另一个角色（她和对方一起）之前，先看清单里对方那会儿在干什么：两人本来就在一起、这会儿一起走的，两个人的条目都记上（对方那条 with 写她），对方手上那段也按第 16 条写进 stale；对方那边已经记着别的事（尤其是对方自己说的），就照对方的来，只记她自己：with 不写对方，doing 里也别写成和对方一起。
 8. 每条条目写两层：public 是住在一起的人自然会知道的粗粒度信息（人在哪、大概在干哪类事，例如"在藏经阁闭关练功"、"出门吃饭了"），可以为空表示别人完全不知道；doing 是细节，可以写具体在干什么、聊了什么。
@@ -135,9 +135,9 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
       "since": "2026-10-12 00:11", "until": "在练的事 #3 练成", "until_time": ""}}
   ],
   "lift_constraints": ["c3"],
-  "intentions": [{{"who": "napcat", "text": "晚饭后跟主人去温泉街夜市，挨个摊子逛一圈、跟着他挤一回人堆（15:11 她问今晚能不能带她去，主人答应了，说周六人多）", "window": "18:40~21:00", "date": "2026-10-17", "with": ["master"]}},
-                 {{"who": "napcat2", "text": "去镇上鱼摊买两条黑鱼回来，晚上做水煮鱼（16:40 主人说想吃水煮鱼，她答应这就去买）", "now": true, "since": "2026-10-17 16:40", "window": "", "date": "", "with": []}},
-                 {{"who": "master", "text": "去鹈茅学院上课（23:03 睡前他说明天还有课）", "window": "", "date": "2026-10-18", "with": []}}],
+  "intentions": [{{"who": "napcat", "text": "晚饭后跟主人去温泉街夜市，挨个摊子逛一圈、跟着他挤一回人堆", "why": "15:11 她问今晚能不能带她去，主人答应了，说周六人多", "window": "18:40~21:00", "date": "2026-10-17", "with": ["master"]}},
+                 {{"who": "napcat2", "text": "去镇上鱼摊买两条黑鱼回来，晚上做水煮鱼", "why": "16:40 主人说想吃水煮鱼，她答应这就去买", "now": true, "since": "2026-10-17 16:40", "window": "", "date": "", "with": []}},
+                 {{"who": "master", "text": "去鹈茅学院上课", "why": "23:03 睡前他说明天还有课", "window": "", "date": "2026-10-18", "with": []}}],
   "drop_intentions": ["i3"],
   "stale": [{{"who": "napcat2", "entry": "e100", "why": "主人叫她去街上看看有什么硬菜", "how": "收尾", "wrap": "关火，把炒了一半的饭盛出来扣好", "minutes": 2, "result": "饭炒到一半，盛在盘里扣着", "to": "", "doing": ""}}],
   "things": [
@@ -387,7 +387,7 @@ class Recorder:
                 tags.append(when)
             if item.get("now_at"):
                 tags.append("%s 答应现在就去" % timeutil.day_hm(item.get("now_at")))
-            parts.append("- 打算 %s（%s）：%s" % (item.get("id"), "，".join(tags), item.get("text")))
+            parts.append("- 打算 %s（%s）：%s%s" % (item.get("id"), "，".join(tags), item.get("text"), why_text(item)))
         book = getattr(self, "trainings", None)
         if book is not None:
             try:
@@ -796,6 +796,9 @@ class Recorder:
         for raw in data.get("constraints") or []:
             if not isinstance(raw, dict):
                 continue
+            # 记过的规矩又记一遍：add_constraint 并到原来那条上，这里不当新规矩（不然每回都撤掉排好的段重排）
+            existed = self.world.same_constraint(str(raw.get("who") or "").strip(), raw.get("text"))
+            before = (existed.get("until"), existed.get("until_time")) if existed is not None else None
             added = self.world.add_constraint({
                 "who": raw.get("who"),
                 "text": raw.get("text"),
@@ -811,6 +814,12 @@ class Recorder:
                 "source": "chat",
                 "src_umo": umo,
             })
+            if added and existed is not None:
+                if before != (added.get("until"), added.get("until_time")):
+                    logger.info("[super_enhance/world] 记录员改了%s的规矩 %s 的期限：%s", self.label(added["who"]) or added["who"],
+                                added["id"], clean_text(added.get("until") or added.get("until_time"), 40))
+                    changed = changed or added["who"] in set(self.raw_log.enabled_bots())
+                continue
             if added:
                 logger.info("[super_enhance/world] 记录员记了%s的规矩 %s：%s", self.label(added["who"]) or added["who"],
                             added["id"], clean_text(added["text"], 40))
@@ -853,7 +862,7 @@ class Recorder:
             record = self.world.set_intention(
                 who, raw.get("text"), raw.get("window") or "", "chat",
                 with_list=together, date=raw.get("date") or "",
-                heard_by=[heard] if who == "master" and heard else None, now_at=now_at,
+                heard_by=[heard] if who == "master" and heard else None, now_at=now_at, why=raw.get("why") or "",
             )
             # 只有新记的才腾地方；同一条再说一遍不动（补写可能已经把它排进去了）；主人自己的安排不腾她们的地方
             if record and str(record.get("id")) not in known and who != "master":

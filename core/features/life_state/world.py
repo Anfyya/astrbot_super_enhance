@@ -139,6 +139,10 @@ class WorldStore:
                 {"version": 1, "constraints": [], "intentions": [],
                  "cursors": {}, "last_step": "", "last_step_attempt": "", "errors": {}},
             )
+            merged = _merge_same_constraints(self._state)
+            if merged:
+                logger.info("[super_enhance/world] 规矩存重了 %d 份，并掉了", merged)
+                self._save_state()
         return self._state
 
     def _save_state(self, quiet: bool = False) -> None:
@@ -766,6 +770,20 @@ class WorldStore:
                         old[key] = clean_text(item.get(key), MAX_TEXT)
                 self._save_state()
                 return old
+        same = self.same_constraint(who, text)
+        if same is not None:
+            # 同一个人、内容一样、还生效的已经有了：不另起一条（不然撤的时候只撤掉一份），
+            # 只补它空着的「别人看到的说法」，期限照这回说的改
+            public = clean_text(item.get("public"), MAX_PUBLIC)
+            if public and not same.get("public"):
+                same["public"] = public
+            until = clean_text(item.get("until"), MAX_TEXT)
+            if until:
+                same["until"] = until
+            if item.get("until_time"):
+                same["until_time"] = str(item.get("until_time"))
+            self._save_state()
+            return same
         nid = int(state.get("next_c") or 1)
         state["next_c"] = nid + 1
         record = {
@@ -784,6 +802,17 @@ class WorldStore:
         items.append(record)
         self._save_state()
         return record
+
+    def same_constraint(self, who: str, text: str):
+        """还生效的规矩里，同一个人、内容一样（去掉空白标点后比）的那条；没有返回 None。"""
+        key = _rule_key(clean_text(text, MAX_TEXT))
+        if not key:
+            return None
+        for old in self._load_state().get("constraints") or []:
+            if (str(old.get("status")) == "active" and str(old.get("who")) == str(who)
+                    and _rule_key(old.get("text")) == key):
+                return old
+        return None
 
     def update_constraint(self, cid: str, **fields):
         for item in self._load_state().get("constraints") or []:
@@ -863,24 +892,30 @@ class WorldStore:
         return top + 1
 
     def set_intention(self, who: str, text: str, window: str = "", source: str = "step",
-                      with_list=None, date: str = "", heard_by=None, now_at: str = ""):
+                      with_list=None, date: str = "", heard_by=None, now_at: str = "", why: str = ""):
         """记一条打算。with_list 里有 "master" = 主人提的或答应了的、要和主人一起做的事；
         date 是哪天做（YYYY-MM-DD，可空）；heard_by 是主人自己的打算由谁听到的（主人的打算只给听到的人看）；
-        now_at 是她答应「现在就去做」的时刻（补写马上先排这件）。"""
+        now_at 是她答应「现在就去做」的时刻（补写马上先排这件）；why 是怎么说起的（补写、记录员看，聊天不给她看）。"""
         body = clean_text(text, MAX_INTENTION_TEXT)
         if not who or not body:
             return None
+        reason = clean_text(why, MAX_TEXT)
         state = self._load_state()
         items = list(state.get("intentions") or [])
         # 同样的打算不重复记；不同的打算并存，新的不再顶掉旧的
         for item in items:
             if str(item.get("who")) == str(who) and str(item.get("text") or "") == body:
+                if reason and not item.get("why"):
+                    item["why"] = reason
+                    self._save_state()
                 return item
         seq = self._intention_seq(state)
         state["intention_seq"] = seq
         record = {"id": "i%d" % seq, "who": who, "text": body,
                   "window": clean_text(window, 60), "source": source,
                   "created": fmt_time(self.now_local())}
+        if reason:
+            record["why"] = reason
         together = [str(x) for x in (with_list or []) if str(x).strip() and str(x) != str(who)]
         if together:
             record["with"] = together
@@ -899,8 +934,9 @@ class WorldStore:
         return record
 
     def update_intention(self, intention_id: str, text=None, window=None, date=None, pushed=None,
-                         source="manual") -> bool:
-        """按编号改一条打算（网页手动）。补写推进挂太久的打算时也用：pushed 记下这次推过的时刻，source 传 None 不改来源。"""
+                         source="manual", why=None) -> bool:
+        """按编号改一条打算（网页手动）。补写推进挂太久的打算时也用：pushed 记下这次推过的时刻，source 传 None 不改来源。
+        why 传字符串就改「怎么说起的」（空串就是清掉）。"""
         if not intention_id:
             return False
         state = self._load_state()
@@ -915,6 +951,12 @@ class WorldStore:
                     item["text"] = body
             if window is not None:
                 item["window"] = clean_text(window, 60)
+            if why is not None:
+                reason = clean_text(why, MAX_TEXT)
+                if reason:
+                    item["why"] = reason
+                else:
+                    item.pop("why", None)
             day = str(date or "").strip()[:10]
             if re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
                 item["date"] = day
@@ -1432,6 +1474,58 @@ def mood_text(entry: dict) -> str:
     """「（心情：……）」：补写写的这段她什么心情（给补写看前面的心情接着往下写）；没写返回空。"""
     value = str((entry or {}).get("mood") or "").strip()
     return "（心情：%s）" % value if value else ""
+
+
+def _rule_key(text) -> str:
+    """规矩去重用：去掉空白和标点后比。"""
+    return re.sub(r"[\s，。,.!！?？、；;：:「」『』\"'（）()]+", "", str(text or ""))
+
+
+def _merge_same_constraints(state: dict) -> int:
+    """还生效的规矩里，同一个人、内容一样的并成一条：留最早记的那条，它空着的字段从后面几条补上。返回并掉了几条。
+
+    11-07 查出来的：记录员把记过的规矩又记一遍时会另起编号，两人 7 条规矩存成了 16 条，每次聊天念两三遍；
+    撤规矩只按编号撤一条，剩下的几份照样生效。"""
+    items = state.get("constraints") or []
+    first: dict = {}
+    kept, dropped = [], 0
+    for item in items:
+        key = (str(item.get("who")), _rule_key(item.get("text")))
+        if str(item.get("status")) == "active" and key[1]:
+            old = first.get(key)
+            if old is not None:
+                for field in ("public", "until", "until_time", "src_quote"):
+                    if item.get(field) and not old.get(field):
+                        old[field] = item[field]
+                dropped += 1
+                continue
+            first[key] = item
+        kept.append(item)
+    if dropped:
+        state["constraints"] = kept
+    return dropped
+
+
+# 11-07 以前记录员把「怎么说起的」写在打算末尾的括号里，括号里带着钟点或日期
+_OLD_WHY_RE = re.compile(r"^(.*\S)\s*（([^（）]*(?:\d{1,2}[:：]\d{2}|\d{1,2}-\d{1,2}|\d{1,2}月\d{1,2})[^（）]*)）\s*$", re.S)
+
+
+def plan_text(item: dict) -> str:
+    """给她聊天时看的打算：只写要做的事，「怎么说起的」不给。
+
+    11-07 以前前因写在打算末尾的括号里（「……（19:34 主人笑她之前说没带吃的回来就要堵门咬人……）」），
+    每轮聊天都给她看，等于一直提醒她那场别扭。现在记录员另写在 why 里；没有 why 的老打算，末尾带钟点、日期的括号当前因去掉。"""
+    text = str((item or {}).get("text") or "").strip()
+    if str((item or {}).get("why") or "").strip():
+        return text
+    match = _OLD_WHY_RE.match(text)
+    return match.group(1) if match else text
+
+
+def why_text(item: dict) -> str:
+    """「（怎么说起的：……）」：给补写、记录员看这条打算是怎么来的；没写返回空。"""
+    value = str((item or {}).get("why") or "").strip()
+    return "（怎么说起的：%s）" % value if value else ""
 
 
 def steps_text(entry: dict) -> str:

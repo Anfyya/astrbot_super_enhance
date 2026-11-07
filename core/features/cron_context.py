@@ -100,6 +100,9 @@ class CronContextFeature:
         # cron 请求的补注入回调（async (event, req)）：cron 路径不触发 on_llm_request，
         # 生活状态等功能要在这里把平时的注入补上；与裁剪开关无关，始终执行。
         self.cron_request_hooks: list = []
+        # AstrBot 把 cron 请求组好以后的回调（async (event, req)）：人格、工具都装上了，就是真发出去的那份
+        # （请求快照存主动消息用）。
+        self.cron_built_hooks: list = []
 
     # ---------- 配置 ----------
 
@@ -173,7 +176,15 @@ class CronContextFeature:
                     await feature._maybe_trim(event, req)
             except Exception:
                 logger.error("[super_enhance/cron_ctx] cron 钩子异常", exc_info=True)
-            return await orig(*args, **kwargs)
+            result = await orig(*args, **kwargs)
+            if result is not None and is_cron_event(event):
+                built = getattr(result, "provider_request", None) or req
+                for hook in list(feature.cron_built_hooks):
+                    try:
+                        await hook(event, built)
+                    except Exception:
+                        logger.error("[super_enhance/cron_ctx] cron 请求组好以后的回调失败", exc_info=True)
+            return result
 
         self.patches.add(
             ama,

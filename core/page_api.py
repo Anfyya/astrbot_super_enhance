@@ -628,6 +628,8 @@ class ContextPageApi:
                     for item in world.intentions()
                 ],
                 "routine": world.all_routine(),
+                # 这天 0 点抽的（起床时的心情、插曲、消遣、闲着时、意外、饭……），网页「这天抽的」照它显示
+                "seed": self._day_seed(life, date_text),
                 "step_notes": life.step_notes_text(),
                 "step_thoughts": life.step_thoughts(),
                 "day_plan": {bot: world.day_plan(bot, date_text) for bot in bots},
@@ -648,6 +650,36 @@ class ContextPageApi:
         except Exception as exc:
             logger.error("[super_enhance/ctx] 读取世界线失败", exc_info=True)
             return _err(exc)
+
+    @staticmethod
+    def _day_seed(life, date_text: str) -> dict:
+        """这天 0 点抽的那份（daily_seeds.json）原样给，再加上按钟点算的天气（hourly，跟聊天、补写算的是同一份）。
+        这天没抽过返回空。"""
+        try:
+            from .features.life_state import weather as weather_mod
+
+            seeds = life.seed_log.load() or {}
+            seed = seeds.get(date_text)
+            if not isinstance(seed, dict):
+                return {}
+            out = dict(seed)
+            known = sorted(k for k, v in seeds.items() if isinstance(v, dict) and v.get("weather"))
+
+            def weather_of(day):
+                older = [k for k in known if k <= day.isoformat()]
+                return str(seeds[older[-1]]["weather"]) if older else "多云"
+
+            home = str(life.cfg.get("world_home") or "").strip() or "穗织"
+            start = datetime.datetime.fromisoformat(date_text)
+            out["weather_day"] = weather_mod.split(seed.get("weather"))[1]
+            out["hourly"] = [
+                {"from": a.strftime("%H:%M"), "to": "24:00" if b.date() != start.date() else b.strftime("%H:%M"), "text": t}
+                for a, b, t in weather_mod.segments(start, start + datetime.timedelta(days=1), weather_of, home)
+            ]
+            return out
+        except Exception:
+            logger.warning("[super_enhance/ctx] 世界线页读这天抽的失败", exc_info=True)
+            return {}
 
     @staticmethod
     def _entry_things(life, raws, old) -> list:
@@ -684,7 +716,7 @@ class ContextPageApi:
                     world.note_manual()
                 elif action == "update":
                     fields = {}
-                    for key in ("place", "doing", "public", "start", "end", "training", "steps", "importance", "result"):
+                    for key in ("place", "doing", "public", "start", "end", "training", "steps", "importance", "result", "mood"):
                         if body.get(key) is not None:
                             fields[key] = body.get(key)
                     if isinstance(body.get("things"), list):
@@ -706,6 +738,7 @@ class ContextPageApi:
                         "steps": body.get("steps") or [],
                         "importance": body.get("importance"),
                         "result": body.get("result"),
+                        "mood": body.get("mood") or "",
                         "public": body.get("public"),
                         "with": body.get("with") or [],
                         "training": body.get("training"),
@@ -750,7 +783,7 @@ class ContextPageApi:
                         ok = True
                 elif iid:
                     ok = world.update_intention(
-                        iid, text=body.get("text"), window=body.get("window")
+                        iid, text=body.get("text"), window=body.get("window"), why=body.get("why")
                     )
                 elif len(world.intentions(who)) == 1:
                     # 只有一条时，网页的「保存」还是改那一条（老习惯）
@@ -758,11 +791,13 @@ class ContextPageApi:
                         str(world.intentions(who)[0].get("id") or ""),
                         text=body.get("text"),
                         window=body.get("window"),
+                        why=body.get("why"),
                     )
                 else:
                     ok = bool(
                         world.set_intention(
-                            who, body.get("text") or "", body.get("window") or "", "manual"
+                            who, body.get("text") or "", body.get("window") or "", "manual",
+                            why=body.get("why") or "",
                         )
                     )
             elif kind == "step_notes":
