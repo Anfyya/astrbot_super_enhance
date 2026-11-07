@@ -5,8 +5,44 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 
 from astrbot.api import logger
+
+# 每调完一次模型（成功了，或者最后一次也失败了）把这一次交给它存：插件启动时请求快照那边接上
+# （存进快照那个 git 库的「内部/<标签>.json」），没接就不存
+_recorder = None
+
+
+def set_recorder(fn) -> None:
+    global _recorder
+    _recorder = fn
+
+
+def _record(**item) -> None:
+    fn = _recorder
+    if fn is None:
+        return
+    try:
+        fn(item)
+    except Exception:  # noqa: BLE001
+        logger.warning("[super_enhance] 记这次模型调用失败", exc_info=True)
+
+
+def _provider_name(provider, provider_id: str) -> str:
+    try:
+        value = getattr(provider.meta(), "id", "")
+        if value:
+            return str(value)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        value = (getattr(provider, "provider_config", None) or {}).get("id")
+        if value:
+            return str(value)
+    except Exception:  # noqa: BLE001
+        pass
+    return str(provider_id or "")
 
 SYSTEM_PROMPT = (
     "你只输出一个可以被 JSON 解析的对象，不要输出解释、Markdown 代码块或任何多余文本。"
@@ -48,6 +84,15 @@ async def text_chat(
         raise RuntimeError("没有可用的模型")
     last_error: Exception | None = None
     total = max(1, int(attempts))
+    started = time.time()
+    record = dict(
+        label=log_label,
+        provider=_provider_name(provider, provider_id),
+        session_id=session_id,
+        started=started,
+        system_prompt=system_prompt,
+        prompt=prompt,
+    )
     for attempt in range(1, total + 1):
         try:
             response = await asyncio.wait_for(
@@ -60,10 +105,14 @@ async def text_chat(
             )
             text = str(getattr(response, "completion_text", "") or "")
             thought = str(getattr(response, "reasoning_content", "") or "").strip()
+            _record(**record, elapsed=round(time.time() - started, 1), attempt=attempt,
+                    error="", text=text, thought=thought)
             return text, thought
         except Exception as exc:
             last_error = exc
             if attempt >= total:
+                _record(**record, elapsed=round(time.time() - started, 1), attempt=attempt,
+                        error=str(exc) or type(exc).__name__, text="", thought="")
                 raise
             logger.warning("[super_enhance] %s第 %d 次失败：%s", log_label, attempt, exc)
     raise last_error or RuntimeError("模型调用失败")

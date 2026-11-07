@@ -33,6 +33,7 @@ from astrbot.core.star.star_tools import StarTools
 from mcp.types import CallToolResult
 
 from .core.config_view import SectionConfig
+from .core.common import llm as common_llm
 from .core.common.bots import identify_event
 from .core.features.context import ContextToolsFeature
 from .core.features.history_merge import HistoryMergeFeature
@@ -132,6 +133,8 @@ class SuperEnhance(Star):
         self.snapshot = RequestSnapshotFeature(
             context, SectionConfig(raw, "request_snapshot"), data_dir
         )
+        # 补写、记录员这些插件自己调模型的，每一次也存进快照那个 git 库
+        common_llm.set_recorder(self.snapshot.record_inner)
         # 数据目录里放了 pending_memory_edits.json 才会动：启动后等长期记忆就绪，按清单小改记忆
         self.lm_edits = MemoryEditRunner(context, data_dir)
         self.features = FeatureGroup(
@@ -192,6 +195,8 @@ class SuperEnhance(Star):
         if self.page_api is not None:
             self.page_api.close()
         await self.life.terminate()
+        common_llm.set_recorder(None)
+        self.snapshot.close()
 
     # ------------------------------------------------------------------
     # 1. NapCat 输入状态
