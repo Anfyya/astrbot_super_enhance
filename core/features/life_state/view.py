@@ -375,7 +375,11 @@ def mood_now_text(service, bot: str, now: datetime.datetime) -> str:
     今天一段都没写（刚上线、补写还没写到），退回每天 0 点抽的起床时的心情。
 
     11-07 以前是一整天都给 0 点抽的那句：世界线里补写早让她消了气（「腮帮子慢慢松开了」），
-    聊天这边还一直是「有点小脾气」，一晚上都冲着主人。"""
+    聊天这边还一直是「有点小脾气」，一晚上都冲着主人。
+
+    心情得连着由头写明白（补写第 23 条）：11-07 21:54、22:05 亚托莉看到的是「有点不服气，还想接着捣鼓」，
+    补写那段写的是她在跟收音机较劲，聊天只看得到这一句，冲着主人说「会忍不住笑话你的」「可要说你了」。
+    起床时的心情是 0 点抽的，本来就说不上由头，这里也照实说不是冲着谁来的。"""
     flat = now.replace(tzinfo=None)
     today = flat.date().isoformat()
     latest = ""
@@ -392,7 +396,7 @@ def mood_now_text(service, bot: str, now: datetime.datetime) -> str:
     mood = str(((seed or {}).get("moods") or {}).get(bot) or "").strip() if isinstance(seed, dict) else ""
     if not mood:
         return ""
-    return "你今天起床时的心情：%s（一天里会跟着发生的事变）。自然地透在说话的语气里，用不着说出来。" % mood
+    return "你今天起床时的心情：%s。这是起床就带着的，不是冲着谁来的，一天里会跟着发生的事变。自然地透在说话的语气里，用不着说出来。" % mood
 
 
 def _weather_text_of(service):
