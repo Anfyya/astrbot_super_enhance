@@ -371,13 +371,28 @@ def weather_now_text(service, now: datetime.datetime) -> str:
 
 
 def mood_now_text(service, bot: str, now: datetime.datetime) -> str:
-    """她今天的心情（每天 0 点抽的那份，跟补写看到的是同一份）；今天没抽到就空。"""
+    """她现在的心情：补写给每段写了「这段她什么心情」，取已经开始的最近一段写了的那句；
+    今天一段都没写（刚上线、补写还没写到），退回每天 0 点抽的起床时的心情。
+
+    11-07 以前是一整天都给 0 点抽的那句：世界线里补写早让她消了气（「腮帮子慢慢松开了」），
+    聊天这边还一直是「有点小脾气」，一晚上都冲着主人。"""
+    flat = now.replace(tzinfo=None)
+    today = flat.date().isoformat()
+    latest = ""
+    for item in service.world.activities(bot, flat):
+        start = parse_time(item.get("start"))
+        if start is None or start > flat or str(item.get("start") or "")[:10] != today:
+            continue
+        if str(item.get("mood") or "").strip():
+            latest = str(item["mood"]).strip()
+    if latest:
+        return "你现在的心情：%s。自然地透在说话的语气里，用不着说出来。" % latest
     seeds = service.seed_log.load() or {}
-    seed = seeds.get(now.date().isoformat())
+    seed = seeds.get(today)
     mood = str(((seed or {}).get("moods") or {}).get(bot) or "").strip() if isinstance(seed, dict) else ""
     if not mood:
         return ""
-    return "你今天的心情：%s。自然地透在说话的语气里，用不着说出来。" % mood
+    return "你今天起床时的心情：%s（一天里会跟着发生的事变）。自然地透在说话的语气里，用不着说出来。" % mood
 
 
 def _weather_text_of(service):

@@ -56,6 +56,8 @@ MAX_STOP_WHY = 80
 # 每一步的文字长度
 MAX_STEP = 80
 MAX_RESULT = 80
+# 补写给每段写的「这段她什么心情」（一句话）
+MAX_MOOD = 60
 
 TIME_FMT = timeutil.TIME_FMT
 
@@ -378,6 +380,8 @@ class WorldStore:
             record["lamp"] = True  # 补写标的点着煤油灯（supply.LAMP_OIL）
         if entry.get("kerosene"):
             record["kerosene"] = True  # 补写标的这段把补给船那桶煤油领回来了（supply.LAMP_OIL）
+        if str(entry.get("mood") or "").strip() and kind != "event":
+            record["mood"] = clean_text(entry.get("mood"), MAX_MOOD)  # 补写写的这段她什么心情（聊天取当下这句）
         if entry.get("stopped") and isinstance(entry.get("stop_at_step"), int):
             record["stop_at_step"] = entry["stop_at_step"]
         if entry.get("stopped") and str(entry.get("wrap") or "").strip():
@@ -1422,6 +1426,12 @@ def result_text(entry: dict) -> str:
         return ""
     value = str((entry or {}).get("result") or "").strip()
     return "（结果：%s）" % value if value else ""
+
+
+def mood_text(entry: dict) -> str:
+    """「（心情：……）」：补写写的这段她什么心情（给补写看前面的心情接着往下写）；没写返回空。"""
+    value = str((entry or {}).get("mood") or "").strip()
+    return "（心情：%s）" % value if value else ""
 
 
 def steps_text(entry: dict) -> str:

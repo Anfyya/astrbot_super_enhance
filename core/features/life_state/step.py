@@ -30,8 +30,8 @@ from . import supply as supply_mod
 from .homewords import localize
 from .menu import meal_slots, meals_text
 from .variety import default_pools, twists_of, when_map, with_when
-from .world import (WorldStore, clean_text, doing_text, fmt_time, is_event, is_sleep, parse_steps, parse_time, progress_of, real_stop, result_text,
-                    steps_text)
+from .world import (WorldStore, clean_text, doing_text, fmt_time, is_event, is_sleep, mood_text, parse_steps, parse_time, progress_of, real_stop,
+                    result_text, steps_text)
 
 SYSTEM_PROMPT = llm.SYSTEM_PROMPT
 
@@ -138,6 +138,7 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
    - 同一种东西有好几件的（清单里标着「长得像，认准编号」），照清单认准是哪一件。
 21. **刚挨了主人训、主人刚生她的气**（上面「已经发生的」里有主人训她、骂她、生她气、跟她闹别扭这类事，后来也没说气消了、原谅她了）：她后面的安排要顺着这件事、她的性格和当时的情况来排，不能像没事人一样照常出门玩、去买东西、坐下来做手工。具体怎么样由你按实际情况定（可能闷在屋里、想办法跟主人道歉、做点事想讨他欢心、做事心不在焉……）；主人后来气消了、原谅她了，再照常排。
 22. **丛雨怎么移动**：丛雨平时是飘着的，脚不沾地，赶路就飘过去，累了或者撒娇时才落地走两步。她那几段里换地方、出门、回来、凑到谁跟前，都照这个写。
+23. **每段写 mood：这段她是什么心情**，一句话（比如「还有点闷，不太想说话」「气消得差不多了」「被夸了，心里美滋滋的」）。心情跟着事走：从她上一段的心情接着往下写（上面已经发生的、手上的事后面写着当时的心情；今天头一段从起床时的底色起），这段碰上的事、主人说的话、过了多久都会让它变——闹别扭的气会慢慢消，高兴的劲头也会过去，别一整天都是同一个心情。心情不好要有由头，由头得是世界线或聊天记录里真有的事（可以就是这段里写出来的一件小事）；没由头的坏心情过一阵就淡了。睡觉那段写睡前的心情。
 {world_notes}
 {step_notes}
 要问主人的（ask_master）：主人想吃的、叫她们做的、要和她们一起做的事，怎么做主人还没说定的（比如主人说想吃鱼，没说是蒸是煎还是炖；说要一起出去，没说去哪儿），就算有常见的做法，也先问主人一句：填 ask_master，who 写谁来问（key），question 写她要问的一句话。填了也照样把整份写完，这件事先照你觉得最合适的写；程序会让她去问主人、等他回话，主人说的跟你写的不一样，会把回话交给你再改。主人已经说定的、做好了直接端给主人的，不用问；没有要问的，ask_master 留空。
@@ -152,8 +153,8 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
   "stopped_results": {{}},
   "intent_moves": {{"i3": {{"done": false, "text": "推进以后的打算", "date": "", "window": ""}}}},
   "segments": {{
-    "napcat": [{{"start": "{example_start}", "end": "{example_end}", "place": "", "doing": "一句话写这件事", "steps": [{{"text": "这一阵子她一直在干什么", "minutes": 5}}, {{"text": "第二步", "minutes": 15}}, {{"text": "收尾：用过的东西收好、归位", "minutes": 5}}], "result": "这件事的结果", "state": "做事", "importance": 2, "at_home": true, "meal": false, "public": "", "with": [], "training": "", "intent": "", "from": "照上面哪一样写的", "things": [], "items": []}},
-               {{"start": "{example_end}", "end": "{example_end2}", "place": "", "doing": "下一件事", "steps": [{{"text": "第一步", "minutes": 10}}, {{"text": "收尾", "minutes": 5}}], "result": "这件事的结果", "state": "做事", "importance": 2, "at_home": true, "meal": false, "public": "", "with": [], "training": "", "intent": "", "from": "照上面哪一样写的", "things": [], "items": []}}],
+    "napcat": [{{"start": "{example_start}", "end": "{example_end}", "place": "", "doing": "一句话写这件事", "steps": [{{"text": "这一阵子她一直在干什么", "minutes": 5}}, {{"text": "第二步", "minutes": 15}}, {{"text": "收尾：用过的东西收好、归位", "minutes": 5}}], "result": "这件事的结果", "state": "做事", "importance": 2, "at_home": true, "meal": false, "public": "", "with": [], "training": "", "intent": "", "from": "照上面哪一样写的", "mood": "这段她什么心情", "things": [], "items": []}},
+               {{"start": "{example_end}", "end": "{example_end2}", "place": "", "doing": "下一件事", "steps": [{{"text": "第一步", "minutes": 10}}, {{"text": "收尾", "minutes": 5}}], "result": "这件事的结果", "state": "做事", "importance": 2, "at_home": true, "meal": false, "public": "", "with": [], "training": "", "intent": "", "from": "照上面哪一样写的", "mood": "这段她什么心情", "things": [], "items": []}}],
     "napcat2": []
   }}
 }}
@@ -446,7 +447,8 @@ class LifeStep:
         moods = seed.get("moods") or {}
         if moods:
             lines.append(
-                "- 各人今天的心情（自然地透在做的事里，不用每段都点明；要写为什么是这个心情时，"
+                "- 各人今天起床时的心情（只是早上的底色，一天里跟着发生的事变，见第 23 条；"
+                "自然地透在做的事里，不用每段都点明；要写为什么是这个心情时，"
                 "写清是谁对谁说了、做了什么，照聊天记录和世界线的原样，别把谁说的谁做的弄反；"
                 "是前几天的事就写日期，例如「10-31 晚上主人说她……」，不写「昨晚」「昨天」）：%s"
                 % "；".join("%s：%s" % (labels.get(bot) or bot, mood) for bot, mood in moods.items())
@@ -1051,12 +1053,13 @@ class LifeStep:
                         lines.append("- %s %s（顺带的事）%s" % (
                             self.label(bot) or bot, timeutil.day_hm(item.get("start")), item.get("doing") or item.get("place")))
                         continue
-                    lines.append("- %s %s %s %s%s" % (
+                    lines.append("- %s %s %s %s%s%s" % (
                         self.label(bot) or bot,
                         timeutil.span_text(item.get("start"), item.get("end"), date_prefix=True, ongoing="~…"),
                         item.get("place") or "",
                         doing_text(item),
                         result_text(item),
+                        mood_text(item),
                     ))
             master = [
                 x for x in self.world.entries(date_text, "master")
@@ -1095,12 +1098,13 @@ class LifeStep:
                 now_lines.append("- %s：这会儿没有记录" % (self.label(bot) or bot))
                 continue
             pct = None if cur.get("idle") else progress_of(cur, flat)
-            now_lines.append("- %s：%s %s%s（%s 起%s%s）" % (
+            now_lines.append("- %s：%s %s%s（%s 起%s%s）%s" % (
                 self.label(bot) or bot, cur.get("place") or "", cur.get("doing") or "",
                 "（闲着）" if cur.get("idle") else "（睡着）" if is_sleep(cur) else steps_text(cur) + result_text(cur),
                 timeutil.day_hm(cur.get("start")),
                 "，预计 %s 做完" % timeutil.day_hm(cur.get("end")) if cur.get("end") else "，还没定什么时候做完",
                 "，做了 %d%%" % pct if pct is not None else "",
+                mood_text(cur),
             ))
         parts.append("她们此刻手上的事：\n" + "\n".join(now_lines))
         # 这次不写的人，她后面已经排好的段也给出来，免得把她拉进她那边没有的事里；
@@ -1677,6 +1681,8 @@ class LifeStep:
                     # 点着煤油灯（supply.LAMP_OIL 开着时，程序照这个算煤油还剩多少）
                     **({"lamp": True} if raw.get("lamp") in (True, "true") and not sleep else {}),
                     **({"kerosene": True} if raw.get("kerosene") in (True, "true") else {}),
+                    # 这段她什么心情（第 23 条）：聊天时取已经开始的最近一段写了的那句（view.mood_now_text）
+                    "mood": str(raw.get("mood") or "").strip(),
                     "public": raw.get("public"),
                     "with": with_list,
                     "training": training,
