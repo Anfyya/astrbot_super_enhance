@@ -876,7 +876,7 @@ class LifeStep:
         manager = getattr(self.context, "persona_manager", None)
         if manager is None:
             return ""
-        persona_id = str(self.cfg.get("persona_id") or "").strip()
+        persona_id = ""  # 补写用这个机器人自己的人格（11-07 以前面板上能另指定一个，一直空着）
         try:
             persona = None
             if persona_id:

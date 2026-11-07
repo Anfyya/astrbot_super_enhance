@@ -31,9 +31,8 @@ class OverflowGuard:
 
     @property
     def enabled(self) -> bool:
-        return bool(self.config.get("enabled", False)) and bool(
-            self.config.get("overflow_guard", True)
-        )
+        # 跟着上下文命令一起开关（11-07 以前面板上另有「不让 AstrBot 自动压缩」，一直开着）
+        return bool(self.config.get("enabled", False))
 
     def reply_for(self, umo: str) -> str:
         bot = bot_of_umo(umo)

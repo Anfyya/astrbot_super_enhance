@@ -35,6 +35,8 @@ PLUGIN_NAME = "astrbot_plugin_super_enhance"
 PAGE_API_PREFIX = f"/{PLUGIN_NAME}/ctx"
 
 _ROUTE_SPECS = (
+    ("settings", "settings_view", ("GET",), "设置：网页上的设置项（分组、说明、现值）"),
+    ("settings/edit", "settings_edit", ("POST",), "设置：保存网页上的设置项"),
     ("pools", "pools_view", ("GET",), "插曲与消遣池：每条的权重、组、最近抽到"),
     ("pools/edit", "pools_edit", ("POST",), "插曲与消遣池：增删改、挪池子、恢复默认"),
     ("world", "world_view", ("GET",), "世界线：某天的条目 / 约束 / 打算 / 骨架 / 状态"),
@@ -1358,6 +1360,40 @@ class ContextPageApi:
             return _ok(cached[1] if cached is not None else {})
         except Exception as exc:
             logger.error("[super_enhance/ctx] 读取插曲与消遣池失败", exc_info=True)
+            return _err(exc)
+
+    def _settings_data(self) -> dict:
+        store = getattr(self.plugin, "web_settings", None)
+        if store is None:
+            raise RuntimeError("网页设置没装上")
+        data = store.view()
+        life = self.plugin.life
+        # 台词按角色分开编辑要用的角色名
+        data["bots"] = [{"key": bot, "label": life.bots.label_for(bot) or bot} for bot in life.enabled_bots() or []]
+        return data
+
+    async def settings_view(self):
+        """网页「设置」页：分组、每项的说明、现值和默认值。"""
+        try:
+            return _ok(self._settings_data())
+        except Exception as exc:
+            logger.error("[super_enhance/ctx] 读取设置失败", exc_info=True)
+            return _err(exc)
+
+    async def settings_edit(self):
+        """保存网页「设置」：changes = [{"section", "key", "value"}]，有一项不合法就一项都不存。"""
+        payload = await request.get_json(silent=True) or {}
+        try:
+            store = getattr(self.plugin, "web_settings", None)
+            if store is None:
+                return _err("网页设置没装上")
+            count = store.save(payload.get("changes") if isinstance(payload, dict) else None)
+            logger.info("[super_enhance/ctx] 网页设置改了 %d 项", count)
+            return _ok(self._settings_data())
+        except ValueError as exc:
+            return _err(exc)
+        except Exception as exc:
+            logger.error("[super_enhance/ctx] 保存设置失败", exc_info=True)
             return _err(exc)
 
     async def pools_edit(self):

@@ -14,7 +14,15 @@ class SectionConfig(Mapping):
     项多的分组在面板里再分小组（组里再套一层 object，例如 ``life_state.step``），
     小组里的键照样直接按名字取：``SectionConfig(cfg, "life_state").get("world_enabled")``，
     各功能不用管它挪到了哪个小组。所以一个分组里（连同它的小组）键名不能重复。
+
+    另外两层（2026-11-07）：
+    - 网页「设置」页存的设置盖在最上面（core/web_settings.py）：``overlay(分组名)`` 给出这一组在网页上登记的键和值；
+    - 几组共用的基本信息（``basic``：机器人身份、主人 QQ、主人称呼、时区、调试日志）垫在最下面，本组没有的键再去那里找。
     """
+
+    # 插件加载时由 main.py 接上 WebSettings.section
+    overlay = None
+    SHARED = ("basic",)
 
     def __init__(self, config: Mapping[str, Any] | None, section: str) -> None:
         self._root: Mapping[str, Any] = config or {}
@@ -23,11 +31,24 @@ class SectionConfig(Mapping):
         self.name = section
 
     def _layers(self) -> Iterator[Mapping[str, Any]]:
-        """先是本组自己的键，再是各个小组。每次现取，面板改了配置也跟着变。"""
+        """网页设置 → 本组 → 本组的小组 → 共用的基本信息。每次现取，面板、网页改了都跟着变。"""
+        overlay = SectionConfig.overlay
+        if overlay is not None:
+            try:
+                web = overlay(self.name)
+            except Exception:  # noqa: BLE001 网页设置读坏了不能连累面板配置
+                web = None
+            if web:
+                yield web
         yield self._section
         for value in self._section.values():
             if isinstance(value, Mapping):
                 yield value
+        if self.name not in self.SHARED and isinstance(self._root, Mapping):
+            for name in self.SHARED:
+                shared = self._root.get(name)
+                if isinstance(shared, Mapping):
+                    yield shared
 
     def __getitem__(self, key: str) -> Any:
         for layer in self._layers():
@@ -36,11 +57,14 @@ class SectionConfig(Mapping):
         raise KeyError(key)
 
     def __iter__(self) -> Iterator[str]:
+        seen = set()
         for layer in self._layers():
             for key, value in layer.items():
-                if layer is self._section and isinstance(value, Mapping):
+                if isinstance(value, Mapping):
                     continue  # 小组本身不算一项，它里面的键算
-                yield key
+                if key not in seen:
+                    seen.add(key)
+                    yield key
 
     def __len__(self) -> int:
         return sum(1 for _ in self)

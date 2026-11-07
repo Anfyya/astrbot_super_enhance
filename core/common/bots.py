@@ -87,13 +87,17 @@ class BotRegistry:
 
     def __init__(self, cfg, root=None) -> None:
         self.cfg = cfg
-        if isinstance(root, Mapping):
-            section = root.get("bot_dialog")
-        elif hasattr(cfg, "root"):
-            whole = cfg.root()
-            section = whole.get("bot_dialog") if isinstance(whole, Mapping) else None
-        else:
-            section = cfg
+        root_fn = getattr(cfg, "root", None)
+        whole = root if isinstance(root, Mapping) else (root_fn() if callable(root_fn) else None)
+        section = cfg
+        if isinstance(whole, Mapping):
+            # 机器人身份、主人 QQ 在面板「基本信息」（basic）里；11-07 以前在 bot_dialog 里
+            section = None
+            for name in ("basic", "bot_dialog"):
+                block = whole.get(name)
+                if isinstance(block, Mapping) and "bot_identities" in block:
+                    section = block
+                    break
         self.identity_cfg = section if isinstance(section, Mapping) else cfg
 
         self.labels: dict[str, str] = {}

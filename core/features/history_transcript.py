@@ -329,12 +329,8 @@ class HistoryTranscriptFeature:
     def enabled(self) -> bool:
         return bool(self.config.get("enabled", False))
 
-    @property
-    def recent(self) -> int:
-        try:
-            return max(0, int(self.config.get("recent_messages", 0)))
-        except Exception:
-            return 0
+    # 原话全写进聊天记录、不另外留几条当成 assistant 消息（11-07 以前面板上有「放最近几条原话」，一直是 0）
+    recent = 0
 
     def _label(self, bot: str) -> str:
         try:
@@ -352,10 +348,7 @@ class HistoryTranscriptFeature:
         return name or "主人"
 
     def _applies(self, umo: str) -> bool:
-        sessions = [str(s).strip() for s in (self.config.get("sessions") or []) if str(s).strip()]
-        if sessions:
-            return umo in sessions
-        # 没填就管：开了生活状态的机器人，和人的私聊
+        # 管开了世界线的机器人和人的私聊（11-07 以前面板上能另填会话名单，一直空着）
         if ":FriendMessage:" not in umo:
             return False
         try:
@@ -373,7 +366,7 @@ class HistoryTranscriptFeature:
         bot = bot_of_umo(umo)
         setattr(req, MARK_ATTR, {
             "umo": umo, "label": self._label(bot), "recent": self.recent,
-            "memo": bool(self.config.get("include_memo", True)), "other": self._other(umo),
+            "memo": True, "other": self._other(umo),
         })
 
     async def add_master(self, req) -> None:

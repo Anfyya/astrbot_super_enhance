@@ -464,6 +464,21 @@
   .pc-n{font-weight:600;font-size:15px;line-height:22px}
   .pc-s{font-size:12px;line-height:18px;color:var(--t3)}
   .pc-f{display:flex;align-items:center;gap:8px;border-top:1px solid var(--line);padding-top:12px}
+  /* 设置页 */
+  .st{max-width:760px;margin:0 auto}
+  .st-f{display:flex;flex-direction:column;gap:6px;min-width:0}
+  .st-f + .st-f{border-top:1px solid var(--line);padding-top:14px}
+  .st-top{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+  .st-l{font-size:14px;font-weight:600;color:var(--t1)}
+  .st-d{font-size:12px;color:var(--t4)}
+  .st-h{font-size:12.5px;line-height:19px;color:var(--t3)}
+  .st-in{display:block;width:100%;min-width:0;padding:6px 9px;border:1px solid var(--line2);border-radius:8px;background:var(--bg);color:var(--t1);
+    font:inherit;font-size:13.5px;line-height:20px;outline:none;resize:vertical;transition:border-color .12s,box-shadow .12s}
+  .st-in:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--ring)}
+  input.st-in.st-num{width:160px}
+  .st-bot{font-size:12.5px;color:var(--t2);margin:4px 0 2px}
+  .st-reset{border:0;background:transparent;color:var(--accent);font:inherit;font-size:12px;cursor:pointer;padding:0}
+  .st-mod{color:var(--warn)}
   .pc > .ladd{margin-top:auto}
   .slot-l{font-size:12px;font-weight:500;line-height:18px;color:var(--t3);letter-spacing:.04em;margin-bottom:8px}
   .sub-sec{border-top:1px solid var(--line);padding-top:12px;display:flex;flex-direction:column;gap:8px}
@@ -1131,6 +1146,22 @@
       <div class="scroller scroll"><div class="scene" id="poolBody"></div></div>
     </section>
 
+    <!-- 设置 -->
+    <section class="view" id="setView" hidden>
+      <header class="mhead"><div class="mhead-in">
+        <button class="btn quiet ibtn narrow-only" data-icon="menu" data-open-side title="会话列表" type="button"></button>
+        <div class="who">
+          <span class="av hm" data-icon="tool"></span>
+          <div class="who-t"><span class="who-n">设置</span><span class="who-s" id="setSub">保存后从下一次请求起生效</span></div>
+        </div>
+        <div class="grow"></div>
+        <button class="btn quiet ibtn" id="setRefresh" data-icon="refresh" title="刷新" type="button"></button>
+        <button class="btn quiet" id="setUndo" type="button" disabled>撤销修改</button>
+        <button class="btn pri" id="setSave" type="button" disabled>保存</button>
+      </div></header>
+      <div class="scroller scroll"><div class="scene" id="setBody"></div></div>
+    </section>
+
     <!-- 世界线 -->
     <section class="view" id="worldView" hidden>
       <header class="mhead"><div class="mhead-in">
@@ -1590,6 +1621,12 @@
       onclick: function () { openPools(); }
     }, pg, h("span", { class: "nav-t" }, h("span", { class: "nav-n", text: "插曲与消遣" }), h("span", { class: "nav-s", text: psub }))));
 
+    var sg = h("span", { class: "av hm" });
+    sg.appendChild(icon("tool"));
+    world.appendChild(h("button", {
+      class: "nav-item" + (S.view === "set" ? " on" : ""), type: "button",
+      onclick: function () { openSettings(); }
+    }, sg, h("span", { class: "nav-t" }, h("span", { class: "nav-n", text: "设置" }), h("span", { class: "nav-s", text: "世界设定 · 台词 · 运行参数" }))));
   }
 
   function setSideOpen(open) {
@@ -1613,6 +1650,12 @@
 
   /* ================= 视图切换 ================= */
   function guardDirty() {
+    if (S.view === "set" && setDirty()) {
+      return confirmDlg({ title: "放弃未保存的设置？", body: "「设置」页还有修改没保存。", ok: "放弃修改", danger: true }).then(function (ok) {
+        if (ok) { S.setDraft = {}; }
+        return ok;
+      });
+    }
     if (!S.insp || !S.insp.dirty) { return Promise.resolve(true); }
     return confirmDlg({ title: "放弃未保存的修改？", body: "右侧面板里的修改还没保存。", ok: "放弃修改", danger: true }).then(function (ok) {
       if (ok && S.insp) { S.insp.dirty = false; }
@@ -1655,6 +1698,8 @@
   function openLedger() { openAuxPage("ledger", renderLedger, loadLedger); }
 
   function openPools() { openAuxPage("pool", renderPools, loadPools); }
+
+  function openSettings() { openAuxPage("set", renderSettings, loadSettings); }
 
   function openWorld() {
     guardDirty().then(function (ok) {
@@ -1727,6 +1772,7 @@
     $("convView").hidden = !isConv;
     $("ledgerView").hidden = S.view !== "ledger";
     $("poolView").hidden = S.view !== "pool";
+    $("setView").hidden = S.view !== "set";
     $("worldView").hidden = S.view !== "world";
     $("thingsView").hidden = S.view !== "things";
     if (isConv) {
@@ -3600,6 +3646,156 @@
   }
 
   $("poolRefresh").addEventListener("click", function () { loadPools().then(function () { if (!S.poolsErr) { toast("已刷新"); } }); });
+
+  /* ---------- 设置：插件网页上的设置项（存在 web_settings.json；AstrBot 面板只留基本信息、模型和总开关） ---------- */
+  function loadSettings(silent) { return loadAuxPage("ctx/settings", "settings", "set", renderSettings, silent); }
+
+  function setKey(f) { return f.section + "." + f.key; }
+  function setHas(k) { return !!S.setDraft && Object.prototype.hasOwnProperty.call(S.setDraft, k); }
+  function setValue(f) { var k = setKey(f); return setHas(k) ? S.setDraft[k] : f.value; }
+  function setSame(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
+  function setChanges() {
+    var out = [];
+    ((S.settings || {}).fields || []).forEach(function (f) {
+      var k = setKey(f);
+      if (setHas(k) && !setSame(S.setDraft[k], f.value)) { out.push({ section: f.section, key: f.key, value: S.setDraft[k] }); }
+    });
+    return out;
+  }
+  function setDirty() { return setChanges().length > 0; }
+  function setPut(f, v) {
+    S.setDraft = S.setDraft || {};
+    S.setDraft[setKey(f)] = v;
+    setBar();
+  }
+  function setBar() {
+    var n = setChanges().length;
+    $("setSave").disabled = !n;
+    $("setUndo").disabled = !n;
+    $("setSub").textContent = n ? "有 " + n + " 项未保存" : "保存后从下一次请求起生效";
+  }
+
+  function renderSettings() {
+    var box = clear($("setBody"));
+    var d = S.settings;
+    if (!d) {
+      if (S.settingsErr) {
+        box.appendChild(errState("读取失败", S.settingsErr, function () { loadSettings(); }));
+      } else {
+        box.appendChild(skeleton("st", ["height:160px;margin-bottom:16px", "height:320px"]));
+      }
+      return;
+    }
+    var wrap = h("div", { class: "st" });
+    (d.groups || []).forEach(function (g) {
+      var fields = (d.fields || []).filter(function (f) { return f.group === g.key; });
+      if (!fields.length) { return; }
+      var card = h("div", { class: "pc" });
+      fields.forEach(function (f) { card.appendChild(setField(d, f)); });
+      wrap.appendChild(h("div", { class: "lsec" }, lsecHead(g.title, g.hint || ""), card));
+    });
+    box.appendChild(wrap);
+    setBar();
+  }
+
+  function setField(d, f) {
+    var v = setValue(f);
+    var short = f.type === "int" || f.type === "float" || f.type === "bool" || f.type === "choice" || f.type === "list";
+    var top = h("div", { class: "st-top" }, h("span", { class: "st-l", text: f.label }));
+    if (f.type === "int" || f.type === "float") { top.appendChild(h("span", { class: "st-d", text: "默认 " + f["default"] })); }
+    if (short && !setSame(v, f["default"])) {
+      top.appendChild(h("button", { class: "st-reset", type: "button", text: "恢复默认", onclick: function () {
+        setPut(f, JSON.parse(JSON.stringify(f["default"])));
+        renderSettings();
+      } }));
+    }
+    return h("div", { class: "st-f" }, top, f.hint ? h("div", { class: "st-h", text: f.hint }) : null, setControl(d, f, v));
+  }
+
+  function setControl(d, f, v) {
+    if (f.type === "bool") {
+      return edChips([{ key: true, label: "开" }, { key: false, label: "关" }], !!v, function (x) { setPut(f, x); });
+    }
+    if (f.type === "choice") {
+      return edChips((f.options || []).map(function (o) { return { key: o, label: o }; }), v, function (x) { setPut(f, x); });
+    }
+    if (f.type === "int" || f.type === "float") {
+      var num = h("input", { class: "st-in st-num", type: "number", step: f.type === "int" ? "1" : "0.1", min: f.min, max: f.max });
+      num.value = v === null || v === undefined ? "" : String(v);
+      num.addEventListener("input", function () {
+        var t = num.value.trim();
+        setPut(f, t === "" ? null : (f.type === "int" ? parseInt(t, 10) : parseFloat(t)));
+      });
+      return num;
+    }
+    if (f.type === "text" || f.type === "list") {
+      var ta = h("textarea", { class: "st-in", rows: f.type === "text" ? 8 : 3 });
+      ta.value = f.type === "list" ? (v || []).join("\n") : String(v || "");
+      ta.addEventListener("input", function () {
+        setPut(f, f.type === "list" ? ta.value.split("\n").map(function (x) { return x.trim(); }).filter(Boolean) : ta.value);
+      });
+      return ta;
+    }
+    if (f.type === "lines") { return setLines(d, f, v || []); }
+    return h("span", { class: "muted", text: "（不支持的类型）" });
+  }
+
+  // 台词按角色分开写，存回去是一行一句「平台ID=句子」；名单外的角色单列，不丢
+  function setLines(d, f, rows) {
+    var bots = (d.bots || []).map(function (b) { return { key: b.key, label: b.label }; });
+    var known = {}, groups = {}, extra = [];
+    bots.forEach(function (b) { known[b.key] = true; });
+    rows.forEach(function (r) {
+      var s = String(r), i = s.indexOf("=");
+      var k = i > 0 ? s.slice(0, i).trim() : "";
+      if (!groups[k]) { groups[k] = []; if (!known[k]) { extra.push({ key: k, label: k || "未注明角色" }); } }
+      groups[k].push(i > 0 ? s.slice(i + 1).trim() : s.trim());
+    });
+    var all = bots.concat(extra);
+    var areas = {};
+    var sync = function () {
+      var out = [];
+      all.forEach(function (b) {
+        String(areas[b.key].value || "").split("\n").forEach(function (x) { x = x.trim(); if (x) { out.push(b.key + "=" + x); } });
+      });
+      setPut(f, out);
+    };
+    var wrap = h("div");
+    all.forEach(function (b) {
+      var ta = h("textarea", { class: "st-in", rows: Math.max(2, (groups[b.key] || []).length) });
+      ta.value = (groups[b.key] || []).join("\n");
+      ta.addEventListener("input", sync);
+      areas[b.key] = ta;
+      wrap.appendChild(h("div", { class: "st-bot", text: b.label }));
+      wrap.appendChild(ta);
+    });
+    return wrap;
+  }
+
+  function saveSettings() {
+    var changes = setChanges();
+    if (!changes.length) { return; }
+    $("setSave").disabled = true;
+    post("ctx/settings/edit", { changes: changes }).then(function (d) {
+      S.settings = d;
+      S.setDraft = {};
+      renderSettings();
+      toast("已保存 " + changes.length + " 项，下一次请求起生效");
+    }).catch(function (e) {
+      setBar();
+      toast("没保存：" + errMsg(e), { err: true });
+    });
+  }
+
+  $("setRefresh").addEventListener("click", function () {
+    guardDirty().then(function (ok) {
+      if (!ok) { return; }
+      S.setDraft = {};
+      loadSettings().then(function () { if (!S.settingsErr) { toast("已刷新"); } });
+    });
+  });
+  $("setUndo").addEventListener("click", function () { S.setDraft = {}; renderSettings(); });
+  $("setSave").addEventListener("click", saveSettings);
 
   /* ================= 能力与约定 ================= */
   function loadLedger(silent) { return loadAuxPage("ctx/ledger", "ledger", "ledger", renderLedger, silent); }

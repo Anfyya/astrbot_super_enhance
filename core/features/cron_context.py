@@ -128,7 +128,8 @@ class CronContextFeature:
 
     @property
     def notify_errors(self) -> bool:
-        return bool(self.config.get("notify_errors", True))
+        # 出错一律在会话里说一声（11-07 以前面板上有开关，一直开着）
+        return True
 
     # ---------- 安装 / 卸载 ----------
 

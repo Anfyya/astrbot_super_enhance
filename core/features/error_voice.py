@@ -8,14 +8,15 @@
 - ``review``：每晚 00:00 的日程回查失败。
 - ``cron``：主动消息的上下文裁剪出错。
 
-句子写在设置「出错时她说的话」分组（``error_voice``）里：每行 ``机器人id=句子``，
+句子在插件网页「设置 · 角色台词」里改（分组 ``error_voice``，见 core/web_settings.py）：每行 ``机器人id=句子``，
 同一个机器人可以写多行，出错时随机挑一句（不跟上一次重复）。没给这个机器人配句子的，
 照旧发原来的报错。出了什么错只写日志。
 
 这几句发出去以后她自己不知道：``model`` 这一轮 AstrBot 不写进会话历史（主人那条原话也丢了），
-``review`` / ``cron`` 是插件直接发的，本来就不进历史。开了 ``error_note_to_history`` 时，
-发完以后补进她的会话历史：一条 assistant，内容是主人收到的那句，后面附一段系统标记写明出了什么错；
+``review`` / ``cron`` 是插件直接发的，本来就不进历史。所以发完以后补进她的会话历史：
+一条 assistant，内容是主人收到的那句，后面附一段系统标记写明出了什么错；
 ``model`` 还会补上主人那条原话。发给主人的照旧是那句，标记只在历史里。
+（11-07 以前「补进历史」是面板上的开关 error_note_to_history，一直开着，现在写死。）
 """
 
 import random
@@ -25,6 +26,7 @@ from collections.abc import Mapping
 from astrbot.api import logger
 
 from ..common import history_io
+from ..config_view import SectionConfig
 from .life_state.models import bot_of_umo
 from .turn_state import local_stamp
 
@@ -39,7 +41,6 @@ except Exception:  # 老版本 AstrBot 没有人格自定义报错
     logger.warning("[super_enhance/error_voice] 这版 AstrBot 没有人格自定义报错，模型失败时照旧发原来的报错")
 
 SECTION = "error_voice"
-NOTE_KEY = "error_note_to_history"
 # 这一轮模型失败的记录，on_agent_done 记下，发完以后补进历史
 NOTE_FLAG = "_super_enhance_model_error_note"
 REASON_MAX = 300
@@ -56,8 +57,8 @@ def _section(config) -> Mapping:
     # AstrBot 的整份配置取任何属性都返回 None（不报错），所以要看 root 能不能调用，不能只看有没有
     root_fn = getattr(config, "root", None)
     root = root_fn() if callable(root_fn) else config
-    section = root.get(SECTION) if isinstance(root, Mapping) else None
-    return section if isinstance(section, Mapping) else {}
+    # 走 SectionConfig：句子存在网页设置里（盖在面板配置上面）
+    return SectionConfig(root if isinstance(root, Mapping) else {}, SECTION)
 
 
 def lines_for(config, kind: str, bot: str) -> list[str]:
@@ -131,7 +132,7 @@ def remember_model_error(config, event, run_context, response) -> None:
         return
     from .cron_context import is_cron_event
 
-    if not _section(config).get(NOTE_KEY, True) or is_cron_event(event):
+    if is_cron_event(event):
         return
     exc = sys.exc_info()[1]
     reason = ("%s: %s" % (type(exc).__name__, exc)) if exc is not None else ""
@@ -205,7 +206,7 @@ async def note_sent_error(context, config, umo: str, sent: str, reason: str, liv
     这时直接写库会被盖掉，所以并到它身上（随收尾一起写库）；没有就直接写库。
     """
     umo = str(umo or "").strip()
-    if not umo or not sent or not _section(config).get(NOTE_KEY, True):
+    if not umo or not sent:
         return
     message = {
         "role": "assistant",

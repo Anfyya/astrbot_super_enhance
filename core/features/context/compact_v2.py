@@ -120,7 +120,8 @@ class CompactV2:
 
     @property
     def master(self) -> str:
-        return str(self._cfg("v2_master_name", "主人")).strip() or "主人"
+        # 面板「基本信息 · 主人称呼」（11-07 以前是这一组的 v2_master_name）
+        return str(self._cfg("master_name", "主人")).strip() or "主人"
 
     def _now(self) -> datetime.datetime:
         """本地时间（不带时区）：容器里是 UTC，消息里的时间戳是本地时间。"""

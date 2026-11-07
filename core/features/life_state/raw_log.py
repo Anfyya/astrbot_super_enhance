@@ -51,7 +51,8 @@ class RawMessageLog:
 
     @property
     def enabled(self) -> bool:
-        return bool(self.cfg.get("raw_log_enabled", True))
+        # 原始消息副本一直存（11-07 以前面板上有开关，一直开着）
+        return True
 
     def _tz(self):
         return timeutil.timezone(self.cfg, self.context, DEFAULT_TZ)

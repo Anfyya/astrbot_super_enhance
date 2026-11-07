@@ -37,7 +37,7 @@ class TypingFeature:
             # 这一轮已经决定静默，没必要再触发「正在输入」再等几秒
             self._debug("skip because this turn is silent")
             return
-        if self.config.get("only_private", True) and not event.is_private_chat():
+        if not event.is_private_chat():
             self._debug(f"skip not private {event.unified_msg_origin}")
             return
         if event.get_platform_name() != "aiocqhttp":
@@ -66,7 +66,7 @@ class TypingFeature:
 
         delay = float(self.config.get("delay_seconds", 2.0))
         delay = min(max(delay, 0.0), 10.0)
-        event_type = int(self.config.get("event_type", 1))
+        event_type = 1  # 显示成「对方正在输入…」
 
         try:
             bot = getattr(event, "bot", None)

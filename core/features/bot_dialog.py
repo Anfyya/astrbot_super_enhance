@@ -124,10 +124,8 @@ class BotDialogFeature:
 
     @property
     def delegation_enabled(self) -> bool:
-        try:
-            return bool(self.config.get("delegation_report", True))
-        except Exception:
-            return True
+        # 替主人传完话一律回来报告（11-07 以前面板上有开关，一直开着）
+        return True
 
     @property
     def fallback_seconds(self) -> int:
@@ -274,11 +272,7 @@ class BotDialogFeature:
         """
         if not self.enabled or self.context is None:
             return
-        try:
-            if not bool(self.config.get("record_to_master_history", True)):
-                return
-        except Exception:
-            pass
+        # 一律写进和主人的会话（11-07 以前面板上有开关，一直开着）
 
         identity = self._identity(event)
         sender, bot = identity.sender, identity.bot

@@ -33,6 +33,7 @@ from astrbot.core.star.star_tools import StarTools
 from mcp.types import CallToolResult
 
 from .core.config_view import SectionConfig
+from .core.web_settings import WebSettings
 from .core.common import llm as common_llm
 from .core.common.bots import identify_event
 from .core.features.context import ContextToolsFeature
@@ -72,6 +73,13 @@ class SuperEnhance(Star):
         super().__init__(context)
         self.config = config or {}
         raw = self.config
+        try:
+            data_dir = StarTools.get_data_dir(PLUGIN_NAME)
+        except Exception:
+            data_dir = Path("data") / PLUGIN_NAME
+        # 网页「设置」页存的设置盖在面板配置上面：各功能读配置时先查这里（见 core/web_settings.py）
+        self.web_settings = WebSettings(data_dir)
+        SectionConfig.overlay = self.web_settings.section
         self.typing = TypingFeature(SectionConfig(raw, "typing"))
         self.silence = SilenceFeature(SectionConfig(raw, "stay_silent"))
         self.bot_dialog = BotDialogFeature(
@@ -79,10 +87,6 @@ class SuperEnhance(Star):
         )
         self.typing.skip_ids_fn = lambda: self.bot_dialog.bot_ids
         self.msg_time = MsgTimeFeature(context, SectionConfig(raw, "msg_time"))
-        try:
-            data_dir = StarTools.get_data_dir(PLUGIN_NAME)
-        except Exception:
-            data_dir = Path("data") / PLUGIN_NAME
         self.context_tools = ContextToolsFeature(
             context, SectionConfig(raw, "context_tools"), data_dir
         )
@@ -199,6 +203,8 @@ class SuperEnhance(Star):
         await self.life.terminate()
         common_llm.set_recorder(None)
         self.snapshot.close()
+        if SectionConfig.overlay == self.web_settings.section:
+            SectionConfig.overlay = None
 
     # ------------------------------------------------------------------
     # 1. NapCat 输入状态

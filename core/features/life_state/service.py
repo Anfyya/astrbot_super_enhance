@@ -12,7 +12,6 @@ from ...common.bots import platform_of
 
 from .injector import (
     as_context_part,
-    build_fake_messages,
     strip_fake_messages,
 )
 from . import loop as loop_mod
@@ -160,13 +159,14 @@ class LifeStateService:
     def enabled(self) -> bool:
         return bool(self.cfg.get("enabled", False))
 
+    # 能力清单、约定跟着世界线走（11-07 以前面板上各有一个开关，一直开着）
     @property
     def abilities_enabled(self) -> bool:
-        return self.enabled and bool(self.cfg.get("abilities_enabled", True))
+        return self.enabled
 
     @property
     def promise_enabled(self) -> bool:
-        return self.enabled and bool(self.cfg.get("promise_enabled", True))
+        return self.enabled
 
     @property
     def training_enabled(self) -> bool:
@@ -218,14 +218,8 @@ class LifeStateService:
             self._world_task = None
 
     def _bot_enabled(self, bot: str) -> bool:
-        """该机器人（平台实例）是否启用动态生活状态。"""
-        mode = str(self.cfg.get("session_list_mode") or "whitelist").strip()
-        items = [platform_of(x) for x in (self.cfg.get("session_list") or [])]
-        if mode == "none":
-            return True
-        if mode == "blacklist":
-            return bot not in items
-        return bot in items
+        """该机器人（平台实例）是否启用动态生活状态：在面板「作用会话」里的才算。"""
+        return bot in [platform_of(x) for x in (self.cfg.get("session_list") or [])]
 
     def enabled_bots(self) -> list[str]:
         """按会话名单取启用的机器人，保持配置顺序且去重。"""
@@ -243,11 +237,7 @@ class LifeStateService:
         strip_fake_messages(getattr(req, "contexts", None) or [])
         if not text:
             return
-        mode = str(self.cfg.get("injection_mode") or "extra_user_content_parts")
-        if mode == "fake_tool_call":
-            req.contexts.extend(build_fake_messages(text))
-        else:
-            req.extra_user_content_parts.append(as_context_part(text))
+        req.extra_user_content_parts.append(as_context_part(text))
     # ---------- 约定 / 能力：注入文本 ----------
 
     def _day_word(self, date_text: str, today: datetime.date) -> str:
@@ -347,7 +337,7 @@ class LifeStateService:
         text = view_mod.world_text(self, bot, self._now())
         if not text:
             return
-        if self.cfg.get("world_voice_note", True) and self._cron_kind(event) not in REPORT_KINDS:
+        if self._cron_kind(event) not in REPORT_KINDS:
             text += "\n" + PROACTIVE_VOICE_NOTE
         parts = getattr(req, "extra_user_content_parts", None)
         if not isinstance(parts, list):
