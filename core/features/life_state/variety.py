@@ -1074,6 +1074,33 @@ MOODS = (
     "心血来潮想搞点新花样", "平静满足",
 )
 
+# 抽到「有点小脾气」时再抽一个跟主人无关的起因，接在后面（补写、聊天看到的是同一句）。
+# 11-07：只写「有点小脾气」、没写为什么，聊天时她就近找由头，常怪到主人头上（「刚才被主人笑话」「某些人上午一声不吭跑出门」）；
+# 拿 16:35 那次重放，带着这种跟主人无关的起因，3 遍都没再冲主人。
+# 起因另用一个按日期、角色定的随机数抽，不动原来那串随机数（网页「明天抽中」的模拟照旧）。{other} 换成另一位的名字。
+GRUMPY = "有点小脾气"
+GRUMPY_CAUSES = (
+    "攒的那罐螺丝被{other}拿去垫了桌脚",
+    "晾在船舷上的衣服被风刮进了海里，捞上来还得重洗",
+    "修了大半天的旧收音机，刚响了两声又哑了",
+    "最后一块点心被{other}先吃掉了",
+    "跟{other}下棋连输了三盘",
+    "理好的一团线被海风吹得乱成一团",
+    "做的菜咸了一点，被{other}说了一句",
+    "好不容易钓上来的鱼脱钩跑了",
+    "头发怎么梳都翘着一撮压不下去",
+    "刚擦干净的甲板又被海鸥弄脏了",
+)
+
+
+def with_cause(mood: str, date_text: str, bot: str, labels: dict) -> str:
+    """「有点小脾气」接上一个跟主人无关的起因；别的心情原样。"""
+    if mood != GRUMPY:
+        return mood
+    others = [str(name) for key, name in (labels or {}).items() if key != bot and name]
+    cause = random.Random("%s/%s/%s" % (date_text, bot, GRUMPY)).choice(GRUMPY_CAUSES)
+    return "%s（%s，到现在还有点不痛快）" % (mood, cause.format(other=others[0] if others else "人家"))
+
 # 意外：难得碰上一回，比小插曲动静大，但当天能收场
 ACCIDENTS = (
     "镇上停电了大半天，原本的打算全得改",
@@ -1343,6 +1370,7 @@ def draw_seed(
     groups = group_map(pools)
     labels = labels or {}
     moods = {bot: rng.choice(MOODS) for bot in labels}
+    moods = {bot: with_cause(mood, date_text, bot, labels) for bot, mood in moods.items()}
     seen = {bot: last_drawn(history, date_text, bot, groups) for bot in labels}
     together = []
     if len(labels) >= 2:
