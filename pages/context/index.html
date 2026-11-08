@@ -463,7 +463,8 @@
   .pc-h > div{min-width:0}
   .pc-n{font-weight:600;font-size:15px;line-height:22px}
   .pc-s{font-size:12px;line-height:18px;color:var(--t3)}
-  .pc-f{display:flex;align-items:center;gap:8px;border-top:1px solid var(--line);padding-top:12px}
+  /* 卡片底下一栏、卡片里另起的一小块：分隔线上下一样空 16（卡片里各块之间也是 16） */
+  .pc-f{display:flex;align-items:center;gap:8px;border-top:1px solid var(--line);padding-top:16px}
   /* 设置页 */
   .st{max-width:760px;margin:0 auto}
   .st-f{display:flex;flex-direction:column;gap:6px;min-width:0}
@@ -481,7 +482,7 @@
   .st-mod{color:var(--warn)}
   .pc > .ladd{margin-top:auto}
   .slot-l{font-size:12px;font-weight:500;line-height:18px;color:var(--t3);letter-spacing:.04em;margin-bottom:8px}
-  .sub-sec{border-top:1px solid var(--line);padding-top:12px;display:flex;flex-direction:column;gap:8px}
+  .sub-sec{border-top:1px solid var(--line);padding-top:16px;display:flex;flex-direction:column;gap:8px}
   .lrows{display:flex;flex-direction:column}
   .lrow{display:flex;align-items:flex-start;gap:12px;padding:12px 0;border-top:1px solid var(--line)}
   .lrow:first-child{border-top:0;padding-top:0}
@@ -502,10 +503,21 @@
   .bar6{display:inline-block;width:120px;height:6px;border-radius:3px;background:var(--sunk);position:relative;overflow:hidden;vertical-align:middle}
   .bar6 > i{position:absolute;left:0;top:0;bottom:0;border-radius:3px;background:var(--accent)}
   /* 键值行：左列标签右列内容，标签按最长的一项对齐 */
-  .kvl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:8px 16px;font-size:13px;line-height:20px;justify-items:start;align-items:baseline}
+  /* 键值行（作息骨架、这天抽的、后台运行）：左列标签按最长的一项对齐；内容是正文字号（text-list），标签是 text-label 的大小、t3 色 */
+  .kvl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:12px 16px;font-size:14px;line-height:22px;justify-items:start;align-items:baseline}
   .kvl > div{display:contents}
-  .kvl .when-b{margin:0;font-weight:500;color:var(--t3)}
-  .nlist{display:flex;flex-direction:column;gap:4px;font-size:13px;line-height:20px;margin:0;padding:0;list-style:none}
+  .kvl .when-b{margin:0;font-size:12.5px;font-weight:500;color:var(--t3)}
+  /* 窄的时候（世界线右栏、手机）标签放到内容上面一行，一对一对之间空 12；宽的时候照旧左右两列 */
+  @container wside (max-width:420px){
+    .kvl{display:flex;flex-direction:column;gap:12px}
+    .kvl > div{display:flex;flex-direction:column;gap:2px;min-width:0}
+    .kvl .when-b{line-height:18px}
+  }
+  /* 这天抽的：天气那格下面按钟点分的几段，元信息字号，钟点一列对齐 */
+  .kv-hours{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:0 8px;margin-top:4px;font-size:12px;line-height:18px;color:var(--t3);font-variant-numeric:tabular-nums}
+  .kv-hours > div{display:contents}
+  /* 一条一行带小圆点（补写注意事项、这天抽的里好几条的那格）：跟键值行同一个字号 */
+  .nlist{display:flex;flex-direction:column;gap:4px;font-size:14px;line-height:22px;margin:0;padding:0;list-style:none}
   .nlist > div{position:relative;padding-left:14px}
   .nlist > div::before{content:"";position:absolute;left:2px;top:9px;width:4px;height:4px;border-radius:50%;background:var(--t3)}
   .pc > .pc-s .when-b{font-weight:600;color:var(--t2)}
@@ -777,6 +789,9 @@
   .wgrid{display:flex;flex-direction:column;gap:32px}
   .wgrid .lsec{margin-bottom:0}
   .wgrid .w-main{order:-1}
+  .wgrid > .w-rules,.wgrid > .w-intent,.wgrid > .w-routine{container:wside / inline-size}
+  /* 这天抽的、作息骨架、补写注意事项三块装在同一格里：块和块之间照样空 32（原来上面那条把下边距清成 0，三块挤在一起） */
+  .wgrid > .w-routine{display:flex;flex-direction:column;gap:32px}
   .wjump{display:flex;gap:6px;flex-wrap:wrap;margin:-8px 0 20px}
   .wdate{display:flex;align-items:center;gap:4px}
   .wdate select.inp{width:auto}
@@ -5830,22 +5845,36 @@
       return sec;
     }
     var mine = function (v) { return v && typeof v === "object" && !Array.isArray(v) ? v[who] : v; };
-    var rows = h("div", { class: "nlist" });
-    var line = function (label, value) {
-      if (value === undefined || value === null || value === "" || (Array.isArray(value) && !value.length)) { return; }
-      rows.appendChild(h("div", null, h("b", { text: label + "：" }), Array.isArray(value) ? value.join("；") : String(value)));
+    // 跟作息骨架一样是键值行：左列标签，右列内容。好几条的一条一行（小圆点），菜名用顿号连成一行
+    var rows = h("div", { class: "kvl" });
+    var line = function (label, value, inline) {
+      var items = (Array.isArray(value) ? value : [value]).map(function (x) { return x === undefined || x === null ? "" : String(x).trim(); })
+        .filter(Boolean);
+      if (!items.length) { return null; }
+      var v = h("div");
+      if (items.length > 1 && !inline) {
+        v.className = "nlist";
+        items.forEach(function (x) { v.appendChild(h("div", { text: x })); });
+      } else {
+        v.textContent = items.join("、");
+      }
+      rows.appendChild(h("div", null, h("span", { class: "when-b", text: label }), v));
+      return v;
     };
-    line("天气", seed.weather_day || seed.weather);
-    var hours = h("div", { class: "muted", style: "font-size:12px;line-height:18px;padding-left:14px" });
-    (seed.hourly || []).forEach(function (x) { hours.appendChild(h("div", { text: x.from + "–" + x.to + "　" + x.text })); });
-    if ((seed.hourly || []).length) { rows.appendChild(hours); }
+    var hourly = seed.hourly || [];
+    var wv = line("天气", seed.weather_day || seed.weather) || (hourly.length ? line("天气", "分时段") : null);
+    if (wv && hourly.length) {
+      var hrs = h("div", { class: "kv-hours" });
+      hourly.forEach(function (x) { hrs.appendChild(h("div", null, h("span", { text: x.from + "–" + x.to }), h("span", { text: x.text }))); });
+      wv.appendChild(hrs);
+    }
     line("起床时的心情", mine(seed.moods));
     line("这天的基调", mine(seed.tone));
     WORLD_SEED_ROWS.forEach(function (r) { line(r[1], mine(seed[r[0]])); });
     line("两人一起", seed.together);
     line("意外", mine(seed.accident));
     var menu = (seed.meals || {}).menu || {};
-    Object.keys(menu).forEach(function (k) { line(k, menu[k]); });
+    Object.keys(menu).forEach(function (k) { line(k, menu[k], true); });
     card.appendChild(rows);
     sec.appendChild(card);
     return sec;
@@ -5893,14 +5922,16 @@
     var r = (d.routine || {})[b.key] || {};
     var plan = (d.day_plan || {})[b.key] || {};
     var card = h("div", { class: "pc", "data-wk": "r:" + b.key });
-    card.appendChild(h("div", { class: "pc-s", text: plan.wake ? (d.date === d.today ? "今天定的：" : String(d.date).slice(5) + " 定的：") + plan.wake + " 起床 · " + plan.sleep + " 入睡" : "还没有作息" }));
     var f = S.rEdit[b.key];
     if (!f) {
+      // 这一天实际定下的起床、入睡也放进键值行（原来是上面单独一行小字）
       var lines = h("div", { class: "kvl" });
-      lines.appendChild(h("div", null, h("span", { class: "when-b", text: "起床" }), (r.wake || "—") + "（前后浮动 " + (r.wake_jitter_min || 0) + " 分钟）"));
-      lines.appendChild(h("div", null, h("span", { class: "when-b", text: "入睡" }), (r.sleep || "—") + "（前后浮动 " + (r.sleep_jitter_min || 0) + " 分钟）"));
-      lines.appendChild(h("div", null, h("span", { class: "when-b", text: "三餐" }), (r.meals || []).join("、") || "—"));
-      if (r.notes) { lines.appendChild(h("div", null, h("span", { class: "when-b", text: "备注" }), r.notes)); }
+      var kv = function (k, v) { lines.appendChild(h("div", null, h("span", { class: "when-b", text: k }), h("span", { text: v }))); };
+      kv(d.date === d.today ? "今天定的" : String(d.date).slice(5) + " 定的", plan.wake ? plan.wake + " 起床 · " + plan.sleep + " 入睡" : "还没定");
+      kv("起床", (r.wake || "—") + "（前后浮动 " + (r.wake_jitter_min || 0) + " 分钟）");
+      kv("入睡", (r.sleep || "—") + "（前后浮动 " + (r.sleep_jitter_min || 0) + " 分钟）");
+      kv("三餐", (r.meals || []).join("、") || "—");
+      if (r.notes) { kv("备注", r.notes); }
       card.appendChild(lines);
       var edit = h("button", { class: "btn sm", type: "button" }, icon("edit"), "编辑");
       edit.addEventListener("click", function () {
