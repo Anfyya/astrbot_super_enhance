@@ -220,7 +220,6 @@
   .nav-n{font-size:14px;font-weight:550;line-height:20px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .nav-s{font-size:12px;line-height:16px;color:var(--t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .nav-r{font-size:12px;line-height:16px;color:var(--t3);font-variant-numeric:tabular-nums;flex:none;min-width:32px;text-align:right}
-  .nav-item .dot{margin:0 4px 0 0}
   .side-empty{font-size:12.5px;color:var(--t3);padding:6px 8px}
 
   /* ============ 主区头部 ============ */
@@ -234,6 +233,9 @@
   #convTabs{margin-left:8px}
   #convWho:empty,.gauge:empty{display:none}
   #convWho:empty + #convTabs{margin-left:0}
+  /* 吃的、东西：标题旁边「现有的 / 未来 / 没了的 / 全部」，跟会话页的「历史 / 请求快照」一个位置 */
+  #thingsWhen{margin-left:8px}
+  #thingsWhen:empty{display:none}
   .narrow-only{display:none !important}
   /* 头部两端的无框图标按钮按图标对齐（和右侧面板的关闭按钮同一个规则） */
   .mhead-in > .btn.quiet.ibtn:last-child,.mhead-in > .head-acts:last-child{margin-right:-8px}
@@ -882,8 +884,10 @@
   .tpicked{margin:-4px 0 12px;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
   .tpicked .chip-t{padding:0 8px 0 10px}
   .tpicked .chip-t svg.i{width:12px;height:12px}
+  /* 搜的时候：照现在的条件没列出来、别处还有对得上的 */
+  .thidden{font-size:13px;line-height:20px;color:var(--t3);padding-bottom:12px}
+  .thidden .tlink{font-size:13px;margin-left:8px}
   .tsum{margin:0 0 16px;display:flex;gap:6px 8px;flex-wrap:wrap;align-items:center;font-size:12px;line-height:20px;color:var(--t3)}
-  .tsum > span:not(.tag){margin-left:4px}
   .tlist .trow{display:grid;grid-template-columns:10px minmax(0,1fr) auto;column-gap:14px;align-items:start;padding:14px 0;border-top:1px solid var(--line)}
   .tlist .trow > .tdot{grid-column:1;grid-row:1}
   .tlist .trow > .tacts{grid-column:3;grid-row:1}
@@ -975,6 +979,14 @@
     .view{--gutter:24px}
   }
   @container main (max-width:720px){
+    /* 吃的、东西：标题那一行放不下，头部排两行（跟会话页一样）：菜单 · 标题 · 刷新 ／ 现有的 · 未来 · 没了的 · 全部 */
+    #thingsView .mhead-in{display:grid;grid-template-columns:auto minmax(0,1fr) auto;column-gap:0;row-gap:10px}
+    #thingsView .mhead-in > .narrow-only{grid-column:1;grid-row:1;margin-right:8px}
+    #thingsView .mhead-in > .who{grid-column:2;grid-row:1;margin-right:8px}
+    #thingsRefresh{grid-column:3;grid-row:1;justify-self:end}
+    #thingsWhen{grid-column:1 / -1;grid-row:2;margin-left:0;display:flex}
+    #thingsWhen button{flex:1;min-width:0;padding:0 8px}
+    #thingsView .mhead-in > .grow{display:none}
     .gauge .bar,.gauge .lbl{display:none}
     .wcols,.tform{grid-template-columns:minmax(0,1fr)}
     .tform > .wfld{grid-column:1 / -1}
@@ -1203,6 +1215,7 @@
           <span class="av hm" data-icon="bowl" id="thingsAv"></span>
           <div class="who-t"><span class="who-n" id="thingsTitle">家里的吃的</span><span class="who-s" id="thingsSub">此刻现算：记录员记的 + 世界线里做完的段标的</span></div>
         </div>
+        <div class="seg" id="thingsWhen"></div>
         <div class="grow"></div>
         <button class="btn quiet ibtn" id="thingsRefresh" data-icon="refresh" title="刷新" type="button"></button>
       </div></header>
@@ -1488,8 +1501,8 @@
     wEdit: {}, cEdit: {}, iEdit: {}, rEdit: {}, nEdit: {},
     things: null, thingsErr: "", thingsLoading: false, thingsFilter: "now", thingsQ: "", thingsOpen: {}, thingsVoid: {}, tEdit: {}, thingsFocus: "",
     thingsCat: "food", objFilter: "now", objQ: "",
-    // 筛选面板里另外几组（什么时候还是 thingsFilter / objFilter）：在哪、状态（只有吃的）、类别、排序
-    tPick: { food: { where: "here", state: "", kind: "", sort: "" }, item: { where: "here", state: "", kind: "", sort: "" } },
+    // 筛选面板里那几组：排序（默认新到旧）、在哪、状态（只有吃的）、类别；「什么时候」在标题旁边，还是 thingsFilter / objFilter
+    tPick: { food: { where: "here", state: "", kind: "", sort: "new" }, item: { where: "here", state: "", kind: "", sort: "new" } },
     tPanel: false
   };
 
@@ -1543,7 +1556,6 @@
     // 侧栏小字：打开过那一页就用那一页的完整数据，没打开过用首屏后取的 ctx/side
     var side = S.side || {};
     var wst = S.world ? (S.world.status || {}) : side.world;
-    var wlive = S.world ? worldLive() : !!(wst && wst.mode === "live");
     var wg = h("span", { class: "av hm" });
     wg.appendChild(icon("clock"));
     var wsub = "读取中…";
@@ -1555,46 +1567,26 @@
     world.appendChild(h("button", {
       class: "nav-item" + (S.view === "world" ? " on" : ""), type: "button",
       onclick: function () { openWorld(); }
-    }, wg, h("span", { class: "nav-t" }, h("span", { class: "nav-n", text: "世界线" }), h("span", { class: "nav-s", text: wsub })),
-      wlive ? h("span", { class: "dot on", title: "live" }) : null));
+    }, wg, h("span", { class: "nav-t" }, h("span", { class: "nav-n", text: "世界线" }), h("span", { class: "nav-s", text: wsub }))));
 
+    // 吃的、东西：只写件数，算此刻住的这一处 + 带在身上的（跟列表默认列的、她们眼下看得到的一样）
     var tg = h("span", { class: "av hm" });
     tg.appendChild(icon("bowl"));
-    var tsub = "读取中…", tbad = false, food = side.food;
-    if (S.things) {
-      var live = (S.things.items || []).filter(function (x) { return !x.ended; });
-      food = {
-        n: live.length,
-        bad: live.filter(function (x) { return (x.fresh || {}).level === "坏了"; }).length,
-        hurry: live.filter(function (x) { return (x.fresh || {}).level === "快不行了"; }).length,
-        low: live.filter(function (x) { return x.low; }).length
-      };
-    }
+    var tsub = "读取中…", food = side.food;
+    if (S.things) { food = { n: (S.things.items || []).filter(function (x) { return !x.ended && tPassWhere(x, "here"); }).length }; }
     if (S.thingsErr && !S.things) { tsub = "不可用"; }
-    else if (food) {
-      tbad = food.bad + food.hurry > 0;
-      tsub = food.n ? food.n + " 件" + (food.hurry ? " · " + food.hurry + " 件快不行了" : "") + (food.bad ? " · " + food.bad + " 件坏了" : "")
-        + (food.low ? " · " + food.low + " 件余量不多" : "") : "还没有记着的";
-    }
+    else if (food) { tsub = food.n ? food.n + " 件" : "还没有记着的"; }
     world.appendChild(h("button", {
       class: "nav-item" + (S.view === "things" && S.thingsCat !== "item" ? " on" : ""), type: "button",
       onclick: function () { openThings(null, "food"); }
-    }, tg, h("span", { class: "nav-t" }, h("span", { class: "nav-n", text: "家里的吃的" }), h("span", { class: "nav-s", text: tsub })),
-      tbad ? h("span", { class: "dot bad", title: "有快不行了或按时间算坏了的" }) : null));
+    }, tg, h("span", { class: "nav-t" }, h("span", { class: "nav-n", text: "家里的吃的" }), h("span", { class: "nav-s", text: tsub }))));
 
     var og = h("span", { class: "av hm" });
     og.appendChild(icon("box"));
     var osub = "读取中…", objs = side.items;
-    if (S.things) {
-      var olive = (S.things.objects || []).filter(function (x) { return !x.ended; });
-      var okinds = {};
-      olive.forEach(function (x) { var k = x.kind || x.name; okinds[k] = (okinds[k] || 0) + 1; });
-      objs = { n: olive.length, same: Object.keys(okinds).filter(function (k) { return okinds[k] > 1; }).length };
-    }
+    if (S.things) { objs = { n: (S.things.objects || []).filter(function (x) { return !x.ended && tPassWhere(x, "here"); }).length }; }
     if (S.thingsErr && !S.things) { osub = "不可用"; }
-    else if (objs) {
-      osub = objs.n ? objs.n + " 件" + (objs.same ? " · " + objs.same + " 组长得像" : "") : "还没有记着的";
-    }
+    else if (objs) { osub = objs.n ? objs.n + " 件" : "还没有记着的"; }
     world.appendChild(h("button", {
       class: "nav-item" + (S.view === "things" && S.thingsCat === "item" ? " on" : ""), type: "button",
       onclick: function () { openThings(null, "item"); }
@@ -1618,19 +1610,15 @@
       onclick: function () { openLedger(); }
     }, lg, h("span", { class: "nav-t" }, h("span", { class: "nav-n", text: "能力与约定" }), h("span", { class: "nav-s", text: lsub }))));
 
+    // 插曲与消遣：只写总条数（几个池子加起来）
     var pg = h("span", { class: "av hm" });
     pg.appendChild(icon("cal"));
     var psub = "每天抽的插曲 · 消遣", pc = side.pools;
     if (S.pools) {
       var np = S.pools.pools || {};
-      pc = {
-        twists: (np.twists || []).length + (np.night_twists || []).length + (np.together || []).length,
-        pastimes: (np.pastimes || []).length,
-        idles: (np.idles || []).length + (np.night_idles || []).length,
-        custom: S.pools.custom
-      };
+      pc = { n: (S.pools.kinds || []).reduce(function (s, k) { return s + (np[k.kind] || []).length; }, 0) };
     }
-    if (pc) { psub = pc.twists + " 件插曲 · " + pc.pastimes + " 样消遣 · " + pc.idles + " 种闲着" + (pc.custom ? "" : " · 默认"); }
+    if (pc) { psub = pc.n + " 条"; }
     world.appendChild(h("button", {
       class: "nav-item" + (S.view === "pool" ? " on" : ""), type: "button",
       onclick: function () { openPools(); }
@@ -4461,7 +4449,6 @@
   var WORLD_SRC = { chat: "对话", step: "补写", manual: "手动" };
   var WORLD_ERR = { recorder: "记录员", step: "幕间补写", review: "约束复核", loop: "后台循环" };
 
-  function worldLive() { return !!(S.world && S.world.status && S.world.status.mode === "live"); }
 
   function worldEditing() {
     return Object.keys(S.wEdit).length || Object.keys(S.cEdit).length || Object.keys(S.iEdit).length || Object.keys(S.rEdit).length || Object.keys(S.nEdit).length;
@@ -6143,11 +6130,16 @@
     }
   }
 
-  // ---------- 筛选与排序（吃的、东西两页共用；「什么时候」还是 thingsFilter / objFilter，别的几组在 S.tPick） ----------
+  // ---------- 筛选与排序（吃的、东西两页共用） ----------
+  // 「什么时候」（看哪张单子）在标题旁边，点一下就切，还是 thingsFilter / objFilter；
+  // 筛选面板里是排序、在哪、状态（只有吃的）、类别，在 S.tPick。
   // 在哪：here = 此刻住的这一处 + 带在身上的；带在身上 / 某一处 / all。没分过两处（homes 空）不显示这一组
+  var T_WHENS = [["now", "现有的"], ["future", "未来"], ["gone", "没了的"], ["all", "全部"]];
   var T_STATES = [["", "全部"], ["hurry", "快不行了"], ["bad", "按时间算坏了"], ["low", "余量不多"]];
-  var T_SORTS = { food: [["", "要紧的在前"], ["new", "新到旧"], ["old", "旧到新"], ["name", "按名字"]],
-    item: [["", "长得像的排一起"], ["new", "新到旧"], ["old", "旧到新"], ["name", "按名字"], ["touched", "最近动过的在前"]] };
+  // 排序默认新到旧（按记下来的先后）；原来的默认还能选：吃的「要紧的在前」、东西「长得像的排一起」
+  var T_SORTS = { food: [["new", "新到旧"], ["old", "旧到新"], ["urgent", "要紧的在前"], ["name", "按名字"]],
+    item: [["new", "新到旧"], ["old", "旧到新"], ["group", "长得像的排一起"], ["name", "按名字"], ["touched", "最近动过的在前"]] };
+  function tDefaultPick() { return { where: "here", state: "", kind: "", sort: "new" }; }
   function tPick(objectMode) { return S.tPick[objectMode ? "item" : "food"]; }
   function tKindOf(x, objectMode) { return objectMode ? objKind(x) : (x.kind || ""); }
   function tPassWhere(x, where) {
@@ -6178,10 +6170,12 @@
     var st = (x.stages || [])[(x.stages || []).length - 1];
     return String((x.ended && x.ended.at) || (st && st.at) || x.created || "");
   }
+  // 编号里的数（w12 → 12）：同一分钟记下的几件按它分先后
+  function tNum(x) { var m = /(\d+)/.exec(String(x.id || "")); return m ? +m[1] : 0; }
   function tSort(list, objectMode) {
     var s = tPick(objectMode).sort;
-    if (s === "new") { list.sort(function (a, b) { return String(b.created).localeCompare(String(a.created)); }); }
-    else if (s === "old") { list.sort(function (a, b) { return String(a.created).localeCompare(String(b.created)); }); }
+    if (s === "new") { list.sort(function (a, b) { return String(b.created).localeCompare(String(a.created)) || tNum(b) - tNum(a); }); }
+    else if (s === "old") { list.sort(function (a, b) { return String(a.created).localeCompare(String(b.created)) || tNum(a) - tNum(b); }); }
     else if (s === "name") { list.sort(function (a, b) { return String(a.name || "").localeCompare(String(b.name || ""), "zh"); }); }
     else if (s === "touched") { list.sort(function (a, b) { return tLastAt(b).localeCompare(tLastAt(a)); }); }
     return list;
@@ -6192,10 +6186,14 @@
     if (v === "here") { return "这一处" + (d.home ? "（" + d.home + "）" : ""); }
     return v === "all" ? "全部" : v;
   }
-  // 筛选面板里改了一组：重画（列表、按钮上的数、面板都跟着变）
+  // 改了一组：重画（列表、按钮上的数、面板都跟着变）。换了一张单子（什么时候）就回到最上面
   function tSet(objectMode, key, value) {
-    if (key === "when") { if (objectMode) { S.objFilter = value; } else { S.thingsFilter = value; } }
-    else { tPick(objectMode)[key] = value; }
+    if (key === "when") {
+      if (objectMode) { S.objFilter = value; } else { S.thingsFilter = value; }
+      renderDataPage({ toTop: true });
+      return;
+    }
+    tPick(objectMode)[key] = value;
     renderDataPage();
   }
   // 跳过来找某一件：这几组要是会把它藏起来，先放开（在哪、状态、类别回到全部）
@@ -6206,18 +6204,58 @@
     if (!objectMode && !tPassState(x, p.state)) { p.state = ""; }
     if (p.kind && tKindOf(x, objectMode) !== p.kind) { p.kind = ""; }
   }
-  // 跟默认不一样的那几组（按钮上的数、按钮下面那一串可点掉的小标签）
+  // 筛选面板里跟默认不一样的那几组（按钮上的数、收起时按钮下面那一串可点掉的小标签）。「什么时候」在标题旁边，不算在这里
   function tPicked(objectMode) {
     var p = tPick(objectMode), d = S.things || {}, out = [];
-    var filter = objectMode ? S.objFilter : S.thingsFilter;
-    var WHEN = { future: "未来", gone: "没了的", all: "全部（含没了的）" };
     var lab = function (rows, v) { return (rows.filter(function (x) { return x[0] === v; })[0] || [0, v])[1]; };
-    if (filter !== "now") { out.push({ key: "when", label: WHEN[filter] || filter, reset: "now" }); }
+    if (p.sort !== "new") { out.push({ key: "sort", label: "排序：" + lab(T_SORTS[objectMode ? "item" : "food"], p.sort), reset: "new" }); }
     if ((d.homes || []).length && p.where !== "here") { out.push({ key: "where", label: "在哪：" + tWhereLabel(p.where), reset: "here" }); }
     if (!objectMode && p.state) { out.push({ key: "state", label: lab(T_STATES, p.state), reset: "" }); }
     if (p.kind) { out.push({ key: "kind", label: "类别：" + p.kind, reset: "" }); }
-    if (p.sort) { out.push({ key: "sort", label: "排序：" + lab(T_SORTS[objectMode ? "item" : "food"], p.sort), reset: "" }); }
     return out;
+  }
+  // 标题旁边「现有的 / 未来 / 没了的 / 全部」：看哪张单子，点一下就切。件数照筛选面板里选的算（未来那张单子不分这些）
+  function tWhenSeg(objectMode, items) {
+    var seg = clear($("thingsWhen"));
+    if (!items) { return; }
+    var filter = objectMode ? S.objFilter : S.thingsFilter;
+    var pass = items.filter(function (x) { return tPassAll(x, objectMode, "when"); });
+    var counts = { now: pass.filter(function (x) { return !x.ended; }).length, gone: pass.filter(function (x) { return !!x.ended; }).length,
+      all: pass.length, future: futureList(objectMode ? "item" : "food", "").length };
+    T_WHENS.forEach(function (o) {
+      seg.appendChild(h("button", { type: "button", class: o[0] === filter ? "on" : "", "aria-pressed": o[0] === filter ? "true" : "false",
+        onclick: function () { if (o[0] !== (objectMode ? S.objFilter : S.thingsFilter)) { tSet(objectMode, "when", o[0]); } } },
+        o[1], h("span", { class: "wcount", text: String(counts[o[0]]) })));
+    });
+  }
+  // 搜的字对得上哪些（名字、编号、种类、哪来的、搁在哪……）
+  function tMatch(x, q, objectMode) {
+    if (!q) { return true; }
+    var fields = objectMode
+      ? [x.id, x.name, x.kind, x.look, x.inside, x.origin, x.place, x.holder_label, x.state, x.owner_label]
+      : [x.id, x.name, x.kind, x.origin, x.place];
+    return fields.join(" ").toLowerCase().indexOf(q) >= 0;
+  }
+  // 搜的时候，照现在的条件没列出来、别处还有对得上的：说在哪，点一下全放开一起看
+  function tHiddenHint(objectMode, hidden, filter, none) {
+    var p = tPick(objectMode), why = {}, order = [];
+    hidden.forEach(function (x) {
+      var k;
+      if (filter === "now" && x.ended) { k = "已经没了"; }
+      else if (filter === "gone" && !x.ended) { k = "还在的"; }
+      else if (!tPassWhere(x, p.where)) { k = x.where === "带在身上" ? "带在身上" : "在" + (x.where || "别处"); }
+      else { k = "被筛选挡住"; }
+      if (!why[k]) { why[k] = 0; order.push(k); }
+      why[k] += 1;
+    });
+    var parts = order.map(function (k) { return k + " " + why[k]; }).join(" · ");
+    return h("div", { class: none ? "muted" : "thidden", style: none ? "font-size:13px;line-height:1.7" : null },
+      (none ? "照现在的条件没有对得上的。别处还有 " : "别处还有 ") + hidden.length + " 件对得上：" + parts,
+      h("button", { class: "tlink", type: "button", style: none ? "font-size:13px;margin-left:8px" : null, onclick: function () {
+        if (objectMode) { S.objFilter = "all"; } else { S.thingsFilter = "all"; }
+        p.where = "all"; p.state = ""; p.kind = "";
+        renderDataPage({ toTop: true });
+      } }, "放开一起看"));
   }
   function tChips(objectMode, key, opts, cur, counts) {
     var wrap = h("div", { class: "chips" });
@@ -6228,14 +6266,13 @@
     });
     return wrap;
   }
+  // 筛选面板（点「筛选」在工具栏下面展开）：排序（最常改的放第一行）、在哪、状态（只有吃的）、类别
   function tFilterPanel(objectMode, items) {
-    var p = tPick(objectMode), d = S.things || {}, filter = objectMode ? S.objFilter : S.thingsFilter;
+    var p = tPick(objectMode), d = S.things || {};
     var panel = h("div", { class: "tfilt" });
     var row = function (label, body) { panel.appendChild(h("div", { class: "fg" }, h("b", { text: label }), body)); };
     var count = function (skip, pass) { return items.filter(function (x) { return tPassAll(x, objectMode, skip) && pass(x); }).length; };
-    row("什么时候", tChips(objectMode, "when", [["now", "现有的"], ["future", "未来"], ["gone", "没了的"], ["all", "全部"]], filter, {
-      now: count("when", function (x) { return !x.ended; }), gone: count("when", function (x) { return !!x.ended; }),
-      all: count("when", function () { return true; }), future: futureList(objectMode ? "item" : "food", "").length }));
+    row("排序", tChips(objectMode, "sort", T_SORTS[objectMode ? "item" : "food"], p.sort));
     if ((d.homes || []).length) {
       var wopts = [["here", tWhereLabel("here")], ["带在身上", "带在身上"]];
       (d.homes || []).forEach(function (hm) { if (hm !== d.home) { wopts.push([hm, hm]); } });
@@ -6260,11 +6297,9 @@
     sel.value = p.kind;
     sel.addEventListener("change", function () { tSet(objectMode, "kind", sel.value); });
     row("类别", sel);
-    row("排序", tChips(objectMode, "sort", T_SORTS[objectMode ? "item" : "food"], p.sort));
     var foot = h("div", { class: "ffoot" });
-    foot.appendChild(h("button", { class: "btn sm quiet", type: "button", onclick: function () {
-      if (objectMode) { S.objFilter = "now"; } else { S.thingsFilter = "now"; }
-      S.tPick[objectMode ? "item" : "food"] = { where: "here", state: "", kind: "", sort: "" };
+    foot.appendChild(h("button", { class: "btn sm quiet", type: "button", disabled: !tPicked(objectMode).length, onclick: function () {
+      S.tPick[objectMode ? "item" : "food"] = tDefaultPick();
       renderDataPage();
     } }, "都恢复默认"));
     foot.appendChild(h("button", { class: "btn sm", type: "button", onclick: function () { S.tPanel = false; renderDataPage(); } }, "收起"));
@@ -6282,6 +6317,7 @@
     var box = clear($("thingsBody"));
     var d = S.things;
     if (!d) {
+      tWhenSeg(objectMode, null);
       if (S.thingsErr) {
         box.appendChild(errState((objectMode ? "家里的东西" : "家里的吃的") + "读取失败", S.thingsErr, function () { loadThings(); }));
       } else {
@@ -6293,15 +6329,19 @@
       ? "吃的以外的东西，记录员记的 + 世界线里做完的段标的"
       : "记录员记的 + 世界线里做完的段标的");
     var items = (objectMode ? d.objects : d.items) || [];
-    var live = items.filter(function (x) { return !x.ended; });
+    tWhenSeg(objectMode, items);
     var setQuery = function (value) { if (objectMode) { S.objQ = value; } else { S.thingsQ = value; } };
     var bar = h("div", { class: "tbar" });
     var q = h("input", { class: "inp", type: "text", placeholder: objectMode ? "搜名字、编号、样子、在哪" : "搜名字、编号、哪来的", value: objectMode ? S.objQ : S.thingsQ });
     q.addEventListener("input", function () { setQuery(q.value); drawDataList(); });
     bar.appendChild(h("label", { class: "search" }, thingSearchIcon(), q));
-    // 筛选：一个按钮，点开是一块面板（什么时候、在哪、状态、类别、排序）；跟默认不一样的几组排在按钮下面，点 × 去掉
-    var picked = tPicked(objectMode);
-    bar.appendChild(h("button", { class: "btn sm fbtn" + (S.tPanel || picked.length ? " on" : ""), type: "button", "aria-expanded": S.tPanel ? "true" : "false",
+    // 筛选：一个按钮，点开是一块面板（排序、在哪、状态、类别）；跟默认不一样的几组收起时排在按钮下面，点 × 去掉。
+    // 看「未来」时这几样都用不上（那张单子按世界线排），按钮灰掉
+    var future = (objectMode ? S.objFilter : S.thingsFilter) === "future";
+    var picked = future ? [] : tPicked(objectMode);
+    bar.appendChild(h("button", { class: "btn sm fbtn" + (!future && (S.tPanel || picked.length) ? " on" : ""), type: "button",
+      "aria-expanded": !future && S.tPanel ? "true" : "false", disabled: future,
+      title: future ? "未来那张单子按世界线排，不分在哪、状态、类别" : null,
       onclick: function () { S.tPanel = !S.tPanel; renderDataPage(); } },
       icon("filter"), "筛选", picked.length ? h("span", { class: "wcount", text: String(picked.length) }) : null));
     bar.appendChild(h("div", { class: "grow" }));
@@ -6313,7 +6353,7 @@
       thingOpenForm(objectMode ? "onew" : "new", draft);
     } }, icon("plus"), "加一件"));
     box.appendChild(bar);
-    if (S.tPanel) { box.appendChild(tFilterPanel(objectMode, items)); }
+    if (S.tPanel && !future) { box.appendChild(tFilterPanel(objectMode, items)); }
     else if (picked.length) {
       var pk = h("div", { class: "tpicked" });
       picked.forEach(function (x) {
@@ -6323,21 +6363,12 @@
       box.appendChild(pk);
     }
 
+    // 说明（快不行了、余量不多这些不在这里数，要看在筛选的「状态」里挑）
     var sum = h("div", { class: "tsum" });
     if (objectMode) {
-      var kinds = {};
-      live.forEach(function (x) { kinds[objKind(x)] = (kinds[objKind(x)] || 0) + 1; });
-      var nSame = Object.keys(kinds).filter(function (k) { return kinds[k] > 1; }).length;
-      if (nSame) { sum.appendChild(h("span", { class: "tag warn", title: "同一种东西有好几件，排在一起，认准编号", text: "长得像的 " + nSame + " 组" })); }
-      sum.appendChild(h("span", { text: "每件一个编号，记哪来的、经过谁手、搁在哪、变成什么样；同一种东西排在一起，模型查的也是这一份" }));
+      sum.appendChild(h("span", { text: "每件一个编号，记哪来的、经过谁手、搁在哪、变成什么样；模型查的也是这一份" }));
     } else {
-      var nHurry = live.filter(function (x) { return x.fresh.level === "快不行了"; }).length;
-      var nBad = live.filter(function (x) { return x.fresh.level === "坏了"; }).length;
-      var nLow = live.filter(function (x) { return x.low; }).length;
-      if (nHurry) { sum.appendChild(h("span", { class: "tag warn", text: "快不行了 " + nHurry })); }
-      if (nLow) { sum.appendChild(h("span", { class: "tag warn", title: "米面油盐、调料快用完了的（该买了），和剩得不多的", text: "余量不多 " + nLow })); }
-      if (nBad) { sum.appendChild(h("span", { class: "tag bad", title: "按时间算已经坏了，聊天里还没说扔", text: "按时间算坏了 " + nBad })); }
-      sum.appendChild(h("span", { text: "保鲜：还能放多久，按每一步怎么放、放在哪（冷热）、切没切、腌晒熏到哪了、当天天气和钟点现算。余量：还剩一开始的几成，米面油盐、调料干货、腌菜按克 / 毫升记、用一次扣一次。口感：跟刚有的时候比还剩几成，蔫了、回软、串味、凉了、熟过头……都往下扣，凉了热一热、发硬蒸一蒸这种缓回来就又满了。快不行了、余量不多的排在前面" }));
+      sum.appendChild(h("span", { text: "保鲜：还能放多久，按每一步怎么放、放在哪（冷热）、切没切、腌晒熏到哪了、当天天气和钟点现算。余量：还剩一开始的几成，米面油盐、调料干货、腌菜按克 / 毫升记、用一次扣一次。口感：跟刚有的时候比还剩几成，蔫了、回软、串味、凉了、熟过头……都往下扣，凉了热一热、发硬蒸一蒸这种缓回来就又满了" }));
     }
     box.appendChild(sum);
     box.appendChild(h("div", { class: "tlist" }, h("div", { class: "pc", id: objectMode ? "objList" : "thingsList" })));
@@ -6383,28 +6414,30 @@
     var filter = objectMode ? S.objFilter : S.thingsFilter;
     if (filter === "future") { card.appendChild(futureRows(objectMode ? "item" : "food", q)); return; }
     var source = (objectMode ? S.things.objects : S.things.items) || [];
-    var list = source.filter(function (x) {
-      if (!tPassAll(x, objectMode, "")) { return false; }
-      if (!q) { return true; }
-      var fields = objectMode
-        ? [x.id, x.name, x.kind, x.look, x.inside, x.origin, x.place, x.holder_label, x.state, x.owner_label]
-        : [x.id, x.name, x.kind, x.origin, x.place];
-      return fields.join(" ").toLowerCase().indexOf(q) >= 0;
-    });
+    var list = source.filter(function (x) { return tPassAll(x, objectMode, "") && tMatch(x, q, objectMode); });
+    // 搜的时候：照现在的条件没列出来、别处还有对得上的（没了的、在别的地方的、被状态类别挡住的）
+    var hidden = q ? source.filter(function (x) { return !tPassAll(x, objectMode, "") && tMatch(x, q, objectMode); }) : [];
     var rows = h("div", { class: "lrows" });
+    if (!list.length && hidden.length) {
+      rows.appendChild(tHiddenHint(objectMode, hidden, filter, true));
+      card.appendChild(rows);
+      return;
+    }
+    if (hidden.length) { rows.appendChild(tHiddenHint(objectMode, hidden, filter, false)); }
     if (!list.length) {
       var empty = !source.length;
       rows.appendChild(h("div", { class: "muted", style: "font-size:13px;line-height:1.7", text: empty
         ? (objectMode
           ? "家里还没记着别的东西。聊天里说买了、收到了、做好了、挪了、交给谁了，记录员会记下来；补写在世界线里排的做手工、收拾东西，那一段做完也会算进来。也可以点右上角「加一件」手动记。"
           : "家里还没有记着的吃的。聊天里说买了、收到了、做好了，记录员会记下来；补写在世界线里排的买菜、做饭，那一段做完也会算进来。也可以点右上角「加一件」手动记。")
-        : (q || tPicked(objectMode).some(function (x) { return x.key !== "when" && x.key !== "sort"; }) ? "没有对得上的。" : filter === "gone"
+        : (q || tPicked(objectMode).some(function (x) { return x.key !== "sort"; }) ? "没有对得上的。" : filter === "gone"
           ? (objectMode ? "还没有送走、丢掉、用完的。" : "还没有吃完、用完的。")
           : (objectMode ? "家里现在没有了。" : "家里现在没有了，都吃完用完了。")) }));
       card.appendChild(rows);
       return;
     }
-    if (tPick(objectMode).sort) {
+    var sortBy = tPick(objectMode).sort;
+    if (objectMode ? sortBy !== "group" : sortBy !== "urgent") {
       tSort(list, objectMode).forEach(function (it) { rows.appendChild(objectMode ? objRow(it) : thingRow(it)); });
     } else if (objectMode) {
       var groups = {}, order = [];

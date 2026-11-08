@@ -1590,7 +1590,7 @@ class ContextPageApi:
             request = old
 
     async def side_view(self):
-        """侧栏那几项的小字：世界线、家里的吃的、家里的东西、能力与约定、插曲与消遣，不打开那一页也显示个数。
+        """侧栏那几项的小字：世界线、家里的吃的和东西（件数）、能力与约定、插曲与消遣（总条数），不打开那一页也显示。
         首屏画完以后再取，不挡首屏；吃的那份走 things_view 自己的缓存。口径和网页打开那一页时算的一样。"""
         global request
         life = getattr(self.plugin, "life", None)
@@ -1607,20 +1607,14 @@ class ContextPageApi:
             res = await self.things_view()
             if res.get("status") == "ok":
                 data = res.get("data") or {}
-                food = [x for x in data.get("items") or [] if not x.get("ended")]
-                level = [str((x.get("fresh") or {}).get("level") or "") for x in food]
-                out["food"] = {
-                    "n": len(food),
-                    "hurry": level.count("快不行了"),
-                    "bad": level.count("坏了"),
-                    "low": sum(1 for x in food if x.get("low")),
-                }
-                objects = [x for x in data.get("objects") or [] if not x.get("ended")]
-                kinds: dict[str, int] = {}
-                for x in objects:
-                    key = str(x.get("kind") or x.get("name") or "")
-                    kinds[key] = kinds.get(key, 0) + 1
-                out["items"] = {"n": len(objects), "same": sum(1 for n in kinds.values() if n > 1)}
+                # 侧栏只写件数：算此刻住的这一处 + 带在身上的（跟网页列表默认列的、她们眼下看得到的一样）；没分过两处就全算
+                home, homes = str(data.get("home") or ""), data.get("homes") or []
+
+                def here(x: dict) -> bool:
+                    return not x.get("ended") and (not homes or str(x.get("where") or "") in ("带在身上", home))
+
+                out["food"] = {"n": sum(1 for x in data.get("items") or [] if here(x))}
+                out["items"] = {"n": sum(1 for x in data.get("objects") or [] if here(x))}
             res = await self.get_ledger()
             if res.get("status") == "ok":
                 data = res.get("data") or {}
@@ -1632,12 +1626,8 @@ class ContextPageApi:
                     "trainings": sum(1 for x in data.get("trainings") or [] if x.get("status") == "open"),
                 }
             pools = life.pool_store.load()
-            out["pools"] = {
-                "twists": sum(len(pools.get(k) or []) for k in ("twists", "night_twists", "together")),
-                "pastimes": len(pools.get("pastimes") or []),
-                "idles": sum(len(pools.get(k) or []) for k in ("idles", "night_idles")),
-                "custom": life.pool_store.custom(),
-            }
+            out["pools"] = {"n": sum(len(pools.get(k) or []) for k in
+                                     ("twists", "night_twists", "together", "pastimes", "idles", "night_idles"))}
             return _ok(out)
         except Exception as exc:
             logger.error("[super_enhance/ctx] 侧栏读取失败", exc_info=True)
