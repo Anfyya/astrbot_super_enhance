@@ -1169,7 +1169,14 @@ ACCIDENTS = (
     "收到一个意想不到的好消息",
     "在不常去的地方发现一样被人藏起来的东西",
     "住处有东西出了毛病（门锁卡住、水管坏了之类），折腾了半天",
+    "船屋有东西出了毛病（舱门卡住、舱板松了之类），折腾了半天",
 )
+# 只在一处碰得上的意外（没写的哪儿都行）。11-09：海边本来就只有柴油到了那几晚才发电、船屋从来没电，谈不上停电；船屋没有水管
+ACCIDENT_WHERE = {
+    "镇上停电了大半天，原本的打算全得改": "穗织",
+    "住处有东西出了毛病（门锁卡住、水管坏了之类），折腾了半天": "穗织",
+    "船屋有东西出了毛病（舱门卡住、舱板松了之类），折腾了半天": "海边小镇",
+}
 
 ACCIDENT_CHANCE = 0.1  # 大约十天碰上一回
 # 每人每天抽几件：白天、晚上各一份；两人一起的当天一份
@@ -1447,7 +1454,8 @@ def draw_seed(
                                         PASTIME_COOLDOWN)
     accident = ""
     if rng.random() < ACCIDENT_CHANCE:
-        accident = _pick(ACCIDENTS, used("accident", ACCIDENT_LOOKBACK), 1, rng)[0]
+        here = [a for a in ACCIDENTS if not home or ACCIDENT_WHERE.get(a, home) == home]
+        accident = _pick(here, used("accident", ACCIDENT_LOOKBACK), 1, rng)[0]
     return {
         "weather": _weather(date_text, prev_weather, rng, home),
         "tone": _pick(TONES, used("tone", 1), 1, rng)[0],
