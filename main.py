@@ -298,6 +298,35 @@ class SuperEnhance(Star):
         for text in texts:
             yield self._worldline_node(event, text) if forward else text
 
+    # ------------------------------------------------------------------
+    # 4.2 /send：哪个号收到就让哪个号立刻发一条主动消息，跟网页上「立刻发一条主动消息」一样（2026-11-10）
+    # 排好了不回话（她那条主动消息几秒后就到）；排不上才回一句原因
+    # ------------------------------------------------------------------
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("send")
+    async def send_proactive(self, event: AstrMessageEvent):
+        """让这个号立刻发一条主动消息（同网页按钮）；/send 后面跟的话当这一条的额外要求"""
+        umo = str(getattr(event, "unified_msg_origin", "") or "")
+        bot = umo.split(":", 1)[0].strip()
+        if not bot:
+            yield event.plain_result("这条消息看不出是哪个号发的。")
+            event.stop_event()
+            return
+        # 「/send 问问主人明天想吃什么」：后面那句只管这一条主动消息，发不发照样她自己定（2026-11-10）
+        words = str(getattr(event, "message_str", "") or "").strip().split(maxsplit=1)
+        extra = words[1].strip() if len(words) > 1 else ""
+        try:
+            msg = await self.life.planner.fire_now(bot, extra)
+        except Exception:
+            logger.error("[super_enhance/ctx] /send 手动主动消息失败", exc_info=True)
+            msg = "排任务失败（看日志）"
+        logger.info("[super_enhance/ctx] /send 手动主动消息（%s%s）：%s", bot, "，额外要求：" + extra[:60] if extra else "", msg)
+        if not msg.startswith("已排"):
+            yield event.plain_result(msg)
+        # 不回话也得截住：不然 AstrBot 把「/send」当成一句话交给模型，她会再回一句
+        # （11-10 0:51 亚托莉「主人怎么大半夜发了个英文过来呀？」）
+        event.stop_event()
+
     def _worldline_node(self, event, text: str):
         """把整天的世界线包成一条合并转发的聊天记录：不看字数，永远是一张卡片。"""
         from astrbot.core.message.components import Node, Plain

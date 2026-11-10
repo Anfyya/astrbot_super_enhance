@@ -423,8 +423,11 @@ class ProactivePlanner:
             logger.warning("[super_enhance/life] 建立主动对话任务失败：%s", e)
             return False
 
-    async def fire_now(self, bot: str) -> str:
-        """网页上点一下：立刻排一条主动消息（不走"刚聊过就顺延"那套）。"""
+    async def fire_now(self, bot: str, extra: str = "") -> str:
+        """网页上点一下、/send：立刻排一条主动消息（不走"刚聊过就顺延"那套）。
+
+        extra：只管这一条的额外要求（/send 后面跟的话），写进这条的提示词，发不发照样她自己定。
+        """
         if not self.enabled:
             return "主动对话没开（life_state.proactive_enable）"
         cron = self._cron()
@@ -438,6 +441,7 @@ class ProactivePlanner:
         meta = {
             "kind": "manual", "bot": bot, "date": now.date().isoformat(),
             "minute": now.hour * 60 + now.minute, "postponed": 0,
+            "extra": str(extra or "").strip(),
         }
         ok = await self._add_job(cron, meta, targets[0], at)
         logger.info("[super_enhance/life] [%s] 网页手动发一条主动消息：%s", bot, "已排" if ok else "失败")
@@ -633,6 +637,8 @@ class ProactivePlanner:
             out["se_done"] = meta["done"]
         if meta.get("question"):
             out["se_question"] = meta["question"]
+        if meta.get("extra"):
+            out["se_extra"] = meta["extra"]
         return out
 
     def _meta_of(self, job, payload: dict) -> dict:
@@ -674,6 +680,7 @@ class ProactivePlanner:
             "training": training if isinstance(training, dict) else None,
             "postponed": postponed,
             "job_id": str(getattr(job, "job_id", "") or ""),
+            "extra": str(payload.get("se_extra") or "").strip(),
         }
 
     def _stale(self, meta: dict, at_ts: float) -> bool:
@@ -1188,4 +1195,8 @@ class ProactivePlanner:
         extra = str(self.cfg.get("proactive_extra_requirements") or "").strip()
         if extra:
             lines.append("额外要求：%s" % extra)
+        # /send 后面跟的话：只管这一条（2026-11-10）
+        once = str(meta.get("extra") or "").strip()
+        if once:
+            lines.append("这一条的额外要求：%s" % once)
         return "\n".join(lines)
