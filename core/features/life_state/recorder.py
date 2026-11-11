@@ -353,9 +353,11 @@ class Recorder:
         for item in items:
             role = str(item.get("role") or "")
             text = str(item.get("text") or "")
+            if str(item.get("src") or "") == "proactive":
+                # 她主动发给主人的：整条不给记录员看（2026-11-11），免得把主动消息当成主人的吩咐去改世界线
+                continue
             if role == "assistant":
-                # 她主动发给主人的（不是回话）：里面说的打算、提议不记（第 17 条）
-                who = label + ("（主动发的）" if str(item.get("src") or "") == "proactive" else "")
+                who = label
             else:
                 who = "主人"
                 # 主人塞给她的一次性提示（<system>……</system>）不是他说的话，不记成规矩
@@ -513,6 +515,13 @@ class Recorder:
         moment = now or self._now()
         items = self.pending(umo, moment)
         if not items:
+            return False
+        if all(str(x.get("src") or "") == "proactive" for x in items):
+            # 整批都是她主动发的：不喂记录员，但游标要往前走，不然一直重读
+            last = items[-1]
+            self.world.set_cursor(umo, float(last.get("ts") or 0), _digest(last.get("text")))
+            logger.info("[super_enhance/life] %s 这批 %d 条全是主动消息，不喂记录员", bot_of_umo(umo),
+                        len(items))
             return False
         # 一次别喂太多：积压就分几轮处理，每轮游标往前走一点
         try:
