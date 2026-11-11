@@ -44,6 +44,14 @@ async def flush_outbox(service) -> None:
         except Exception:
             logger.error("[super_enhance/life] outbox 发送失败", exc_info=True)
 
+def recorder_on(service) -> bool:
+    """记录员开关（life_state.recorder_enable，默认开）。关掉就不再拿聊天去改世界线。"""
+    try:
+        return bool(service.recorder.cfg.get("recorder_enable", True))
+    except Exception:
+        return True
+
+
 async def world_loop(service) -> None:
     """世界线后台循环：记录员、补写和每日维护。"""
     await asyncio.sleep(20.0)
@@ -56,18 +64,21 @@ async def world_loop(service) -> None:
                 await world_daily(service, today)
                 service._world_day = today
             else:
-                await review_if_due(service, now)
+                if recorder_on(service):
+                    await review_if_due(service, now)
             service.world.tick(now)
             # 面板里改了「住在哪」：从这一刻起记成换了住处（存货按它分两处，见 ThingStore.here）
             if service.world.note_home(service.life_step.home, now.replace(tzinfo=None)):
                 logger.info("[super_enhance/life] 住处换成 %s（%s 起）", service.life_step.home, now.strftime("%m-%d %H:%M"))
-            for umo in service.recorder.sessions():
-                items = service.recorder.pending(umo, now)
-                if items:
-                    logger.info("[super_enhance/life] 世界线：%s 待处理 %d 条，可跑=%s", umo, len(items), service.recorder.ready(umo, now))
-            done = await service.recorder.run_all(now)
-            if done:
-                await sync_live_jobs(service, today.isoformat())
+            done = 0
+            if recorder_on(service):
+                for umo in service.recorder.sessions():
+                    items = service.recorder.pending(umo, now)
+                    if items:
+                        logger.info("[super_enhance/life] 世界线：%s 待处理 %d 条，可跑=%s", umo, len(items), service.recorder.ready(umo, now))
+                done = await service.recorder.run_all(now)
+                if done:
+                    await sync_live_jobs(service, today.isoformat())
             if service.life_step.due(now):
                 await service.life_step.run(now)
             await settle_live(service, now)
