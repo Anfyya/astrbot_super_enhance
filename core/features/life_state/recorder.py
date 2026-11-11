@@ -17,7 +17,7 @@ from ...common import llm, timeutil
 from ...common.text import strip_inline_system
 from .homewords import localize
 from .models import bot_of_umo
-from .things import (CAT_FOOD, CAT_ITEM, KEEPS, KINDS, SAME_NEW_MINUTES, SAME_STEP_MINUTES, SPOTS, STEPS, USE_STEPS, cat_of,
+from .things import (CAT_FOOD, CAT_ITEM, KEEPS, KINDS, SAME_NEW_MINUTES, SAME_STEP_MINUTES, SPOTS, STEPS, USE_STEPS, cat_of, spots_for,
                      checked_place, find_same, norm_kind, norm_step, usable)
 from .world import (WorldStore, clean_steps, clean_text, doing_text, fit_steps, fmt_time, is_event, is_sleep, parse_time,
                     result_text, step_minutes, why_text, wind_up)
@@ -503,7 +503,7 @@ class Recorder:
             kinds=" / ".join(KINDS),
             steps=" / ".join(STEPS),
             keeps=" / ".join(KEEPS),
-            spots=" / ".join(SPOTS),
+            spots=" / ".join(spots_for(str(self.cfg.get("world_home") or ""))),
             world_notes=self.world_notes,
         ), str(self.cfg.get("world_home") or ""))
 

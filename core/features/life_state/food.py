@@ -30,6 +30,15 @@ SLICE_MINUTES = 30
 KEEPS = ("收着放", "罩着放", "敞着放", "泡在水里", "挂着通风", "活养着")
 DEFAULT_KEEP = "收着放"
 SPOTS = ("屋里", "阴凉处", "地窖", "井里", "冰箱", "冻着", "屋外", "太阳底下", "灶上温着")
+# 海边小镇没电、没冰箱（见地图）：住海边时给补写、记录员挑的「放在哪」里去把冰箱去掉；
+# 老数据里写着冰箱的照旧认，不改、不挪
+NO_FRIDGE_HOMES = ("海边小镇",)
+
+
+def spots_for(home: str) -> tuple:
+    if str(home or "").strip() in NO_FRIDGE_HOMES:
+        return tuple(s for s in SPOTS if s != "冰箱")
+    return SPOTS
 DEFAULT_SPOT = "屋里"
 # 没熟透：中间还生着（煎、煮的时候火候不到），吃了要闹肚子，回锅煎透煮透（热了一下）就好；生着的坏得也快些
 STATES = {"整的": 1.0, "切开了": 1.5, "碰伤了": 1.3, "没熟透": 1.3}

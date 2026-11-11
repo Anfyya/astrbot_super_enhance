@@ -38,7 +38,7 @@ from astrbot.api import logger
 from ...common import jsonio
 
 from .food import (DEFAULT_KEEP, DEFAULT_SHIFT, DEFAULT_SPOT, DEFAULT_STATE, KEEPS, MONTH_TEMP, PROCESS_STEPS, SLICE_MINUTES,
-                   SPOTS, STATES, WEATHER_SHIFT, SpaceIndex, month_temp, norm_keep, norm_spot, norm_state, room_temp,
+                   SPOTS, STATES, WEATHER_SHIFT, SpaceIndex, month_temp, norm_keep, norm_spot, norm_state, room_temp, spots_for,
                    simulate, split_keep, weather_kind, weather_shift, VAGUE_PLACE)
 from . import weather as weather_mod
 from . import weathering

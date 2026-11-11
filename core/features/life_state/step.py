@@ -23,7 +23,7 @@ from ...common import jsonio, llm, timeutil
 from .models import profile_umo_for_bot
 from .recorder import norm_time
 from .things import (CAT_FOOD, CAT_ITEM, END_STEPS, ITEM_END_STEPS, ITEM_MID_STEPS, ITEM_START_STEPS, KEEPS, KINDS, MEASURED_KINDS, MID_STEPS,
-                     SPOTS, START_STEPS, _same_name, cat_of, checked_place, had_before, is_ended, norm_kind, norm_state,
+                     SPOTS, START_STEPS, _same_name, cat_of, checked_place, had_before, is_ended, norm_kind, norm_state, spots_for,
                      norm_step, split_keep, step_no, MAX_INSIDE)
 from . import weather as weather_mod
 from . import supply as supply_mod
@@ -1295,7 +1295,7 @@ class LifeStep:
             task_block=self._task_block(tasks),
             kinds=" / ".join(KINDS),
             keeps=" / ".join(KEEPS),
-            spots=" / ".join(SPOTS),
+            spots=" / ".join(spots_for(self.home)),
             example_start=fmt_time(example_start),
             example_end=fmt_time(example_start + datetime.timedelta(minutes=25)),
             example_end2=fmt_time(example_start + datetime.timedelta(minutes=40)),
