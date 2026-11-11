@@ -1340,7 +1340,7 @@ class LifeStep:
         for bot in bots:
             if bot in tasks:
                 continue
-            info = self.need(bot, now, ahead_minutes=10**6 if force else BATCH_MINUTES)
+            info = self.need(bot, now, ahead_minutes=BATCH_MINUTES)
             if info is not None:
                 tasks[bot] = info
         flat = now.replace(tzinfo=None)
@@ -1353,7 +1353,8 @@ class LifeStep:
             if front is None:
                 continue
             edge, last = front
-            if flat < edge <= reach - datetime.timedelta(minutes=JOIN_ROOM_MINUTES):
+            # 手动补写（force）：不看有没有缺口，也不推翻已排好的，直接从她排到的最后一段往后接
+            if force or flat < edge <= reach - datetime.timedelta(minutes=JOIN_ROOM_MINUTES):
                 tasks[bot] = {"mode": "after", "start": edge, "cur": last}
         return tasks
 
