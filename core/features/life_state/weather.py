@@ -16,6 +16,11 @@ import re
 MAX_WIND = 11
 SEA_HOMES = ("海边小镇",)
 
+# 月平均气温（湖南江西一带的平年值，1 月到 12 月）：照长沙/南昌那一带的均值取整
+MONTH_MEAN = (5, 7, 11, 17, 22, 26, 29, 28, 24, 19, 13, 7)
+# 一天里最高最低差多少（晴天差得多，阴雨天差得少）
+DIURNAL = 4.0
+
 # 雨多大（毫米/小时）→ 叫法；先认大的
 RAIN_WORDS = ((16.0, "暴雨"), (8.0, "大雨"), (2.5, "中雨"), (1.0, "小雨"), (0.05, "毛毛雨"))
 
@@ -164,6 +169,53 @@ def _profile(kind: str, home: str, month: int, rng: random.Random) -> dict:
     return {"cloud": cloud, "rain": rain, "fog": fog, "wind": wind, "snow": snow}
 
 
+def _temp_parts(month: int, cloud: int, rain: float, fog: int, wind: int, snow: bool) -> tuple:
+    """这一天的日平均、日内起伏：阴雨压低温、缩小温差，晴天拉高温差。"""
+    mean = float(MONTH_MEAN[max(1, min(12, int(month))) - 1])
+    amp = DIURNAL
+    if cloud == 0:
+        mean += 0.9
+        amp *= 1.25
+    elif cloud >= 2:
+        mean -= 0.6
+        amp *= 0.8
+    if rain > 0:
+        mean -= min(4.0, 0.9 * float(rain))
+        amp *= 0.85
+    if fog == 1:
+        mean -= 0.6
+    elif fog >= 2:
+        mean -= 1.2
+    if snow:
+        mean -= 3.5
+        amp *= 0.7
+    if wind > 2:
+        mean -= min(2.5, 0.25 * (wind - 2))
+    return mean, amp
+
+
+def _temp_at(month: int, hour: int, cloud: int, rain: float, fog: int, wind: int, snow: bool) -> float:
+    """这个钟头的气温：下午两三点最高，天亮前最低。"""
+    mean, amp = _temp_parts(month, cloud, rain, fog, wind, snow)
+    import math
+    return mean + amp * math.cos(2 * math.pi * (hour - 14.5) / 24.0)
+
+
+def _feels_at(month: int, hour: int, cloud: int, rain: float, fog: int, wind: int, snow: bool) -> float:
+    """体感：风大、下雨、起雾都更冷。"""
+    temp = _temp_at(month, hour, cloud, rain, fog, wind, snow)
+    feels = temp
+    if wind > 2:
+        feels -= min(4.5, 0.45 * (wind - 2))
+    if rain >= 1.0:
+        feels -= 1.2
+    elif rain > 0.05:
+        feels -= 0.5
+    if fog:
+        feels -= 0.6
+    return feels
+
+
 @functools.lru_cache(maxsize=512)
 def _day(date_text: str, home: str, text: str) -> tuple:
     try:
@@ -190,8 +242,11 @@ def _day(date_text: str, home: str, text: str) -> tuple:
     for h in range(24):
         wind = int(round(max(0.0, min(float(MAX_WIND), today["wind"][h]))))
         rain = round(max(0.0, today["rain"][h]), 1)
+        snow = bool(today["snow"] and rain > 0)
         hours.append({"hour": h, "cloud": today["cloud"][h], "rain": rain, "fog": today["fog"][h], "wind": wind,
-                      "snow": bool(today["snow"] and rain > 0), "dir": direction})
+                      "snow": snow, "dir": direction,
+                      "temp": _temp_at(month, h, today["cloud"][h], rain, today["fog"][h], wind, snow),
+                      "feels": _feels_at(month, h, today["cloud"][h], rain, today["fog"][h], wind, snow)})
     return tuple(hours)
 
 
@@ -266,6 +321,13 @@ def describe(hour: dict, home: str) -> str:
     bits.append("%s %d 级" % (hour["dir"], hour["wind"]))
     if home in SEA_HOMES:
         bits.append(wave_text(hour["wind"]))
+    if "temp" in hour:
+        t = hour["temp"]
+        feels = hour.get("feels", t)
+        if abs(feels - t) >= 1.5:
+            bits.append("约 %.0f 度，体感 %.0f 度" % (t, feels))
+        else:
+            bits.append("约 %.0f 度" % t)
     return "，".join(bits)
 
 
