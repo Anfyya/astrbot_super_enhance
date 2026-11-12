@@ -581,6 +581,22 @@ class Recorder:
                 break
         return count
 
+    def skip_pending(self, now: datetime.datetime | None = None) -> int:
+        """记录员关着的时候用（2026-11-12）：还没处理的消息不喂模型，游标直接挪到最后一条。
+        不然再打开时，会把关着那几天的聊天一口气补记进世界线。返回挪了几个会话。"""
+        moment = now or self._now()
+        moved = 0
+        for umo in self.sessions():
+            if umo in self._running:
+                continue
+            items = self.pending(umo, moment)
+            if not items:
+                continue
+            last = items[-1]
+            self.world.set_cursor(umo, float(last.get("ts") or 0), _digest(last.get("text")))
+            moved += 1
+        return moved
+
     # ---------- 约束复核（每天一次） ----------
 
     def _review_prompt(self, active: list, now: datetime.datetime) -> str:

@@ -45,7 +45,7 @@ async def flush_outbox(service) -> None:
             logger.error("[super_enhance/life] outbox 发送失败", exc_info=True)
 
 def recorder_on(service) -> bool:
-    """记录员开关（life_state.recorder_enable，默认开）。关掉就不再拿聊天去改世界线。"""
+    """记录员开关（life_state.recorder_enable，默认开，在网页「设置 → 内部功能」里）。关掉就不再拿聊天去改世界线。"""
     try:
         return bool(service.recorder.cfg.get("recorder_enable", True))
     except Exception:
@@ -79,6 +79,9 @@ async def world_loop(service) -> None:
                 done = await service.recorder.run_all(now)
                 if done:
                     await sync_live_jobs(service, today.isoformat())
+            else:
+                # 关着的时候游标照样往前走：不然再打开时，会把关着那几天的聊天一口气补记进世界线
+                service.recorder.skip_pending(now)
             if service.life_step.due(now):
                 await service.life_step.run(now)
             await settle_live(service, now)

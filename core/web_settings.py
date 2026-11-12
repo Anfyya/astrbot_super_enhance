@@ -129,6 +129,8 @@ FIELDS = (
     # 内部功能
     _field("life_state", "world_enabled", "advanced", "bool", "补写", True,
            "关掉后不再往世界线里写新的经历，记录员照常记。"),
+    _field("life_state", "recorder_enable", "advanced", "bool", "记录员", True,
+           "关掉后不再根据聊天改世界线，聊天里定的规矩、打算和主人的动向也不再记；补写照常写。"),
     _field("history_transcript", "enabled", "advanced", "bool", "历史转写", True,
            "发给模型时把会话历史写成一段聊天记录，免得她照着自己前几条的口气往下接。"),
     _field("cron_context", "enabled", "advanced", "bool", "主动消息上下文裁剪", True,

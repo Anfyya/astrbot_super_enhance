@@ -3,6 +3,7 @@
 每天抽到的天气（daily_seeds 里一句话，例如「午后暴雨」）在这里展开成 24 个钟头：每个钟头写天色、雨多大（毫米/小时）、
 雾多浓、风几级（蒲福风级，最多 11 级——12 级以上会把船屋毁掉、改了整个故事，不由抽签决定）。
 同一天、同一处、同一句天气每次展开都一样（按这三样定随机数），所以补写、记录员、聊天时的她、存货模拟看到的是同一场雨、同一阵风。
+每个钟头还带屋外的气温和体感（2026-11-11 加，11-12 改成直接用存货那套 food.outdoor_temp），写在天气那句的末尾。
 """
 
 from __future__ import annotations
@@ -15,11 +16,6 @@ import re
 
 MAX_WIND = 11
 SEA_HOMES = ("海边小镇",)
-
-# 月平均气温（湖南江西一带的平年值，1 月到 12 月）：照长沙/南昌那一带的均值取整
-MONTH_MEAN = (5, 7, 11, 17, 22, 26, 29, 28, 24, 19, 13, 7)
-# 一天里最高最低差多少（晴天差得多，阴雨天差得少）
-DIURNAL = 4.0
 
 # 雨多大（毫米/小时）→ 叫法；先认大的
 RAIN_WORDS = ((16.0, "暴雨"), (8.0, "大雨"), (2.5, "中雨"), (1.0, "小雨"), (0.05, "毛毛雨"))
@@ -166,44 +162,23 @@ def _profile(kind: str, home: str, month: int, rng: random.Random) -> dict:
         cloud = [1] * 24
     elif "晴" in kind or "暖阳" in kind or "回暖" in kind or "秋高气爽" in kind:
         cloud = [0] * 24
+    if "无风" in kind:
+        # 天气原文里写明「无风」（2026-11-12 用户手定过冬那几天要大太阳、没风）：风压到 0–1 级
+        wind = [rng.uniform(0.0, 1.4) for _ in hours]
     return {"cloud": cloud, "rain": rain, "fog": fog, "wind": wind, "snow": snow}
 
 
-def _temp_parts(month: int, cloud: int, rain: float, fog: int, wind: int, snow: bool) -> tuple:
-    """这一天的日平均、日内起伏：阴雨压低温、缩小温差，晴天拉高温差。"""
-    mean = float(MONTH_MEAN[max(1, min(12, int(month))) - 1])
-    amp = DIURNAL
-    if cloud == 0:
-        mean += 0.9
-        amp *= 1.25
-    elif cloud >= 2:
-        mean -= 0.6
-        amp *= 0.8
-    if rain > 0:
-        mean -= min(4.0, 0.9 * float(rain))
-        amp *= 0.85
-    if fog == 1:
-        mean -= 0.6
-    elif fog >= 2:
-        mean -= 1.2
-    if snow:
-        mean -= 3.5
-        amp *= 0.7
-    if wind > 2:
-        mean -= min(2.5, 0.25 * (wind - 2))
-    return mean, amp
+def _outdoor(date_text: str, hour: int, home: str, text: str) -> float:
+    """这个钟头屋外的气温。跟存货算变质用的是同一套（food.outdoor_temp：按住处的各月平均、当天那句天气的冷热、
+    一天里的起伏，下午两点最暖、凌晨两点最冷），她们听到的冷热和吃的坏得快慢才对得上（2026-11-12）。"""
+    from .food import outdoor_temp  # 用到才引：food 要带上 world，这个模块别的地方用不着
+
+    moment = datetime.datetime.strptime(str(date_text)[:10], "%Y-%m-%d").replace(hour=int(hour))
+    return float(outdoor_temp(moment, "%s::%s" % (home, text) if home else text))
 
 
-def _temp_at(month: int, hour: int, cloud: int, rain: float, fog: int, wind: int, snow: bool) -> float:
-    """这个钟头的气温：下午两三点最高，天亮前最低。"""
-    mean, amp = _temp_parts(month, cloud, rain, fog, wind, snow)
-    import math
-    return mean + amp * math.cos(2 * math.pi * (hour - 14.5) / 24.0)
-
-
-def _feels_at(month: int, hour: int, cloud: int, rain: float, fog: int, wind: int, snow: bool) -> float:
+def _feels(temp: float, rain: float, fog: int, wind: int) -> float:
     """体感：风大、下雨、起雾都更冷。"""
-    temp = _temp_at(month, hour, cloud, rain, fog, wind, snow)
     feels = temp
     if wind > 2:
         feels -= min(4.5, 0.45 * (wind - 2))
@@ -243,10 +218,10 @@ def _day(date_text: str, home: str, text: str) -> tuple:
         wind = int(round(max(0.0, min(float(MAX_WIND), today["wind"][h]))))
         rain = round(max(0.0, today["rain"][h]), 1)
         snow = bool(today["snow"] and rain > 0)
+        temp = _outdoor(date_text, h, home, text)
         hours.append({"hour": h, "cloud": today["cloud"][h], "rain": rain, "fog": today["fog"][h], "wind": wind,
                       "snow": snow, "dir": direction,
-                      "temp": _temp_at(month, h, today["cloud"][h], rain, today["fog"][h], wind, snow),
-                      "feels": _feels_at(month, h, today["cloud"][h], rain, today["fog"][h], wind, snow)})
+                      "temp": temp, "feels": _feels(temp, rain, today["fog"][h], wind)})
     return tuple(hours)
 
 
@@ -313,7 +288,31 @@ def rain_of(text: str) -> float:
     return 0.0
 
 
-def describe(hour: dict, home: str) -> str:
+def _deg(value: float) -> str:
+    n = int(round(value))
+    return "零下 %d" % -n if n < 0 else "%d" % n
+
+
+def temp_text(pairs: list) -> str:
+    """气温那一小段。pairs 是 [(气温, 体感)]：一个钟头写「约 N 度」；并在一起的几个钟头冷热差出去了，
+    写成「约 低–高 度」（不然一整夜只报头一个钟头的，后半夜最冷的那阵看不出来）。
+    体感比气温低得多的（风大、下雨、起雾）带上。"""
+    temps = [int(round(t)) for t, _f in pairs]
+    lo, hi = min(temps), max(temps)
+    low_feels = min(f for _t, f in pairs)
+    if lo == hi:
+        text = "约 %s 度" % _deg(lo)
+        if min(t for t, _f in pairs) - low_feels >= 1.5:
+            text += "，体感 %s 度" % _deg(low_feels)
+        return text
+    text = "约 %d–%d 度" % (lo, hi) if lo >= 0 else "约 %s 度到 %s 度" % (_deg(lo), _deg(hi))
+    if lo - low_feels >= 1.5:
+        text += "，体感最低 %s 度" % _deg(low_feels)
+    return text
+
+
+def describe(hour: dict, home: str, temps: list | None = None) -> str:
+    """temps：这句管着好几个钟头时，把各个钟头的 (气温, 体感) 交进来，气温写成一段范围。"""
     bits = [sky_word(hour)]
     word = rain_word(hour["rain"], hour.get("snow", False))
     if word:
@@ -322,12 +321,7 @@ def describe(hour: dict, home: str) -> str:
     if home in SEA_HOMES:
         bits.append(wave_text(hour["wind"]))
     if "temp" in hour:
-        t = hour["temp"]
-        feels = hour.get("feels", t)
-        if abs(feels - t) >= 1.5:
-            bits.append("约 %.0f 度，体感 %.0f 度" % (t, feels))
-        else:
-            bits.append("约 %.0f 度" % t)
+        bits.append(temp_text(temps or [(hour["temp"], hour.get("feels", hour["temp"]))]))
     return "，".join(bits)
 
 
@@ -342,16 +336,18 @@ def segments(moment: datetime.datetime, until: datetime.datetime, text_of, home:
     while cur < until:
         hour = day_hours(cur.date().isoformat(), text_of(cur.date()), home)[cur.hour]
         key = (sky_word(hour), rain_word(hour["rain"], hour.get("snow", False)), _band(hour["wind"]))
+        pair = (hour.get("temp"), hour.get("feels", hour.get("temp")))
         if rows and rows[-1][4] == key:
             rows[-1][1] = cur + datetime.timedelta(hours=1)
             rows[-1][3].append(hour["wind"])
+            rows[-1][5].append(pair)
         else:
-            rows.append([cur, cur + datetime.timedelta(hours=1), hour, [hour["wind"]], key])
+            rows.append([cur, cur + datetime.timedelta(hours=1), hour, [hour["wind"]], key, [pair]])
         cur += datetime.timedelta(hours=1)
     out = []
-    for start, end, hour, winds, key in rows:
+    for start, end, hour, winds, key, pairs in rows:
         lo, hi = min(winds), max(winds)
-        text = describe(dict(hour, wind=hi), home)
+        text = describe(dict(hour, wind=hi), home, pairs if "temp" in hour else None)
         if lo != hi:
             text = text.replace("%s %d 级" % (hour["dir"], hi), "%s %d–%d 级" % (hour["dir"], lo, hi))
         out.append((max(start, moment), min(end, until), text, key))
