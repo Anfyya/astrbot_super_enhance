@@ -126,6 +126,7 @@ def tool_recall(service, umo: str, keyword: str = "", date: str = "", time: str 
     from . import recall
 
     now = service._now()
+    service.things.view(now)
     if str(entry or "").strip():
         return recall.detail(service.world, bot, service.bots.label_for, now, entry, date)
     if not any(str(x or "").strip() for x in (keyword, date, time)):

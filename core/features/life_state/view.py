@@ -9,7 +9,8 @@ from astrbot.api import logger
 
 from ...common import timeutil
 from . import raw_log as raw_log_mod
-from .world import (WorldStore, detail_of, doing_text, is_event, parse_time, plan_text, progress_of, public_of, real_stop,
+from .living_rules import CHAT_LIFECYCLE
+from .world import (WorldStore, detail_of, doing_text, event_text_at, is_event, parse_time, plan_text, progress_of, public_of, real_stop,
                     result_text, staged_of, visible_to)
 
 WEEKDAYS_CN = timeutil.WEEKDAYS_CN
@@ -60,7 +61,7 @@ def merge_close(items: list, gap_minutes: int = FRAGMENT_MINUTES) -> list:
     for index, item in enumerate(items):
         start = parse_time(item.get("start"))
         end = ends[index]
-        if is_event(item) or real_stop(item):
+        if is_event(item) or real_stop(item) or item.get("_fact_error"):
             row = dict(item)
             row["_eff_end"] = end.strftime("%Y-%m-%d %H:%M") if end else ""
             out.append(row)
@@ -112,7 +113,7 @@ def _latest_visible(items: list, viewer: str, now: datetime.datetime):
         level = visible_to(item, viewer)
         if level == "none":
             continue
-        text = detail_of(item) if level == "detail" else public_of(item)
+        text = event_text_at(item, now, detail=level == "detail")
         if text:
             return item, text
     return None, ""
@@ -169,12 +170,12 @@ def build_world_text(
         # 闲着的不算进度
         pct = None if own_now.get("idle") else progress_of(own_now, now)
         lines.append("你现在：%s（%s%s）" % (
-            staged_of(own_now, now) or "（没写）", _when(own_now), "，做了 %d%%" % pct if pct is not None else ""))
+            event_text_at(own_now, now) or "（没写）", _when(own_now), "，做了 %d%%" % pct if pct is not None else ""))
     else:
         last = world.last_activity(viewer, now)
         above = last
         if last is not None:
-            lines.append("你最近：%s%s（%s，已经做完）" % (detail_of(last) or "（没写）", result_text(last), _when(last)))
+            lines.append("你最近：%s（%s）" % (event_text_at(last, now) or "（没写）", _when(last)))
 
     # 接下来排好的几件（只给先后和事名、不给钟点，也不给步骤和结局）：
     # 免得她把后面的事说成已经做了，也免得她像报日程表一样按点报时间。
@@ -205,7 +206,7 @@ def build_world_text(
             # 做完了的才带结果；正在做的只给到当前这一步
             ended = parse_time(item.get("end")) if item.get("end") else None
             done = not going and ended is not None and ended <= now
-            text = _clip_tail(staged_of(item, now) if going else detail_of(item) + (result_text(item) if done else ""))
+            text = _clip_tail(event_text_at(item, now))
             if text:
                 if is_event(item):
                     today_lines.append("- %s（顺带）%s" % (str(item.get("start"))[5:16], text))
@@ -240,7 +241,7 @@ def build_world_text(
         cur = world.current(bot, now)
         if cur is not None and visible_to(cur, viewer) != "none":
             item = cur
-            text = staged_of(cur, now) if visible_to(cur, viewer) == "detail" else public_of(cur)
+            text = event_text_at(cur, now, detail=visible_to(cur, viewer) == "detail")
         else:
             item, text = _latest_visible(
                 [x for x in world.entries(date_text, bot) if not is_event(x)], viewer, now)
@@ -301,12 +302,21 @@ def world_text(service, bot: str, now: datetime.datetime) -> str:
     except Exception:
         logger.warning("[super_enhance/life] 查主人在别处的聊天失败", exc_info=True)
     try:
+        service.things.view(now)
         head = build_world_text(service.world, bot, now, service.bots.label_for, recent=recent, elsewhere=elsewhere)
     except Exception:
         logger.warning("[super_enhance/life] 世界线渲染失败", exc_info=True)
         head = ""
     blocks = [head]
     if head:
+        blocks.append(CHAT_LIFECYCLE)
+        shelf = service.things.here(service.things.view(now), now)
+        fuel_rows = [service.things.item_line(item, shelf, service.bots.label_for) for item in shelf.values()
+                     if item.get("cat") == "item" and "柴" in str(item.get("kind") or "")
+                     and not any(stage.get("what") in ("用完了", "丢了", "记错了", "送人了")
+                                 for stage in item.get("stages") or [])]
+        if fuel_rows:
+            blocks.append("此刻的柴料（按批次，历史外观不代表当前干湿）：\n" + "\n".join(fuel_rows[-8:]))
         try:
             blocks.append(weather_now_text(service, now))
         except Exception:
@@ -394,6 +404,9 @@ def mood_now_text(service, bot: str, now: datetime.datetime) -> str:
         if start is None or start > flat or str(item.get("start") or "")[:10] != today:
             continue
         if str(item.get("mood") or "").strip():
+            ended = parse_time(item.get("end"))
+            if item.get("_fact_error") or ended is None or ended > flat:
+                continue
             latest = str(item["mood"]).strip()
     if latest:
         return "你现在的心情：%s。自然地透在说话的语气里，用不着说出来。" % latest

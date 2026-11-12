@@ -42,9 +42,13 @@ from .food import (DEFAULT_KEEP, DEFAULT_SHIFT, DEFAULT_SPOT, DEFAULT_STATE, KEE
                    simulate, split_keep, weather_kind, weather_shift, VAGUE_PLACE)
 from . import weather as weather_mod
 from . import weathering
-from .world import clean_steps, clean_text, fmt_time, parse_time, real_stop
+from .world import clean_steps, clean_text, fmt_time, parse_time, real_stop, step_finished_at
 
 FILE_NAME = "things.json"
+
+
+class FactConflict(ValueError):
+    pass
 _WARNED_CLASH: set = set()  # 编号撞车只在每次启动后第一次碰到时警告（清单每次重算都会再碰到同一处，之前每 2 分钟刷一对）
 CAT_FOOD = "food"
 CAT_ITEM = "item"
@@ -201,7 +205,7 @@ LOW_LEFT_SHARE = 0.25
 
 # 开始做：没做完的（起了个头的围巾）；做好了：一回就做成的，或者没做完的那件后来做完了（所以两边都有）
 ITEM_START_STEPS = ("买回来", "收到", "捡到", "开始做", "做好了", "原来就有")
-ITEM_MID_STEPS = ("挪地方", "交给", "用了", "做了一截", "做好了", "变了样")
+ITEM_MID_STEPS = ("挪地方", "交给", "用了", "做了一截", "做好了", "变了样", "清点")
 ITEM_END_STEPS = ("送人了", "丢了", "坏了扔了", "用完了", "记错了")
 ITEM_STEPS = tuple(dict.fromkeys(ITEM_START_STEPS + ITEM_MID_STEPS + ITEM_END_STEPS))
 ITEM_STEP_WORDS = (
@@ -441,6 +445,77 @@ def measure(item: dict) -> dict | None:
             "zero": zero, "low": 0 < left <= low_mark}
 
 
+def quantity(value):
+    if re.search(r"-\s*\d", str(value or "")):
+        return None
+    counted = _counts(value)
+    return counted[0] if counted and counted[0][1] not in ("斤", "两") else parse_amount(value)
+
+
+def stock(item: dict):
+    measured = measure(item)
+    if measured is not None:
+        return measured
+    left, unit, zero = None, "", None
+    starts, _, ends = steps_of(cat_of(item))
+    for stage in item.get("stages") or []:
+        what = stage.get("what")
+        amount = quantity(stage.get("amount")) or quantity(stage.get("left"))
+        if what in starts or what == "清点":
+            if amount:
+                left, unit = amount
+        elif what in ends:
+            left, zero = 0.0, stage
+        elif left is not None and what in ("用了", "用掉一部分", "吃了一部分"):
+            used = quantity(stage.get("used"))
+            if used and used[1] in ("", unit):
+                left = max(0.0, left - used[0])
+            elif amount and amount[1] in ("", unit):
+                left = amount[0]
+            if left <= 0:
+                zero = stage
+    return {"left": left, "unit": unit, "zero": zero, "per_use": 0.0} if left is not None else None
+
+
+def consumption_error(item: dict, stage: dict) -> str:
+    if stage.get("what") not in ("用了", "用掉一部分", "吃了一部分", "用完了", "吃完了"):
+        return ""
+    before = dict(item, stages=[row for row in item.get("stages") or [] if str(row.get("at")) <= str(stage.get("at"))])
+    info = stock(before)
+    requested = quantity(stage.get("used"))
+    if stage.get("used") not in (None, "") and requested is None:
+        return "用量需要非负数量和可识别的单位"
+    if info is None:
+        if weathering.fuel_item(item):
+            return "柴料数量尚未清点，不能凭空扣用"
+        return ""
+    if requested and requested[1] not in ("", info["unit"]):
+        return "用量单位不一致：库存%s，用量%s" % (info["unit"], requested[1])
+    if stage.get("what") in ("用完了", "吃完了"):
+        needed = requested[0] if requested else info["left"]
+    elif requested:
+        needed = requested[0]
+    else:
+        remaining = quantity(stage.get("left"))
+        if remaining and remaining[1] not in ("", info["unit"]):
+            # 老菜肴用锅盛、剩半碗：没有容积换算不能硬按半锅扣，也不当作多做了一份。
+            if cat_of(item) == CAT_FOOD and measure(before) is None and not any(row.get("amount") for row in before["stages"]):
+                return ""
+            return "剩余数量单位不一致"
+        if remaining and remaining[0] > info["left"]:
+            return "使用后余量不能增加"
+        needed = info["left"] - remaining[0] if remaining else info["per_use"]
+        if needed <= 0 and weathering.fuel_item(item):
+            return "使用柴料需要写本次用量或剩余数量"
+    if needed > info["left"] + 1e-8:
+        return "原料不足：仅余%s%s，本次需要%s%s" % (info["left"], info["unit"], needed, info["unit"])
+    remaining = quantity(stage.get("left"))
+    if requested and remaining and (remaining[1] not in ("", info["unit"])
+                                    or abs(remaining[0] - (info["left"] - needed)) > 1e-8):
+        return "本次用量和剩余数量对不上"
+    return ""
+
+
 # 补写、记录员写地点拆开写：area 哪间屋、哪个地方，at 搁在那儿的什么上、什么里，detail 再细一点的哪一格、哪个容器里（可空）
 PLACE_FIELDS = ("area", "at", "detail")
 MAX_PLACE_PART = 16
@@ -483,7 +558,7 @@ def is_ended(item: dict) -> dict | None:
     for stage in item.get("stages") or []:
         if stage.get("what") in ends:
             return stage
-    info = measure(item) if cat_of(item) == CAT_FOOD else None
+    info = stock(item)
     if info is not None and info["zero"] is not None:
         return dict(info["zero"], what="用完了", _auto=True)
     return None
@@ -642,6 +717,9 @@ def clean_stage(stage: dict, cat: str = CAT_FOOD) -> dict:
         out["holder"] = clean_text(stage.get("holder"), 12)
         if stage.get("owner"):
             out["owner"] = clean_text(stage.get("owner"), 12)
+        for key in ("amount", "used", "purpose", "keep", "spot"):
+            if stage.get(key) not in (None, ""):
+                out[key] = clean_text(stage[key], MAX_LEFT)
     else:
         out["keep"], out["spot"] = split_keep(stage.get("keep"), stage.get("spot"), stage.get("place"))
         out["state"] = norm_state(stage.get("state"))
@@ -654,7 +732,12 @@ def clean_stage(stage: dict, cat: str = CAT_FOOD) -> dict:
         for key in ("fresh_note", "taste_note"):  # 手写的保鲜 / 口感（manual_notes）
             if str(stage.get(key) or "").strip():
                 out[key] = clean_text(stage.get(key), MAX_NOTE)
-    for key in ("into", "note", "recorded", "wl"):
+    conditions = weathering.clean_conditions(stage.get("weather"))
+    if conditions:
+        out["weather"] = conditions
+    if isinstance(stage.get("also_into"), list):
+        out["also_into"] = [clean_text(value, 40) for value in stage["also_into"] if value]
+    for key in ("into", "note", "recorded", "wl", "effect"):
         if stage.get(key):
             out[key] = clean_text(stage.get(key), MAX_NOTE)
     if isinstance(stage.get("src"), dict):
@@ -702,17 +785,27 @@ def insert_stage(item: dict, new: dict) -> str:
     created = parse_time(item.get("created"))
     if created is not None and moment < created:
         return "早于它有的时候（%s）" % item.get("created")
+    for old in stages:
+        when = parse_time(old.get("at"))
+        if old.get("wl") and old.get("wl") == new.get("wl") and old.get("effect") and old.get("effect") == new.get("effect"):
+            return "重复（同一个物品变化已记录）"
+        if old.get("wl") and new.get("wl") and old["wl"] != new["wl"]:
+            continue
+        if old.get("effect") and new.get("effect") and old["effect"] != new["effect"]:
+            continue
+        if (old.get("what") == new["what"] and when is not None
+                and abs((when - moment).total_seconds()) <= SAME_STEP_MINUTES * 60
+                and all(str(old.get(key) or "") == str(new.get(key) or "")
+                        for key in ("into", "used", "place", "state", "weather"))):
+            return "重复（%s 已经记过%s）" % (str(old.get("at"))[11:16], new["what"])
     end = is_ended(item)
     if end is not None and (parse_time(end.get("at")) or moment) <= moment and not (end.get("_auto") and new["what"] == "清点"):
         return "它 %s 已经%s了" % (str(end.get("at"))[5:16], end.get("what"))
     if new["what"] in ends and any((parse_time(x.get("at")) or moment) > moment for x in stages):
         return "后面还记着别的步"
-    for old in stages:
-        when = parse_time(old.get("at"))
-        if (old.get("what") == new["what"] and when is not None
-                and abs((when - moment).total_seconds()) <= SAME_STEP_MINUTES * 60
-                and str(old.get("into") or "") == str(new.get("into") or "")):
-            return "重复（%s 已经记过%s）" % (str(old.get("at"))[11:16], new["what"])
+    why = consumption_error(item, new)
+    if why:
+        return why
     index = len(stages)
     while index > 0 and (parse_time(stages[index - 1].get("at")) or moment) > moment:
         index -= 1
@@ -811,6 +904,7 @@ class ThingStore:
         self._revision = 1
         self._view_cache: tuple | None = None
         self._weather_cache: tuple | None = None
+        self._projection_errors = {}
         # 跨 view 的模拟结果（见 profile）：键带上影响结果的全部输入，有上限
         self._sim_cache: OrderedDict = OrderedDict()
 
@@ -862,6 +956,13 @@ class ThingStore:
                 return item
         return None
 
+    def _local_items(self, items, moment):
+        """同名库存只在当时所在住地比较；另一处独立生活的物资不混用。"""
+        if self.world is None or not self.world.homes():
+            return list(items)
+        home = self.world.home_at(moment)
+        return [item for item in items if self.where_of(item, moment) in ("", home)]
+
     def reserve_id(self, cat: str = CAT_FOOD) -> str:
         """发一个新编号：只增不减（吃的存 seq、别的东西存 seq_item），用过的、发了没用上的都不再发。"""
         data = self._load()
@@ -898,7 +999,7 @@ class ThingStore:
         if cat == CAT_FOOD and first["what"] == "原来就有":
             if norm_kind(kind) not in MEASURED_KINDS:
                 return None, "「原来就有」只用在米面油盐、调料干货、腌菜这些常备的上，别的吃的得先买"
-            old = had_before(self._load().get("items") or [], name)
+            old = had_before(self._local_items(self._load().get("items") or [], parse_time(first["at"])), name)
             if old is not None:
                 return None, "「%s」以前记过（%s），没了得去买" % (name, old.get("id"))
         if cat == CAT_FOOD:
@@ -972,7 +1073,7 @@ class ThingStore:
             return "没有 %s 这一件" % thing_id
         if self.is_secret(item) and not self._manual_stage(stage):
             return "%s 是私人物品，记录员 / 世界线 / 补写不能修改" % thing_id
-        why = insert_stage(item, clean_stage(stage, cat_of(item)))
+        why = self._fuel_check(item, stage) or insert_stage(item, clean_stage(stage, cat_of(item)))
         if not why:
             self._save()
         return why
@@ -1104,7 +1205,7 @@ class ThingStore:
             return "这一步已经变了，刷新一下再改"
         merged = dict(stages[index])
         for key in ("at", "what", "left", "amount", "used", "place", "keep", "spot", "state", "holder", "owner", "by", "into", "note",
-                    "fresh_note", "taste_note"):
+                    "fresh_note", "taste_note", "weather", "purpose"):
             if fields.get(key) is not None:
                 merged[key] = fields[key]
         new = clean_stage(merged, cat_of(item))
@@ -1180,21 +1281,86 @@ class ThingStore:
                 steps = entry.get("things")
                 if not isinstance(steps, list) or not steps:
                     continue
-                if entry.get("stopped"):
-                    steps = reached_steps(entry, steps)
-                    if not steps:
-                        continue
                 if bots and str(entry.get("who")) not in bots:
                     continue
-                end = parse_time(entry.get("end"))
-                if end is None or end > flat:
-                    continue
-                out.append({"at": fmt_time(end), "start": str(entry.get("start") or fmt_time(end)),
-                            "ref": "%s/%s" % (day, entry.get("id")), "by": str(entry.get("who")), "steps": steps})
-        out.sort(key=lambda x: x["at"])
+                out.extend(self.entry_segments(entry, "%s/%s" % (day, entry.get("id")), flat))
+        out.sort(key=lambda row: (row["at"], row["start"], row["ref"]))
         return out
 
+    @staticmethod
+    def entry_segments(entry: dict, ref: str, until: datetime.datetime) -> list:
+        groups = {}
+        effects = entry.get("things") or []
+        for index, effect in enumerate(effects):
+            if not isinstance(effect, dict):
+                continue
+            effect = dict(effect)
+            if effect.get("id") and effect.get("what") in USE_STEPS and not effect.get("into"):
+                # 旧数据按步骤投料、最后才出锅，常只在成品from里记录对应关系。
+                targets = [str(row["new"]) for row in effects if isinstance(row, dict) and row.get("new")
+                           and effect["id"] in (row.get("from") or [])]
+                if targets:
+                    effect["into"] = targets[0]
+                    effect["also_into"] = targets[1:]
+            at = step_finished_at(entry, step_no(effect.get("step")))
+            if at is None or at > until:
+                continue
+            stamp = fmt_time(at)
+            group = groups.setdefault(stamp, {"at": stamp, "start": entry.get("start") or stamp,
+                                              "ref": ref, "key": ref + "@" + stamp,
+                                              "by": str(entry.get("who") or ""), "steps": []})
+            group["steps"].append(dict(effect, effect=str(index + 1)))
+        return list(groups.values())
+
     def _apply_segment(self, items: dict, alias: dict, seg: dict, persist: bool = False) -> None:
+        trial = dict(items)
+        affected = set()
+        for effect in seg["steps"]:
+            for token in [effect.get("new"), effect.get("id"), effect.get("into")] + list(effect.get("from") or []):
+                key = alias.get(str(token), str(token))
+                if key in items:
+                    affected.add(key)
+        for key in affected:
+            trial[key] = copy.deepcopy(items[key])
+        trial_alias = dict(alias)
+        self._apply_segment_unchecked(trial, trial_alias, seg)
+        items.clear()
+        items.update(trial)
+        alias.clear()
+        alias.update(trial_alias)
+        if persist:
+            for item in items.values():
+                item.pop("virtual", None)
+            self._load()["items"] = list(items.values())
+
+    def _fuel_check(self, item: dict, stage: dict) -> str:
+        if not weathering.fuel_item(item) or self._manual_stage(stage):
+            return ""
+        at = parse_time(stage.get("at"))
+        if at is None:
+            return "时间不对"
+        weathers = self._weathers(at)
+        known = sorted(weathers)
+
+        def day_text(day):
+            older = [key for key in known if key <= day.isoformat()]
+            return weathers[older[-1]] if older else "多云"
+
+        home_at = self.world.home_at if self.world is not None else lambda moment: "海边小镇"
+        state = weathering.simulate(item, at, day_text, home_at) or {}
+        conditions = weathering.clean_conditions(stage.get("weather"))
+        drying = (conditions.get("fuel_state") == "ready" or conditions.get("fuel_wet", 1) <= 0.2
+                  or weathering.asserted(stage.get("state") or "", weathering.RESET_DRY + ("干柴", "已干燥")))
+        burning = stage.get("what") in ("用了", "用完了") and stage.get("purpose") != "material"
+        if (drying or burning) and state.get("fuel_state") != "ready":
+            return "这批柴尚未干透，不能直接写成干柴或烧掉；先晾晒、检查，或另取已干批次"
+        if burning and not state.get("fuel_safe"):
+            return "海漂或处理木料不能作家用炉常规燃料，另取合适的干柴"
+        if conditions.get("fuel_safe") is True and not state.get("fuel_safe"):
+            return "不能把海漂或处理木料只改标记就当成合适燃柴"
+        return ""
+
+    def _apply_segment_unchecked(self, items: dict, alias: dict, seg: dict) -> None:
         """把世界线里一段标的那几步算进 items（编号 → 那件）：先认新的，再给已有的加步，
         做菜用掉的料两头都记上。persist 时 items 就是存下来的那些（沉下来那次），新的一件也存进去。"""
         at, ref, by = seg["at"], seg["ref"], seg["by"]
@@ -1215,9 +1381,12 @@ class ThingStore:
 
         def stage_of(step: dict, cat: str, what) -> dict:
             fields = {"at": at, "what": what, "left": step.get("left"), "place": step.get("place"), "state": step.get("state"),
-                      "by": by, "src": src, "wl": ref}
+                      "by": by, "src": src, "wl": ref, "effect": step.get("effect"),
+                      "weather": step.get("weather"), "purpose": step.get("purpose"), "note": step.get("note"),
+                      "also_into": step.get("also_into")}
             if cat == CAT_ITEM:
-                fields.update(holder=step.get("holder"), owner=step.get("owner"))
+                fields.update(holder=step.get("holder"), owner=step.get("owner"),
+                              amount=step.get("amount"), used=step.get("used"), keep=step.get("keep"), spot=step.get("spot"))
             else:
                 fields.update(keep=step.get("keep"), spot=step.get("spot"), amount=step.get("amount"), used=step.get("used"))
             return clean_stage(fields, cat)
@@ -1248,18 +1417,19 @@ class ThingStore:
                     made.append(known)
                 continue
             if what not in steps_of(cat)[0] or not name:
-                continue
+                raise FactConflict("%s 新物品没有有效来源或名称" % tid)
             key = self._name_key(name)
             secret = next((x for x in items.values() if self.is_secret(x) and any(
                 self._name_key(y) == key for y in [x.get("name")] + list(x.get("secret_aliases") or [])
             )), None)
             if secret is not None:
-                alias[tid] = str(secret.get("id"))
-                continue
+                raise FactConflict("%s 是私人物品，不能自动另建" % tid)
             if cat == CAT_FOOD and what == "原来就有" and (
-                    norm_kind(step.get("kind")) not in MEASURED_KINDS or had_before(items.values(), name) is not None):
-                continue  # 只有从没记过的常备调料能「原来就有」；用完了的得买
-            same = find_same([x for x in items.values() if cat_of(x) == cat], name, what,
+                    norm_kind(step.get("kind")) not in MEASURED_KINDS
+                    or had_before(self._local_items(items.values(), moment), name) is not None):
+                raise FactConflict("%s 不能用原来就有补库存，需要实际取得" % name)
+            same = find_same([x for x in items.values() if cat_of(x) == cat and not x.get("wl")
+                              and not weathering.fuel_item(x)], name, what,
                              start - datetime.timedelta(minutes=SEG_SAME_MINUTES), moment + datetime.timedelta(minutes=SEG_SAME_MINUTES),
                              kind=step.get("kind") if cat == CAT_ITEM else norm_kind(step.get("kind")), cat=cat,
                              skip={str(x.get("id")) for x in made})
@@ -1274,7 +1444,12 @@ class ThingStore:
             sources = []
             for token in step.get("from") or []:
                 sid = resolve(token)
-                if sid and sid not in sources and usable(items[sid], at):
+                source = items.get(sid)
+                allocated = source and any(tid in [row.get("into")] + (row.get("also_into") or []) and str(row.get("at")) <= at
+                                           for row in source.get("stages") or [])
+                if not source or (not allocated and (not usable(source, at) or str(source.get("created")) > at)):
+                    raise FactConflict("%s 的材料 %s 在 %s 不可用" % (name, token, at))
+                if sid not in sources:
                     sources.append(sid)
             item = {"id": tid, "cat": cat, "name": name,
                     "kind": clean_text(step.get("kind"), MAX_ITEM_KIND) if cat == CAT_ITEM else norm_kind(step.get("kind")),
@@ -1289,10 +1464,7 @@ class ThingStore:
                 got = parse_amount(first.get("amount")) or parse_amount(first.get("left"))
                 if got is not None and got[1]:
                     item["unit"] = got[1]
-            if persist:
-                self._load().setdefault("items", []).append(item)
-            else:
-                item["virtual"] = True
+            item["virtual"] = True
             items[tid] = item
             made.append(item)
         for step in seg["steps"]:
@@ -1300,17 +1472,20 @@ class ThingStore:
                 continue
             tid = resolve(step.get("id"))
             if not tid:
-                continue
+                raise FactConflict("%s 没有物品 %s" % (ref, step.get("id")))
             if self.is_secret(items[tid]):
-                continue
+                raise FactConflict("%s 是私人物品，不能自动修改" % tid)
             cat = cat_of(items[tid])
             stage = stage_of(step, cat, step.get("what"))
-            into = resolve(step.get("into"))
+            into = resolve(step.get("into")) or str(step.get("into") or "").strip()
             if into and into != tid and not self.is_secret(items.get(into) or {}):
                 stage["into"] = into
-            if insert_stage(items[tid], stage):
-                continue
-            if stage.get("into") and tid not in (items[into].get("from") or []):
+            why = self._fuel_check(items[tid], stage) or insert_stage(items[tid], stage)
+            if why:
+                if why.startswith("重复"):
+                    continue
+                raise FactConflict("%s：%s" % (tid, why))
+            if stage.get("into") and into in items and tid not in (items[into].get("from") or []):
                 items[into].setdefault("from", []).append(tid)
         for dish in made:
             if cat_of(dish) != CAT_FOOD:
@@ -1319,18 +1494,21 @@ class ThingStore:
                 source = items.get(sid)
                 if source is None or cat_of(source) != CAT_FOOD:
                     continue
-                if any(str(x.get("into") or "") == dish["id"] for x in source.get("stages") or []):
+                if any(dish["id"] in [x.get("into")] + (x.get("also_into") or []) for x in source.get("stages") or []):
                     continue
                 # 这一段里已经记了它用掉多少（补写常常不写 into）：into 补在那一步上，不再另补一步空的把剩多少盖掉
-                used = [x for x in source.get("stages") or [] if x.get("wl") == ref and x.get("what") in USE_STEPS]
+                used = [x for x in source.get("stages") or [] if x.get("wl") == ref and x.get("what") in USE_STEPS
+                        and not x.get("into")]
                 if used:
                     blank = next((x for x in used if not x.get("into")), None)
                     if blank is not None:
                         blank["into"] = dish["id"]
                     continue
                 # 按量记的（盐、油这种）没写用了多少：measure 按平常一次的量扣
-                insert_stage(source, clean_stage({"at": at, "what": "用掉一部分", "by": by, "into": dish["id"],
-                                                  "note": "做这盘菜时用了，没说用了多少", "src": src, "wl": ref}))
+                why = insert_stage(source, clean_stage({"at": at, "what": "用掉一部分", "by": by, "into": dish["id"],
+                                                       "note": "做这盘菜时用了，没说用了多少", "src": src, "wl": ref}))
+                if why and not why.startswith("重复"):
+                    raise FactConflict("%s 的材料 %s：%s" % (dish["id"], sid, why))
 
     def settle(self, now: datetime.datetime) -> int:
         """世界线里做完满 SETTLE_DAYS 天的段：把它标的那几步沉进 things.json（世界线文件到期会清掉）。"""
@@ -1338,14 +1516,20 @@ class ThingStore:
         cutoff = fmt_time(flat - datetime.timedelta(days=SETTLE_DAYS))
         data = self._load()
         settled = data.setdefault("settled", {})
-        todo = [x for x in self.segments(flat) if x["at"] < cutoff and x["ref"] not in settled]
+        todo = [x for x in self.segments(flat) if x["at"] < cutoff and x["ref"] not in settled and x["key"] not in settled]
         if not todo:
             return 0
         items = {str(x.get("id")): x for x in data.get("items") or []}
         alias = data.setdefault("alias", {})
+        blocked = set()
         for seg in todo:
-            self._apply_segment(items, alias, seg, persist=True)
-            settled[seg["ref"]] = fmt_time(flat)
+            if seg["ref"] in blocked:
+                continue
+            try:
+                self._apply_segment(items, alias, seg, persist=True)
+                settled[seg["key"]] = fmt_time(flat)
+            except FactConflict:
+                blocked.add(seg["ref"])
         keep_from = (flat.date() - datetime.timedelta(days=SCAN_DAYS + 10)).isoformat()
         data["settled"] = {k: v for k, v in settled.items() if k[:10] >= keep_from}
         self._save()
@@ -1365,15 +1549,25 @@ class ThingStore:
         except Exception:
             logger.warning("[super_enhance/things] 沉世界线里的吃的失败", exc_info=True)
         data = self._load()
-        items = {str(x.get("id")): copy.deepcopy(x) for x in data.get("items") or []}
+        items = {str(x.get("id")): copy.deepcopy(x) for x in data.get("items") or []
+                 if str(x.get("created") or "") <= fmt_time(flat)}
         for item in items.values():
+            item["stages"] = [stage for stage in item.get("stages") or [] if str(stage.get("at") or "") <= fmt_time(flat)]
             for index, stage in enumerate(item.get("stages") or []):
                 stage["_i"] = index  # 存下来的第几步（网页改这一步用）；世界线现算的步没有
         alias = dict(data.get("alias") or {})
         settled = data.get("settled") or {}
+        self._projection_errors = {}
         for seg in self.segments(flat):
-            if seg["ref"] not in settled:
-                self._apply_segment(items, alias, seg)
+            if seg["ref"] in self._projection_errors:
+                continue
+            if seg["ref"] not in settled and seg["key"] not in settled:
+                try:
+                    self._apply_segment(items, alias, seg)
+                except FactConflict as error:
+                    self._projection_errors[seg["ref"]] = (seg["at"], str(error))
+        if self.world is not None:
+            self.world._fact_errors = dict(self._projection_errors)
         for tid, info in (data.get("opened") or {}).items():
             if tid in items and isinstance(info, dict):
                 items[tid]["_opened"] = info
@@ -1386,6 +1580,29 @@ class ThingStore:
         current_revision = self.world.revision() if self.world is not None and hasattr(self.world, "revision") else 0
         self._view_cache = ((fmt_time(flat), current_revision, self._revision), result)
         return result
+
+    def validate_entries(self, entries: list) -> None:
+        if not entries:
+            return
+        horizon = max(parse_time(entry.get("end") or entry.get("start")) for entry in entries)
+        try:
+            self._view_cache = None
+            self.view(horizon)
+            for entry in entries:
+                ref = "%s/%s" % (str(entry.get("start"))[:10], entry.get("id"))
+                error = getattr(self, "_projection_errors", {}).get(ref)
+                if error:
+                    raise FactConflict("%s：%s" % (ref, error[1]))
+        finally:
+            self._view_cache = None
+            if self.world is not None:
+                self.world._fact_errors = {}
+
+    def check_stage(self, thing_id, stage: dict) -> str:
+        item = self.get(thing_id)
+        if item is None:
+            return "没有 %s 这一件" % thing_id
+        return self._fuel_check(item, stage) or insert_stage(copy.deepcopy(item), clean_stage(stage, cat_of(item)))
 
     # ---------- 风吹日晒雨淋（weathering.py）：现算，不存 ----------
 
@@ -1523,6 +1740,9 @@ class ThingStore:
                 for step in steps:
                     if not isinstance(step, dict):
                         continue
+                    finished = step_finished_at(entry, step_no(step.get("step")))
+                    if finished is not None and finished <= flat:
+                        continue
                     tid = str(step.get("new") or "").strip()
                     if tid and tid not in known and tid not in found:
                         found[tid] = {"id": tid, "cat": CAT_ITEM if step.get("cat") == CAT_ITEM else CAT_FOOD,
@@ -1644,8 +1864,8 @@ class ThingStore:
         else:
             return None, "世界线那一段里找不到这一步了，刷新一下再改"
         target = dict(old[index])
-        keys = ("what", "left", "amount", "used", "place", "keep", "spot", "state") if cat == CAT_FOOD \
-            else ("what", "place", "holder", "state", "owner")
+        keys = ("what", "left", "amount", "used", "place", "keep", "spot", "state", "weather") if cat == CAT_FOOD \
+            else ("what", "place", "holder", "state", "owner", "weather", "amount", "used", "left", "purpose")
         for key in keys:
             if fields.get(key) is not None:
                 target[key] = fields[key]
@@ -2039,6 +2259,9 @@ class ThingStore:
             look = "%s %s%s" % (str(made.get("at"))[5:16], made.get("what"), "：" + done if done else "")
         parts = [x for x in (look, "" if state and state in look else state, seal, self._where(last, label_fn), came,
                              "归%s" % self._who(owner, label_fn) if owner else "") if x]
+        quantity_left = stock(item)
+        if quantity_left is not None:
+            parts.append("现余 %s%s" % (_num_text(quantity_left["left"]), quantity_left["unit"]))
         if item.get("_weather"):
             parts.append("按天气算，此刻：%s" % item["_weather"])
         return "%s %s〔%s〕：%s" % (item.get("id"), item.get("name"), "；".join(tags), "｜".join(parts))

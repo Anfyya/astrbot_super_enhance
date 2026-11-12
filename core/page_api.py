@@ -1224,7 +1224,7 @@ class ContextPageApi:
                     return None, "不能晚于现在"
                 stage = {"at": at, "src": src, "recorded": stamp}
                 for key in ("what", "left", "amount", "used", "place", "keep", "spot", "state", "holder", "owner", "by", "note",
-                            "fresh_note", "taste_note"):
+                            "fresh_note", "taste_note", "weather", "purpose"):
                     if raw.get(key) is not None:
                         stage[key] = raw.get(key)
                 return stage, ""

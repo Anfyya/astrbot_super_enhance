@@ -10,7 +10,7 @@ import datetime
 import re
 
 from ...common import timeutil
-from .world import WorldStore, detail_of, is_event, parse_time, public_of, result_text, steps_text, visible_to
+from .world import WorldStore, event_text_at, is_event, parse_time, visible_to
 
 WEEKDAYS_CN = timeutil.WEEKDAYS_CN
 # 一次最多列几条（再多就让她加日期 / 时间缩小）
@@ -112,18 +112,14 @@ def _who(item: dict, viewer: str, label) -> str:
     return label(who) or who
 
 
-def _text(item: dict, level: str, full: bool = False) -> str:
+def _text(item: dict, level: str, now: datetime.datetime, full: bool = False) -> str:
     """她看到的这条：自己的 / 能看细节的给细节，别人的只给粗粒度。full 时连分步也给。"""
-    if level != "detail":
-        return public_of(item)
-    text = detail_of(item)
+    text = event_text_at(item, now, detail=level == "detail", full=full)
     if item.get("idle"):
         text += "（闲着）"
     elif item.get("sleep") is True:
         text += "（睡觉）"  # 只认补写明确标了睡觉的；老条目按字猜的不标，免得「准备歇下」也算睡觉
-    elif full:
-        text += steps_text(item)
-    return text + result_text(item)
+    return text
 
 
 def _clip(text: str, limit: int = ROW_LIMIT) -> str:
@@ -179,11 +175,11 @@ def search(world: WorldStore, viewer: str, label, now: datetime.datetime,
                 if not (a <= hi and max(a, b) >= lo):
                     continue  # 和要看的时间段不沾边（只给一个钟点就看覆盖那一刻的）
             if terms:
-                text = _text(item, level, full=True)
-                if not all(t in text or t in str(item.get("src_quote") or "") for t in terms):
+                text = _text(item, level, now, full=True)
+                if not all(t in text for t in terms):
                     continue
             hits.append("- %s %s %s：%s" % (_ref(one, item), _span_text(item, one), _who(item, viewer, label),
-                                         _clip(_text(item, level))))
+                                         _clip(_text(item, level, now))))
         total += len(hits)
         if hits and len(rows) < MAX_ROWS:
             head = "%s（%s）" % (one.isoformat(), WEEKDAYS_CN[one.weekday()])
@@ -226,13 +222,16 @@ def detail(world: WorldStore, viewer: str, label, now: datetime.datetime, ref: s
         return "这一条你看不到。"
     start = parse_time(item.get("start"))
     end = parse_time(item.get("end")) if item.get("end") else start
+    if start is None or start > now:
+        return event_text_at(item, now, detail=level == "detail") or "这一条尚未发生。"
     lines = ["当时的世界线：%s（%s）%s" % (day.isoformat(), WEEKDAYS_CN[day.weekday()], _span_text(item, day))]
     who = str(item.get("who") or "")
-    text = _text(item, level, full=True)
+    text = _text(item, level, now, full=True)
     withs = [label(x) or x for x in item.get("with") or [] if x != viewer]
     lines.append("%s：%s%s%s" % (
         _who(item, viewer, label), text, "（和%s一起）" % "、".join(withs) if withs else "",
-        "（原话：%s）" % item["src_quote"] if level == "detail" and item.get("src_quote") else ""))
+        "（原话：%s）" % item["src_quote"] if level == "detail" and item.get("src_quote")
+        and (is_event(item) or (end is not None and end <= now)) and not item.get("_fact_error") else ""))
     # 同一个人前后各一件
     own = [x for x in world.activities(who, end or now) if not is_event(x)] if who and who != "master" else []
     ids = [str(x.get("id")) + str(x.get("start")) for x in own]
@@ -248,7 +247,7 @@ def detail(world: WorldStore, viewer: str, label, now: datetime.datetime, ref: s
                 other_day = datetime.date.fromisoformat(str(other.get("start"))[:10])
                 lines.append("%s%s：%s %s" % (
                     "你" if who == viewer else _who(item, viewer, label), word,
-                    _span_text(other, other_day), _clip(_text(other, seen))))
+                    _span_text(other, other_day), _clip(_text(other, seen, now))))
     # 同一时候别人在干什么、这段时间里顺带的事
     if start is not None:
         lo, hi = start, max(end or start, start)
@@ -268,14 +267,14 @@ def detail(world: WorldStore, viewer: str, label, now: datetime.datetime, ref: s
                     continue
                 if is_event(x):
                     if lo <= a <= hi:
-                        events.append("%s %s：%s" % (_span_text(x, day), _who(x, viewer, label), _clip(_text(x, seen))))
+                        events.append("%s %s：%s" % (_span_text(x, day), _who(x, viewer, label), _clip(_text(x, seen, now))))
                     continue
                 if str(x.get("who")) == who:
                     continue
                 if not (a < hi and (b or a) > lo):
                     continue  # 首尾刚好挨着的不算同一时候
                 others.setdefault(str(x.get("who")), []).append(
-                    "%s %s" % (_span_text(x, day), _clip(_text(x, seen))))
+                    "%s %s" % (_span_text(x, day), _clip(_text(x, seen, now))))
         if others:
             lines.append("同一时候：")
             for other, rows in others.items():

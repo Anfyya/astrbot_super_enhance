@@ -12,6 +12,7 @@
 """
 
 import asyncio
+import copy
 import datetime
 import re
 import time
@@ -22,15 +23,19 @@ from ...common import jsonio, llm, timeutil
 
 from .models import profile_umo_for_bot
 from .recorder import norm_time
+from .facts import fact_batch
+from .living_rules import LIFECYCLE_RULES
+from .things import FactConflict
 from .things import (CAT_FOOD, CAT_ITEM, END_STEPS, ITEM_END_STEPS, ITEM_MID_STEPS, ITEM_START_STEPS, KEEPS, KINDS, MEASURED_KINDS, MID_STEPS,
                      SPOTS, START_STEPS, _same_name, cat_of, checked_place, had_before, is_ended, norm_kind, norm_state, spots_for,
                      norm_step, split_keep, step_no, MAX_INSIDE)
 from . import weather as weather_mod
+from . import weathering
 from . import supply as supply_mod
 from .homewords import localize
 from .menu import meal_slots, meals_text
 from .variety import default_pools, twists_of, when_map, with_when
-from .world import (WorldStore, clean_text, doing_text, fmt_time, is_event, is_sleep, mood_text, parse_steps, parse_time, progress_of, real_stop,
+from .world import (WorldStore, clean_text, doing_text, event_text_at, fmt_time, is_event, is_sleep, mood_text, parse_steps, parse_time, progress_of, real_stop,
                     result_text, steps_text, why_text)
 
 SYSTEM_PROMPT = llm.SYSTEM_PROMPT
@@ -559,22 +564,26 @@ class LifeStep:
             if key:
                 name = clean_text(raw.get("name"), 30)
                 if what not in START_STEPS or not name:
-                    continue
+                    raise FactConflict("新食物需要有效名称和取得方式")
                 kind = norm_kind(raw.get("kind"))
                 if what == "原来就有" and (kind not in MEASURED_KINDS or had_before(shelf.values(), name) is not None):
-                    continue  # 只有从没记过的米面油盐、调料能「原来就有」；别的、用完了的得先买
+                    raise FactConflict("%s 不能用原来就有补库存" % name)
                 step = {"new": self._claim(keys, key, name, bot, store.reserve_id), "name": name, "kind": kind,
                         "origin": clean_text(raw.get("origin"), 60),
                         "from": [x for x in dict.fromkeys(resolve(t) for t in raw.get("from") or []) if x]}
             else:
                 tid = resolve(raw.get("id"))
                 if not tid or what not in MID_STEPS + END_STEPS:
-                    continue
+                    raise FactConflict("食物 %s 不存在或动作无效" % raw.get("id"))
                 step = {"id": tid}
                 into = resolve(raw.get("into"))
                 if into and into != tid:
                     step["into"] = into
             place = checked_place(raw.get("place"), bool(key), raw.get("name") or step.get("id"))
+            if any(not resolve(token) for token in raw.get("from") or []):
+                raise FactConflict("%s 有无法找到的原料编号" % (raw.get("name") or raw.get("id")))
+            if raw.get("into") and not resolve(raw["into"]):
+                raise FactConflict("做进的成品 %s 没有对应记录" % raw["into"])
             keep, spot = split_keep(raw.get("keep"), raw.get("spot"), place)
             step.update({"what": what, "left": clean_text(raw.get("left"), 20), "place": place,
                          "keep": keep, "spot": spot, "state": norm_state(raw.get("state")),
@@ -600,7 +609,7 @@ class LifeStep:
             if key:
                 name = clean_text(raw.get("name"), 30)
                 if what not in ITEM_START_STEPS or not name:
-                    continue
+                    raise FactConflict("新物品需要有效名称和取得方式")
                 step = {"new": self._claim(keys, key, name, bot, lambda: store.reserve_id(CAT_ITEM)), "cat": CAT_ITEM, "name": name, "kind": clean_text(raw.get("kind"), 10),
                         "look": clean_text(raw.get("look"), 60), "owner": clean_text(raw.get("owner"), 12),
                         "inside": clean_text(raw.get("inside"), MAX_INSIDE),
@@ -609,13 +618,21 @@ class LifeStep:
             else:
                 tid = resolve(raw.get("id"))
                 if not tid or what not in ITEM_MID_STEPS + ITEM_END_STEPS:
-                    continue
+                    raise FactConflict("物品 %s 不存在或动作无效" % raw.get("id"))
                 step = {"id": tid}
                 if raw.get("owner"):
                     step["owner"] = clean_text(raw.get("owner"), 12)
             place = checked_place(raw.get("place"), bool(key), raw.get("name") or step.get("id"))
+            if any(not resolve(token) for token in raw.get("from") or []):
+                raise FactConflict("%s 有无法找到的材料编号" % (raw.get("name") or raw.get("id")))
             step.update({"what": what, "place": place, "holder": clean_text(raw.get("holder"), 12),
                          "state": clean_text(raw.get("state"), 40), "step": step_no(raw.get("step")) or ""})
+            for field in ("amount", "used", "left", "purpose", "keep", "spot"):
+                if raw.get(field) not in (None, ""):
+                    step[field] = clean_text(raw[field], 30)
+            conditions = weathering.clean_conditions(raw.get("weather"))
+            if conditions:
+                step["weather"] = conditions
             out.append({k: v for k, v in step.items() if v not in ("", None, [])})
         return out
 
@@ -1036,12 +1053,14 @@ class LifeStep:
 
     @staticmethod
     def _things_moment(tasks: dict | None, flat: datetime.datetime) -> datetime.datetime:
-        """家里的吃的按这次补写的起点算（几个人起点不同取最晚的），不早于此刻。"""
+        """回补过去时从最早的补写起点取库存，后续取得须沿事件推进。"""
         starts = [x.get("start") for x in (tasks or {}).values() if isinstance(x, dict)]
         starts = [x for x in starts if isinstance(x, datetime.datetime)]
-        return max([flat] + [x.replace(tzinfo=None) for x in starts])
+        return min([flat] + [x.replace(tzinfo=None) for x in starts])
 
     def _history_blocks(self, bots: list, flat: datetime.datetime) -> list[str]:
+        if getattr(self, "things", None) is not None:
+            self.things.view(flat)
         blocks = []
         for date_offset in (1, 0):
             date_text = (flat.date() - datetime.timedelta(days=date_offset)).isoformat()
@@ -1059,9 +1078,9 @@ class LifeStep:
                         self.label(bot) or bot,
                         timeutil.span_text(item.get("start"), item.get("end"), date_prefix=True, ongoing="~…"),
                         item.get("place") or "",
-                        doing_text(item),
-                        result_text(item),
-                        mood_text(item),
+                        event_text_at(item, flat),
+                        "",
+                        mood_text(item) if not item.get("_fact_error") and parse_time(item.get("end")) is not None and parse_time(item["end"]) <= flat else "",
                     ))
             master = [
                 x for x in self.world.entries(date_text, "master")
@@ -1102,11 +1121,11 @@ class LifeStep:
             pct = None if cur.get("idle") else progress_of(cur, flat)
             now_lines.append("- %s：%s %s%s（%s 起%s%s）%s" % (
                 self.label(bot) or bot, cur.get("place") or "", cur.get("doing") or "",
-                "（闲着）" if cur.get("idle") else "（睡着）" if is_sleep(cur) else steps_text(cur) + result_text(cur),
+                "（闲着）" if cur.get("idle") else "（睡着）" if is_sleep(cur) else event_text_at(cur, flat),
                 timeutil.day_hm(cur.get("start")),
                 "，预计 %s 做完" % timeutil.day_hm(cur.get("end")) if cur.get("end") else "，还没定什么时候做完",
                 "，做了 %d%%" % pct if pct is not None else "",
-                mood_text(cur),
+                "",
             ))
         parts.append("她们此刻手上的事：\n" + "\n".join(now_lines))
         # 这次不写的人，她后面已经排好的段也给出来，免得把她拉进她那边没有的事里；
@@ -1127,7 +1146,7 @@ class LifeStep:
                         self.label(bot) or bot,
                         timeutil.span_text(item.get("start"), item.get("end"), date_prefix=True, ongoing="~…"),
                         item.get("place") or "",
-                        (item.get("doing") or "") + result_text(item),
+                        event_text_at(item, flat),
                         "（和%s）" % "、".join(self.label(x) or x for x in item["with"]) if item.get("with") else "",
                     ))
         if planned:
@@ -1251,6 +1270,10 @@ class LifeStep:
         """接着写时交代她上一段结束时的样子：在哪、结果怎样（第一段从这儿接上，人在外面就先把路走完）；没有那段就空。"""
         if not entry or is_event(entry):
             return ""
+        moment = self._now().replace(tzinfo=None)
+        ended = parse_time(entry.get("end"))
+        if entry.get("_fact_error") or ended is None or ended > moment:
+            return "%s截至此刻：%s；后续结果尚未发生。" % (what, event_text_at(entry, moment))
         out = "%s结束时她在：%s" % (what, clean_text(entry.get("place") or "", 40) or "（没写地方）")
         if entry.get("at_home") is False:
             out += "，人不在宿舍"
@@ -1300,7 +1323,7 @@ class LifeStep:
             example_end=fmt_time(example_start + datetime.timedelta(minutes=25)),
             example_end2=fmt_time(example_start + datetime.timedelta(minutes=40)),
             horizon=fmt_time(max(min(x["start"] or now for x in tasks.values()), now) + datetime.timedelta(hours=HORIZON_HOURS)),
-        ), self.home)
+        ) + LIFECYCLE_RULES, self.home)
 
 
     # ---------- 执行 ----------
@@ -1530,26 +1553,27 @@ class LifeStep:
             await asyncio.sleep(ASK_POLL_SECONDS)
 
     async def _recheck_things(self, data: dict, prompt: str, text: str, tasks: dict, moment: datetime.datetime) -> dict:
-        """步骤里写到了家里的吃的、东西却没标（_unmarked）：把问题列给模型，叫它照原样重写一遍，只打回一次。
-        重写的不是 JSON、或者调用出错，照用第一次的；重写完还有没标的，记一行日志照用。"""
+        """预演事实校验，失败时带原因重写一次；仍失败则整批不提交成功叙述。"""
         date_text = moment.date().isoformat()
         try:
             shelf = self._shelf_at(self._things_moment(tasks, moment))
             problems = self._unmarked(data, tasks, shelf, date_text)
-        except Exception:
-            logger.warning("[super_enhance/world] 补写核对标的吃的、东西失败", exc_info=True)
-            return data
+            with fact_batch(self, preview=True):
+                self._apply(data, copy.deepcopy(tasks), moment)
+        except FactConflict as error:
+            problems = [str(error)]
         if not problems:
             return data
         logger.info("[super_enhance/world] 补写步骤里写到的吃的、东西没标，打回重写：\n%s", "\n".join(problems))
         retry = (
             prompt
             + "\n\n你上一次的输出：\n" + str(text or "").strip()
-            + "\n\n程序核对出这些段的步骤里写到了家里清单上的吃的、东西（或这一次里新添的），things / items 里却没标：\n"
+            + "\n\n程序校验发现以下物品或资源变化不能成立，成功文字不能先存入世界线：\n"
             + "\n".join(problems)
             + "\n照第 18、20 条改：真用到了、吃了、做进了菜、挪了、交给别人了，给那段补上那一步（写 id、what、step；"
             "做进了菜的也写进那盘菜的 from）；同一件事两个人一起做的，标在其中一个人那段里就行；只是顺嘴提到、其实没动它的，"
-            "把那句改成不提它。别的照上一次的原样，重新输出完整的 JSON。"
+            "把那句改成不提它。原料不足就减量、实际采购后再做或改做别的；湿柴不能直接烧，改取已有干柴或先取得。"
+            "物品编号、步骤、时间和结果一起修正，不要删除物品字段却保留成功叙述。重新输出完整 JSON。"
         )
         try:
             again, _thought = await llm.text_chat(
@@ -1558,19 +1582,16 @@ class LifeStep:
                 attempts=1, log_label="补写重写",
             )
         except Exception as e:
-            logger.warning("[super_enhance/world] 补写重写失败，照用第一次的：%s", e)
-            return data
+            raise FactConflict("补写修订失败，未提交有冲突的成功结果") from e
         self._run_cache = {}
         fixed = llm.extract_json(again)
         if not isinstance(fixed, dict) or not isinstance(fixed.get("segments"), dict):
-            logger.warning("[super_enhance/world] 补写重写的不是 JSON，照用第一次的")
-            return data
-        try:
-            left = self._unmarked(fixed, tasks, self._shelf_at(self._things_moment(tasks, moment)), date_text)
-        except Exception:
-            left = []
+            raise FactConflict("补写修订返回格式无效，未提交成功结果")
+        left = self._unmarked(fixed, tasks, self._shelf_at(self._things_moment(tasks, moment)), date_text)
         if left:
-            logger.warning("[super_enhance/world] 补写重写以后还有没标的，照用：\n%s", "\n".join(left))
+            raise FactConflict("补写仍有未记录的关键变化：" + "；".join(left))
+        with fact_batch(self, preview=True):
+            self._apply(fixed, copy.deepcopy(tasks), moment)
         return fixed
 
     def _limit(self, start: datetime.datetime, end, sleepy: bool) -> datetime.datetime:
@@ -1581,6 +1602,10 @@ class LifeStep:
         return min(end, start + cap)
 
     def apply(self, data: dict, tasks: dict, now: datetime.datetime):
+        with fact_batch(self):
+            return self._apply(data, tasks, now)
+
+    def _apply(self, data: dict, tasks: dict, now: datetime.datetime):
         """校验并落库，返回（每人写进去的段，没写到此刻之后的人）。"""
         flat = now.replace(tzinfo=None)
         date_text = flat.date().isoformat()
@@ -1597,9 +1622,17 @@ class LifeStep:
             shelf = self._shelf_at(self._things_moment(tasks, flat)) if store is not None else None
         except Exception:
             logger.warning("[super_enhance/world] 补写算家里的吃的失败", exc_info=True)
-            shelf = None
+            raise FactConflict("库存读取失败，未提交无法核对的生活结果")
         thing_keys: dict = {}
         item_keys: dict = {}
+        if store is not None:
+            for bot, rows in segments.items():
+                for raw in rows if isinstance(rows, list) else []:
+                    for field, keys, category in (("things", thing_keys, CAT_FOOD), ("items", item_keys, CAT_ITEM)):
+                        for effect in raw.get(field) or []:
+                            if isinstance(effect, dict) and effect.get("new") and effect.get("name"):
+                                self._claim(keys, str(effect["new"]), clean_text(effect["name"], 30), bot,
+                                            lambda category=category: store.reserve_id(category))
         for bot, info in tasks.items():
             start = info["start"]
             if info["mode"] == "open":
@@ -1699,6 +1732,9 @@ class LifeStep:
                     "source": "step",
                     "created": fmt_time(flat),
                 }
+                for effect in entry["things"]:
+                    if not 1 <= step_no(effect.get("step")) <= len(_texts):
+                        raise FactConflict("%s 的物品变化必须绑定有效的分步编号" % entry.get("doing"))
                 record = self.world.add_entry(cursor.date().isoformat(), entry)
                 if record is None:
                     break
@@ -1713,5 +1749,7 @@ class LifeStep:
             written[bot] = rows
             if cursor <= flat or (until is not None and not rows):
                 missed.append(self.label(bot) or bot)
+        if store is not None:
+            store.validate_entries([entry for rows in written.values() for entry in rows])
         self._apply_intent_moves(moves, written, flat)
         return written, missed

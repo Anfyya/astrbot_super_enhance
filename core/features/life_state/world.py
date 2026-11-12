@@ -117,6 +117,7 @@ class WorldStore:
         self._defer_depth = 0
         self._dirty_days: set[str] = set()
         self._revision = 1
+        self._fact_errors = {}
 
     # ---------- 通用 ----------
 
@@ -257,6 +258,9 @@ class WorldStore:
         if who:
             items = [x for x in items if str(x.get("who")) == str(who)]
         items.sort(key=lambda x: str(x.get("start") or ""))
+        items = [dict(item, _fact_failed_at=self._fact_errors[date_text + "/" + str(item.get("id"))][0],
+                      _fact_error=self._fact_errors[date_text + "/" + str(item.get("id"))][1])
+                 if date_text + "/" + str(item.get("id")) in self._fact_errors else item for item in items]
         return items
 
     def find(self, entry_id: str, *, date_text: str = "", who: str = "", back_days: int = 2):
@@ -1386,6 +1390,40 @@ def step_minutes(entry: dict) -> list:
     return mins if len(mins) == len(steps) and mins and all(x > 0 for x in mins) else []
 
 
+def step_finished_at(entry: dict, number: int = 0):
+    start = parse_time(entry.get("start"))
+    end = parse_time(entry.get("end"))
+    if start is None:
+        return None
+    if is_event(entry):
+        return start
+    if not number:
+        return end if not real_stop(entry) else None
+    texts, minutes = parse_steps(entry.get("steps"))
+    minutes = minutes or step_minutes(entry)
+    if entry.get("stopped"):
+        completed = entry.get("stop_at_step")
+        if isinstance(completed, int) and number > completed:
+            return None
+        planned_texts, planned_minutes = parse_steps(entry.get("steps_planned"))
+        if planned_texts and planned_minutes:
+            texts, minutes = planned_texts, planned_minutes
+    elif minutes and end is not None:
+        # 旧条目末尾可能多/少一分钟；只有最终一步跟整段结束对齐，前面的取得时间照分步。
+        total = (end - start).total_seconds() / 60
+        if sum(minutes[:-1]) < total:
+            minutes = minutes[:-1] + [total - sum(minutes[:-1])]
+    if not 1 <= number <= len(texts):
+        return None
+    if minutes:
+        finish = start + datetime.timedelta(minutes=sum(minutes[:number]))
+    elif end is not None and not entry.get("stopped"):
+        finish = start + (end - start) * number / len(texts)
+    else:
+        return None
+    return finish if end is None or finish <= end else None
+
+
 def fit_steps(item: dict) -> bool:
     """按这段现在的起止把分步分钟对上（就地改 item，改了返回 True）。
 
@@ -1546,9 +1584,38 @@ def staged_of(entry: dict, now: datetime.datetime) -> str:
                                  str((entry or {}).get("doing") or "").strip()) if x)
     if not steps or pct is None:
         return text
-    index = step_index(entry, pct)
+    flat = now.replace(tzinfo=None)
+    index = sum(1 for number in range(1, len(steps) + 1)
+                if (step_finished_at(entry, number) or datetime.datetime.max) <= flat)
+    index = min(index, len(steps) - 1)
     inner = ("做过了：%s；" % "；".join(steps[:index]) if index else "") + "正在：" + steps[index]
     return "%s（%s）" % (text, inner) if text else inner
+
+
+def event_text_at(entry: dict, now: datetime.datetime, *, detail: bool = True, full: bool = False) -> str:
+    flat = now.replace(tzinfo=None)
+    start = parse_time(entry.get("start"))
+    end = parse_time(entry.get("end"))
+    if start is None:
+        return ""
+    if start > flat:
+        intention = str((entry.get("doing") if detail else entry.get("place")) or "").strip()
+        return "尚未开始，仅是打算：%s" % (intention or entry.get("place") or "待定")
+    failed_at = parse_time(entry.get("_fact_failed_at"))
+    if failed_at is not None and failed_at <= flat:
+        return "%s：物品变化未成立，不能确认后续完成；%s" % (
+            entry.get("place") or "这件事", entry.get("_fact_error") or "需要重新安排")
+    done = is_event(entry) or (end is not None and end <= flat)
+    if not detail:
+        if not done:
+            return "%s：还在进行，结果尚未发生" % (entry.get("place") or "这件事")
+        return public_of(entry)
+    if not done:
+        return staged_of(entry, flat)
+    text = detail_of(entry)
+    if full and not real_stop(entry):
+        text += steps_text(entry)
+    return text + result_text(entry)
 
 
 def _master_plan_expired(item: dict, today: datetime.date) -> bool:
