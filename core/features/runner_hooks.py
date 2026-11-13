@@ -6,18 +6,20 @@ from astrbot.api import logger
 
 
 class RunnerHooks:
-    """聊天记录 → 图片 → 零思考重试；卸载反序。"""
+    """聊天记录 → 图片 → 零思考重试 → 上游报错补历史；卸载反序。"""
 
-    def __init__(self, transcript, image, zero_think) -> None:
+    def __init__(self, transcript, image, zero_think, error_voice) -> None:
         self.transcript = transcript
         self.image = image
         self.zero_think = zero_think
+        self.error_voice = error_voice
 
     def install(self) -> None:
         order = (
             ("聊天记录", self.transcript.install),
             ("图片", self.image.install),
             ("零思考重试", self.zero_think.install),
+            ("报错补历史", self.error_voice.install),
         )
         for name, install in order:
             try:
@@ -32,6 +34,7 @@ class RunnerHooks:
             ("聊天记录", self.transcript.uninstall),
             ("图片", self.image.uninstall),
             ("零思考重试", self.zero_think.uninstall),
+            ("报错补历史", self.error_voice.uninstall),
         )):
             try:
                 uninstall()

@@ -277,6 +277,9 @@ cron 唤醒时把上下文换成最近 `window_hours` 小时内的纯 user / ass
 - 上面三种报错发出去以后她本来不知道（模型失败那一轮 AstrBot 不存，主人那句也丢了；另外两种是插件直接发的）。
   `error_note_to_history`（默认开）在发完以后补进她的会话历史：一条 assistant（主人收到的那句 + 系统标记写明出了什么错），
   模型失败还补上主人原话。她下一轮就知道刚才出过事。发给主人的不变。
+- 上游 503 / 超时这类“正常返回 `role=err`”的失败不走 `on_agent_done`，所以还在
+  `ToolLoopAgentRunner._get_persona_custom_error_message`（只有 err 分支会调）接住最终错误句和原因；
+  否则插件只会在异常分支补历史，普通上游报错仍然断片。
 
 ### ⑨ 消息时间戳（`msg_time`）
 

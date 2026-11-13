@@ -122,7 +122,9 @@ class SuperEnhance(Star):
             context, SectionConfig(raw, "image_gen"), data_dir,
             is_bot=lambda sender: sender in self.bot_dialog.bot_ids,
         )
-        self.runner_hooks = RunnerHooks(self.transcript, self.image_gen, self.zero_think)
+        self.runner_hooks = RunnerHooks(
+            self.transcript, self.image_gen, self.zero_think, error_voice
+        )
         # 聊天记录里的图（她发出去的、主人发来的），之后每轮放进本轮那条用户消息的副本里给她看
         self.transcript.attach = self.image_gen.attach_images
         # 发消息 / tell 的说明换成写死对象和会话号的中文版（只改这一轮的工具清单）

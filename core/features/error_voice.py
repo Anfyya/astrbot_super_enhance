@@ -17,6 +17,11 @@
 一条 assistant，内容是主人收到的那句，后面附一段系统标记写明出了什么错；
 ``model`` 还会补上主人那条原话。发给主人的照旧是那句，标记只在历史里。
 （11-07 以前「补进历史」是面板上的开关 error_note_to_history，一直开着，现在写死。）
+
+11-13 修：上游 503 / 超时这类错误，AstrBot 会正常返回一个 ``role="err"`` 的响应，
+这条路径**不触发 ``on_agent_done``**，所以以前记不下来。现在在
+``ToolLoopAgentRunner._get_persona_custom_error_message`` 里记（只有 err 分支会调它），
+发送后照旧由 ``after_message_sent`` 补进历史。
 """
 
 import random
@@ -26,6 +31,7 @@ from collections.abc import Mapping
 from astrbot.api import logger
 
 from ..common import history_io
+from ..common.patching import PatchSet
 from ..config_view import SectionConfig
 from .life_state.models import bot_of_umo
 from .turn_state import local_stamp
@@ -43,6 +49,10 @@ except Exception:  # 老版本 AstrBot 没有人格自定义报错
 SECTION = "error_voice"
 # 这一轮模型失败的记录，on_agent_done 记下，发完以后补进历史
 NOTE_FLAG = "_super_enhance_model_error_note"
+# AstrBot 的 ToolLoopAgentRunner 只在 llm_resp.role=err 时调它，可以在这里接住
+# 「上游正常返回错误响应」；这条路径不会走 on_agent_done。
+ERROR_HOOK = "_get_persona_custom_error_message"
+ERROR_HOOK_MARKER = "_super_enhance_error_voice_orig"
 REASON_MAX = 300
 KEYS = {
     "model": "error_replies_model",
@@ -51,6 +61,7 @@ KEYS = {
 }
 
 _last: dict[tuple[str, str], str] = {}
+_patches = PatchSet()
 
 
 def _section(config) -> Mapping:
@@ -123,12 +134,30 @@ def _dump(message):
     return data
 
 
+def _latest_user(run_context, event=None):
+    """这一轮主人那条原话：优先从 run_context.messages 里取，缺了再用事件正文兜底。"""
+    for message in reversed(getattr(run_context, "messages", None) or []):
+        if getattr(message, "role", None) == "user" or (
+            isinstance(message, dict) and message.get("role") == "user"
+        ):
+            return _dump(message)
+    text = str(getattr(event, "message_str", "") or "").strip()
+    if text:
+        return {
+            "role": "user",
+            "content": [{"type": "text", "text": text}],
+        }
+    return None
+
+
 def remember_model_error(config, event, run_context, response) -> None:
     """on_agent_done：这一轮模型失败了，记下原因、主人那条原话、主人收到的那句。
 
     AstrBot 在 ``run_agent`` 的 except 里调这个钩子，此时 ``sys.exc_info()`` 就是那个异常。
     """
     if getattr(response, "role", None) != "err":
+        return
+    if event.get_extra(NOTE_FLAG):
         return
     from .cron_context import is_cron_event
 
@@ -137,18 +166,99 @@ def remember_model_error(config, event, run_context, response) -> None:
     exc = sys.exc_info()[1]
     reason = ("%s: %s" % (type(exc).__name__, exc)) if exc is not None else ""
     reason = " ".join(reason.split())[:REASON_MAX]
-    user = None
-    for message in reversed(getattr(run_context, "messages", None) or []):
-        if getattr(message, "role", None) == "user" or (
-            isinstance(message, dict) and message.get("role") == "user"
-        ):
-            user = _dump(message)
-            break
     event.set_extra(NOTE_FLAG, {
         "reason": reason,
-        "user": user,
+        "user": _latest_user(run_context, event),
         "sent": str(getattr(response, "completion_text", "") or "").strip(),
     })
+
+
+def remember_provider_error(runner, sent: str = "") -> None:
+    """上游返回 ``role=err`` 时记下这一轮，发送后由 after_message_sent 补进历史。
+
+    这类错误不是异常，AstrBot 不会调 ``on_agent_done``，只能从错误分支本身接。
+    ``sent`` 是人格自定义报错（AstrBot 实际发出去的那句）；没配时按 core 的格式拼。
+    """
+    run_context = getattr(runner, "run_context", None)
+    event = getattr(getattr(run_context, "context", None), "event", None)
+    if event is None or event.get_extra(NOTE_FLAG):
+        return
+    from .cron_context import is_cron_event
+
+    if is_cron_event(event):
+        return
+    final = getattr(runner, "final_llm_resp", None)
+    raw = _flat(getattr(final, "completion_text", "") or "")
+    reason = raw or "上游模型请求没有返回可用结果"
+    if not sent:
+        sent = "LLM 响应错误: %s" % (raw or "未知错误")
+    event.set_extra(NOTE_FLAG, {
+        "reason": reason,
+        "user": _latest_user(run_context, event),
+        "sent": str(sent).strip(),
+    })
+    logger.info(
+        "[super_enhance/error_voice] 上游模型报错已记下，发送后补进历史（%s）",
+        reason,
+    )
+
+
+def install() -> None:
+    """接住上游正常返回的 role=err；只补这一条路径，不改 AstrBot 的发送结果。"""
+    if _patches:
+        return
+    try:
+        from astrbot.core.agent.runners.tool_loop_agent_runner import (
+            ToolLoopAgentRunner,
+        )
+    except Exception:
+        logger.error(
+            "[super_enhance/error_voice] 找不到 ToolLoopAgentRunner（AstrBot 版本可能变了），"
+            "上游报错仍补不进历史",
+            exc_info=True,
+        )
+        return
+    if not hasattr(ToolLoopAgentRunner, ERROR_HOOK):
+        logger.error(
+            "[super_enhance/error_voice] ToolLoopAgentRunner 里找不到 %s，"
+            "上游报错仍补不进历史",
+            ERROR_HOOK,
+        )
+        return
+    current = ToolLoopAgentRunner.__dict__.get(ERROR_HOOK) or getattr(
+        ToolLoopAgentRunner, ERROR_HOOK
+    )
+    orig = getattr(current, ERROR_HOOK_MARKER, None) or current
+
+    def wrapped(runner):
+        sent = orig(runner)
+        try:
+            remember_provider_error(runner, sent or "")
+        except Exception:
+            logger.error(
+                "[super_enhance/error_voice] 记录上游模型报错出错", exc_info=True
+            )
+        return sent
+
+    _patches.add(
+        ToolLoopAgentRunner,
+        ERROR_HOOK,
+        orig,
+        wrapped,
+        marker=ERROR_HOOK_MARKER,
+    )
+    logger.info(
+        "[super_enhance/error_voice] 已接住上游 role=err：发送后补主人原话和报错句进历史"
+    )
+
+
+def uninstall() -> None:
+    if not _patches:
+        return
+    try:
+        _patches.uninstall()
+    except Exception:
+        logger.error("[super_enhance/error_voice] 卸载报错补历史钩子失败", exc_info=True)
 
 
 def _flat(text) -> str:
