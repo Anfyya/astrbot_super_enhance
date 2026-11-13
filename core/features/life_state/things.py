@@ -42,6 +42,7 @@ from .food import (DEFAULT_KEEP, DEFAULT_SHIFT, DEFAULT_SPOT, DEFAULT_STATE, KEE
                    simulate, split_keep, weather_kind, weather_shift, VAGUE_PLACE)
 from . import weather as weather_mod
 from . import weathering
+from . import fuel_records
 from .world import clean_steps, clean_text, fmt_time, parse_time, real_stop, step_finished_at
 
 FILE_NAME = "things.json"
@@ -1026,6 +1027,9 @@ class ThingStore:
             got = parse_amount(first.get("amount")) or parse_amount(first.get("left"))
             if got is not None and got[1]:
                 item["unit"] = got[1]  # 头一回写的是毫升还是克，以后就按它算
+        why = self._inherit_fuel(item, [self.get(token) for token in item["from"]])
+        if why and not self._manual_stage(stage):
+            return None, why
         self._load().setdefault("items", []).append(item)
         self._save()
         return item, ""
@@ -1275,16 +1279,15 @@ class ThingStore:
             bots = set()
         flat = now.replace(tzinfo=None)
         out = []
+        fuel_since = str(self._load().get("fuel_validation_since") or "")
         for back in range(SCAN_DAYS, -1, -1):
             day = (flat.date() - datetime.timedelta(days=back)).isoformat()
             for entry in self.world.entries(day):
-                steps = entry.get("things")
-                if not isinstance(steps, list) or not steps:
-                    continue
                 if bots and str(entry.get("who")) not in bots:
                     continue
-                out.extend(self.entry_segments(entry, "%s/%s" % (day, entry.get("id")), flat))
-        out.sort(key=lambda row: (row["at"], row["start"], row["ref"]))
+                out.extend(segment for segment in self.entry_segments(entry, "%s/%s" % (day, entry.get("id")), flat)
+                           if not segment.get("fuel_entry") or not fuel_since or str(entry.get("start")) >= fuel_since)
+        out.sort(key=lambda row: (row["at"], bool(row.get("fuel_entry")), row["start"], row["ref"]))
         return out
 
     @staticmethod
@@ -1310,9 +1313,20 @@ class ThingStore:
                                               "ref": ref, "key": ref + "@" + stamp,
                                               "by": str(entry.get("who") or ""), "steps": []})
             group["steps"].append(dict(effect, effect=str(index + 1)))
-        return list(groups.values())
+        checks = []
+        for number, at in fuel_records.requirements(entry, until):
+            stamp = fmt_time(at)
+            checks.append({"at": stamp, "start": entry.get("start") or stamp, "ref": ref,
+                           "key": ref + "@" + stamp + "#fuel", "by": str(entry.get("who") or ""),
+                           "steps": [], "fuel_entry": entry, "fuel_step": number})
+        return list(groups.values()) + checks
 
     def _apply_segment(self, items: dict, alias: dict, seg: dict, persist: bool = False) -> None:
+        if seg.get("fuel_entry"):
+            why = self._fuel_record_error(seg["fuel_entry"], items, parse_time(seg["at"]), seg.get("fuel_step", 0))
+            if why:
+                raise FactConflict(why)
+            return
         trial = dict(items)
         affected = set()
         for effect in seg["steps"]:
@@ -1333,12 +1347,7 @@ class ThingStore:
                 item.pop("virtual", None)
             self._load()["items"] = list(items.values())
 
-    def _fuel_check(self, item: dict, stage: dict) -> str:
-        if not weathering.fuel_item(item) or self._manual_stage(stage):
-            return ""
-        at = parse_time(stage.get("at"))
-        if at is None:
-            return "时间不对"
+    def _fuel_state(self, item: dict, at: datetime.datetime) -> dict:
         weathers = self._weathers(at)
         known = sorted(weathers)
 
@@ -1347,17 +1356,137 @@ class ThingStore:
             return weathers[older[-1]] if older else "多云"
 
         home_at = self.world.home_at if self.world is not None else lambda moment: "海边小镇"
-        state = weathering.simulate(item, at, day_text, home_at) or {}
+        return weathering.simulate(item, at, day_text, home_at) or {}
+
+    def _fuel_record_error(self, entry: dict, items: dict, at: datetime.datetime, number: int = 0) -> str:
+        day = str(entry.get("start") or "")[:10]
+        related = [entry]
+        if self.world is not None:
+            related.extend(other for other in self.world.entries(day) if fuel_records.shared(entry, other))
+        refs = {day + "/" + str(row.get("id")) for row in related}
+        start = parse_time(entry.get("start"))
+        texts = clean_steps(entry.get("steps"))
+        after = step_finished_at(entry, number - 1) if number > 1 and fuel_records.refueling(texts[number - 1]) else None
+        for item in items.values():
+            if self.is_secret(item) or not weathering.fuel_item(item):
+                continue
+            for index, stage in enumerate(item.get("stages") or []):
+                moment = parse_time(stage.get("at"))
+                ref = stage.get("wl") or (stage.get("src") or {}).get("entry")
+                if (ref not in refs or moment is None or not start <= moment <= at
+                        or (after is not None and moment <= after)
+                        or stage.get("purpose") == "material" or stage.get("what") not in ("用了", "用掉一部分", "用完了")):
+                    continue
+                if ref in self._projection_errors:
+                    continue
+                before = dict(item, stages=item["stages"][:index])
+                previous, current = stock(before), stock(dict(item, stages=item["stages"][:index + 1]))
+                if (previous is None or current is None or previous["left"] <= current["left"]
+                        or self._fuel_check(before, dict(stage, purpose="fuel"))):
+                    continue
+                if self.world is not None and self.where_of(before, moment) not in ("", self.world.home_at(moment)):
+                    continue
+                return ""
+        return "已写烧柴或添柴，但没有对应可用柴批次的实际扣料；先取得干柴并按编号记用量，没取得就暂缓，不能只保留成功文字"
+
+    def _inherit_fuel(self, item: dict, sources: list) -> str:
+        if not sources or not weathering.fuel_item(item):
+            return ""
+        first = item["stages"][0]
+        at = parse_time(first.get("at"))
+        if at is None:
+            return "柴料加工时间不对"
+        states = [self._fuel_state(dict(source, kind=str(source.get("kind") or "") + " 柴料"), at)
+                  for source in sources if source]
+        if not states:
+            return "柴料加工缺少原批次"
+        declared = weathering.clean_conditions(first.get("weather"))
+        if any(state.get("fuel_state") != "ready" for state in states):
+            if (declared.get("fuel_state") == "ready" or declared.get("seasoning") == "seasoned"
+                    or weathering.dry_asserted(first.get("state") or "")):
+                return "裁短、劈开或另建批次不能使湿料立即变成干柴"
+        if declared.get("fuel_safe") is True and any(state.get("fuel_safe") is not True for state in states):
+            return "加工后的柴料必须继承原料的来源与适用性，不能改名洗掉浸海或处理经历"
+        for key in ("wet", "fuel_wet"):
+            values = [state.get(key) for state in states]
+            declared.pop(key, None)
+            if all(value is not None for value in values):
+                declared[key] = max(values)
+        for key in ("saltwater", "treated", "rotten"):
+            values = [state.get(key) for state in states]
+            declared.pop(key, None)
+            if any(value is True for value in values):
+                declared[key] = True
+            elif all(value is False for value in values):
+                declared[key] = False
+        declared.pop("fuel_safe", None)
+        declared.pop("fuel_state", None)
+        declared.pop("seasoning", None)
+        if any(state.get("fuel_safe") is False for state in states):
+            declared["fuel_safe"] = False
+        declared["fuel_source"] = states[0].get("fuel_source") or "drift_unknown"
+        if any(state.get("fuel_safe") is None for state in states):
+            declared["fuel_source"] = "drift_unknown"
+        if any(state.get("seasoning") == "green" for state in states):
+            declared["seasoning"] = "green"
+        elif all(state.get("seasoning") == "seasoned" for state in states):
+            declared["seasoning"] = "seasoned"
+        first["weather"] = declared
+        return ""
+
+    @staticmethod
+    def _fuel_allocation_error(item: dict, items: dict) -> str:
+        if not weathering.fuel_item(item):
+            return ""
+        for token in item.get("from") or []:
+            source = items.get(token)
+            if source is None:
+                return "柴料加工缺少原批次 %s" % token
+            allocations = [stage for stage in source.get("stages") or []
+                           if str(stage.get("at")) <= str(item.get("created"))
+                           and stage.get("into") == item.get("id")
+                           and stage.get("what") in ("用了", "用掉一部分", "用完了")
+                           and stage.get("purpose") == "material"]
+            if not allocations:
+                return "柴料分批加工须记录原批次 %s 的实际用量及 into，purpose=material；不能复制库存" % token
+            if any(stage.get("also_into") for stage in allocations):
+                return "不同柴料子批次需要各自的扣料记录，不能共用一笔用量"
+        return ""
+
+    def _fuel_check(self, item: dict, stage: dict) -> str:
+        if self._manual_stage(stage):
+            return ""
+        if not weathering.fuel_item(item):
+            if stage.get("purpose") != "fuel" or not weathering.wood_candidate(item):
+                return ""
+            item = dict(item, kind=str(item.get("kind") or "") + " 柴料")
+        at = parse_time(stage.get("at"))
+        if at is None:
+            return "时间不对"
+        state = self._fuel_state(item, at)
         conditions = weathering.clean_conditions(stage.get("weather"))
+        history = [row for row in item.get("stages") or [] if str(row.get("at")) <= str(stage.get("at"))]
+        properties = weathering.fuel_properties(item, history + [stage])
+        if conditions.get("fuel_source") == "supplier" and state.get("fuel_source") != "supplier":
+            return "把木料带去柴料场不改变原来历；若换到干柴，应交出旧批次、另记实际取得的新批次"
+        for key in ("saltwater", "treated", "rotten"):
+            if conditions.get(key) is False and state.get(key) is True:
+                return "不能只改标记消除这批木料已有的浸泡、处理或腐朽经历"
+        if conditions.get("fuel_safe") is True and (properties.get("fuel_safe") is not True or state.get("fuel_safe") is False):
+            return "不能只写可燃：需有明确来源及处理经历，海水浸泡、涂漆等旧事实不能用冲洗或改名消除"
+        if (conditions.get("seasoning") == "seasoned" and state.get("seasoning") != "seasoned"
+                and state.get("fuel_state") not in ("ready", "unknown")):
+            return "这批木料尚未陈干，不能通过改成原已干缩短晾晒"
+        if ("fuel_wet" in conditions and state.get("fuel_wet") is not None
+                and conditions["fuel_wet"] < state["fuel_wet"] - 1e-8):
+            return "已有柴木内部湿度由天气计算，不能用新标记降低来跳过干燥"
         drying = (conditions.get("fuel_state") == "ready" or conditions.get("fuel_wet", 1) <= 0.2
-                  or weathering.asserted(stage.get("state") or "", weathering.RESET_DRY + ("干柴", "已干燥")))
-        burning = stage.get("what") in ("用了", "用完了") and stage.get("purpose") != "material"
+                  or weathering.dry_asserted(stage.get("state") or ""))
+        burning = stage.get("what") in ("用了", "用掉一部分", "用完了") and stage.get("purpose") != "material"
         if (drying or burning) and state.get("fuel_state") != "ready":
             return "这批柴尚未干透，不能直接写成干柴或烧掉；先晾晒、检查，或另取已干批次"
-        if burning and not state.get("fuel_safe"):
-            return "海漂或处理木料不能作家用炉常规燃料，另取合适的干柴"
-        if conditions.get("fuel_safe") is True and not state.get("fuel_safe"):
-            return "不能把海漂或处理木料只改标记就当成合适燃柴"
+        if burning and (state.get("fuel_safe") is not True or properties.get("fuel_safe") is not True):
+            return "%s，先确认来源或另取合适干柴" % (state.get("fuel_reason") or properties.get("fuel_reason") or "木料不适合燃用")
         return ""
 
     def _apply_segment_unchecked(self, items: dict, alias: dict, seg: dict) -> None:
@@ -1464,6 +1593,9 @@ class ThingStore:
                 got = parse_amount(first.get("amount")) or parse_amount(first.get("left"))
                 if got is not None and got[1]:
                     item["unit"] = got[1]
+            why = self._inherit_fuel(item, [items[token] for token in sources])
+            if why:
+                raise FactConflict("%s：%s" % (name, why))
             item["virtual"] = True
             items[tid] = item
             made.append(item)
@@ -1488,6 +1620,9 @@ class ThingStore:
             if stage.get("into") and into in items and tid not in (items[into].get("from") or []):
                 items[into].setdefault("from", []).append(tid)
         for dish in made:
+            why = self._fuel_allocation_error(dish, items)
+            if why:
+                raise FactConflict("%s：%s" % (dish.get("name"), why))
             if cat_of(dish) != CAT_FOOD:
                 continue  # 东西用什么做的只是来历，不替料补「用掉」
             for sid in dish.get("from") or []:
@@ -1587,12 +1722,16 @@ class ThingStore:
         horizon = max(parse_time(entry.get("end") or entry.get("start")) for entry in entries)
         try:
             self._view_cache = None
-            self.view(horizon)
+            shelf = self.view(horizon)
             for entry in entries:
                 ref = "%s/%s" % (str(entry.get("start"))[:10], entry.get("id"))
                 error = getattr(self, "_projection_errors", {}).get(ref)
                 if error:
                     raise FactConflict("%s：%s" % (ref, error[1]))
+                for number, at in fuel_records.requirements(entry, horizon):
+                    why = self._fuel_record_error(entry, shelf, at, number)
+                    if why:
+                        raise FactConflict("%s：%s" % (ref, why))
         finally:
             self._view_cache = None
             if self.world is not None:

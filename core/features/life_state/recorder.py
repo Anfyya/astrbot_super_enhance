@@ -20,6 +20,7 @@ from .homewords import localize
 from .facts import fact_batch
 from .living_rules import LIFECYCLE_RULES
 from . import weathering
+from . import fuel_records
 from .things import FactConflict, clean_stage, insert_stage
 from .models import bot_of_umo
 from .things import (CAT_FOOD, CAT_ITEM, KEEPS, KINDS, SAME_NEW_MINUTES, SAME_STEP_MINUTES, SPOTS, STEPS, USE_STEPS, cat_of, spots_for,
@@ -228,6 +229,7 @@ class RecorderBatch:
     mentioned: set[str] = field(default_factory=set)
     fresh: set[str] = field(default_factory=set)
     free_at: dict[str, datetime.datetime] = field(default_factory=dict)
+    written: list[dict] = field(default_factory=list)
 
 
 class Recorder:
@@ -733,6 +735,9 @@ class Recorder:
         for who, since in sorted(state.touched.items()):
             self._redo_after(who, since, now)
         self._unpair(now)
+        store = getattr(self, "things", None)
+        if store is not None:
+            store.validate_entries(state.written)
 
     def _apply_entries(self, raws, umo: str, now: datetime.datetime, items, bots: set,
                        free_at: dict, flat_now: datetime.datetime) -> None:
@@ -791,6 +796,8 @@ class Recorder:
             if moved:
                 entry.update(moved)
             record = self.world.add_entry(date_text, entry)
+            if record is not None:
+                self.batch.written.append(record)
             if record is not None and moved:
                 self._fit_moved(record)
                 logger.info("[super_enhance/world] 记录员把%s排好的 %s 挪到 %s（%s），分步和标的吃的照留",
@@ -1598,6 +1605,17 @@ class Recorder:
         hit = self._said_item(items, raw.get("quote"))
         said = norm_time("%s %s" % (hit.get("date"), hit.get("time")), day) if hit else ""
         src = {"umo": umo, "quote": clean_text(raw.get("quote"), 80)}
+        at = norm_time(raw.get("at"), day, fallback=said or fmt_time(now))
+        moment = parse_time(at)
+        for record in getattr(self.batch, "written", []):
+            start = parse_time(record.get("start"))
+            end = parse_time(record.get("end")) or now.replace(tzinfo=None)
+            summary = "，".join([str(record.get("doing") or "")] + list(record.get("steps") or []))
+            if (start is not None and moment is not None and start <= moment <= end
+                    and (not raw.get("by") or self._by(raw["by"]) == record.get("who"))
+                    and fuel_records.burning(summary, bool(fuel_records.WOOD.search(summary)))):
+                src["entry"] = str(record["start"])[:10] + "/" + str(record["id"])
+                break
         if hit:
             src["at"] = said
             if str(hit.get("role") or "") == "assistant":
@@ -1606,7 +1624,7 @@ class Recorder:
             else:
                 src["who"] = "主人"
         return {
-            "at": norm_time(raw.get("at"), day, fallback=said or fmt_time(now)),
+            "at": at,
             "what": raw.get("what"),
             "left": raw.get("left"),
             "place": checked_place(raw.get("place"), new, raw.get("name") or raw.get("id")),
@@ -1637,6 +1655,7 @@ class Recorder:
         view = store.here(store.view(flat), flat)
         keys: dict[str, str] = {}
         dishes = []
+        fuel_batches = []
 
         def resolve(token) -> str:
             """临时代号 / 编号 → 存下来的那件的编号（世界线里现算的先存下来）；对不上返回空串。"""
@@ -1689,6 +1708,8 @@ class Recorder:
             view[item["id"]] = copy.deepcopy(item)
             if sources and cat == CAT_FOOD:
                 dishes.append(item)
+            if sources and weathering.fuel_item(item):
+                fuel_batches.append(item)
             first = item["stages"][0]
             logger.info("[super_enhance/things] 新记 %s %s（%s，%s %s）", item["id"], item["name"], item["kind"],
                         first["at"][5:], first["what"])
@@ -1719,6 +1740,10 @@ class Recorder:
                 store.link_source(into, tid)
             logger.info("[super_enhance/things] %s 记一步：%s %s%s", tid, stage["at"][5:], norm_step(stage.get("what"), cat),
                         "（做进了 %s）" % into if stage.get("into") else "")
+        for batch in fuel_batches:
+            why = store._fuel_allocation_error(batch, {token: store.get(token) for token in batch.get("from") or []})
+            if why:
+                raise FactConflict("%s：%s" % (batch.get("name"), why))
         # 菜的 from 里写了、料那边没记「用掉」的：补一步，剩多少没说
         for dish in dishes:
             first = dish["stages"][0]
