@@ -1183,8 +1183,8 @@ class ProactivePlanner:
         if sent:
             lines.append("")
             lines.append("你今天主动发过的话：")
-            for moment, text, replied in sent:
-                lines.append("- %s %s%s" % (timeutil.day_hm(moment), text, "" if replied else "（主人还没回）"))
+            for moment, text, _replied in sent:
+                lines.append("- %s %s" % (timeutil.day_hm(moment), text))
         lines.append("")
         if kind == "question":
             lines.append("调用 send_message_to_user 把这句问出去（必须发）。")

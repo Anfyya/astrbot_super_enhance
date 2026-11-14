@@ -134,6 +134,7 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
    - kind 从这几类里挑：{kinds}；keep（怎么放）从这几样里挑：{keeps}；spot（放在哪，管冷热）从这几样里挑：{spots}。
 19. **被打断的事后来怎么样了**：上面「被打断、还没交代后来怎么样的事」里每一件，在 stopped_results 里用编号写一句后来怎么样了：撂下不做了、交给谁接着做完了、等手上的事忙完回头接着做完了、或者赶紧几下做完了，挑合情理的写。只写这个人自己怎么处理这件事，不替别人定事实：别人那件做没做完、做出了什么，以世界线上别人那段写的为准（标着「做到……先放下了」的就是没做完），拿不准就写撂下了或者等回头再说。要和你这次排的段对得上：写了回头接着做，就把接着做的那段排上；写了交给对方，对方那段就是接着做这件事。没列出来的不写。
 20. **家里的东西**（吃的以外）：上面「家里的东西」是此刻家里有的（编号、样子、在哪、在谁手上）。段里做了、用了、挪了、交给别人了、接着做了一截的东西，写进这段的 items（没动到就是空数组）：
+   只是拿来读、翻看、摊开看一眼，之后原样放回去，地方、样子、数量都没变的，不算动到它，不写 items；别为了让校验通过硬编一条物品变化。
    - 已有的写 id、what（挪地方 / 交给 / 用了 / 做了一截 / 做好了 / 变了样 / 送人了 / 丢了 / 坏了扔了 / 用完了）、place、holder（交到谁手上）、state（这段做完它什么样，比如「织到两尺长」）。接着做没做完的那件（比如接着织那条围巾），就是清单里那一件，写「做了一截」或「做好了」，不要另建一件。清单里标着「已做好」的已经做完了，不要再排接着做它，也别给它写「做了一截」「做好了」；想再做一样的，就另起一件新的。
    - 新做出来的、买回来的、捡到的写 new（临时代号 x1、x2……，这一次里每件一个，两个人、几段之间也不重复：丛雨那段用了 x1，亚托莉那段的新东西就从 x2 起）、name（叫得出区别的名字，例如「兔子窗花」）、kind（它是什么，一个词：窗花、围巾……）、look（样子）、owner（归谁）、what（开始做 / 做好了 / 买回来 / 收到 / 捡到）、place、state。清单里还没有、可前面早就有了的（比如前几天起了头的围巾），也写 new，what 写「原来就有」，state 写它现在的样子。
    - 上面写了字、画了东西的（给主人留的纸条、信、便笺、清单、贺卡、画）：look 里把上面写的原话一字不差地写出来，用「」括起来；画的写清楚画了什么。例如 look 写「黄纸条，铅笔写的：『主人，粥在灶上温着，亚托莉去码头了，中午前回来』」，别只写「一张写给主人的纸条」。这段的 steps 里写到她写纸条时也用这句原话。后来谁拿起来看、念给主人听，都照这句说，不能另编。
@@ -235,6 +236,11 @@ def stale_days(item: dict, today: datetime.date) -> int:
 # 一句里有这些字眼的，不是在动它（写日志、聊天、回想、打算、看看够不够），这一句不核
 MENTION_SKIP = ("写", "记", "说", "聊", "讲", "提起", "提到", "想", "梦", "念叨", "打算", "商量", "问", "盘算", "惦记",
                 "回味", "夸", "看看", "瞧瞧", "看一遍", "够不够", "剩多少", "还剩几")
+# 只是拿来读、翻、摊开看的纸类东西，没改地方、没改样子、没消耗，不算动了它。
+# 真拿它去撕、裁、烧、包、擦时，下面这些词不算数，照常核。
+READ_MEDIA = ("报纸", "白纸", "照片", "书", "杂志", "本子", "海图", "画册", "笔记", "作业本")
+READ_ONLY_WORDS = ("翻", "读", "阅", "浏览", "看", "瞧", "抽出", "拿", "取", "抱", "摞", "摊开")
+READ_MUTATION_WORDS = ("撕", "剪", "裁", "烧", "点火", "引火", "包", "擦", "垫", "糊", "塞", "铺", "贴")
 # 菜名前头的做法：「清炒丝瓜」写成「丝瓜」也认
 COOK_HEADS = ("清炒", "红烧", "清蒸", "凉拌", "爆炒", "干煸", "水煮", "糖醋", "油焖", "小炒",
               "蒸", "炒", "煮", "炖", "煎", "炸", "烤", "卤", "拌", "焖")
@@ -267,6 +273,9 @@ def mentioned(text: str, known: dict) -> set:
     out = set()
     for clause in CLAUSE_SPLIT.split(str(text or "")):
         if not clause or any(w in clause for w in MENTION_SKIP):
+            continue
+        if (any(w in clause for w in READ_MEDIA) and any(w in clause for w in READ_ONLY_WORDS)
+                and not any(w in clause for w in READ_MUTATION_WORDS)):
             continue
         taken = []
         for key in keys:
@@ -1553,46 +1562,53 @@ class LifeStep:
             await asyncio.sleep(ASK_POLL_SECONDS)
 
     async def _recheck_things(self, data: dict, prompt: str, text: str, tasks: dict, moment: datetime.datetime) -> dict:
-        """预演事实校验，失败时带原因重写一次；仍失败则整批不提交成功叙述。"""
+        """预演事实校验，把没标物品和落库冲突一起打回重写；最多两轮，仍失败则整批不提交。"""
         date_text = moment.date().isoformat()
-        try:
-            shelf = self._shelf_at(self._things_moment(tasks, moment))
-            problems = self._unmarked(data, tasks, shelf, date_text)
-            with fact_batch(self, preview=True):
-                self._apply(data, copy.deepcopy(tasks), moment)
-        except FactConflict as error:
-            problems = [str(error)]
-        if not problems:
-            return data
-        logger.info("[super_enhance/world] 补写步骤里写到的吃的、东西没标，打回重写：\n%s", "\n".join(problems))
-        retry = (
-            prompt
-            + "\n\n你上一次的输出：\n" + str(text or "").strip()
-            + "\n\n程序校验发现以下物品或资源变化不能成立，成功文字不能先存入世界线：\n"
-            + "\n".join(problems)
-            + "\n照第 18、20 条改：真用到了、吃了、做进了菜、挪了、交给别人了，给那段补上那一步（写 id、what、step；"
-            "做进了菜的也写进那盘菜的 from）；同一件事两个人一起做的，标在其中一个人那段里就行；只是顺嘴提到、其实没动它的，"
-            "把那句改成不提它。原料不足就减量、实际采购后再做或改做别的；湿柴不能直接烧，改取已有干柴或先取得。"
-            "物品编号、步骤、时间和结果一起修正，不要删除物品字段却保留成功叙述。重新输出完整 JSON。"
-        )
-        try:
-            again, _thought = await llm.text_chat(
-                self.context, retry, provider_id=str(self.cfg.get("llm_provider_id") or "").strip(),
-                timeout=self.timeout, session_id="super_enhance_lifestep", system_prompt=SYSTEM_PROMPT,
-                attempts=1, log_label="补写重写",
+        current, current_text = data, text
+        for attempt in range(3):
+            problems = []
+            try:
+                self._run_cache = {}
+                shelf = self._shelf_at(self._things_moment(tasks, moment))
+                problems.extend(self._unmarked(current, tasks, shelf, date_text))
+                with fact_batch(self, preview=True):
+                    self._apply(current, copy.deepcopy(tasks), moment)
+            except FactConflict as error:
+                problems.append(str(error))
+            if not problems:
+                return current
+            if attempt >= 2:
+                raise FactConflict("补写修订后仍有事实冲突：" + "；".join(problems))
+            logger.info(
+                "[super_enhance/world] 补写事实校验没过，打回重写（第 %d 轮）：\n%s",
+                attempt + 1,
+                "\n".join(problems),
             )
-        except Exception as e:
-            raise FactConflict("补写修订失败，未提交有冲突的成功结果") from e
-        self._run_cache = {}
-        fixed = llm.extract_json(again)
-        if not isinstance(fixed, dict) or not isinstance(fixed.get("segments"), dict):
-            raise FactConflict("补写修订返回格式无效，未提交成功结果")
-        left = self._unmarked(fixed, tasks, self._shelf_at(self._things_moment(tasks, moment)), date_text)
-        if left:
-            raise FactConflict("补写仍有未记录的关键变化：" + "；".join(left))
-        with fact_batch(self, preview=True):
-            self._apply(fixed, copy.deepcopy(tasks), moment)
-        return fixed
+            retry = (
+                prompt
+                + "\n\n你上一次的输出：\n" + str(current_text or "").strip()
+                + "\n\n程序校验发现以下物品或资源变化不能成立，成功文字不能先存入世界线：\n"
+                + "\n".join(problems)
+                + "\n照第 18、20 条改：真用到了、吃了、做进了菜、挪了、交给别人了，给那段补上那一步（写 id、what、step；"
+                "做进了菜的也写进那盘菜的 from）；同一件事两个人一起做的，标在其中一个人那段里就行；只是拿来读、翻看、"
+                "摊开看一眼又原样放回的，不算动它，不要硬写 items。原料不足就减量、实际采购后再做或改做别的；"
+                "湿柴不能直接烧，改取已有干柴或先取得。物品编号、步骤、时间和结果一起修正，"
+                "不要删除物品字段却保留成功叙述。重新输出完整 JSON。"
+            )
+            try:
+                again, _thought = await llm.text_chat(
+                    self.context, retry, provider_id=str(self.cfg.get("llm_provider_id") or "").strip(),
+                    timeout=self.timeout, session_id="super_enhance_lifestep", system_prompt=SYSTEM_PROMPT,
+                    attempts=1, log_label="补写重写",
+                )
+            except Exception as e:
+                raise FactConflict("补写修订失败，未提交有冲突的成功结果") from e
+            self._run_cache = {}
+            fixed = llm.extract_json(again)
+            if not isinstance(fixed, dict) or not isinstance(fixed.get("segments"), dict):
+                raise FactConflict("补写修订返回格式无效，未提交成功结果")
+            current, current_text = fixed, again
+        raise FactConflict("补写修订未完成")
 
     def _limit(self, start: datetime.datetime, end, sleepy: bool) -> datetime.datetime:
         """结束时间缺了、早于开始、或长得离谱时规整一下（睡觉那段放宽到 MAX_SLEEP_HOURS）。"""
