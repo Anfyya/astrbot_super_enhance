@@ -7,8 +7,8 @@
 - 会话开头有 /compact v2 的前情备忘和原话摘录就放在最前面，后面是备忘之后的全部原话
   （配合每天 0 点自动压缩：昨晚最后几句 + 今天的）；也可以只放最近 N 条；
 - 思考、工具调用、工具结果不写进去；本轮正在进行的工具调用照常是消息；
-  画图的两个工具例外（2026-10-24）：draw_image 写成一行「（你用 draw_image 画了 img2……写给画图模型的画面：……）」，
-  send_image 发出去了写成「你：[图片 img2]」；
+  画面呈现的两个工具例外（2026-10-24，原名 2026-11-14 改掉）：show_view 写成一行
+  「（你用 show_view 呈现了 img2……画面内容：……）」，send_view 发出去了写成「你：[图片 img2]」；
 - 聊天记录里的图不丢（2026-10-24）：她发出去的、主人发来的，按先后取最近 IMAGE_KEEP 张，放进本轮那条用户消息的副本里
   （``attach``，接 image_gen.attach_images），原消息不动、存档里不会多出图；
 - 主人消息里随手塞的 <system>……</system> 提示只在那一轮起作用，之后的聊天记录里去掉（2026-10-18）；
@@ -42,10 +42,12 @@ MEMO_PREFIX = text_utils.MEMO_PREFIX
 NOTE_MARK = text_utils.NOTE_MARK
 # 本轮那条前面紧挨着、还没回的主人消息，离本轮不超过这么久的也算本轮（连发几句、上一句的回复被作废）（分钟）
 TURN_PULL_MINUTES = 5
-# 聊天记录里照样写出来的工具（画图的两个）；别的工具调用不写
-DRAW_TOOLS = ("draw_image", "send_image")
+# 聊天记录里照样写出来的工具（画面呈现的两个）；别的工具调用不写。
+# 旧记录里还是 draw_image / send_image，读出来时按新口径写，不再把「画」带回上下文。
+VIEW_TOOLS = ("show_view", "send_view", "draw_image", "send_image")
+SHOW_VIEW_TOOLS = ("show_view", "draw_image")
 IMG_ID_RE = re.compile(r"img\d+", re.IGNORECASE)
-# 画图那一行里提示词最多写这么多字
+# 画面呈现那一行里提示词最多写这么多字
 PROMPT_CLIP = 200
 # 聊天记录里的图（她发出去的、对面发来的一起算）每轮最多带最近几张给她看
 IMAGE_KEEP = 6
@@ -78,14 +80,14 @@ def _tool_results(history: list) -> dict:
     return out
 
 
-def _draw_lines(message: dict, results: dict) -> list[tuple[str, str]]:
-    """这条里画图工具的调用写成聊天记录里的几行：[(那一行（不带时间）, 发出去的图的编号，没发就空)]。"""
+def _view_lines(message: dict, results: dict) -> list[tuple[str, str]]:
+    """这条里画面呈现工具的调用写成聊天记录里的几行：[(那一行（不带时间）, 发出去的图的编号，没发就空)]。"""
     out = []
     for call in message.get("tool_calls") or []:
         call = _dump(call)
         fn = call.get("function") or {}
         name = str(fn.get("name") or "")
-        if name not in DRAW_TOOLS:
+        if name not in VIEW_TOOLS:
             continue
         try:
             args = json.loads(fn.get("arguments") or "{}")
@@ -93,23 +95,28 @@ def _draw_lines(message: dict, results: dict) -> list[tuple[str, str]]:
             args = {}
         args = args if isinstance(args, dict) else {}
         result = " ".join(str(results.get(str(call.get("id") or ""), "")).split())
-        if name == "draw_image":
+        if name in SHOW_VIEW_TOOLS:
             prompt = " ".join(str(args.get("prompt") or "").split())
             if len(prompt) > PROMPT_CLIP:
                 prompt = prompt[: PROMPT_CLIP - 1] + "…"
-            if result.startswith("画好了："):
-                out.append(("（你用 draw_image 画了 %s，写给画图模型的画面：%s）" % (result[4:].split("。", 1)[0], prompt), ""))
+            ready = ""
+            for prefix in ("画面已就绪：", "画好了："):
+                if result.startswith(prefix):
+                    ready = result[len(prefix):].split("。", 1)[0]
+                    break
+            if ready:
+                out.append(("（你用 show_view 呈现了 %s，画面内容：%s）" % (ready, prompt), ""))
             elif result:
-                out.append(("（你用 draw_image 想画一张，%s；写的画面：%s）" % (result.split("。", 1)[0], prompt), ""))
+                out.append(("（你用 show_view 想呈现一幅画面，%s；画面内容：%s）" % (result.split("。", 1)[0], prompt), ""))
             else:
-                out.append(("（你用 draw_image 画图，写的画面：%s）" % prompt, ""))
+                out.append(("（你用 show_view 呈现画面，画面内容：%s）" % prompt, ""))
             continue
         hit = IMG_ID_RE.search(result) or IMG_ID_RE.search(str(args.get("id") or ""))
         image_id = hit.group(0).lower() if hit else ""
         if image_id and "已经发给对方了" in result:
             out.append(("你：[图片 %s]" % image_id, image_id))
         elif result:
-            out.append(("（你想用 send_image 发%s，%s）" % (" " + image_id if image_id else "图", result.rstrip("。")), ""))
+            out.append(("（你想用 send_view 发%s，%s）" % (" " + image_id if image_id else "图", result.rstrip("。")), ""))
     return out
 
 
@@ -126,7 +133,7 @@ def _image_urls(message: dict) -> list[str]:
 
 
 def history_images(history: list) -> list[dict]:
-    """聊天记录里的图，按先后：她用 send_image 真发出去的 {"mine": True, "id", "stamp"}；
+    """聊天记录里的图，按先后：她用 send_view 真发出去的 {"mine": True, "id", "stamp"}；
     消息里存着的图 {"mine": 是不是她那条, "url", "stamp", "nth", "count"}——主人发来的是 AstrBot 存的 data URI，
     网页上给她或主人的消息放的图也一样存在消息里。"""
     results = _tool_results(history)
@@ -139,14 +146,14 @@ def history_images(history: list) -> list[dict]:
         hit = TIME_RE.search(_text(message))
         stamp = hit.group(1) if hit else ""
         if role == "assistant" and message.get("tool_calls"):
-            out += [{"mine": True, "id": image_id, "stamp": stamp} for _line, image_id in _draw_lines(message, results) if image_id]
+            out += [{"mine": True, "id": image_id, "stamp": stamp} for _line, image_id in _view_lines(message, results) if image_id]
         urls = _image_urls(message)
         out += [{"mine": role == "assistant", "url": url, "stamp": stamp, "nth": n, "count": len(urls)} for n, url in enumerate(urls, 1)]
     return out
 
 
 def sent_images(history: list) -> list[tuple[str, str]]:
-    """聊天记录里她用 send_image 真发出去的图：[(编号, 时间 MM-DD HH:MM)]，按先后。"""
+    """聊天记录里她用 send_view 真发出去的图：[(编号, 时间 MM-DD HH:MM)]，按先后。"""
     return [(item["id"], item["stamp"]) for item in history_images(history) if item.get("id")]
 
 
@@ -188,9 +195,9 @@ def render_lines(history: list, other: str = "主人") -> tuple[list[str], str, 
         pics = len(_image_urls(message))
         if pics and "[Image" not in body:  # 网页上放的图没有 AstrBot 那段「[Image N: …]」：补一个记号，好和带给她的图对上
             body = (body + " " if body else "") + ("[图片]" if pics == 1 else "[图片×%d]" % pics)
-        drawn = _draw_lines(message, results) if role == "assistant" else []
-        if not body and not drawn:
-            continue  # 只有（画图以外的）工具调用、只剩时间戳的那几条
+        view_lines = _view_lines(message, results) if role == "assistant" else []
+        if not body and not view_lines:
+            continue  # 只有（画面呈现以外的）工具调用、只剩时间戳的那几条
         if notes:
             body += "".join("（%s）" % note for note in notes)
         if role == "user" and body.startswith(MEMO_PREFIX):
@@ -204,8 +211,8 @@ def render_lines(history: list, other: str = "主人") -> tuple[list[str], str, 
         if pre:
             stamp, body = stamp or pre.group(1), body[pre.end():]
         head = "[%s] " % stamp if stamp else ""
-        out = ["%s%s：%s" % (head, who, " ".join(body.split("\n")))] if body or not drawn else []
-        out += [head + line for line, _image_id in drawn]
+        out = ["%s%s：%s" % (head, who, " ".join(body.split("\n")))] if body or not view_lines else []
+        out += [head + line for line, _image_id in view_lines]
         if in_excerpts and not REMINDER_RE.search(text):
             excerpts.extend(out)
             continue

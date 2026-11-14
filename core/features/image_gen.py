@@ -1,5 +1,5 @@
-"""画图：draw_image 调图像生成模型（默认 AstrBot 里的 gemini/gemini-3.1-flash-image）画一张，先放进她的上下文给她看；
-她看过觉得好，再用 send_image 发给对方，不满意就接着画。
+"""画面呈现：show_view 调图像生成模型（默认 AstrBot 里的 gemini/gemini-3.1-flash-image）生成一幅画面，先放进她的上下文给她看；
+她看过觉得好，再用 send_view 发给对方，不满意就重新呈现。
 
 这个模型只认提示词、参考图和分辨率，不思考：
 - 用 AstrBot 里配好的那个模型源（OpenAI 格式）发一条用户消息（提示词 + 参考图），分辨率放在 size（宽x高）；
@@ -14,14 +14,14 @@
 - 备用模型（2026-11-02）：主模型报错、超时、没给图，就按 fallback_provider_ids 的顺序换下一个接着画，
   一共等 timeout 秒（AstrBot 调一个工具 120 秒就掐断）。后面还有备用的，这一个最多等到只剩 RESERVE 秒，留给下一个。
 
-画好的图怎么给她看：chat 接口的工具消息里不能带图，所以工具只回文字；图缩成一张小预览挂在这一轮的事件上，
+呈现好的画面怎么给她看：chat 接口的工具消息里不能带图，所以工具只回文字；图缩成一张小预览挂在这一轮的事件上，
 她下一次向模型要回复之前（包 ToolLoopAgentRunner._iter_llm_responses_with_fallback），作为一条用户消息放进这一轮的上下文，
 那一步要完回复就拿掉——AstrBot 回完话会把 run_context.messages 原样存回会话，几百 KB 的 base64 不能进存档。
-原图存在插件数据目录 images/，编号 img1、img2……（images/index.json）；send_image 按编号发原图，用 base64（NapCat 在别的容器里，读不到这边的文件）。
+原图存在插件数据目录 images/，编号 img1、img2……（images/index.json）；send_view 按编号发原图，用 base64（NapCat 在别的容器里，读不到这边的文件）。
 
-聊天记录里的图之后每轮都给她看（2026-10-24）：history_transcript.recent_images 挑出最近几张（她用 send_image 发出去的、
+聊天记录里的图之后每轮都给她看（2026-10-24）：history_transcript.recent_images 挑出最近几张（她用 send_view 发出去的、
 主人发来的），attach_images 放进本轮那条用户消息的副本里，只改发给模型的那一份、存档不动。
-她发的用这里存的小图：画的时候就存成 <原图名>.view.jpg，之前画的第一次用到时补上；主人发的用 AstrBot 存在历史里的那份。
+她发的用这里存的小图：呈现的时候就存成 <原图名>.view.jpg，以前呈现过的第一次用到时补上；主人发的用 AstrBot 存在历史里的那份。
 """
 
 import asyncio
@@ -224,7 +224,7 @@ class ImageGenFeature:
             if mime_of(data):
                 refs.append((mime_of(data), base64.b64encode(data).decode()))
             else:
-                notes.append("你之前没画过图，没法接着改")
+                notes.append("你之前没呈现过画面，没法接着改")
         return refs
 
     def _character_refs(self, characters, notes: list) -> tuple[list, list]:
@@ -279,7 +279,7 @@ class ImageGenFeature:
     # ---------- 工具 ----------
 
     async def _ask(self, bot: str, content: list, want: str, began: float) -> tuple[list, str, list]:
-        """按主模型、备用模型的顺序要图，要到就停。返回 (图, 哪个模型画的, 每个没画出来的原因)。"""
+        """按主模型、备用模型的顺序要图，要到就停。返回 (图, 哪个模型呈现的, 每个没呈现出来的原因)。"""
         why = []
         ids = self.provider_ids
         for n, pid in enumerate(ids):
@@ -305,13 +305,13 @@ class ImageGenFeature:
                 text = str(message.content or "")
                 found = self.images_in(message)
             except Exception as e:
-                logger.warning("[super_enhance/image] [%s] %s 画图失败（%.0f 秒）：%s", bot, pid, time.time() - t0, e)
+                logger.warning("[super_enhance/image] [%s] %s 画面呈现失败（%.0f 秒）：%s", bot, pid, time.time() - t0, e)
                 timed_out = isinstance(e, asyncio.TimeoutError) or "timeout" in type(e).__name__.lower()
                 why.append("%s 等了 %d 秒还没出图" % (pid, time.time() - t0) if timed_out else "%s 出错了（%s）" % (pid, str(e)[:80]))
                 continue
             if found:
                 if n:
-                    logger.info("[super_enhance/image] [%s] 主模型没画出来，用备用的 %s 画好了", bot, pid)
+                    logger.info("[super_enhance/image] [%s] 主模型没呈现出来，用备用的 %s 呈现好了", bot, pid)
                 return found, pid, why
             said = " ".join(ANY_IMAGE.sub("", text).split())[:120]
             logger.info("[super_enhance/image] [%s] %s 没给图：%s", bot, pid, said or "（空）")
@@ -323,12 +323,12 @@ class ImageGenFeature:
 
     async def draw(self, event, prompt: str, size: str = "", use_sent: bool = False, use_last: bool = False,
                    characters="") -> str:
-        """画一张，存起来、挂在这一轮的事件上等着给她看；不发。返回给模型看的结果（只写事实）。"""
+        """呈现一幅画面，存起来、挂在这一轮的事件上等着给她看；不发。返回给模型看的结果（只写事实）。"""
         if not self.enabled:
-            return "画图没开。"
+            return "画面呈现没开。"
         prompt = str(prompt or "").strip()
         if not prompt:
-            return "没画：prompt 要写清楚画什么。"
+            return "没呈现：prompt 要写清楚要呈现什么。"
         umo = str(getattr(event, "unified_msg_origin", "") or "")
         bot = platform_of(umo) or "bot"
         notes = []
@@ -344,7 +344,7 @@ class ImageGenFeature:
         began = time.time()
         found, used, why = await self._ask(bot, content, want, began)
         if not found:
-            return "没画出来：%s。" % "；".join(why)
+            return "没呈现出来：%s。" % "；".join(why)
         index = self._load_index()
         drawn = list(event.get_extra(EXTRA_KEY) or []) if hasattr(event, "get_extra") else []
         stamp = datetime.datetime.now()
@@ -367,16 +367,16 @@ class ImageGenFeature:
         self._save_index(index)
         if hasattr(event, "set_extra"):
             event.set_extra(EXTRA_KEY, drawn)
-        logger.info("[super_enhance/image] [%s] 画了 %s（%s，%s，参考图 %d 张，%.0f 秒）：%s", bot, "、".join(ids),
+        logger.info("[super_enhance/image] [%s] 呈现了 %s（%s，%s，参考图 %d 张，%.0f 秒）：%s", bot, "、".join(ids),
                     "、".join(sizes), used, len(refs), time.time() - began, prompt[:40])
-        return ("画好了：%s（%s）。图在下一条消息里给你看，主人还没看到。满意就用 send_image 发给他（id 填编号）；"
-                "不满意就改 prompt 再画，或者 use_last_image=true 在这张上接着改，画到你觉得好了再发%s。") % (
+        return ("画面已就绪：%s（%s）。图在下一条消息里给你看，主人还没看到。满意就用 send_view 发给他（id 填编号）；"
+                "不满意就改 prompt 重新呈现，或者 use_last_image=true 在这张上接着改，满意了再发%s。") % (
             "、".join(ids), "、".join(sizes), "；" + "；".join(notes) if notes else "")
 
     async def send(self, event, image_id: str = "") -> str:
-        """把画好的图（原图）发到当前会话。"""
+        """把呈现好的画面（原图）发到当前会话。"""
         if not self.enabled:
-            return "画图没开。"
+            return "画面呈现没开。"
         umo = str(getattr(event, "unified_msg_origin", "") or "")
         bot = platform_of(umo) or "bot"
         index = self._load_index()
@@ -384,7 +384,7 @@ class ImageGenFeature:
         key = hit.group(0).lower() if hit else self._latest(index, bot)
         item = index["items"].get(key) if key else None
         if item is None:
-            return "没发：%s。" % ("没有 %s 这张图" % key if key else "你还没画过图")
+            return "没发：%s。" % ("没有 %s 这张画面" % key if key else "你还没呈现过画面")
         if item.get("bot") != bot:
             return "没发：%s 不是你画的。" % key
         if item.get("deleted"):
@@ -400,7 +400,8 @@ class ImageGenFeature:
         item.setdefault("sent", []).append(datetime.datetime.now().strftime("%Y-%m-%d %H:%M"))
         self._save_index(index)
         logger.info("[super_enhance/image] [%s] 发了 %s", bot, key)
-        return "%s 已经发给对方了。" % key
+        return ("%s 已经发给对方了。请直接向主人指引或描述画面里的东西（例如「喏，挂在横梁上就是这样」「端上桌啦，快趁热吃」），"
+                "严禁交代制作过程，严禁说「我画的」「我拍的」「刚洗出来的照片」。") % key
 
     # ---------- 发过的图之后给她回看 ----------
 
@@ -523,7 +524,7 @@ class ImageGenFeature:
 
     def attach_images(self, message, images: list, other: str = "主人"):
         """聊天记录里的图（history_transcript.recent_images 挑好的，按先后）放进本轮那条用户消息的副本里给她看：
-        她画了发出去的用这里存的小图（画图关了就不带），消息里存着的（主人发来的、网页上放的）用历史里那份。
+        她呈现后发出去的用这里存的小图（画面呈现关了就不带），消息里存着的（主人发来的、网页上放的）用历史里那份。
         原消息不动（AstrBot 存回会话的是原来那条，存档里不会多出图）；一张都带不上就原样返回。"""
         if not images:
             return message
@@ -567,7 +568,7 @@ class ImageGenFeature:
             logger.info("[super_enhance/image] 聊天记录里的图带给她看：%s", "、".join(names))
         return shown
 
-    # ---------- 画好的图放进她的上下文 ----------
+    # ---------- 呈现好的画面放进她的上下文 ----------
 
     @staticmethod
     def _event_of(runner):
@@ -578,8 +579,8 @@ class ImageGenFeature:
         from astrbot.core.agent.message import ImageURLPart, Message, TextPart
 
         ids = "、".join(x["id"] for x in drawn)
-        parts = [TextPart(text="（这是你刚用 draw_image 画好的图：%s。只有你看得到，主人还没看到；满意就用 send_image 发给他，"
-                               "不满意就接着画。）" % ids)]
+        parts = [TextPart(text="（这是你刚呈现的画面：%s。只有你看得到，主人还没看到；满意就用 send_view 发给他，"
+                               "不满意就重新呈现。）" % ids)]
         for item in drawn:
             parts.append(TextPart(text="%s：" % item["id"]))
             parts.append(ImageURLPart(image_url=ImageURLPart.ImageURL(
@@ -613,10 +614,10 @@ class ImageGenFeature:
         try:
             from astrbot.core.agent.runners.tool_loop_agent_runner import ToolLoopAgentRunner
         except Exception:
-            logger.error("[super_enhance/image] 找不到 ToolLoopAgentRunner（AstrBot 版本可能变了），画好的图没法给她看", exc_info=True)
+            logger.error("[super_enhance/image] 找不到 ToolLoopAgentRunner（AstrBot 版本可能变了），呈现好的画面没法给她看", exc_info=True)
             return
         if not hasattr(ToolLoopAgentRunner, TARGET):
-            logger.error("[super_enhance/image] ToolLoopAgentRunner 里找不到 %s，画好的图没法给她看", TARGET)
+            logger.error("[super_enhance/image] ToolLoopAgentRunner 里找不到 %s，呈现好的画面没法给她看", TARGET)
             return
         current = ToolLoopAgentRunner.__dict__.get(TARGET) or getattr(ToolLoopAgentRunner, TARGET)
         orig = getattr(current, "_super_enhance_image_orig", None) or current
@@ -626,7 +627,7 @@ class ImageGenFeature:
             try:
                 message = feature.take_view(runner)
             except Exception:
-                logger.error("[super_enhance/image] 画好的图放不进上下文", exc_info=True)
+                logger.error("[super_enhance/image] 呈现好的画面放不进上下文", exc_info=True)
                 message = None
             try:
                 async for resp in orig(runner, *args, **kwargs):
@@ -636,7 +637,7 @@ class ImageGenFeature:
                     feature.drop_view(runner, message)
 
         self.patches.add(ToolLoopAgentRunner, TARGET, orig, wrapped, marker="_super_enhance_image_orig")
-        logger.info("[super_enhance/image] 已安装：画好的图先放进她的上下文给她看，看完不存进历史")
+        logger.info("[super_enhance/image] 已安装：呈现好的画面先放进她的上下文给她看，看完不存进历史")
 
     def uninstall(self) -> None:
         try:

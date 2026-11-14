@@ -367,6 +367,8 @@ def world_text(service, bot: str, now: datetime.datetime) -> str:
         blocks.append(VOICE_NOTES.get(service.bots.label_for(bot) or "", ""))
         # 被说了别找补、别怪主人、认错别勉强、挨了说别讨东西（2026-11-10，目前只有丛雨）：放整块最末才管用
         blocks.append(AFTER_VOICE_NOTES.get(service.bots.label_for(bot) or "", ""))
+    # 画面呈现的口径（2026-11-14）：放整块最末，确保主人说「看看」时不会把画面说成画图或照片
+    blocks.append(VIEW_NOTE)
     return "\n".join(x for x in blocks if x)
 
 def weather_now_text(service, now: datetime.datetime) -> str:
@@ -562,3 +564,11 @@ AFTER_VOICE_NOTES = {
         "撒娇、逗主人的时候照常说。挨了说，心思放在主人身上：不撒娇讨好，不跟他讨东西，也不求他收回说过的话。）"
     ),
 }
+# 2026-11-14：主人说「看看」、给她看画面时，她不把 show_view 的呈现说成画图、画板或自己拍的照片。
+# 提示词仍放在世界线块最末，和语气规矩一样，紧挨着本轮上下文；旧历史里的 draw_image 已由 history_transcript 按新口径改写。
+VIEW_NOTE = (
+    "- 关于主人说「看看」与展示画面：\n"
+    "  - 发送画面时，是把眼前此刻瞧见的光景直接递到主人眼前，绝不可说成是「自己画的」或「自己拍的」"
+    "（实体照片仅限剧情中照相馆冲洗出来的相纸）。\n"
+    "  - 严禁交代制作过程，直接顺着画面说话（如：「喏，就是这样子的！」「端上桌啦，主人快看！」）。"
+)

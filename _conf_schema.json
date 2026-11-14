@@ -154,9 +154,9 @@
         }
     },
     "image_gen": {
-        "description": "画图",
+        "description": "画面呈现",
         "type": "object",
-        "hint": "提供 draw_image、send_image 工具：先画好给角色自己看，满意后再发出。",
+        "hint": "提供 show_view、send_view 工具：先呈现画面给角色自己看，满意后再发出。",
         "items": {
             "enabled": {
                 "description": "启用",

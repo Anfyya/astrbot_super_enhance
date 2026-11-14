@@ -1,6 +1,6 @@
 name: astrbot_plugin_super_enhance
 display_name: 超级增强
 desc: 世界线（记录员 / 补写 / 主动对话）与 NapCat 输入状态、上下文工具、新消息优先等增强
-version: 1.0.0
+version: 1.0.1
 author: yjln
 repo: ""

@@ -13,7 +13,7 @@
 9. 消息时间戳        ``msg_time``
 10. NapCat 输入状态  ``typing``
 11. 静默工具         ``stay_silent``（LLM 工具）
-12. 画图             ``image_gen``（``draw_image`` ``send_image``）
+12. 画面呈现         ``image_gen``（``show_view`` ``send_view``）
 13. 多机器人对话节奏 ``bot_dialog``
 14. 跨会话上下文修复 ``cross_session``
 
@@ -117,7 +117,7 @@ class SuperEnhance(Star):
         )
         # 一个字没想的回复（DeepSeek 偶尔跳过思考）不发，原样再要一次
         self.zero_think = ZeroThinkRetryFeature(SectionConfig(raw, "zero_think_retry"))
-        # 画图工具：调图像生成模型出一张图发给对方（主人发过的图记下来当参考图）
+        # 画面呈现工具：调图像生成模型生成一幅画面发给对方（主人发过的图记下来当参考图）
         self.image_gen = ImageGenFeature(
             context, SectionConfig(raw, "image_gen"), data_dir,
             is_bot=lambda sender: sender in self.bot_dialog.bot_ids,
@@ -186,8 +186,8 @@ class SuperEnhance(Star):
             ("recall", self.life.enabled),
             ("look_things", self.life.enabled),
             ("tell", self.life.enabled),
-            ("draw_image", self.image_gen.enabled),
-            ("send_image", self.image_gen.enabled),
+            ("show_view", self.image_gen.enabled),
+            ("send_view", self.image_gen.enabled),
         ):
             try:
                 if enabled:
@@ -631,46 +631,47 @@ class SuperEnhance(Star):
         """
         return life_ops.tool_look_things(self.life, getattr(event, "unified_msg_origin", "") or "", kind, id)
 
-    # 10-24：画的是她眼前看到的、她自己不在画里；说明里不写「相机」「拍照」这类字：她会照抄进 prompt，画图模型就真画出一台相机。
-    # 同天又补「也没有你的手、东西摆着画」「不写第一人称、POV」：「从你站的地方看过去」让她写成第一人称、两只手举着东西
-    # 11-02：加 characters。画面里有亚托莉 / 丛雨就填名字、程序带官方立绘，prompt 不写长相（模型自己记不准亚托莉长什么样，写长相也画不像）
-    @filter.llm_tool(name="draw_image")
-    async def draw_image(
+    # 11-14：工具名和说明统一成「呈现画面」，避免她把 show_view 说成画图、画板、照片。
+    # 10-24：呈现的是她眼前看到的东西、她自己不在画面里；说明里不写「相机」「拍照」这类字，免得被照抄进 prompt。
+    # 同天又补「也没有你的手、东西摆着呈现」「不写第一人称、POV」：「从你站的地方看过去」会被写成第一人称、两只手举着东西。
+    # 11-02：加 characters。画面里有亚托莉 / 丛雨就填名字、程序带官方立绘，prompt 不写长相。
+    @filter.llm_tool(name="show_view")
+    async def show_view(
         self, event: AstrMessageEvent, prompt: str, size: str = "", use_sent_images: bool = False, use_last_image: bool = False,
         characters: str = "",
     ) -> str:
-        """画一张你这会儿眼前的景象，先给你自己看：主人想看看你那边什么样、想看看什么东西、叫你照着他发的图改的时候用。画出来不会直接发给主人。
+        """把你这会儿眼前看见的光景呈现出一副画面，先给你自己确认：主人想看看你那边什么样、想看看什么东西时使用。呈现出来不会直接发给主人。
 
-        画的是你面前的东西和周围的样子，就像你随手看过去那样。画面里没有你自己，也没有你的手：要给主人看的东西，就画它摆在桌上、地上或者架子上的样子。主人明说要看你本人的样子，才把你画进去。
+        展现的是你面前的东西和周围的样子，就像你随手看过去那样。画面里没有你自己，也没有你的手：要给主人看的东西，就展现它摆在桌上、地上或者架子上的样子。主人明说要看你本人的样子，才把你自己展现在画面里。
 
-        先说一句话再调用（比如「等我一下」）：画一张要十几秒到一分钟，这期间你发不了消息。和这个工具写在同一条回复里的话，会在工具跑之前先单独发给对方；工具跑完你再说的话会另发一条。
+        先说一句话再调用（比如「等我一下」）：呈现画面要十几秒到一分钟，这期间你发不了消息。和这个工具写在同一条回复里的话，会在工具跑之前先单独发给对方；工具跑完你再说的话会另发一条。
 
-        画好的图会接着放进来给你看。满意了用 send_image 发给主人；不满意就改 prompt 再画，或者 use_last_image=true 在这张上接着改，画到你觉得好了再发。
+        画面会接着放进来给你看。满意了用 send_view 发给主人；不满意就改 prompt 重新呈现，或者 use_last_image=true 在这张上接着改，满意了再发。
 
-        画图的模型看不到聊天记录和你的设定，只看 prompt、参考图和分辨率：prompt 只写画面里看得见的东西（有什么、在哪、什么样、光线天色、离得多近、从高处往下看还是平着看），写具体；不写是谁在看、拿什么看的，也不写第一人称、POV 这类说法；画面里没有的东西就别提（写了「没有手」反而容易画出手）。
+        呈现画面的模型看不到聊天记录和你的设定，只看 prompt、参考图和分辨率：prompt 只写画面里看得见的东西（有什么、在哪、什么样、光线天色、离得多近、从高处往下看还是平着看），写具体；不写是谁在看、拿什么看的，也不写第一人称、POV 这类说法；画面里没有的东西就别提（写了「没有手」反而容易把手指带进画面）。
 
-        画面里有亚托莉或丛雨（包括画你自己、画你们俩、画一张画着她的画），一定把名字填进 characters，程序会把她的官方立绘一起给画图模型照着画。这时 prompt 里只写她的名字和她在做什么、什么表情、什么姿势、在哪；她的长相（头发、眼睛、脸、身材、平时那身衣服）一个字都别写，画图模型照立绘画，你写了反而画不像。要她换一身衣服才写穿什么。
+        画面里有亚托莉或丛雨（包括展现你自己、展现你们俩、呈现一张有她的画面），一定把名字填进 characters，程序会把她的官方立绘一起给呈现模型照着呈现。这时 prompt 里只写她的名字和她在做什么、什么表情、什么姿势、在哪；她的长相（头发、眼睛、脸、身材、平时那身衣服）一个字都别写，呈现模型照立绘呈现，你写了反而不像。要她换一身衣服才写穿什么。
 
         Args:
             prompt (string): 画面描述，写具体。
-            size (string): 分辨率，写成 宽x高，比例照着出。最长边不超过 1280 出 1K 的图，不超过 2560 出 2K，再大出 4K（越大越慢）。常用：1024x1024（方）、1280x720（横）、720x1280（竖）；2K 如 2560x1440，4K 如 3840x2160。空着让模型自己定。
+            size (string): 分辨率，写成 宽x高，比例照着出。最长边不超过 1280 出 1K 的画面，不超过 2560 出 2K，再大出 4K（越大越慢）。常用：1024x1024（方）、1280x720（横）、720x1280（竖）；2K 如 2560x1440，4K 如 3840x2160。空着让模型自己定。
             use_sent_images (boolean): true 就把主人发的图给模型参考（他这条消息里的、他回复的那条里的，没有就用他半小时内发过的最近几张）。
-            use_last_image (boolean): true 就把你上一次画的那张给模型，在它上面接着改。
+            use_last_image (boolean): true 就把你上一次呈现的那张给模型，在它上面接着改。
             characters (string): 画面里出现的人，填名字，几个人用顿号隔开，比如「亚托莉」「丛雨、亚托莉」。画面里没有人就空着。
 
         Returns:
-            画好没有、图的编号。
+            呈现好没有、画面的编号。
         """
         return await self.image_gen.draw(event, prompt, size, use_sent_images, use_last_image, characters)
 
-    @filter.llm_tool(name="send_image")
-    async def send_image(self, event: AstrMessageEvent, id: str = "") -> str:
-        """把你用 draw_image 画好、看过觉得满意的图发给对方。
+    @filter.llm_tool(name="send_view")
+    async def send_view(self, event: AstrMessageEvent, id: str = "") -> str:
+        """把你刚呈现、看过觉得满意的画面发给对方。
 
         和这个工具写在同一条回复里的话，会在工具跑之前先单独发给对方；工具跑完你再说的话会另发一条。
 
         Args:
-            id (string): 图的编号（draw_image 给的，比如 img3）；空着就发你最近画的那张。
+            id (string): 画面的编号（show_view 给的，比如 img3）；空着就发你最近呈现的那张。
 
         Returns:
             发出去没有。

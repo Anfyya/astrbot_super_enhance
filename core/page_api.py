@@ -1806,8 +1806,12 @@ class ContextPageApi:
         reason = "\n".join(thinks)
         tool_id = str(item.get("tool_call_id") or "")
         drawn = []
-        if drawer is not None and tool_names.get(tool_id) == "draw_image" and text.startswith("画好了："):
-            # 她画的图不在历史里（存成文件了）：画好那条回包下面按编号显示存着的小图，换图、删图走 ctx/drawn
+        if (
+            drawer is not None
+            and tool_names.get(tool_id) in ("show_view", "draw_image")
+            and (text.startswith("画面已就绪：") or text.startswith("画好了："))
+        ):
+            # 画面的原图不在历史里（存成文件了）：呈现好的那条回包下面按编号显示存着的小图，换图、删图走 ctx/drawn
             for image_id in dict.fromkeys(re.findall(r"img\d+", text.split("。", 1)[0])):
                 if drawer.is_deleted(image_id):
                     drawn.append({"id": image_id, "deleted": True})
