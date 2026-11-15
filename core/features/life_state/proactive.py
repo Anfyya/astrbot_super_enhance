@@ -25,6 +25,7 @@ from astrbot.api import logger
 
 from .homewords import localize
 from ...common import timeutil
+from ...common.patching import PatchSet
 
 from .ledger import promise_with_for
 from .models import (
@@ -240,6 +241,9 @@ async def notify_done(planner, world, bots: list[str], now: datetime.datetime, m
                 item = dict(item, intent="")
             if item.get("intent"):
                 if world.drop_intention(str(item.get("intent")), bot):
+                    companion = getattr(planner, "companionship", None)
+                    if companion is not None:
+                        companion.safe("finish_plan", str(item.get("intent")), item, flat)
                     logger.info("[super_enhance/world] [%s] 打算 %s 做完了（%s），撤掉", bot, item.get("intent"),
                                 str(item.get("doing") or "")[:20])
                 else:
@@ -330,6 +334,7 @@ class ProactivePlanner:
         self.activity_fn = None
         self.sent_fn = None
         self._gate_cron = None
+        self._send_patches = PatchSet()
         self._locks: dict[str, asyncio.Lock] = {}
         # 正在生成的主动对话：会话 → 开始时刻
         self._inflight: dict[str, float] = {}
@@ -447,7 +452,7 @@ class ProactivePlanner:
         logger.info("[super_enhance/life] [%s] 网页手动发一条主动消息：%s", bot, "已排" if ok else "失败")
         return "已排：几秒后发出" if ok else "排任务失败（看日志）"
 
-    async def ask_now(self, bot: str, question: str) -> bool:
+    async def ask_now(self, bot: str, question: str, invitation_id: str = "") -> bool:
         """补写要问主人一句（补写那边停着等回话）：几秒后让她把这句问出去，不顺延、必须发。"""
         if not self.enabled:
             return False
@@ -461,11 +466,21 @@ class ProactivePlanner:
         meta = {
             "kind": "question", "bot": bot, "date": now.date().isoformat(),
             "minute": now.hour * 60 + now.minute, "postponed": 0,
-            "question": {"text": str(question or "")},
+            "question": {"text": str(question or ""), "invitation_id": invitation_id},
         }
         ok = await self._add_job(cron, meta, targets[0], at)
         logger.info("[super_enhance/life] [%s] 补写要问主人「%s」：%s", bot, str(question or "")[:40], "已排" if ok else "排任务失败")
         return ok
+
+    @staticmethod
+    def sleep_exempt(meta: dict) -> bool:
+        if meta.get("kind") == "manual":
+            return True
+        # 仅明确的叫醒/指定必须提醒，不把普通邀约当紧急事项。
+        promise = meta.get("promise") or {}
+        text = str(promise.get("what") or "")
+        return meta.get("kind") == "promise" and any(
+            word in text for word in ("叫醒", "喊醒", "起床提醒", "必须提醒", "一定提醒"))
 
     def targets_of(self, bot: str) -> list[str]:
         """该机器人的主动对话目标会话（给补写等回话时找会话用）。"""
@@ -717,6 +732,7 @@ class ProactivePlanner:
 
     def install_gate(self) -> bool:
         """把 cron 执行主动对话的入口包一层：本插件的任务到点先判断，别的任务原样执行。"""
+        self._install_rest_check()
         cron = self._cron()
         current = getattr(cron, "_run_active_agent_job", None) if cron is not None else None
         if current is None:
@@ -737,6 +753,7 @@ class ProactivePlanner:
         return True
 
     def uninstall_gate(self) -> None:
+        self._send_patches.uninstall()
         cron = self._gate_cron
         self._gate_cron = None
         if cron is None:
@@ -750,6 +767,31 @@ class ProactivePlanner:
             cron.__dict__.pop("_run_active_agent_job", None)
         else:
             cron._run_active_agent_job = orig
+
+    def _install_rest_check(self):
+        """只在实际外发前复核明确休息状态，不评判文字，不影响补写。"""
+        if self._send_patches or getattr(self, "companionship", None) is None:
+            return
+        try:
+            from astrbot.core.tools.message_tools import SendMessageToUserTool
+            original = getattr(SendMessageToUserTool.call, "_se_companion_send_orig", None) or SendMessageToUserTool.call
+            planner = self
+
+            async def send(tool, context, **kwargs):
+                event = getattr(getattr(context, "context", None), "event", None)
+                if event is not None and is_proactive_event(event) and planner.enabled:
+                    payload = event.get_extra("cron_payload") or {}
+                    meta = {"kind": payload.get("se_kind") or "middle", "promise": payload.get("se_promise"),
+                            "done": payload.get("se_done"), "bot": payload.get("se_bot") or bot_of_umo(event.unified_msg_origin)}
+                    now = timeutil.now(planner.timezone)
+                    if not planner.sleep_exempt(meta) and planner.companionship.safe("resting", now, default=False):
+                        planner.companionship.safe("defer_notice", meta["bot"], meta, now)
+                        return "主人已明确休息，普通主动消息暂未发送，留待合适时机；不必重复调用。"
+                return await original(tool, context, **kwargs)
+
+            self._send_patches.add(SendMessageToUserTool, "call", original, send, marker="_se_companion_send_orig")
+        except Exception:
+            logger.warning("[super_enhance/life] 发送前休息状态检查暂不可用，保留到点检查", exc_info=True)
 
     def _lock(self, target: str) -> asyncio.Lock:
         lock = self._locks.get(target)
@@ -792,6 +834,13 @@ class ProactivePlanner:
                 )
                 return None
             now_ts = time.time()
+            companion = getattr(self, "companionship", None)
+            if companion is not None and not self.sleep_exempt(meta):
+                now = timeutil.now(self.timezone)
+                if companion.safe("resting", now, default=False):
+                    companion.safe("defer_notice", meta["bot"], meta, now)
+                    logger.info("[super_enhance/life] [%s] 主人明确休息，普通主动联系留待醒后", meta["bot"])
+                    return None
             if self._stale(meta, now_ts):
                 logger.info(
                     "[super_enhance/life] [%s] 主动对话（%s，原定 %s）过了 %d 分钟还没发出去，那会儿已经过去了，不发了",
@@ -849,6 +898,14 @@ class ProactivePlanner:
 
         now = timeutil.now(self.timezone)
         chat = self._chat(target)
+        companion = getattr(self, "companionship", None)
+        if companion is not None and meta["kind"] == "middle":
+            idea = companion.safe("next_idea", meta["bot"], now)
+            if idea:
+                meta["kind"] = "question"
+                meta["question"] = {"text": idea["text"], "invitation_id": idea["id"]}
+                companion.safe("attempted", idea["id"], now)
+                payload.update(self._meta_payload(meta))
         payload["note"] = self.build_note(meta, now, chat)
         logger.info(
             "[super_enhance/life] [%s] 主动对话到点（%s，原定 %s%s）：%s",
@@ -1090,7 +1147,8 @@ class ProactivePlanner:
         kind = meta.get("kind")
         if kind == "question":
             question = meta.get("question") or {}
-            return "你想问主人一件事：%s。用你自己的话问他这一句，问完等他回答，别替他答。" % (question.get("text") or "")
+            return ("你想问主人一件事：%s。用你自己的话问，别替他答。"
+                    "若是邀请，问出去后可以先做自己的事；没回复不算同意，后面还能接上。") % (question.get("text") or "")
         if kind in ("out", "back", "meal"):
             done = meta.get("done") or {}
             head = localize({"out": "你刚出了宿舍", "back": "你刚回到宿舍", "meal": "开饭了"}[kind], str(self.cfg.get("world_home") or ""))
@@ -1176,6 +1234,13 @@ class ProactivePlanner:
             "【主动找主人说话】",
             "现在是 %s。没有人叫你，是你自己想找主人说说话。" % format_datetime(now),
         ]
+        companion = getattr(self, "companionship", None)
+        if companion is not None:
+            near = companion.safe("render", str(meta.get("bot") or ""), now, default="")
+            if near:
+                lines.append(near)
+            lines.append("从眼前的事和你们真实的相处里挑一句想对他说的话：想分享、靠近、接上话题或邀请都可以。"
+                         "保持自己的性格，不必每次求夸奖或提问；已经问过还没回应的，不反复催。")
         # 她此刻在做什么看注入的【世界线】。「刚做完一件事」不再专门点出来：世界线里本来就有，点出来她就照着报行程
         if kind != "done":
             lines.append(self._kind_line(meta, now, chat))

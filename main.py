@@ -559,7 +559,7 @@ class SuperEnhance(Star):
     ) -> None:
         """工具结果同优先级的两项：原始消息副本、bot↔bot 委托回报。"""
         await run_steps(event, (
-            ("原始消息副本", lambda: raw_log.record_tool_message(self.life, event, tool, tool_args)),
+            ("原始消息副本", lambda: raw_log.record_tool_message(self.life, event, tool, tool_args, tool_result)),
             ("委托回报", lambda: self.bot_dialog.note_delegation(event, tool, tool_args)),
         ), "工具结果钩子")
 

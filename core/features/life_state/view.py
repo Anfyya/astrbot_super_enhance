@@ -308,6 +308,11 @@ def world_text(service, bot: str, now: datetime.datetime) -> str:
         logger.warning("[super_enhance/life] 世界线渲染失败", exc_info=True)
         head = ""
     blocks = [head]
+    companion = getattr(service, "companionship", None)
+    if companion is not None:
+        from .companionship import LIVING_NOTE
+        blocks.append(companion.safe("render", bot, now, default=""))
+        blocks.append(LIVING_NOTE)
     if head:
         blocks.append(CHAT_LIFECYCLE)
         shelf = service.things.here(service.things.view(now), now)

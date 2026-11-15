@@ -30,6 +30,8 @@ from . import training as training_calc
 from .proactive import ProactivePlanner
 from . import raw_log as raw_log_mod
 from .raw_log import RawMessageLog
+from .companionship import Companionship
+from .sleep_webhook import SleepWebhook
 from ...common.bots import BotRegistry
 from . import view as view_mod
 from . import operations as operations_mod
@@ -120,6 +122,15 @@ class LifeStateService:
         # 世界线 live 时，主动消息提示词里不再出「原本打算」那一行
         self._world_task: asyncio.Task | None = None
         self._world_day = None
+        # 共用一份有来源的互动记录；失败只少一段上下文，不阻断原有生活。
+        self.companionship = Companionship(self.world, cfg, self.raw_log, self.bots.label_for)
+        self.recorder.companionship = self.companionship
+        self.life_step.companionship = self.companionship
+        self.planner.companionship = self.companionship
+        self.raw_log.on_record = lambda item: self.companionship.safe("observe_message", item)
+        if self.cfg.get("world_enabled", True):
+            self.companionship.safe("bootstrap", self._now())
+        self.sleep_webhook = SleepWebhook(self, self.data_dir)
 
     # ---------- 世界线 ----------
 
@@ -190,6 +201,7 @@ class LifeStateService:
     # ---------- 生命周期 ----------
 
     async def initialize(self) -> None:
+        self.sleep_webhook.start()
         if not self.enabled:
             logger.info("[super_enhance/life] 未启用（life_state.enabled=false）")
             return
@@ -208,6 +220,7 @@ class LifeStateService:
         logger.info("[super_enhance/life] 已启用（时区 %s，世界线）", self.timezone)
 
     async def terminate(self) -> None:
+        await self.sleep_webhook.stop()
         self.planner.uninstall_gate()
         if self._world_task is not None:
             self._world_task.cancel()

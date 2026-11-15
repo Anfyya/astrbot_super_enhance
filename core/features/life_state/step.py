@@ -24,6 +24,7 @@ from ...common import jsonio, llm, timeutil
 from .models import profile_umo_for_bot
 from .recorder import norm_time
 from .facts import fact_batch
+from .companionship import LIVING_NOTE, invitation_text
 from .living_rules import LIFECYCLE_RULES
 from .things import FactConflict
 from .things import (CAT_FOOD, CAT_ITEM, END_STEPS, ITEM_END_STEPS, ITEM_MID_STEPS, ITEM_START_STEPS, KEEPS, KINDS, MEASURED_KINDS, MID_STEPS,
@@ -148,7 +149,7 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
 24. **给外人帮忙、干活不白帮**：她们给镇上的人（家里人以外）搭手干活、跑腿、修东西、搬东西、照看东西，人家总会给点什么：几个钱、一点吃的、一样用得上的东西，或者讲好的工钱、打捞费。写进那段的 steps 和 result（谁给的、给了什么）；拿回来的吃的、东西照第 18、20 条记进 things。顺手扶一把、递个东西这种小事不算。丛雨一般人看不见，人家不知道是她帮的，别排她一个人给外人干活；跟亚托莉一起干的，回报给亚托莉。
 {world_notes}
 {step_notes}
-要问主人的（ask_master）：主人想吃的、叫她们做的、要和她们一起做的事，怎么做主人还没说定的（比如主人说想吃鱼，没说是蒸是煎还是炖；说要一起出去，没说去哪儿），就算有常见的做法，也先问主人一句：填 ask_master，who 写谁来问（key），question 写她要问的一句话。填了也照样把整份写完，这件事先照你觉得最合适的写；程序会让她去问主人、等他回话，主人说的跟你写的不一样，会把回话交给你再改。主人已经说定的、做好了直接端给主人的，不用问；没有要问的，ask_master 留空。
+要问主人的（ask_master）：who 写谁来问，question 写一句话。已接下的小事只是做法没定时，kind 写 decision，先按合适做法把整份写完，程序可短等回话再调整。她自己想邀请主人一起做点什么、分享发现或一起待一会儿，也可以主动提出，kind 写 invite；只排自己的准备和其他生活，不写主人已经答应或共同做完。邀请会单独保留，主人晚些回复也能接上，不必让整段生活停着等。主人明确休息时考虑声音、活动位置、早餐和醒来后的相处，普通问题留到合适时候；既不替他醒来，也不要求她们整天守着。没合适的问题就留空，不为凑互动硬问。
 
 注意：**不要输出 intentions，也不要写任何「接下来打算」**。上面「各自的打算」里如果有，是之前说好要做的，照着走就行；标着「挂了几天了」的，只在 intent_moves 里写它后来怎样（第 12 条）。
 
@@ -156,7 +157,7 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
 
 {{
   "end_current": {{"napcat": "{example_end}"}},
-  "ask_master": {{"who": "", "question": ""}},
+  "ask_master": {{"who": "", "question": "", "kind": "decision 或 invite"}},
   "stopped_results": {{}},
   "intent_moves": {{"i3": {{"done": false, "text": "推进以后的打算", "date": "", "window": ""}}}},
   "segments": {{
@@ -1129,6 +1130,13 @@ class LifeStep:
     def _context_block(self, bots: list, now: datetime.datetime, tasks: dict | None = None) -> str:
         parts = []
         flat = now.replace(tzinfo=None)
+        companion = getattr(self, "companionship", None)
+        if companion is not None:
+            parts.append(LIVING_NOTE)
+            for bot in bots:
+                text = companion.safe("render", bot, flat, default="")
+                if text:
+                    parts.append("%s：\n%s" % (self.label(bot) or bot, text))
         parts.extend(self._history_blocks(bots, flat))
         # 今天真被打断、还没交代后来怎么样的事：补写在 stopped_results 里写一句（见第 19 条）
         stops = []
@@ -1506,6 +1514,22 @@ class LifeStep:
         if who not in bots:
             who = next((bot for bot in tasks if bot in bots), bots[0] if bots else "")
         planner = getattr(self, "planner", None)
+        companion = getattr(self, "companionship", None)
+        if companion is not None:
+            now = self._now().replace(tzinfo=None)
+            is_invite = ask.get("kind") == "invite" or (ask.get("kind") != "decision" and invitation_text(question))
+            if is_invite:
+                # 邀请不占住后台两分钟，也不把沉默当同意；缺可选记录时其余生活照常落库。
+                starts = [x.get("start") for x in tasks.values() if isinstance(x.get("start"), datetime.datetime)]
+                when = max(now, min(starts)) if starts else now
+                idea = companion.safe("wish", who, question, when)
+                if (idea and idea["bot"] == who and idea["history"][-1]["status"] == "idea" and when <= now
+                        and not companion.safe("resting", now, default=False) and planner is not None):
+                    if await planner.ask_now(who, question, invitation_id=idea["id"]):
+                        companion.safe("attempted", idea["id"], now)
+                return data, text
+            if companion.safe("resting", now, default=False):
+                return data, text
         targets = planner.targets_of(who) if planner is not None and planner.enabled and who else []
         if not targets:
             logger.info("[super_enhance/world] 补写想让%s问主人「%s」，可主动对话没开或没配会话，照第一次写的",

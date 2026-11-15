@@ -16,6 +16,7 @@ from astrbot.api import logger
 
 from ...common import llm, timeutil
 from ...common.text import strip_inline_system
+from .companionship import RECORDER_NOTE
 from .homewords import localize
 from .facts import fact_batch
 from .living_rules import LIFECYCLE_RULES
@@ -109,7 +110,7 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
     - 没做：其实压根没做（她只是嘴上答应了，后面一直在聊别的、改了主意），整段撤掉；她那段时间实际在干什么，照第 5 条另记一条（时间写实际的）。
     - 接着做：清单里标着「和她一起」的另一个人那段，她走了以后对方一个人接着做；doing 写对方一个人接着做什么，result 写对方一个人做完是什么样（只写对方这一个人，走了的那个不写进去）。
     她接下去的那段（往那边去的路上，或者她说已经做上了的新的那件），从收尾、做完、交接完的时候才开始（start 照常写那条消息的时间，程序会往后挪）。和她一起做这件事的另一个人那段（清单里标着「和她一起」），也写进 stale，按上面挑一样（多半是接着做、放下，或者被交给的那个人接手）。只写对不上的；照样做得了、不受影响的不写。还没开始的段不用写进 stale：谁的现在被你改了，程序会把她后面补写排的段全撤掉，由补写按新的情况从头排。
-17. 对话原文里标着「（主动发的）」的，是她自己主动发给主人的消息，不是在回主人的话：里面说的打算、提议、规矩一概不记（不写 intentions，也不写 constraints）；里面说她做了什么、在做什么，照常按第 5 条记。
+17. 对话原文里标着「（主动发的）」的，是她自己主动发给主人的消息，不是在回主人的话。她提出的邀约可以记在 companionship.invitations 的 pending 中；不是主人的命令或同意，不因此写 constraints 或已确认的共同 intentions。主人后面的明确回应按邀请编号接续。里面说她做了什么，沿用已经成立的世界线，勿因复述重复入账。
 18. 吃的（家里的存货）：买回来的、收到的、做好的吃的，每件一个编号，从有了那一刻起每一步都记进 things。只记聊天里说已经发生了的：「待会去买」「明天做」不记；说的是能这么做、要是这么做会怎样的假设（「挂在旧货铺能换好几个齿轮」「拿去卖能换不少钱」「这个能做成汤」），也不记，那件东西还在原处，别记成已经换了、卖了、做了；主人接着这句话说的（「铜管换齿轮？」「你要拿它去换？」）也只是在说这个假设，不是她真去换了；世界线里写着、聊天里没说的不记（那些程序会按世界线自己算进清单）。标「（主动发的）」的消息里说已经买了、做了、吃了的，也照记（这一条和第 17 条不一样）。
    - 新的一件（上面「家里的吃的」里没有的）：写 new（这一批里的临时代号 n1、n2……；不要写编号，编号由程序发）、name、kind、origin、from，再加上它的第一步。第一步只能是「买回来」「收到」「做好了」「原来就有」：买回来、收到的，必须是聊天里说了真的买了、收到了；家里一直备着、清单里还没记的（盐、糖、醋、米面油这类），头一回说到用了它，先记一件「原来就有」（amount 写估计还有多少），再记用掉；别的清单里没有的东西被吃了、用了，不记（不知道它是哪来的）。清单里已经有的同一件（同一次买的、同一锅做的）不要再建。旧的还没吃完又买了一份，是新的一件。买了当场就吃完的零嘴不用记。
    - 米面油盐、调料干货、腌菜这些按量用的（kind 是「干货调料粮食」「腌菜酱菜泡菜」，清单里写着「还剩多少克 / 毫升」）：量写准确的数，用克、毫升、斤写，不要写「大半袋」「用掉一点」：买回来、收到、原来就有写 amount（一共多少，例如「5 斤」「500 毫升」）；用掉写 used（这次用了多少，例如「3 克」「15 毫升」；聊天里没说就按这道菜平常的用量估）；聊天里说了还剩多少的（「盐只剩个罐底了」「米还有半袋」），记一步「清点」，amount 写折成克 / 毫升的剩多少。一盘菜、一锅汤照旧写大概（left 写「小半锅」「吃了一半」）；按个数的照旧写个数（「两块」）。
@@ -361,10 +362,9 @@ class Recorder:
             role = str(item.get("role") or "")
             text = str(item.get("text") or "")
             if str(item.get("src") or "") == "proactive":
-                # 她主动发给主人的：整条不给记录员看（2026-11-11），免得把主动消息当成主人的吩咐去改世界线
-                continue
+                role = "assistant"
             if role == "assistant":
-                who = label
+                who = label + ("（主动发的，只代表她自己的话）" if item.get("src") == "proactive" else "")
             else:
                 who = "主人"
                 # 主人塞给她的一次性提示（<system>……</system>）不是他说的话，不记成规矩
@@ -503,11 +503,19 @@ class Recorder:
         labels = "、".join(
             "%s=%s" % (bot, self.label(bot) or bot) for bot in self.raw_log.enabled_bots()
         )
+        companion = getattr(self, "companionship", None)
+        interaction = (companion.safe("render", bot_of_umo(umo), now, recorder=True, default="")
+                       if companion is not None else "")
+        previous = companion.safe("reply_context", umo, items, now, default=[]) if companion is not None else []
+        transcript = self._transcript(items, umo)
+        if previous:
+            transcript = ("此前实际发出的两句话（只用来理解本批回应，不重复记成新发生的事实）：\n"
+                          + self._transcript(previous, umo) + "\n\n本批待记录消息：\n" + transcript)
         return localize(RECORDER_TEMPLATE.format(
             now=fmt_time(now),
             where=self._where_text(umo),
             labels=labels or "（未配置）",
-            transcript=self._transcript(items, umo),
+            transcript=transcript,
             today_block=self._today_block(now),
             things_block=self._things_block(now),
             kinds=" / ".join(KINDS),
@@ -515,7 +523,7 @@ class Recorder:
             keeps=" / ".join(KEEPS),
             spots=" / ".join(spots_for(str(self.cfg.get("world_home") or ""))),
             world_notes=self.world_notes,
-        ) + LIFECYCLE_RULES, str(self.cfg.get("world_home") or ""))
+        ) + LIFECYCLE_RULES + "\n" + RECORDER_NOTE + "\n" + interaction, str(self.cfg.get("world_home") or ""))
 
     # ---------- 执行 ----------
 
@@ -525,7 +533,11 @@ class Recorder:
         if not items:
             return False
         if all(str(x.get("src") or "") == "proactive" for x in items):
-            # 整批都是她主动发的：不喂记录员，但游标要往前走，不然一直重读
+            # 单纯主动消息先轻量登记邀请，不额外调用模型或让她自己的话改写事实。
+            companion = getattr(self, "companionship", None)
+            if companion is not None:
+                for item in items:
+                    companion.safe("observe_message", item)
             last = items[-1]
             self.world.set_cursor(umo, float(last.get("ts") or 0), _digest(last.get("text")))
             logger.info("[super_enhance/life] %s 这批 %d 条全是主动消息，不喂记录员", bot_of_umo(umo),
@@ -715,6 +727,15 @@ class Recorder:
         flat_now = now.replace(tzinfo=None)
         bots = set(self.raw_log.enabled_bots())
         state = self.batch = RecorderBatch()
+        companion = getattr(self, "companionship", None)
+        extra_plans = []
+        if companion is not None:
+            for item in batch:
+                companion.safe("observe_message", item)
+            previous = companion.safe("reply_context", umo, batch, now, default=[])
+            extra_plans = companion.safe("apply_record", umo, data.get("companionship"), previous + batch, now, default=[])
+            if extra_plans:
+                data = dict(data, intentions=list(data.get("intentions") or []) + extra_plans)
         # 先定对不上的那几段怎么收场（收尾、做完、交接要几分钟），再记这次的新条目：免得新条目先把手上的事一刀截断
         state.free_at = self._apply_stale(data.get("stale") or [], now)
         self._apply_entries(data.get("entries") or [], umo, now, items, bots, state.free_at, flat_now)
@@ -903,6 +924,9 @@ class Recorder:
                 with_list=together, date=raw.get("date") or "",
                 heard_by=[heard] if who == "master" and heard else None, now_at=now_at, why=raw.get("why") or "",
             )
+            companion = getattr(self, "companionship", None)
+            if companion is not None:
+                companion.safe("bind_plan", raw, record)
             # 只有新记的才腾地方；同一条再说一遍不动（补写可能已经把它排进去了）；主人自己的安排不腾她们的地方
             if record and str(record.get("id")) not in known and who != "master":
                 if record.get("now_at"):
@@ -914,7 +938,9 @@ class Recorder:
         """新记了一条带时间段的打算：她那段时间里补写排好的事让开——没开始的撤掉，跨进来的截到打算开始的那一刻；
         对方写着和她一起的那几段也一样。空出来的由补写把打算排进去（顺带上对方）。
         时间段太长（超过 MAKE_ROOM_HOURS）或已经过了的不动，免得撤掉一大片。"""
-        span = window_span(intention.get("window"), now)
+        scheduled = parse_time(str(intention.get("date") or "") + " 00:00")
+        reference = now.replace(year=scheduled.year, month=scheduled.month, day=scheduled.day) if scheduled else now
+        span = window_span(intention.get("window"), reference)
         if span is None:
             return
         flat = now.replace(tzinfo=None)

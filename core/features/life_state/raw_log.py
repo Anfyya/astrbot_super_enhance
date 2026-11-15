@@ -46,6 +46,7 @@ class RawMessageLog:
         self._day_cache: dict[str, tuple[int, list[dict]]] = {}
         # () -> 记录员还没处理完的最早那天（YYYY-MM-DD，没有就空串）；清理旧文件时这天以后的先不删
         self.keep_from_fn = None
+        self.on_record = None
 
     # ---------- 基础 ----------
 
@@ -70,7 +71,7 @@ class RawMessageLog:
 
     # ---------- 写入 ----------
 
-    def record(self, umo: str, role: str, text: str, when=None, src: str = "") -> bool:
+    def record(self, umo: str, role: str, text: str, when=None, src: str = "", interaction=None) -> bool:
         """追加一条原始消息；重复（同角色/同分钟/同开头）会被忽略。
 
         src 标消息来源，目前只有 "proactive"（本插件排的主动对话发给主人的消息）。
@@ -104,10 +105,17 @@ class RawMessageLog:
             }
             if src:
                 item["src"] = str(src)
+            if isinstance(interaction, dict) and interaction:
+                item["interaction"] = dict(interaction)
             with path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(item, ensure_ascii=False) + "\n")
             self._day_cache.pop(day, None)
             self.cleanup()
+            if self.on_record is not None:
+                try:
+                    self.on_record(item)
+                except Exception:
+                    logger.warning("[super_enhance/life] 互动近况暂未更新，原始消息已保存", exc_info=True)
             return True
         except Exception as e:
             logger.error("[super_enhance/raw_log] 写入失败：%s", e)
@@ -363,11 +371,14 @@ def master_chats_elsewhere(service, bot: str, now: datetime.datetime) -> list[tu
 
 
 def record_incoming(service, event) -> None:
-    """记录用户发来的原始消息。"""
+    """记录用户发来的原始消息副本（睡眠/清醒由快捷指令独立同步，不再由消息到达改写）。"""
     _touch(service, getattr(event, "unified_msg_origin", ""))
     try:
+        moment = service._now()
+        umo = str(getattr(event, "unified_msg_origin", "") or "")
+        text = (event.get_message_str() or "").strip()
         service.raw_log.record(
-            event.unified_msg_origin, "user", event.get_message_str() or ""
+            umo, "user", text, when=moment
         )
     except Exception:
         logger.debug("[super_enhance/life] 记录用户消息失败", exc_info=True)
@@ -395,9 +406,18 @@ def record_reply(service, event) -> None:
     except Exception:
         logger.debug("[super_enhance/life] 记录回复失败", exc_info=True)
 
-def record_tool_message(service, event, tool, tool_args) -> None:
+def record_tool_message(service, event, tool, tool_args, tool_result=None) -> None:
     """记录经 send_message_to_user 主动发出的消息（含定时主动对话）。"""
     if getattr(tool, "name", "") != "send_message_to_user":
+        return
+    if getattr(tool_result, "isError", False) or (isinstance(tool_result, dict) and tool_result.get("isError")):
+        return
+    content = (tool_result.get("content", []) if isinstance(tool_result, dict)
+               else getattr(tool_result, "content", [])) or []
+    result_text = tool_result if isinstance(tool_result, str) else "\n".join(
+        str(part.get("text", "") if isinstance(part, dict) else getattr(part, "text", "")) for part in content)
+    # 发送工具的明确成功回执；普通 error: 字符串也不能算已发出。
+    if "Message sent to session " not in str(result_text):
         return
     args = tool_args or {}
     messages = args.get("messages")
@@ -436,6 +456,9 @@ def record_tool_message(service, event, tool, tool_args) -> None:
         src = "proactive"
         service._proactive_sent[umo] = time.time()
     try:
-        service.raw_log.record(umo, "assistant", "\n".join(texts), src=src)
+        payload = event.get_extra("cron_payload") or {}
+        question = payload.get("se_question") or {}
+        interaction = {"invitation_id": question["invitation_id"]} if isinstance(question, dict) and question.get("invitation_id") else None
+        service.raw_log.record(umo, "assistant", "\n".join(texts), src=src, interaction=interaction)
     except Exception:
         logger.debug("[super_enhance/life] 记录主动消息失败", exc_info=True)

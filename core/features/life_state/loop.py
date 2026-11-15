@@ -82,10 +82,16 @@ async def world_loop(service) -> None:
             else:
                 # 关着的时候游标照样往前走：不然再打开时，会把关着那几天的聊天一口气补记进世界线
                 service.recorder.skip_pending(now)
+            companion = getattr(service, "companionship", None)
+            if companion is not None:
+                companion.safe("apply_refresh", service._now(), service.enabled_bots())
             if service.life_step.due(now):
                 await service.life_step.run(now)
             await settle_live(service, now)
             await notify_done(service, service._now())
+            companion = getattr(service, "companionship", None)
+            if companion is not None:
+                companion.safe("reconcile", service._now())
             if done:
                 service._debug("世界线：记录员处理了 %d 个会话", done)
             service.world.clear_error("loop")
