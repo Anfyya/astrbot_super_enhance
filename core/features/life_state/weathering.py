@@ -61,7 +61,7 @@ CONDITION_VALUES = {
 }
 GREEN_WORDS = ("新鲜枝木", "新鲜修枝", "刚砍", "新砍", "新伐", "刚修剪", "刚剪下", "鲜木", "青木")
 WET_WORDS = ("湿透", "泡透", "浸湿", "淋湿", "潮湿", "湿木", "湿柴", "湿的", "返潮")
-NEGATED_ACTION = re.compile(r"(?:尚未|还没|没有|未曾|还未|不能|不必|无需|未|没|不|别|勿|准备|打算|等待|需要|正在|继续|拿去|等|待|去|让|得|要)[^，。；;!?！？\n]{0,8}$")
+NEGATED_ACTION = re.compile(r"(?:尚未|还没|没有|未曾|还未|不能|不必|无需|未|没|不|别|勿|准备|打算|等待|需要|正在|继续|帮助|利于|便于|加快|恢复|拿去|等|待|去|让|得|要)[^，。；;!?！？\n]{0,8}$")
 
 
 def asserted(text: str, words) -> bool:
@@ -93,7 +93,7 @@ def clean_conditions(value) -> dict:
 
 
 def dry_asserted(text: str) -> bool:
-    return asserted(text, RESET_DRY + ("已干燥", "干柴")) and not asserted(text, WET_WORDS + GREEN_WORDS)
+    return asserted(text, RESET_DRY + ("已干燥", "干燥", "干柴", "干枯枝")) and not asserted(text, WET_WORDS + GREEN_WORDS)
 
 
 def fuel_item(item: dict) -> bool:
@@ -124,6 +124,8 @@ def fuel_properties(item: dict, stages: list) -> dict:
         if asserted(text, ("腐朽", "腐烂", "烂木", "发霉")):
             properties["rotten"] = True
     origin = str(item.get("origin") or "")
+    if not origin and stages and stages[0].get("what") == "捡到":
+        origin = str(stages[0].get("place") or "")
     for source, words in (("supplier", ("柴料场", "柴铺")), ("land_deadwood", ("坡上", "薪柴地", "林地", "林下")),
                           ("pruning", ("修枝", "清障")), ("workshop", ("木工", "船匠")),
                           ("drift_unknown", ("漂流", "海滩捡", "沙滩捡"))):
@@ -162,11 +164,11 @@ def storage_conditions(stage: dict) -> dict:
         out["rain_cover"] = True
     if any(word in text for word in ("撤掉帆布", "掀开遮盖", "移到露天", "无遮挡", "无遮雨")):
         out["rain_cover"] = False
-    if asserted(text, ("通风", "透气", "留着缝", "留出缝", "敞着")):
+    if asserted(text, ("通风", "透气", "留着缝", "留出缝", "留缝", "干燥架", "敞着")):
         out["ventilated"] = True
     if any(word in text for word in ("密封", "裹紧", "不通风")):
         out["ventilated"] = False
-    if asserted(text, ("离地", "垫高", "架空", "垫木上")):
+    if asserted(text, ("离地", "垫高", "架空", "垫木上", "干燥架", "木架")):
         out["off_ground"] = True
     if any(word in text for word in ("直接落地", "贴地", "放在泥地")):
         out["off_ground"] = False

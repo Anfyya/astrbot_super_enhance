@@ -210,7 +210,7 @@ ITEM_MID_STEPS = ("挪地方", "交给", "用了", "做了一截", "做好了", 
 ITEM_END_STEPS = ("送人了", "丢了", "坏了扔了", "用完了", "记错了")
 ITEM_STEPS = tuple(dict.fromkeys(ITEM_START_STEPS + ITEM_MID_STEPS + ITEM_END_STEPS))
 ITEM_STEP_WORDS = (
-    ("记错", "记错了"), ("用完", "用完了"), ("用光", "用完了"), ("坏了扔", "坏了扔了"), ("扔", "丢了"), ("丢", "丢了"),
+    ("记错", "记错了"), ("清点", "清点"), ("盘点", "清点"), ("用完", "用完了"), ("用光", "用完了"), ("坏了扔", "坏了扔了"), ("扔", "丢了"), ("丢", "丢了"),
     ("送人", "送人了"), ("送出去", "送人了"), ("送来", "收到"), ("送的", "收到"), ("赢", "收到"),
     ("原来", "原来就有"), ("本来", "原来就有"), ("一直有", "原来就有"), ("捡", "捡到"), ("拾", "捡到"),
     ("起头", "开始做"), ("开始", "开始做"), ("动手", "开始做"),
@@ -463,6 +463,8 @@ def stock(item: dict):
         what = stage.get("what")
         amount = quantity(stage.get("amount")) or quantity(stage.get("left"))
         if what in starts or what == "清点":
+            if not amount and what in starts and weathering.fuel_item(item):
+                amount = quantity(stage.get("state")) or quantity(item.get("look"))
             if amount:
                 left, unit = amount
         elif what in ends:
@@ -1483,7 +1485,9 @@ class ThingStore:
         drying = (conditions.get("fuel_state") == "ready" or conditions.get("fuel_wet", 1) <= 0.2
                   or weathering.dry_asserted(stage.get("state") or ""))
         burning = stage.get("what") in ("用了", "用掉一部分", "用完了") and stage.get("purpose") != "material"
-        if (drying or burning) and state.get("fuel_state") != "ready":
+        if burning and state.get("fuel_state") != "ready":
+            return "这批柴尚未干透，不能直接写成干柴或烧掉；先晾晒、检查，或另取已干批次"
+        if drying and state.get("fuel_state") not in ("ready", "unknown"):
             return "这批柴尚未干透，不能直接写成干柴或烧掉；先晾晒、检查，或另取已干批次"
         if burning and (state.get("fuel_safe") is not True or properties.get("fuel_safe") is not True):
             return "%s，先确认来源或另取合适干柴" % (state.get("fuel_reason") or properties.get("fuel_reason") or "木料不适合燃用")

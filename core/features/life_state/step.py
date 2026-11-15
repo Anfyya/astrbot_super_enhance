@@ -135,8 +135,8 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
 19. **被打断的事后来怎么样了**：上面「被打断、还没交代后来怎么样的事」里每一件，在 stopped_results 里用编号写一句后来怎么样了：撂下不做了、交给谁接着做完了、等手上的事忙完回头接着做完了、或者赶紧几下做完了，挑合情理的写。只写这个人自己怎么处理这件事，不替别人定事实：别人那件做没做完、做出了什么，以世界线上别人那段写的为准（标着「做到……先放下了」的就是没做完），拿不准就写撂下了或者等回头再说。要和你这次排的段对得上：写了回头接着做，就把接着做的那段排上；写了交给对方，对方那段就是接着做这件事。没列出来的不写。
 20. **家里的东西**（吃的以外）：上面「家里的东西」是此刻家里有的（编号、样子、在哪、在谁手上）。段里做了、用了、挪了、交给别人了、接着做了一截的东西，写进这段的 items（没动到就是空数组）：
    只是拿来读、翻看、摊开看一眼，之后原样放回去，地方、样子、数量都没变的，不算动到它，不写 items；别为了让校验通过硬编一条物品变化。
-   - 已有的写 id、what（挪地方 / 交给 / 用了 / 做了一截 / 做好了 / 变了样 / 送人了 / 丢了 / 坏了扔了 / 用完了）、place、holder（交到谁手上）、state（这段做完它什么样，比如「织到两尺长」）。接着做没做完的那件（比如接着织那条围巾），就是清单里那一件，写「做了一截」或「做好了」，不要另建一件。清单里标着「已做好」的已经做完了，不要再排接着做它，也别给它写「做了一截」「做好了」；想再做一样的，就另起一件新的。
-   - 新做出来的、买回来的、捡到的写 new（临时代号 x1、x2……，这一次里每件一个，两个人、几段之间也不重复：丛雨那段用了 x1，亚托莉那段的新东西就从 x2 起）、name（叫得出区别的名字，例如「兔子窗花」）、kind（它是什么，一个词：窗花、围巾……）、look（样子）、owner（归谁）、what（开始做 / 做好了 / 买回来 / 收到 / 捡到）、place、state。清单里还没有、可前面早就有了的（比如前几天起了头的围巾），也写 new，what 写「原来就有」，state 写它现在的样子。
+   - 已有的写 id、what（挪地方 / 交给 / 用了 / 清点 / 做了一截 / 做好了 / 变了样 / 送人了 / 丢了 / 坏了扔了 / 用完了）、place、holder（交到谁手上）、state（这段做完它什么样，比如「织到两尺长」）；柴炭、火柴、绳料等消耗品及燃柴按生活规程补写 amount（清点数量）/ used（本次用量）/ left（剩余数量）/ purpose（燃用填 "fuel"，作加工原料填 "material"）/ into（加工分拆进了哪个新代号）/ weather（晾放遮雨通风或检查后的柴木条件）。接着做没做完的那件（比如接着织那条围巾），就是清单里那一件，写「做了一截」或「做好了」，不要另建一件。清单里标着「已做好」的已经做完了，不要再排接着做它，也别给它写「做了一截」「做好了」；想再做一样的，就另起一件新的。
+   - 新做出来的、买回来的、捡到的写 new（临时代号 x1、x2……，这一次里每件一个，两个人、几段之间也不重复：丛雨那段用了 x1，亚托莉那段的新东西就从 x2 起）、name（叫得出区别的名字，例如「兔子窗花」）、kind（它是什么，一个词：窗花、围巾、燃柴……）、look（样子）、owner（归谁）、origin（哪来的，如「坡上薪柴地」「船匠边料」「杂货铺」）、from（用哪几件原料做的，没有留空）、what（开始做 / 做好了 / 买回来 / 收到 / 捡到）、amount（消耗品和柴火必填数量与单位，如「1捆」「6份」）、place、state、weather（柴木或晾晒物品填条件，例如坡上捡的已干枯枝填 {{"fuel_source": "land_deadwood", "saltwater": false, "treated": false, "seasoning": "seasoned", "fuel_size": "kindling", "fuel_state": "ready"}}）。清单里还没有、可前面早就有了的（比如前几天起了头的围巾），也写 new，what 写「原来就有」，state 写它现在的样子。
    - 上面写了字、画了东西的（给主人留的纸条、信、便笺、清单、贺卡、画）：look 里把上面写的原话一字不差地写出来，用「」括起来；画的写清楚画了什么。例如 look 写「黄纸条，铅笔写的：『主人，粥在灶上温着，亚托莉去码头了，中午前回来』」，别只写「一张写给主人的纸条」。这段的 steps 里写到她写纸条时也用这句原话。后来谁拿起来看、念给主人听，都照这句说，不能另编。
    - 封着送来的（寄来的信、没拆的包裹、捆好的箱子）：look 写外面看得到的（信封、邮戳、收信人、包裹多大多沉），里面是什么写进 inside——信写原话，用「」括起来；包裹、箱子写装了哪些东西。state 写「封着没拆」。这段的 doing、steps、result 里写到它时，照外面的样子写。拆开留到聊天里，那时候她们照 inside 说。
    - place 和第 18 条一样拆开写，例如 {{"area": "卧房", "at": "针线笸箩", "detail": ""}}、{{"area": "堂屋", "at": "书架", "detail": "第二格"}}。
@@ -568,6 +568,13 @@ class LifeStep:
         for raw in raws:
             if not isinstance(raw, dict):
                 continue
+            key = str(raw.get("new") or "").strip()
+            name = clean_text(raw.get("name"), 30)
+            if key and name and norm_step(raw.get("what")) in START_STEPS:
+                self._claim(keys, key, name, bot, store.reserve_id)
+        for raw in raws:
+            if not isinstance(raw, dict):
+                continue
             what = norm_step(raw.get("what"))
             key = str(raw.get("new") or "").strip()
             if key:
@@ -601,7 +608,7 @@ class LifeStep:
             out.append({k: v for k, v in step.items() if v not in ("", None, []) or k == "left"})
         return out
 
-    def _item_steps(self, raws, keys: dict, shelf, bot: str = "") -> list:
+    def _item_steps(self, raws, keys: dict, shelf, bot: str = "", seg_place: str = "") -> list:
         """补写给一段标的东西（吃的以外，段里的 items）：临时代号（x1、x2……）换成程序发的 p 编号（同号不同名另发号，见 _claim）；
         已有的得是清单里的（此刻现算）或这一次里新记的，对不上的那步丢掉。存进那段的 things，带 cat=item。"""
         store = getattr(self, "things", None)
@@ -613,16 +620,26 @@ class LifeStep:
         for raw in raws:
             if not isinstance(raw, dict):
                 continue
+            key = str(raw.get("new") or "").strip()
+            name = clean_text(raw.get("name"), 30)
+            if key and name and norm_step(raw.get("what"), CAT_ITEM) in ITEM_START_STEPS:
+                self._claim(keys, key, name, bot, lambda: store.reserve_id(CAT_ITEM))
+        for raw in raws:
+            if not isinstance(raw, dict):
+                continue
             what = norm_step(raw.get("what"), CAT_ITEM)
             key = str(raw.get("new") or "").strip()
             if key:
                 name = clean_text(raw.get("name"), 30)
                 if what not in ITEM_START_STEPS or not name:
                     raise FactConflict("新物品需要有效名称和取得方式")
+                origin = clean_text(raw.get("origin"), 60)
+                if not origin and what == "捡到" and seg_place:
+                    origin = clean_text(seg_place, 60)
                 step = {"new": self._claim(keys, key, name, bot, lambda: store.reserve_id(CAT_ITEM)), "cat": CAT_ITEM, "name": name, "kind": clean_text(raw.get("kind"), 10),
                         "look": clean_text(raw.get("look"), 60), "owner": clean_text(raw.get("owner"), 12),
                         "inside": clean_text(raw.get("inside"), MAX_INSIDE),
-                        "origin": clean_text(raw.get("origin"), 60),
+                        "origin": origin,
                         "from": [x for x in dict.fromkeys(resolve(t) for t in raw.get("from") or []) if x]}
             else:
                 tid = resolve(raw.get("id"))
@@ -631,9 +648,14 @@ class LifeStep:
                 step = {"id": tid}
                 if raw.get("owner"):
                     step["owner"] = clean_text(raw.get("owner"), 12)
+                into = resolve(raw.get("into"))
+                if into and into != tid:
+                    step["into"] = into
             place = checked_place(raw.get("place"), bool(key), raw.get("name") or step.get("id"))
             if any(not resolve(token) for token in raw.get("from") or []):
                 raise FactConflict("%s 有无法找到的材料编号" % (raw.get("name") or raw.get("id")))
+            if raw.get("into") and not resolve(raw["into"]):
+                raise FactConflict("做进的成品 %s 没有对应记录" % raw["into"])
             step.update({"what": what, "place": place, "holder": clean_text(raw.get("holder"), 12),
                          "state": clean_text(raw.get("state"), 40), "step": step_no(raw.get("step")) or ""})
             for field in ("amount", "used", "left", "purpose", "keep", "spot"):
@@ -1743,7 +1765,7 @@ class LifeStep:
                     # 溯源：这段是照什么写的（抽到的哪一条 / 打算 / 作息 / 接着前面 / 自己想的），程序对照当天抽到的核过
                     "origin": origin_of(raw.get("from"), bot, seed, intent=intent, training=training),
                     "things": (self._thing_steps(raw.get("things"), thing_keys, shelf, bot)
-                               + self._item_steps(raw.get("items"), item_keys, shelf, bot)) if state == "do" else [],
+                               + self._item_steps(raw.get("items"), item_keys, shelf, bot, seg_place=str(raw.get("place") or ""))) if state == "do" else [],
                     "seen_by": [bot] + with_list,
                     "source": "step",
                     "created": fmt_time(flat),
