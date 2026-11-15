@@ -5109,7 +5109,7 @@
       card.appendChild(worldEntryForm(d, null));
     } else {
       card.appendChild(h("button", { class: "addlink", type: "button", "data-wk": "e:new", onclick: function () {
-        worldOpen("e", "new", { who: who, when: "", place: "", doing: "", steps: [], result: "", importance: "", "public": "", training: "", things: [] });
+        worldOpen("e", "new", { who: who, when: "", place: "", doing: "", steps: [], result: "", send_msg: false, msg_at: "", msg_purpose: "", "public": "", training: "", things: [] });
       } }, icon("plus"), "手动加一条"));
     }
     sec.appendChild(card);
@@ -5266,10 +5266,11 @@
     var withs = (e["with"] || []).map(function (x) { return worldLabel(d, x); });
     var others = e["public"] || e.place || "";
     // 默认每段只留做了什么、地点、心情；分步、结果、东西、来源点开再看。正在做的那段一直开着（进度要落在步骤上）。
-    // 标签只留例外的：「补写」和不够分的「重要」收在细节里
-    var doneMin = S.world.done_min || 4, impBig = +e.importance >= doneMin;
-    var impTag = +e.importance > 0 ? h("span", { class: "tag" + (impBig ? " acc" : ""),
-      title: "重要程度（够 " + doneMin + " 分做完才叫她主动说）", text: "重要 " + e.importance }) : null;
+    // 主动消息显示「主动说（段头/段尾）」悬停看 msg_purpose；历史日期若仅有旧 importance 仍灰字兼容展示
+    var msgAtWord = e.msg_at === "start" ? "段头" : "段尾";
+    var msgTag = e.send_msg
+      ? h("span", { class: "tag acc", title: e.msg_purpose || "这段设置了主动发消息", text: "主动说（" + msgAtWord + "）" })
+      : (+e.importance > 0 ? h("span", { class: "tag", title: "历史旧版重要程度存档", text: "重要 " + e.importance }) : null);
     var srcTag = h("span", { class: "tag" + (e.source === "manual" ? " acc" : ""), text: WORLD_SRC[e.source] || e.source || "" });
     var openKey = date + ":" + e.id, pinned = going || where === "now";
     if (pinned || S.wOpen[openKey]) { row.classList.add("wopen"); }
@@ -5285,14 +5286,15 @@
         e.at_home === false ? h("span", { class: "tag", text: "在外面" }) : null,
         e.meal ? h("span", { class: "tag", text: "吃饭" }) : null,
         e.source !== "step" ? srcTag : null,
-        impBig ? impTag : null,
+        e.send_msg ? msgTag : null,
         e.mood ? h("span", { class: "wmood", text: "心情：" + e.mood }) : null),
       worldSteps(e, pct),
       (!(e.stop_shown !== undefined ? e.stop_shown : e.stopped) && e.result) ? h("div", { class: "wres", text: "结果：" + e.result }) : null,
       worldThings(d, e, null),
       h("div", { class: "lm" },
         e.source === "step" ? srcTag : null,
-        impTag && !impBig ? impTag : null,
+        !e.send_msg && msgTag ? msgTag : null,
+        e.send_msg && e.msg_purpose ? h("span", { text: "主动说起因：" + e.msg_purpose }) : null,
         h("span", { text: others ? "别人看到：" + others : "别人看不到" }),
         withs.length ? h("span", { text: "和" + withs.join("、") + "一起" }) : null,
         seen.length ? h("span", { text: "细节也给：" + seen.join("、") }) : null,
@@ -5306,7 +5308,7 @@
     var edit = h("button", { class: "btn quiet sm", type: "button", title: "编辑" }, icon("edit"));
     edit.addEventListener("click", function () {
       worldOpen("e", e.id, { when: rangeText(e.start, e.end, date), place: e.place || "", doing: e.doing || "", steps: (e.steps || []).map(function (t, i) { var m = worldStepMins(e); return { text: t, minutes: m ? String(m[i]) : "" }; }),
-        importance: +e.importance > 0 ? String(e.importance) : "",
+        send_msg: !!e.send_msg, msg_at: e.send_msg ? (e.msg_at === "start" ? "start" : "end") : "", msg_purpose: e.msg_purpose || "",
         result: e.result || "", mood: e.mood || "", "public": e["public"] || "",
         training: /^#?\d+$/.test(String(e.training || "").trim()) ? String(e.training).trim().replace(/^#/, "") : "",
         things: JSON.parse(JSON.stringify(e.things || [])) });
@@ -5663,7 +5665,6 @@
     var wk = "e:" + key;
     var f = S.wEdit[key];
     var fileDate = e ? String(e.start || "").slice(0, 10) : d.date;
-    var doneMin = S.world.done_min || 4;
     var isEvent = !!e && e.kind === "event";
     var who = e ? (e.who_label || worldLabel(d, e.who)) : (f.who ? worldLabel(d, f.who) : "");
     var box = e
@@ -5719,10 +5720,21 @@
       "聊天时她看的是已经开始的最近一段写的心情；空着就往前找");
     edRow(p, "别人看到", edInput(f["public"], "空着就只看到地点", function (v) { f["public"] = v; }),
       "别人只看到这一句粗略的说法；细节只有她自己和在场的人知道");
-    edRow(p, "重要程度", [
-      edChips([{ key: "", label: "不打分", none: true }].concat(["1", "2", "3", "4", "5"].map(function (x) { return { key: x, label: x }; })),
-        String(f.importance || ""), function (v) { f.importance = v; }),
-      h("span", { class: "ed-n", text: "够 " + doneMin + " 分，做完会叫她说一声" })]);
+    var msgPurposeWrap = h("div", { style: f.send_msg ? "margin-top:6px;width:100%" : "display:none;margin-top:6px;width:100%" },
+      edInput(f.msg_purpose || "", "这会儿想跟主人说什么、为什么想说（上限 140 字）", function (v) { f.msg_purpose = v; }, { max: 140 }));
+    var curNode = f.send_msg ? (f.msg_at === "start" ? "start" : "end") : "";
+    edRow(p, "主动说", [
+      edChips([
+        { key: "", label: "不主动说", none: true },
+        { key: "start", label: "段头主动说", tip: "这一段刚开始时发" },
+        { key: "end", label: "段尾主动说", tip: "这一段结束时发" }
+      ], curNode, function (v) {
+        f.send_msg = !!v;
+        f.msg_at = v || "";
+        if (!v) { f.msg_purpose = ""; }
+        msgPurposeWrap.style.display = v ? "block" : "none";
+      }),
+      msgPurposeWrap]);
     edRow(p, "在练的事", edInput(f.training, "编号，没有就空着", function (v) { f.training = v; }, { cls: "ed-num", auto: true }));
     box.appendChild(edSec(p));
 
@@ -5751,7 +5763,9 @@
       return worldPost({
         kind: "entry", action: e ? "update" : "add", date: e ? fileDate : r.start.slice(0, 10), id: e ? e.id : "", who: f.who,
         start: r.start, end: r.end, place: f.place, doing: f.doing, steps: stepList, "public": f["public"],
-        importance: String(f.importance || "").trim() === "" ? 0 : +String(f.importance).trim(),
+        send_msg: !!f.send_msg,
+        msg_at: f.send_msg ? (f.msg_at === "start" ? "start" : "end") : "",
+        msg_purpose: f.send_msg ? String(f.msg_purpose || "").trim() : "",
         result: String(f.result || ""),
         mood: String(f.mood || ""),
         training: String(f.training || "").replace(/^#/, "").trim(),

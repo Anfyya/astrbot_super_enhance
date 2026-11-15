@@ -18,9 +18,8 @@ LIVING_NOTE = """
 知道主人在附近时，可以写她走近、展示、邀请和安静相伴；这不等于主人已经回应或参与，with 不为“想着他”而填写。
 主人明确休息时，船舱里的音量、敲打的位置、早餐和共同活动的安排要考虑他还没醒；
 她们可以轻松地做自己的事，也会把想说的话、想分享的东西留到合适时候，不必守床或故意消沉。
-留饭记在实际的桌面或容器，没交接不写放进主人手里，不替他吃完。醒来后自然接一件事，不集中报家务。
-主人的睡眠与清醒状态由快捷指令即时同步；已经醒来不表示下床、起身、吃饭或换地方。
-以主人即时状态为准，不被较旧的聊天描写覆盖。没回复不等于出门、睡着、同意或拒绝；地点不明就不编位置。
+留饭记在实际的桌面或容器并盖好保温，没交接不写放进主人手里，不替他吃完。
+主人的入睡与起床由快捷指令即时写入世界线；以世界线与主人即时状态为准，不被较旧的聊天描写覆盖。没回复不等于出门、睡着、同意或拒绝；地点不明就不编位置。
 待回应的邀请可以先放着，其他生活继续；只有主人的真实回应能把它变成共同约定。
 这些是写作依据，不要求固定句式、次数或话题比例。
 """.strip()
@@ -384,17 +383,70 @@ class Companionship:
                 self._save()
                 return
 
-    def defer_notice(self, bot, meta, now):
-        done = meta.get("done") or {}
-        body = clean_text("，".join(str(done.get(k) or "") for k in ("doing", "result")).strip("，"), 240)
-        if not body or meta.get("kind") in ("meal", "out", "back"):
-            return
+    def defer_notice(self, bot, meta_or_kind, now_or_text=None, maybe_now=None):
+        if isinstance(meta_or_kind, dict):
+            meta = meta_or_kind
+            now = now_or_text or self.world.now_local()
+            kind = str(meta.get("kind") or "")
+            purpose = str(meta.get("purpose") or "").strip()
+            done = meta.get("done") or {}
+            body = clean_text(
+                purpose or "，".join(str(done.get(k) or "") for k in ("doing", "result") if done.get(k)).strip("，"),
+                240,
+            )
+            if not body or kind in ("meal", "out", "back"):
+                return
+            if kind == "segment" and any(w in body for w in ("早安", "晚安", "吃饭", "开饭", "出门", "回来")):
+                return
+        else:
+            kind = str(meta_or_kind or "")
+            body = clean_text(now_or_text, 240)
+            now = maybe_now or self.world.now_local()
+            if not body or kind in ("meal", "out", "back"):
+                return
         notices = self._data()["notices"]
         if any(x["bot"] == bot and x["text"] == body and not x.get("used_at") for x in notices):
             return
         notices.append({"bot": bot, "scene": self._scene(), "text": body, "ts": self._ts(now)})
         self._data()["notices"] = notices[-64:]
         self._save()
+
+    def deferred_for(self, bot, now=None) -> list:
+        moment = now or self.world.now_local()
+        stamp = self._ts(moment)
+        return [
+            dict(x)
+            for x in self._data()["notices"]
+            if x.get("bot") == bot
+            and x.get("scene") == self._scene()
+            and 0 <= stamp - float(x.get("ts") or 0) < 86400
+            and (not x.get("used_at") or float(x["used_at"]) > stamp)
+        ]
+
+    def consume_deferred(self, bot, now=None) -> int:
+        moment = now or self.world.now_local()
+        stamp = self._ts(moment)
+        count = 0
+        for row in self._data()["notices"]:
+            if (
+                row.get("bot") == bot
+                and row.get("scene") == self._scene()
+                and 0 <= stamp - float(row.get("ts") or 0) < 86400
+                and not row.get("used_at")
+            ):
+                row["used_at"] = stamp
+                count += 1
+        if count:
+            self._save()
+        return count
+
+    def extra_note_lines(self, bot, now=None) -> list[str]:
+        items = self.deferred_for(bot, now)
+        if not items:
+            return []
+        return [
+            "主人刚才休息时留着没吵他的事：" + "；".join(x["text"] for x in items[-3:])
+        ]
 
     def _retire_plan(self, token, now):
         self.world.drop_intention(token)
@@ -517,10 +569,10 @@ class Companionship:
     def render(self, bot, now, *, recorder=False):
         lines = []
         state = self.owner_state(now, bot)
-        labels = {"resting": "明确准备休息", "asleep": "明确已经睡下", "awake": "已经清醒，未必已起床",
+        labels = {"resting": "明确准备休息", "asleep": "明确已经睡下", "awake": "已经睡醒起床",
                   "busy": "明确正在忙", "unknown": "当前能否互动不明"}
         if state.get("source"):
-            lines.append("主人即时状态：%s%s。已醒不表示下床；没回复不改变状态。" %
+            lines.append("主人即时状态：%s%s。没回复不改变状态。" %
                          (labels[state["state"]], "，最后明确位置：" + state["place"] if state["place"] else ""))
         elif self.resting(now):
             lines.append("联系时机：目前普通邀约先留着，继续自己手上适合做的事情，不编主人的位置。")
@@ -543,7 +595,7 @@ class Companionship:
         notices = [x for x in self._data()["notices"] if x["bot"] == bot and x.get("scene") == self._scene()
                    and 0 <= stamp - x["ts"] < 86400 and (not x.get("used_at") or x["used_at"] > stamp)]
         if notices:
-            lines.append("休息期间留着想说的一件事（不是已通知）：%s。现在若适合再自然接上，不必补报清单。" % notices[-1]["text"])
+            lines.append("休息期间留着想说的一件事（尚未通知）：%s。" % notices[-1]["text"])
         if recorder or lines:
             return "【与主人相处的近况】\n" + ("\n".join(lines) or "还没有新的互动记录。")
         return ""

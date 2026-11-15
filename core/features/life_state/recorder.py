@@ -21,8 +21,7 @@ from .homewords import localize
 from .facts import fact_batch
 from .living_rules import LIFECYCLE_RULES
 from . import weathering
-from . import fuel_records
-from .things import FactConflict, clean_stage, insert_stage
+from .things import clean_stage, insert_stage
 from .models import bot_of_umo
 from .things import (CAT_FOOD, CAT_ITEM, KEEPS, KINDS, SAME_NEW_MINUTES, SAME_STEP_MINUTES, SPOTS, STEPS, USE_STEPS, cat_of, spots_for,
                      checked_place, find_same, norm_kind, norm_step, usable)
@@ -125,7 +124,7 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
 19. 家里的东西（吃的以外的：衣裳围巾、书册本子、纸条信、画和窗花、布偶摆件、工具器物、首饰小物……）：每件一个编号（p 开头），写进 items，记它从哪来、经过谁手、搁在哪、变成什么样。只记聊天里说已经发生了的，规矩和第 18 条一样。
    - 新的一件（上面「家里的东西」里没有的）：写 new（这一批里的临时代号 x1、x2……；编号由程序发）、name（叫得出区别的名字，例如「深青围巾」「兔子窗花」「压在茶壶底下的纸条」，别只写「围巾」「纸条」）、kind（它是什么，一个词：围巾、窗花、纸条、布偶、书……）、look（样子：颜色、材料、大小、上面有什么，能和同一种的别的那件分清；纸条、信、便笺这种写了字的，聊天里说了写的是什么，就把原话用「」写进 look）、owner（归谁：napcat / napcat2 / master，大家一起用的留空）、origin（哪来的）、from（用清单里哪几件做的），再加上它的第一步。第一步只能是「买回来」「收到」「捡到」「开始做」（起了个头、还没做完）「做好了」「原来就有」（家里本来就有、清单里还没记的）。
    - 已有的那件又发生了一步：写 id（清单里的编号）和这一步，what 从这几样挑：挪地方 / 交给（交到谁手上）/ 用了 / 清点 / 做了一截（没做完的接着做）/ 做好了（没做完的那件做完了）/ 变了样（修好了、弄脏了、洗干净了）/ 送人了 / 丢了 / 坏了扔了 / 用完了 / 记错了。
-   - 每一步写：at、what、place（搁在哪，和第 18 条一样拆开写，例如 {{"area": "卧房", "at": "针线笸箩", "detail": ""}}、{{"area": "堂屋", "at": "书架", "detail": "第二格"}}）、holder（在谁手上、身上：napcat / napcat2 / master，别人写名字；放下搁着就留空）、state（这一步之后它什么样，例如「织到一半」「织好了」「补上了耳朵」）、amount / used / left / purpose / into / weather（柴炭、火柴、绳料等消耗品及燃柴按生活规程填写数量、用途和柴木条件）、by（谁弄的）、owner（归属换了才写，例如送给主人了写 master）、quote。跟上一步一样的不用写。
+   - 每一步写：at、what、place（搁在哪，和第 18 条一样拆开写，例如 {{"area": "卧房", "at": "针线笸箩", "detail": ""}}、{{"area": "堂屋", "at": "书架", "detail": "第二格"}}）、holder（在谁手上、身上：napcat / napcat2 / master，别人写名字；放下搁着就留空）、state（这一步之后它什么样，例如「织到一半」「织好了」「补上了耳朵」）、amount / used / left / into（消耗品或做东西用到的材料可顺带写数量）、by（谁弄的）、owner（归属换了才写，例如送给主人了写 master）、quote。跟上一步一样的不用写。
    - 同一种东西有好几件的（清单里标着「长得像，认准编号」），看清是谁做的、什么样、在哪再记；对不上是哪一件就不记，别记到别的那件上，也别为它另建一件。
    - 清单里写着「按天气算，此刻：……」（淋湿了、生锈了、被风吹进海里了）的是程序照天气算的现在的样子：聊天里她说把它晾干了、擦干了、除了锈、洗了、收进来了、下水捞回来了，给那件记一步，state 写成处理后的样子（「晾干了」「锈擦掉了」），place 写现在搁在哪。
    - 聊天里主人或她说用了、交给谁了、挪了地方、用完了清单上的某件，就给那件记一步，别漏；清单里已经有的（世界线里买回来、捡到、做的也算），不管那边记的是「买回来」还是「捡到」，都记在那件上，不要另建。
@@ -378,7 +377,8 @@ class Recorder:
         if getattr(self, "things", None) is not None:
             self.things.view(now)
         parts = []
-        for item in self.world.constraints(active_only=True):
+        home_scene = str(self.cfg.get("world_home") or "").strip()
+        for item in self.world.constraints(active_only=True, scene=home_scene):
             parts.append(
                 "- 生效中的约束 %s（%s，%s 起%s）：%s"
                 % (
@@ -656,7 +656,8 @@ class Recorder:
     async def review_constraints(self, now: datetime.datetime | None = None) -> list:
         """对照最近两天的世界线，把已经过时的约束撤掉。返回撤掉的编号。"""
         moment = now or self._now()
-        active = self.world.constraints(active_only=True)
+        home_scene = str(self.cfg.get("world_home") or "").strip()
+        active = self.world.constraints(active_only=True, scene=home_scene)
         if not active:
             return []
         provider = self._resolve_provider()
@@ -756,9 +757,6 @@ class Recorder:
         for who, since in sorted(state.touched.items()):
             self._redo_after(who, since, now)
         self._unpair(now)
-        store = getattr(self, "things", None)
-        if store is not None:
-            store.validate_entries(state.written)
 
     def _apply_entries(self, raws, umo: str, now: datetime.datetime, items, bots: set,
                        free_at: dict, flat_now: datetime.datetime) -> None:
@@ -853,16 +851,18 @@ class Recorder:
         另一个人排的段也会牵着她，比如丛雨排着「把午饭端到门口，招呼亚托莉一块吃」，补写就顺着给她排上一起吃）。"""
         changed = False
         flat = now.replace(tzinfo=None, second=0, microsecond=0)
+        home_scene = str(self.cfg.get("world_home") or "").strip()
         for raw in data.get("constraints") or []:
             if not isinstance(raw, dict):
                 continue
             # 记过的规矩又记一遍：add_constraint 并到原来那条上，这里不当新规矩（不然每回都撤掉排好的段重排）
-            existed = self.world.same_constraint(str(raw.get("who") or "").strip(), raw.get("text"))
+            existed = self.world.same_constraint(str(raw.get("who") or "").strip(), raw.get("text"), scene=home_scene)
             before = (existed.get("until"), existed.get("until_time")) if existed is not None else None
             added = self.world.add_constraint({
                 "who": raw.get("who"),
                 "text": raw.get("text"),
                 "public": raw.get("public"),
+                "scene": home_scene,
                 "until": raw.get("until"),
                 "until_time": raw.get("until_time"),
                 "since": norm_time(
@@ -1208,6 +1208,9 @@ class Recorder:
             "things": [dict(x) for x in planned.get("things") or [] if isinstance(x, dict)],
             "result": planned.get("result") or "",
             "importance": planned.get("importance") or 0,
+            "send_msg": bool(planned.get("send_msg")),
+            "msg_at": planned.get("msg_at") or "",
+            "msg_purpose": planned.get("msg_purpose") or "",
             "meal": planned.get("meal"),
             "at_home": planned.get("at_home"),
             "intent": planned.get("intent") or "",
@@ -1367,6 +1370,8 @@ class Recorder:
                     fields["stop_result"] = result
             before = dict(entry)  # 改之前的样子（原来几点结束、标了什么）：后面跟着处理要用
             after = self.world.update(date_text, entry_id, mode="patch", **fields) or entry
+            if how != "做完" and fields.get("stopped"):
+                self.world._fire_drop({who: {f"{date_text}/{entry_id}"}})
             self._touch(who, flat)
             ready = parse_time(after.get("end"))
             if ready is not None and ready > flat:
@@ -1429,6 +1434,9 @@ class Recorder:
             "public": after.get("public"), "with": [], "seen_by": [to],
             "steps": [x for x in rest if x.get("minutes")] or [x.get("text") for x in rest],
             "things": steps, "source": "step", "at_home": after.get("at_home"), "importance": after.get("importance"),
+            "send_msg": bool(after.get("send_msg")) and after.get("msg_at") == "end",
+            "msg_at": "end" if bool(after.get("send_msg")) and after.get("msg_at") == "end" else "",
+            "msg_purpose": (after.get("msg_purpose") or "") if bool(after.get("send_msg")) and after.get("msg_at") == "end" else "",
             "origin": {"kind": "continue", "text": str(after.get("doing") or "")}, "created": fmt_time(now),
         })
         if record is not None:
@@ -1632,16 +1640,6 @@ class Recorder:
         said = norm_time("%s %s" % (hit.get("date"), hit.get("time")), day) if hit else ""
         src = {"umo": umo, "quote": clean_text(raw.get("quote"), 80)}
         at = norm_time(raw.get("at"), day, fallback=said or fmt_time(now))
-        moment = parse_time(at)
-        for record in getattr(self.batch, "written", []):
-            start = parse_time(record.get("start"))
-            end = parse_time(record.get("end")) or now.replace(tzinfo=None)
-            summary = "，".join([str(record.get("doing") or "")] + list(record.get("steps") or []))
-            if (start is not None and moment is not None and start <= moment <= end
-                    and (not raw.get("by") or self._by(raw["by"]) == record.get("who"))
-                    and fuel_records.burning(summary, bool(fuel_records.WOOD.search(summary)))):
-                src["entry"] = str(record["start"])[:10] + "/" + str(record["id"])
-                break
         if hit:
             src["at"] = said
             if str(hit.get("role") or "") == "assistant":
@@ -1649,11 +1647,15 @@ class Recorder:
                 src["who"] = (self.label(bot) or bot) + ("（主动发的）" if str(hit.get("src") or "") == "proactive" else "")
             else:
                 src["who"] = "主人"
+        try:
+            place = checked_place(raw.get("place"), new, raw.get("name") or raw.get("id"))
+        except Exception:
+            place = ""
         return {
             "at": at,
             "what": raw.get("what"),
             "left": raw.get("left"),
-            "place": checked_place(raw.get("place"), new, raw.get("name") or raw.get("id")),
+            "place": place,
             "keep": raw.get("keep"),
             "state": raw.get("state"),
             "amount": raw.get("amount"),
@@ -1665,14 +1667,12 @@ class Recorder:
             "src": src,
             "recorded": fmt_time(now),
             "weather": raw.get("weather"),
-            "purpose": raw.get("purpose"),
             "spot": raw.get("spot"),
         }
 
     def _apply_things(self, raws, umo: str, items, now: datetime.datetime, cat: str = CAT_FOOD) -> None:
         """新的一件先建（临时代号换成程序发的编号），再给已有的加步；做菜用掉的料两头都记上（菜的 from、料的 into）。
-        对照的是此刻现算的存货（含世界线里做完的段）；聊天里说到了世界线里的那件，就把它存下来（从此算确定有的）。
-        cat=item 时记的是吃的以外的东西（第 19 条的 items）：另带 look、owner，不替料补「用掉」。"""
+        单条不合法只跳过该条，绝不阻断整批消息记录与游标推进。"""
         store = getattr(self, "things", None)
         if store is None or not isinstance(raws, list) or not raws:
             return
@@ -1681,7 +1681,6 @@ class Recorder:
         view = store.here(store.view(flat), flat)
         keys: dict[str, str] = {}
         dishes = []
-        fuel_batches = []
 
         def resolve(token) -> str:
             """临时代号 / 编号 → 存下来的那件的编号（世界线里现算的先存下来）；对不上返回空串。"""
@@ -1705,11 +1704,11 @@ class Recorder:
             key = str(raw["new"]).strip()
             stage = self._thing_stage(raw, umo, items, day, now, new=True)
             if bad_time(stage):
-                raise FactConflict("%s 取得时间不对或晚于现在" % raw.get("name"))
+                logger.debug("[super_enhance/things] 跳过取得时间不对的新物品：%s (%s)", raw.get("name"), stage.get("at"))
+                continue
             moment = parse_time(stage["at"])
             gap = datetime.timedelta(minutes=SAME_NEW_MINUTES)
-            # 去重不看来法（一边「捡到」一边「买回来」常是同一件），看时段、种类和名字（东西还认名字里的共同词，见 find_same）；这一批里刚记的不算
-            same = find_same([x for x in view.values() if cat_of(x) == cat and not weathering.fuel_item(x)], raw.get("name"),
+            same = find_same([x for x in view.values() if cat_of(x) == cat], raw.get("name"),
                              norm_step(stage.get("what"), cat), moment - gap, moment + gap,
                              kind=raw.get("kind") if cat == CAT_ITEM else norm_kind(raw.get("kind")), cat=cat,
                              skip=set(keys.values()))
@@ -1722,20 +1721,20 @@ class Recorder:
                 text = str(token or "").strip()
                 source = store.get(keys[text]) if text in keys else view.find(text)
                 if source is None or not usable(source, stage["at"]):
-                    raise FactConflict("%s 的用料 %s 在当时不可用" % (raw.get("name"), token))
+                    logger.debug("[super_enhance/things] %s 的用料 %s 当时不可用，忽略该关联", raw.get("name"), token)
+                    continue
                 sid = resolve(text)
                 if sid and sid not in sources:
                     sources.append(sid)
             item, why = store.create(raw.get("name"), raw.get("kind"), raw.get("origin"), sources, stage, fmt_time(now),
                                      cat=cat, look=raw.get("look") or "", owner=self._by(raw.get("owner")) if raw.get("owner") else "")
             if item is None:
-                raise FactConflict("%s：%s" % (raw.get("name"), why))
+                logger.debug("[super_enhance/things] 新建物品跳过 %s：%s", raw.get("name"), why)
+                continue
             keys[key] = str(item["id"])
             view[item["id"]] = copy.deepcopy(item)
             if sources and cat == CAT_FOOD:
                 dishes.append(item)
-            if sources and weathering.fuel_item(item):
-                fuel_batches.append(item)
             first = item["stages"][0]
             logger.info("[super_enhance/things] 新记 %s %s（%s，%s %s）", item["id"], item["name"], item["kind"],
                         first["at"][5:], first["what"])
@@ -1744,32 +1743,31 @@ class Recorder:
                 continue
             tid = resolve(raw.get("id"))
             if not tid:
-                raise FactConflict("没有 %s 这一件，不能记录%s成功" % (raw.get("id"), raw.get("what")))
+                logger.debug("[super_enhance/things] 跳过不存在的物品变化：%s (%s)", raw.get("id"), raw.get("what"))
+                continue
             stage = self._thing_stage(raw, umo, items, day, now)
             if bad_time(stage):
-                raise FactConflict("%s 的变化时间不对或晚于现在" % tid)
+                logger.debug("[super_enhance/things] 跳过时间不对的物品变化：%s (%s)", tid, stage.get("at"))
+                continue
             into = resolve(raw.get("into")) if raw.get("into") else ""
-            if raw.get("into") and not into:
-                raise FactConflict("成品 %s 没有对应记录" % raw["into"])
             if into and into != tid:
                 stage["into"] = into
-            trial = copy.deepcopy(view.find(tid) or store.get(tid))
-            why = store._fuel_check(trial, stage) or insert_stage(trial, clean_stage(stage, cat))
+            existing = view.find(tid) or store.get(tid)
+            if existing is None:
+                continue
+            trial = copy.deepcopy(existing)
+            why = insert_stage(trial, clean_stage(stage, cat))
             if not why:
                 why = store.add_stage(tid, stage)
             if why:
-                if why.startswith("重复"):
-                    continue
-                raise FactConflict("%s：%s" % (tid, why))
+                if not why.startswith("重复"):
+                    logger.debug("[super_enhance/things] 跳过物品变化 %s：%s", tid, why)
+                continue
             view[tid] = trial
             if stage.get("into"):
                 store.link_source(into, tid)
             logger.info("[super_enhance/things] %s 记一步：%s %s%s", tid, stage["at"][5:], norm_step(stage.get("what"), cat),
                         "（做进了 %s）" % into if stage.get("into") else "")
-        for batch in fuel_batches:
-            why = store._fuel_allocation_error(batch, {token: store.get(token) for token in batch.get("from") or []})
-            if why:
-                raise FactConflict("%s：%s" % (batch.get("name"), why))
         # 菜的 from 里写了、料那边没记「用掉」的：补一步，剩多少没说
         for dish in dishes:
             first = dish["stages"][0]
@@ -1778,7 +1776,6 @@ class Recorder:
                 source = store.get(sid)
                 if source is None or any(str(x.get("into") or "") == dish["id"] for x in source.get("stages") or []):
                     continue
-                # 做菜那会儿已经记了它用掉多少（只是没写 into）：不再补一步空的，把剩多少盖掉
                 if made_at is not None and any(
                     x.get("what") in USE_STEPS and parse_time(x.get("at")) is not None
                     and not x.get("into")
@@ -1791,4 +1788,4 @@ class Recorder:
                     "note": "做这盘菜时用了，聊天里没说剩多少", "src": first.get("src"), "recorded": fmt_time(now),
                 })
                 if why and not why.startswith("重复"):
-                    raise FactConflict("%s 做进 %s 的变化未成立：%s" % (sid, dish["id"], why))
+                    logger.debug("[super_enhance/things] 补记用料跳过 %s -> %s：%s", sid, dish["id"], why)

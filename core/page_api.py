@@ -533,7 +533,6 @@ class ContextPageApi:
 
     async def world_view(self):
         """世界线：某天的条目 + 约束 + 打算 + 骨架 + 运行状态。"""
-        from .features.life_state.proactive import done_min_importance
         from .features.life_state.world import doing_text, real_stop
 
         try:
@@ -620,8 +619,6 @@ class ContextPageApi:
                 "now": now.strftime("%Y-%m-%d %H:%M:%S"),
                 "thing_names": thing_names,
                 "current": current,
-                # 做完的事够这个重要程度才叫她主动说（网页标颜色用）
-                "done_min": done_min_importance(life.cfg),
                 "dates": dates,
                 "days": days,
                 "constraints": constraints,
@@ -718,7 +715,10 @@ class ContextPageApi:
                     world.note_manual()
                 elif action == "update":
                     fields = {}
-                    for key in ("place", "doing", "public", "start", "end", "training", "steps", "importance", "result", "mood"):
+                    for key in (
+                        "place", "doing", "public", "start", "end", "training", "steps",
+                        "importance", "send_msg", "msg_at", "msg_purpose", "result", "mood",
+                    ):
                         if body.get(key) is not None:
                             fields[key] = body.get(key)
                     if isinstance(body.get("things"), list):
@@ -739,6 +739,9 @@ class ContextPageApi:
                         "doing": body.get("doing"),
                         "steps": body.get("steps") or [],
                         "importance": body.get("importance"),
+                        "send_msg": bool(body.get("send_msg")),
+                        "msg_at": body.get("msg_at") or "",
+                        "msg_purpose": body.get("msg_purpose") or "",
                         "result": body.get("result"),
                         "mood": body.get("mood") or "",
                         "public": body.get("public"),
@@ -751,13 +754,14 @@ class ContextPageApi:
                     world.note_manual()
             elif kind == "constraint":
                 cid = str(body.get("id") or "")
+                scene_val = str(body.get("scene") if body.get("scene") is not None else (life.cfg.get("world_home") or "")).strip()
                 if action == "delete":
                     ok = world.lift_constraint(cid, note="面板手动解除")
                 elif action == "reopen":
                     ok = bool(world.update_constraint(cid, status="active"))
                 elif action == "update":
                     fields = {}
-                    for key in ("text", "public", "until", "until_time", "status"):
+                    for key in ("text", "public", "until", "until_time", "status", "scene"):
                         if body.get(key) is not None:
                             fields[key] = body.get(key)
                     if fields.get("until_time"):
@@ -772,6 +776,7 @@ class ContextPageApi:
                         "until": body.get("until"),
                         "until_time": until_time,
                         "since": life._now().strftime("%Y-%m-%d %H:%M"),
+                        "scene": scene_val,
                         "source": "manual",
                     }))
             elif kind == "intention":

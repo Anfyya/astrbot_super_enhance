@@ -36,7 +36,7 @@ from ...common.bots import BotRegistry
 from . import view as view_mod
 from . import operations as operations_mod
 from .variety import PoolStore, SeedLog
-from .world import WorldStore
+from .world import WorldStore, fmt_time, is_event, is_sleep, parse_time
 from .recorder import Recorder
 from .step import LifeStep
 from .things import FILE_NAME as THINGS_FILE_NAME
@@ -48,11 +48,6 @@ PROMISE_FILE_NAME = "promises.json"
 TRAINING_FILE_NAME = "trainings.json"
 # 约定注入时往后看几天
 PROMISE_LOOKAHEAD_DAYS = 7
-# 主动消息再加一句（2026-10-19）：主动找主人时别报家务清单
-PROACTIVE_VOICE_NOTE = "（主动找主人的时候，说你这会儿想跟他说的事，别报家务清单：洗了什么、收了什么、菜温在哪、几点开饭，主人问起再说。）"
-# 这两种主动消息就是来告诉主人那件事做完了（接下的事、说好的打算）：不带上面那句，
-# 不然她把「碗洗好了」当成报家务不敢说，只好没话找话（2026-10-20 22:16「还醒着没」）
-REPORT_KINDS = ("asked", "intent")
 # 当天约定过了这么多分钟还没关，就在注入里标「时间已过」
 PROMISE_OVERDUE_MINUTES = 120
 
@@ -85,6 +80,10 @@ class LifeStateService:
         # 世界线（见 world.py / recorder.py / step.py / view.py）
         self.world = WorldStore(self.data_dir)
         self.world.tz = self.timezone
+        self.planner.world = self.world
+        self.planner.raw_log = self.raw_log
+        self.planner.bots_fn = self.enabled_bots
+        self.world.on_drop = self.planner.on_entries_dropped
         # 每个人上一次叫开饭的时刻（同一顿饭被截停又重排时别再叫一次）
         self._meal_notified: dict[str, datetime.datetime] = {}
         self.seed_log = SeedLog(self.data_dir / "daily_seeds.json")
@@ -350,14 +349,163 @@ class LifeStateService:
         text = view_mod.world_text(self, bot, self._now())
         if not text:
             return
-        if self._cron_kind(event) not in REPORT_KINDS:
-            text += "\n" + PROACTIVE_VOICE_NOTE
         parts = getattr(req, "extra_user_content_parts", None)
         if not isinstance(parts, list):
             parts = []
             req.extra_user_content_parts = parts
         parts.append(as_context_part(text))
         logger.info("[super_enhance/life] [%s] 主动对话已注入世界线", bot)
+
+    # ---------- 主人睡眠入世界线闭环 ----------
+
+    async def apply_master_sleep(self, target: str, now: datetime.datetime | None = None) -> dict:
+        """统一收口 /sleep 与 /wake：同步陪伴状态、世界线 master 段、打断/重排补写与醒来自然招呼。"""
+        moment = now or self._now()
+        flat = moment.astimezone(self.timezone).replace(tzinfo=None) if moment.tzinfo is not None else moment
+        today_text = flat.date().isoformat()
+        yesterday_text = (flat.date() - datetime.timedelta(days=1)).isoformat()
+        home = str(self.cfg.get("world_home") or "").strip() or "穗织"
+        companion = self.companionship
+        owner_snapshot = companion.owner_state(moment) if companion is not None else {}
+        before = str(owner_snapshot.get("state") or "unknown")
+        was_asleep = (
+            bool(companion.resting(moment)) or before in ("resting", "asleep")
+            if companion is not None
+            else False
+        )
+        if hasattr(self.planner, "_capture_loop"):
+            self.planner._capture_loop()
+
+        def _sync_sleep() -> tuple[dict, float, bool]:
+            nonlocal was_asleep
+            slept_minutes = 0.0
+            if target == "asleep":
+                after_state = companion.set_sleep_state("asleep", moment) if companion is not None else {"state": "asleep"}
+                already_sleeping = False
+                for day in (yesterday_text, today_text):
+                    for item in list(self.world.entries(day, "master")):
+                        if is_event(item):
+                            continue
+                        end_dt = parse_time(item.get("end")) if item.get("end") else None
+                        if end_dt is not None and end_dt <= flat:
+                            continue
+                        if is_sleep(item) and end_dt is None:
+                            already_sleeping = True
+                            continue
+                        start_dt = parse_time(item.get("start"))
+                        if start_dt is not None and start_dt >= flat:
+                            self.world.delete_entry(day, str(item.get("id") or ""))
+                        else:
+                            self.world.update(day, str(item.get("id") or ""), mode="normal", end=fmt_time(flat))
+                if not already_sleeping:
+                    sleep_place = "船屋·船舱" if home == "海边小镇" else "宿舍·卧房"
+                    self.world.add_entry(
+                        today_text,
+                        {
+                            "who": "master",
+                            "kind": "activity",
+                            "start": fmt_time(flat),
+                            "end": "",
+                            "place": sleep_place,
+                            "doing": "上床睡觉",
+                            "public": "上床睡觉",
+                            "sleep": True,
+                            "at_home": True,
+                            "source": "manual",
+                        },
+                    )
+                for bot in self.enabled_bots():
+                    cur = self.world.current(bot, flat)
+                    if (
+                        cur is not None
+                        and str(cur.get("source") or "") == "step"
+                        and "master" in [str(x) for x in (cur.get("with") or [])]
+                    ):
+                        self.world.interrupt(bot, flat, "主人去睡了", keep_done=True)
+                    self.world.clear_planned(bot, flat)
+                if companion is not None:
+                    companion.safe("apply_refresh", moment, self.enabled_bots())
+                return after_state, 0.0, False
+
+            # target == "awake"
+            for day in (yesterday_text, today_text):
+                for item in self.world.entries(day, "master"):
+                    if is_event(item):
+                        continue
+                    end_dt = parse_time(item.get("end")) if item.get("end") else None
+                    if end_dt is not None and end_dt <= flat:
+                        continue
+                    if is_sleep(item):
+                        was_asleep = True
+                        start_dt = parse_time(item.get("start"))
+                        if start_dt is not None and flat >= start_dt:
+                            slept_minutes = max(slept_minutes, (flat - start_dt).total_seconds() / 60.0)
+            if was_asleep and slept_minutes <= 0.0 and companion is not None:
+                src_info = owner_snapshot.get("source") if isinstance(owner_snapshot, dict) else None
+                obs_dt = None
+                if isinstance(src_info, dict) and src_info.get("ts"):
+                    try:
+                        obs_dt = datetime.datetime.fromtimestamp(
+                            float(src_info["ts"]), self.timezone
+                        ).replace(tzinfo=None)
+                    except Exception:
+                        obs_dt = None
+                if obs_dt is None and isinstance(owner_snapshot, dict):
+                    obs_dt = parse_time(owner_snapshot.get("updated_at"))
+                if obs_dt is not None and flat > obs_dt:
+                    slept_minutes = max(slept_minutes, (flat - obs_dt).total_seconds() / 60.0)
+
+            after_state = companion.set_sleep_state("awake", moment) if companion is not None else {"state": "awake"}
+            for day in (yesterday_text, today_text):
+                for item in list(self.world.entries(day, "master")):
+                    if is_event(item):
+                        continue
+                    end_dt = parse_time(item.get("end")) if item.get("end") else None
+                    if end_dt is not None and end_dt <= flat:
+                        continue
+                    start_dt = parse_time(item.get("start"))
+                    if start_dt is None or start_dt >= flat:
+                        self.world.delete_entry(day, str(item.get("id") or ""))
+                    else:
+                        self.world.update(day, str(item.get("id") or ""), mode="normal", end=fmt_time(flat))
+
+            wake_place = "船屋·船舱" if home == "海边小镇" else "宿舍·堂屋"
+            self.world.add_entry(
+                today_text,
+                {
+                    "who": "master",
+                    "kind": "event",
+                    "start": fmt_time(flat),
+                    "place": wake_place,
+                    "doing": "起床了",
+                    "public": "起床了",
+                    "at_home": True,
+                    "source": "chat",
+                },
+            )
+            for bot in self.enabled_bots():
+                self.world.clear_planned(bot, flat)
+            if companion is not None:
+                companion.safe("apply_refresh", moment, self.enabled_bots())
+            return after_state, slept_minutes, was_asleep
+
+        after, slept_mins, prev_asleep = await asyncio.to_thread(_sync_sleep)
+        wake_greet = 0
+        if target == "awake" and prev_asleep and slept_mins >= 45.0:
+            try:
+                wake_greet = await self.planner.on_master_wake(moment)
+            except Exception:
+                logger.warning("[super_enhance/life] 主人睡醒后排问候失败", exc_info=True)
+        state_val = after.get("state", target)
+        return {
+            "ok": True,
+            "previous": before,
+            "state": state_val,
+            "resting": state_val in ("resting", "asleep"),
+            "slept_minutes": round(slept_mins, 1),
+            "wake_greet": wake_greet,
+            "at": fmt_time(flat),
+        }
 
     # ---------- 在练的事 ----------
 

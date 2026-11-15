@@ -1,12 +1,12 @@
 """风吹日晒雨淋（2026-11-02）：东西放在哪、什么材料，按每个钟头的天气（weather.py）算它此刻什么样。
 
-不存，现算（跟主人跟前一个钟头当吃完一个路数）：从这件最近 30 天里的每一步（在哪、谁手上、什么样）往后一个钟头一个钟头推。
-- 放在哪：露天（甲板、码头、院子、屋外）/ 半挡着（檐下、廊下、门口）/ 盖着（露天但收着、盖着）/ 屋里、船舱 / 收好（柜、箱、抽屉、罐里，地窖冰箱）/
-  带在身上 / 海里。
-- 材料按名字认：铁、铜、布、纸、木竹、石头贝壳瓷、吃的、别的。
-- 雨（毫米/小时）淋湿；太阳、风、气温把它吹干晒干；雾、海风的盐让铁生锈、布发潮发黏；湿着久了发霉；毒太阳晒久了褪色发脆；
-  风到了它那份重量吹得动的级数，按风比门槛大多少算吹走的机会（同一件、同一个钟头每次算出来一样）：海边吹进海里，别处吹到角落。
-- 她们写了晾干、擦干、除锈、洗干净、捞回来（那一步的 state 里带这些字），从那一步起重新算。
+不存，现算：从这件最近 30 天里的每一步（在哪、谁手上、什么样）往后一个钟头一个钟头推。
+- 放在哪：露天（甲板、码头、院子、屋外）/ 半挡着（檐下、廊下、门口）/ 盖着（露天但收着、盖着）/ 屋里、船舱 / 收好（柜、箱、抽屉、刀鞘、罐里）/
+  炉边烘着（炭炉旁、柴炉边、灶旁快速脱水）/ 带在身上 / 海里。
+- 区分木柴表皮淋雨受潮（吹风或炉边烘烤 2～4 小时即干）与新砍生木芯水分；高潮线以上经雨水冲刷晒透的海滩浮木可正常作柴火。
+- 收纳盒/抽屉/刀鞘内（sealed）隔绝盐雾不生锈；室内干态（wet < 0.2）极慢生锈，日常锅具与擦油保养刀剪免锈。
+- 发霉与温度+闷捂挂钩（通风晾晒不发霉，温暖闷捂湿透超 48 小时才发霉）；木器长期浸泡超 48 小时才泡胀，晾干/烘干后可恢复。
+- 晾衣绳/甲板晾晒衣物默认夹牢（tied），甲板物品吹落入海门槛为 ≥8 级狂风。
 """
 
 from __future__ import annotations
@@ -24,17 +24,21 @@ SEA_HOMES = weather_mod.SEA_HOMES
 CARRIED_AREAS = ("丛雨", "亚托莉", "主人", "napcat", "napcat2", "master")
 SEA_WORDS = ("海里", "水底", "海底")
 SEMI_WORDS = ("檐下", "廊下", "门口", "篷下", "棚下", "雨棚", "屋檐")
-SEALED_WORDS = ("箱", "抽屉", "柜", "罐里", "盒", "储物舱", "笸箩", "篮里", "袋里", "包里")
+SEALED_WORDS = ("箱", "抽屉", "柜", "罐里", "盒", "储物舱", "笸箩", "篮里", "袋里", "包里", "鞘", "刀鞘", "匣", "桶里", "铁桶")
 INSIDE_WORDS = ("舱", "屋里", "房", "堂屋", "卧房", "灶房", "灶台", "铺上", "店", "室", "教室", "车厢", "宿舍", "屋内", "里屋", "桌")
 OPEN_WORDS = ("甲板", "船头", "码头", "防波堤", "海堤", "屋外", "院子", "院里", "晾衣", "屋顶", "外头", "露天", "岸边", "沙滩",
               "浅滩", "礁", "木台", "船篷顶", "栏")
-TIE_WORDS = ("系", "绑", "夹", "晾衣绳", "绳上", "钉", "挂")
+STOVE_DRY_WORDS = ("炉边", "炉旁", "灶边", "灶旁", "炭炉", "小炭炉", "柴炉", "铁桶炉", "火边", "火炉", "暖炉", "烟管旁", "烘着", "烤干", "烘烤", "烤火")
+TIE_WORDS = ("系", "绑", "夹", "晾衣", "绳", "钉", "挂", "栓", "拴", "扣", "竹夹", "夹牢")
+UNTIED_WORDS = ("没夹", "未夹", "没系", "没绑", "随手搭")
 WEIGH_WORDS = ("压着", "压住", "压上", "拿石头")
+OIL_CARE_WORDS = ("擦油", "抹油", "上油", "涂油", "保养", "入鞘", "收进鞘", "刀油", "防锈")
+COOKWARE_WORDS = ("锅", "壶", "铲", "勺")
 
 MATERIAL_WORDS = (
     ("铜", ("铜",)),
     ("铁", ("铁", "钢", "刀", "钩", "钉", "链", "罐", "齿轮", "发条", "锅", "剪", "针", "锁", "钥匙")),
-    ("布", ("衣", "布", "围巾", "被", "帕", "毛巾", "袜", "手套", "帽", "裙", "裤", "绳结", "绣", "毯", "枕", "褥")),
+    ("布", ("衣", "衫", "褂", "袍", "布", "围巾", "被", "帕", "毛巾", "袜", "手套", "帽", "裙", "裤", "绳结", "绣", "毯", "枕", "褥")),
     ("纸", ("纸", "本", "书", "信", "画", "窗花", "日志", "日记", "便条", "照片", "地图", "海图", "卡")),
     ("木", ("木", "竹", "篮", "筐", "屐", "扇", "筷")),
     ("石", ("石", "螺", "贝", "瓷", "陶", "玻璃", "瓶", "珠", "壳")),
@@ -42,17 +46,17 @@ MATERIAL_WORDS = (
 # 风到几级吹得动（越轻越小）
 WEIGHT_WORDS = (
     (4, ("纸条", "纸片", "叶子", "羽毛", "花瓣", "窗花", "便条", "信", "纸鹤", "书签", "照片", "纸")),
-    (6, ("帕", "巾", "衣", "袜", "帽", "布偶", "围巾", "扇", "风筝", "绳结", "布", "本", "日志", "日记")),
+    (6, ("帕", "巾", "衣", "衫", "褂", "袍", "袜", "帽", "裙", "裤", "布偶", "围巾", "扇", "风筝", "绳结", "布", "本", "日志", "日记")),
     (8, ("罐", "盆", "桶", "篮", "筐", "碗", "盘", "碟", "瓶", "凳", "鞋", "屐", "伞", "书", "管")),
     (10, ("箱", "锅", "板", "桌", "椅")),
     (99, ("石", "铁锭", "锚", "潜水艇")),
 )
-RESET_DRY = ("晾干", "擦干", "烘干", "吹干", "晒干", "干了", "干透")
+RESET_DRY = ("晾干", "擦干", "烘干", "烤干", "吹干", "晒干", "晒透", "干了", "干透")
 RESET_RUST = ("除锈", "擦亮", "磨亮", "去锈", "打磨", "擦干净", "擦掉", "擦得发亮", "擦去")
-RESET_WASH = ("洗", "冲干净", "冲了")
+RESET_WASH = ("洗", "冲干净", "冲了", "雨水冲刷", "淡水冲")
 RESET_ALL = ("买回来", "收到", "做好了", "开始做", "原来就有")
 CONDITION_FLAGS = ("rain_cover", "ventilated", "off_ground", "split", "fuel_safe", "saltwater", "treated", "rotten")
-FUEL_WORDS = ("柴火", "干柴", "湿柴", "薪柴", "木柴", "主柴", "细柴", "碎柴", "柴料", "漂流木", "海漂木", "引火料", "引火柴", "引火细料", "枯枝", "修枝木", "实木边料")
+FUEL_WORDS = ("柴火", "干柴", "湿柴", "薪柴", "木柴", "主柴", "细柴", "碎柴", "柴料", "漂流木", "海漂木", "浮木", "引火料", "引火柴", "引火细料", "枯枝", "修枝木", "实木边料")
 CONDITION_VALUES = {
     "fuel_state": ("wet", "drying", "ready"),
     "fuel_source": ("land_deadwood", "pruning", "workshop", "reclaimed", "supplier", "drift_unknown", "sea_salvage"),
@@ -60,7 +64,8 @@ CONDITION_VALUES = {
     "fuel_size": ("kindling", "split", "log"),
 }
 GREEN_WORDS = ("新鲜枝木", "新鲜修枝", "刚砍", "新砍", "新伐", "刚修剪", "刚剪下", "鲜木", "青木")
-WET_WORDS = ("湿透", "泡透", "浸湿", "淋湿", "潮湿", "湿木", "湿柴", "湿的", "返潮")
+WET_WORDS = ("湿透", "泡透", "浸湿", "淋湿", "潮湿", "湿木", "湿柴", "湿的", "返潮", "受潮")
+DEEP_SOAK_WORDS = ("泡透", "内部湿透", "久泡", "海里捞", "海底捞")
 NEGATED_ACTION = re.compile(r"(?:尚未|还没|没有|未曾|还未|不能|不必|无需|未|没|不|别|勿|准备|打算|等待|需要|正在|继续|帮助|利于|便于|加快|恢复|拿去|等|待|去|让|得|要)[^，。；;!?！？\n]{0,8}$")
 
 
@@ -72,7 +77,7 @@ def asserted(text: str, words) -> bool:
                     continue
                 if re.match(r"(?:前|后再|以后|之前|才能|才可|之前|就能)", clause[match.end():]):
                     continue
-                if re.match(r"(?:了)?(?:没有|了吗|了吗|吗|没有呢|不够)", clause[match.end():]):
+                if re.match(r"(?:了)?(?:没有|了吗|吗|没有呢|不够)", clause[match.end():]):
                     continue
                 return True
     return False
@@ -93,7 +98,7 @@ def clean_conditions(value) -> dict:
 
 
 def dry_asserted(text: str) -> bool:
-    return asserted(text, RESET_DRY + ("已干燥", "干燥", "干柴", "干枯枝")) and not asserted(text, WET_WORDS + GREEN_WORDS)
+    return asserted(text, RESET_DRY + ("已干燥", "干燥", "干柴", "干枯枝", "高潮线以上")) and not asserted(text, WET_WORDS + GREEN_WORDS)
 
 
 def fuel_item(item: dict) -> bool:
@@ -112,48 +117,35 @@ def wood_candidate(item: dict) -> bool:
 
 
 def fuel_properties(item: dict, stages: list) -> dict:
-    properties = {"fuel_source": "", "saltwater": None, "treated": None, "rotten": False}
-    forbidden = False
+    """识别木柴基本状态（不再对海滩浮木设官僚禁烧令；高潮线以上经雨水冲刷晒透的浮木均可正常燃用）。"""
+    properties = {"fuel_source": "", "saltwater": False, "treated": False, "rotten": False}
     descriptions = ["，".join(str(item.get(key) or "") for key in ("name", "kind", "origin", "look"))]
     descriptions.extend("，".join(str(stage.get(key) or "") for key in ("state", "note")) for stage in stages)
+    washed_or_dried = False
     for text in descriptions:
-        if asserted(text, ("海水", "海漂", "海里捞", "海底捞")):
+        if asserted(text, ("海里捞", "海底捞", "泡在海里")):
             properties["saltwater"] = True
+        if asserted(text, RESET_WASH + RESET_DRY + ("高潮线", "雨水冲", "晒白", "晒透")):
+            washed_or_dried = True
         if asserted(text, ("涂漆", "刷漆", "油漆", "防腐", "胶合", "胶水", "夹板", "刨花板", "密度板", "油污")):
             properties["treated"] = True
-        if asserted(text, ("腐朽", "腐烂", "烂木", "发霉")):
+        if asserted(text, ("腐朽", "腐烂", "烂木")):
             properties["rotten"] = True
-    origin = str(item.get("origin") or "")
-    if not origin and stages and stages[0].get("what") == "捡到":
-        origin = str(stages[0].get("place") or "")
-    for source, words in (("supplier", ("柴料场", "柴铺")), ("land_deadwood", ("坡上", "薪柴地", "林地", "林下")),
-                          ("pruning", ("修枝", "清障")), ("workshop", ("木工", "船匠")),
-                          ("drift_unknown", ("漂流", "海滩捡", "沙滩捡"))):
-        if any(word in origin for word in words):
-            properties["fuel_source"] = source
-            break
+    if washed_or_dried:
+        properties["saltwater"] = False
     for stage in stages:
         declared = clean_conditions(stage.get("weather"))
         if declared.get("fuel_source"):
             properties["fuel_source"] = declared["fuel_source"]
-        for key in ("saltwater", "treated", "rotten"):
-            if key in declared and properties[key] is not True:
-                properties[key] = declared[key]
-        if declared.get("fuel_source") == "sea_salvage":
-            properties["saltwater"] = True
-        forbidden = forbidden or declared.get("fuel_safe") is False
-    if properties["fuel_source"] in ("land_deadwood", "pruning", "supplier"):
-        for key in ("saltwater", "treated"):
-            if properties[key] is None:
-                properties[key] = False
-    reasons = [label for key, label in (("saltwater", "海水浸泡"), ("treated", "涂漆、胶合或其他处理"), ("rotten", "腐朽或发霉"))
-               if properties[key] is True]
-    if reasons or forbidden:
-        properties.update(fuel_safe=False, fuel_reason="、".join(reasons) or "该批次已有不适合燃用的记录")
-    elif properties["fuel_source"] not in ("", "drift_unknown") and properties["saltwater"] is False and properties["treated"] is False:
-        properties.update(fuel_safe=True, fuel_reason="")
+        if declared.get("treated") is True:
+            properties["treated"] = True
+        if declared.get("rotten") is True:
+            properties["rotten"] = True
+    bad = [label for key, label in (("treated", "带油漆胶水"), ("rotten", "腐朽酥烂")) if properties[key] is True]
+    if bad:
+        properties.update(fuel_safe=False, fuel_reason="、".join(bad))
     else:
-        properties.update(fuel_safe=None, fuel_reason="木料来源或处理经历尚未确认")
+        properties.update(fuel_safe=True, fuel_reason="")
     return properties
 
 
@@ -164,9 +156,9 @@ def storage_conditions(stage: dict) -> dict:
         out["rain_cover"] = True
     if any(word in text for word in ("撤掉帆布", "掀开遮盖", "移到露天", "无遮挡", "无遮雨")):
         out["rain_cover"] = False
-    if asserted(text, ("通风", "透气", "留着缝", "留出缝", "留缝", "干燥架", "敞着")):
+    if asserted(text, ("通风", "透气", "留着缝", "留出缝", "留缝", "干燥架", "敞着", "晾")):
         out["ventilated"] = True
-    if any(word in text for word in ("密封", "裹紧", "不通风")):
+    if any(word in text for word in ("密封", "裹紧", "不通风", "闷着")):
         out["ventilated"] = False
     if asserted(text, ("离地", "垫高", "架空", "垫木上", "干燥架", "木架")):
         out["off_ground"] = True
@@ -176,26 +168,34 @@ def storage_conditions(stage: dict) -> dict:
         out["split"] = True
     out.update(clean_conditions(stage.get("weather")))
     return out
-# 月平均气温（只用来判断湿着会不会发霉）
+
+
+# 月平均气温
 MONTH_TEMP = {"海边小镇": (6.5, 7.0, 9.5, 14.0, 17.5, 20.0, 23.5, 25.5, 23.5, 19.0, 14.5, 9.5)}
 DEFAULT_MONTH_TEMP = (2, 3, 7, 12, 17, 21, 25, 26, 22, 15, 9, 4)
 
 
-def exposure_of(place: str = "", spot: str = "", keep: str = "", holder: str = "") -> str:
+def exposure_of(place: str = "", spot: str = "", keep: str = "", holder: str = "", food: bool = False) -> str:
     """放在哪 → open 露天 / semi 半挡着 / covered 露天但收着盖着 / inside 屋里 / sealed 收好 / carried 带在身上 / sea 海里。"""
     if holder:
         return "carried"
+    if spot == "船舷海里活养":
+        return "covered" if food else "sea"
+    if spot in ("舱底阴凉处", "海水/冷水镇着"):
+        return "inside"
+    if spot in ("冰箱", "冻着", "地窖", "井里"):
+        return "sealed"
     text = str(place or "")
     head = text.split("·", 1)[0]
     if head in CARRIED_AREAS:
         return "carried"
     if any(w in text for w in SEA_WORDS):
+        if food and (keep == "活养着" or any(w in text for w in ("网兜", "竹篓", "蟹笼", "活养"))):
+            return "covered"
         return "sea"
     result = ""
     if spot in ("屋外", "太阳底下"):
         result = "open"
-    elif spot in ("冰箱", "冻着", "地窖", "井里"):
-        return "sealed"
     elif any(w in text for w in SEMI_WORDS):
         result = "semi"
     elif any(w in text for w in SEALED_WORDS):
@@ -256,39 +256,43 @@ def simulate(item: dict, now: datetime.datetime, day_text, home_at, food: bool =
                     key=lambda s: str(s.get("at")))
     if not stages:
         return None
-    flat = now.replace(tzinfo=None)
     name, kind = str(item.get("name") or ""), str(item.get("kind") or "")
+    look_text = str(item.get("look") or "")
     material = material_of(name, kind, food)
     fuel = not food and fuel_item(item)
     if fuel:
         material = "木"
     weight = weight_of(name, kind, food)
-    rusty_look = "锈" in str(item.get("look") or "")
-    # 柴木内部干燥慢，不能每过30天丢掉此前的晾晒进度。
+    rusty_look = "锈" in look_text
+    inherently_rust_free = _has(name + " " + kind + " " + look_text, ("丛雨丸", "不锈钢"))
+    is_cookware = not food and _has(name + " " + kind, COOKWARE_WORDS)
     start = _parse(stages[0]["at"]) if fuel else max(_parse(stages[0]["at"]), flat - datetime.timedelta(days=LOOKBACK_DAYS))
-    # 全程都在屋里、收好、带在身上，又从没住在海边：天气碰不到它
-    exposures = {exposure_of(s.get("place"), s.get("spot"), s.get("keep"), s.get("holder")) for s in stages}
-    if not fuel and not any(s.get("weather") for s in stages) and exposures <= {"inside", "sealed", "carried"} and not any(home_at(_parse(s["at"])) in SEA_HOMES for s in stages) \
-            and home_at(flat) not in SEA_HOMES:
+    exposures = {exposure_of(s.get("place"), s.get("spot"), s.get("keep"), s.get("holder"), food=food) for s in stages}
+    if (not fuel and not any(s.get("weather") for s in stages) and exposures <= {"inside", "sealed", "carried"}
+            and not any(home_at(_parse(s["at"])) in SEA_HOMES for s in stages) and home_at(flat) not in SEA_HOMES):
         return None
     st = {"wet": 0.0, "wet_from": None, "rust": 0.0, "mold": 0.0, "salt": 0.0, "fade": 0.0, "soaked": False,
           "swollen": False, "wet_hours": 0.0, "moved": None}
-    conditions = {}
+    conditions: dict = {}
     if fuel:
         st["fuel_wet"] = None
-        st["seasoning"] = "unknown"
+        st["seasoning"] = "seasoned"
         st.update(fuel_properties(item, stages))
-    place, spot, keep, holder, tied, previous_state = "", "", "", "", 0, None
+    place, spot, keep, holder, tied, near_stove, previous_state = "", "", "", "", 0, False, None
+    oil_protected_until: datetime.datetime | None = None
+    if _has(look_text, OIL_CARE_WORDS):
+        oil_protected_until = flat + datetime.timedelta(days=365)
     index = 0
     cur = start
     while cur <= flat:
-        # 这个钟头开始前发生的步：换地方、换样子、重新算
         while index < len(stages) and _parse(stages[index]["at"]) <= cur:
             stage = stages[index]
+            stage_at = _parse(stage["at"])
             index += 1
             if stage.get("place") and stage.get("place") != place:
                 for key in ("rain_cover", "ventilated", "off_ground"):
                     conditions.pop(key, None)
+                near_stove = False
             if stage.get("place") is not None or stage.get("holder") is not None:
                 place = str(stage.get("place") or place)
                 holder = str(stage.get("holder") or "")
@@ -298,51 +302,73 @@ def simulate(item: dict, now: datetime.datetime, day_text, home_at, food: bool =
             text = "%s %s %s" % (stage.get("what") or "", state_text if state_text != previous_state else "", stage.get("note") or "")
             previous_state = state_text
             if index == 1:
-                text += " " + str(item.get("look") or "")
+                text += " " + look_text
             conditions.update(storage_conditions(stage))
             hold_text = "%s %s %s" % (place, text, keep)
-            tied = (4 if _has(hold_text, WEIGH_WORDS) else 0) or (2 if _has(hold_text, TIE_WORDS) or keep == "挂着通风" else 0)
-            st["moved"] = None  # 有人动过、记过一步：之前被风吹走的事由这一步交代
+            near_stove = spot == "灶上温着" or _has(place, STOVE_DRY_WORDS) or asserted(text, STOVE_DRY_WORDS)
+            if _has(hold_text, WEIGH_WORDS):
+                tied = 4
+            elif _has(hold_text, UNTIED_WORDS):
+                tied = 0
+            elif _has(hold_text, TIE_WORDS) or keep == "挂着通风":
+                tied = 2
+            elif material == "布" and _has(hold_text, ("晾", "晒", "甲板", "栏", "架", "院")):
+                # 晾衣绳、甲板上晾晒的衣物铺盖默认用夹子夹牢或系好
+                tied = 2
+            else:
+                tied = 0
+            st["moved"] = None
             if index == 1 and asserted(text, RESET_ALL):
                 st.update(wet=0.0, wet_from=None, rust=0.0, mold=0.0, salt=0.0, fade=0.0, soaked=False, swollen=False,
                           wet_hours=0.0)
             dry = dry_asserted(text)
             if asserted(text, RESET_WASH):
-                st.update(mold=0.0, salt=0.0, wet=0.0 if dry else 0.6)
+                st.update(mold=0.0, salt=0.0, wet=0.0 if dry else 0.5)
+                if fuel:
+                    st["saltwater"] = False
+                    if not st.get("treated") and not st.get("rotten"):
+                        st.update(fuel_safe=True, fuel_reason="")
             wet = asserted(text, WET_WORDS)
             if wet:
                 dry = False
-            if wet:
-                st["wet"] = 1.0 if asserted(text, ("湿透", "泡透")) else max(st["wet"], 0.65)
-                st["wet_from"] = _parse(stage["at"])
+                st["wet"] = 1.0 if asserted(text, ("湿透", "泡透")) else max(st["wet"], 0.6)
+                st["wet_from"] = stage_at
             if dry:
-                st.update(wet=0.0, wet_from=None, wet_hours=0.0)
+                # 晾干/擦干/烘干：表面水汽清零，泡胀的木器恢复平整（若明确压平纸张也恢复）
+                st.update(wet=0.0, wet_from=None, wet_hours=0.0, swollen=False)
+                if material == "纸" and _has(text, ("压平", "展平", "熨平")):
+                    st["soaked"] = False
             explicit = clean_conditions(stage.get("weather"))
             if "wet" in explicit:
                 st["wet"] = explicit["wet"]
             if fuel:
                 green = asserted(text, GREEN_WORDS) or explicit.get("seasoning") == "green"
-                seasoned = explicit.get("seasoning") == "seasoned" or asserted(text, ("原已干", "原本已干", "原本干燥", "已经陈干"))
-                soaked = asserted(text, ("泡透", "内部湿透", "浸泡", "泡过水"))
-                if green and st["fuel_wet"] is None:
-                    st.update(fuel_wet=0.9, seasoning="green")
-                elif seasoned and st["fuel_wet"] is None:
+                seasoned = explicit.get("seasoning") == "seasoned" or asserted(text, ("原已干", "原本已干", "原本干燥", "已经陈干", "晒透", "干柴"))
+                deep_soaked = asserted(text, DEEP_SOAK_WORDS)
+                if green:
+                    st.update(fuel_wet=max(st.get("fuel_wet") or 0.0, 0.75), seasoning="green")
+                elif seasoned and (st["fuel_wet"] is None or dry):
                     st.update(fuel_wet=0.1, seasoning="seasoned")
-                if soaked:
-                    st["fuel_wet"] = max(st["fuel_wet"] or 0.0, 0.9)
-                elif wet and st["fuel_wet"] is None:
-                    st["fuel_wet"] = 0.65
+                if deep_soaked:
+                    st["fuel_wet"] = max(st.get("fuel_wet") or 0.0, 0.75)
                 elif dry and not green:
                     st.update(fuel_wet=0.1, seasoning="seasoned")
+                elif st["fuel_wet"] is None:
+                    # 普通表皮淋雨或捡来的浮木只算表皮 st["wet"]，不把木芯锁成 6 个月生木
+                    st["fuel_wet"] = 0.15
                 status = explicit.get("fuel_state")
-                if status and st["fuel_wet"] is None:
-                    st["fuel_wet"] = {"wet": 0.9, "drying": 0.5, "ready": 0.1}[status]
-                if "fuel_wet" in explicit and (not green or explicit["fuel_wet"] > 0.2):
+                if status and "fuel_wet" not in explicit:
+                    st["fuel_wet"] = {"wet": 0.7, "drying": 0.4, "ready": 0.1}[status]
+                if "fuel_wet" in explicit:
                     st["fuel_wet"] = explicit["fuel_wet"]
                 if st["fuel_wet"] is not None and st["fuel_wet"] <= 0.2:
                     st["seasoning"] = "seasoned"
             if asserted(text, RESET_RUST):
                 st["rust"] = 0.0
+                if stage_at is not None:
+                    oil_protected_until = max(oil_protected_until or stage_at, stage_at + datetime.timedelta(days=14))
+            if asserted(hold_text, OIL_CARE_WORDS) and stage_at is not None:
+                oil_protected_until = max(oil_protected_until or stage_at, stage_at + datetime.timedelta(days=30))
         if cur >= flat:
             break
         nxt = min(cur.replace(minute=0, second=0, microsecond=0) + datetime.timedelta(hours=1), flat)
@@ -355,12 +381,16 @@ def simulate(item: dict, now: datetime.datetime, day_text, home_at, food: bool =
         home = home_at(cur) or "穗织"
         sea = home in SEA_HOMES
         hour = weather_mod.day_hours(cur.date().isoformat(), day_text(cur.date()), home)[cur.hour]
-        exposure = "sea" if st["moved"] and st["moved"]["sea"] else exposure_of(place, spot, keep, holder)
+        exposure = "sea" if st["moved"] and st["moved"]["sea"] else exposure_of(place, spot, keep, holder, food=food)
         if conditions.get("rain_cover") and exposure in ("open", "semi"):
             exposure = "covered"
         if st["moved"] and not st["moved"]["sea"]:
             exposure = "semi"
         if exposure == "carried":
+            if st["wet"] > 0:
+                st["wet"] = max(0.0, st["wet"] - 0.35 * dt)
+                if st["wet"] < 0.25:
+                    st["wet_from"] = None
             cur = nxt
             continue
         wind, rain = hour["wind"], hour["rain"]
@@ -370,13 +400,11 @@ def simulate(item: dict, now: datetime.datetime, day_text, home_at, food: bool =
         if exposure == "sea":
             st["wet"] = 1.0
             if fuel:
-                st["fuel_wet"] = 1.0
-                st["fuel_safe"] = False
+                st["fuel_wet"] = 0.85
                 st["saltwater"] = True
-                st["fuel_reason"] = "海水浸泡"
             st["wet_from"] = st["wet_from"] or cur
             st["salt"] = min(4.0, st["salt"] + 0.3 * dt)
-            if material == "铁":
+            if material == "铁" and not inherently_rust_free:
                 st["rust"] += 0.15 * dt
             elif material == "铜":
                 st["rust"] += 0.06 * dt
@@ -384,10 +412,10 @@ def simulate(item: dict, now: datetime.datetime, day_text, home_at, food: bool =
                 st["soaked"] = True
             cur = nxt
             continue
-        # 淋雨
+        # 淋雨 vs 晾干/炉边烘烤
         catch = {"open": 1.0, "semi": 0.8 if wind >= 6 else 0.35, "covered": 0.1 if wind >= 8 else 0.0,
-                 "inside": 0.01 if wind >= 10 and rain >= 8 else 0.0}.get(exposure, 0.0)  # 10 级以上风雨，船舱窗缝渗一点
-        if rain > 0 and catch > 0:
+                 "inside": 0.01 if wind >= 10 and rain >= 8 else 0.0}.get(exposure, 0.0)
+        if rain > 0 and catch > 0 and not near_stove:
             soak = (0.3 if rain < 1 else 2.0 if rain < 2.5 else 6.0 if rain < 8 else 15.0) * catch
             if st["wet"] < 0.3 and soak * dt >= 0.3:
                 st["wet_from"] = cur
@@ -397,82 +425,118 @@ def simulate(item: dict, now: datetime.datetime, day_text, home_at, food: bool =
             if exposure == "open" and rain >= 1:
                 st["salt"] = max(0.0, st["salt"] - 0.3 * dt)
         elif st["wet"] > 0:
-            speed = {"布": 0.22, "纸": 0.18, "木": 0.07, "铁": 0.6, "铜": 0.6, "石": 1.2, "吃的": 0.3}.get(material, 0.4)
-            speed *= 1 + 0.12 * wind
-            speed *= (1.6 if sunny else 1.0) if exposure in ("open", "semi") else (0.8 if conditions.get("ventilated") else 0.45)
-            if conditions.get("ventilated") is False:
-                speed *= 0.2
-            speed *= 0.3 if hour["fog"] else 1.0
-            speed *= 0.5 if temp < 5 else 1.0
+            if near_stove:
+                # 炭炉边、柴炉旁、灶旁烘烤：潮柴、湿鞋袜、湿衣 2～3 小时快速烘干
+                speed = 0.45
+            else:
+                # 木柴表皮淋雨受潮吹风 2～4 小时即干，不再卡在 0.07/h
+                speed = {"布": 0.25, "纸": 0.22, "木": 0.30, "铁": 0.6, "铜": 0.6, "石": 1.2, "吃的": 0.3}.get(material, 0.4)
+                speed *= 1 + 0.14 * wind
+                speed *= (1.6 if sunny else 1.0) if exposure in ("open", "semi") else (0.85 if conditions.get("ventilated") else 0.55)
+                if conditions.get("ventilated") is False:
+                    speed *= 0.2
+                speed *= 0.35 if hour["fog"] else 1.0
+                speed *= 0.6 if temp < 5 else 1.0
             st["wet"] = max(0.0, st["wet"] - speed * dt)
             if st["wet"] < 0.25:
                 st["wet_from"] = None
+        # 木芯内部水分：去掉未写 ventilated 则干燥率为 0 的陷阱，炉边可几小时快速烘透
         if fuel and st.get("fuel_wet") is not None:
-            if rain > 0 and catch > 0:
-                st["fuel_wet"] = min(1.0, st["fuel_wet"] + min(rain, 8.0) * catch * 0.001 * dt)
-            elif st["wet"] < 0.5 and conditions.get("ventilated"):
+            if near_stove:
+                st["fuel_wet"] = max(0.08, st["fuel_wet"] - 0.25 * dt)
+                if st["fuel_wet"] <= 0.2:
+                    st["seasoning"] = "seasoned"
+            elif rain > 0 and catch > 0.3:
+                st["fuel_wet"] = min(0.85, st["fuel_wet"] + min(rain, 8.0) * catch * 0.002 * dt)
+            elif st["wet"] < 0.5 and conditions.get("ventilated") is not False:
                 size = conditions.get("fuel_size") or ("split" if conditions.get("split") else "log")
-                if st["seasoning"] == "seasoned":
-                    hours = {"kindling": 24, "split": 96, "log": 240}[size]
-                elif st["seasoning"] == "green":
-                    hours = {"kindling": 480, "split": 4320, "log": 8640}[size]
+                if st["seasoning"] == "green":
+                    hours = {"kindling": 16, "split": 48, "log": 96}[size]
                 else:
-                    hours = {"kindling": 120, "split": 288, "log": 720}[size]
+                    hours = {"kindling": 6, "split": 18, "log": 36}[size]
                 rate = 1.0 / hours
-                rate *= 1.4 if sunny else 0.7
-                rate *= 1.0 if conditions.get("off_ground") else 0.4
-                rate *= 0.15 if hour["fog"] or rain > 0 else 1.0
-                rate *= 0.5 if temp < 5 else 1.0
+                if exposure in ("open", "semi"):
+                    rate *= (1.5 if sunny else 1.0) * (1 + 0.08 * wind)
+                elif conditions.get("ventilated"):
+                    rate *= 1.0
+                else:
+                    rate *= 0.65
+                if conditions.get("off_ground") is False:
+                    rate *= 0.6
+                if hour["fog"] or rain > 0:
+                    rate *= 0.35
                 st["fuel_wet"] = max(0.1, st["fuel_wet"] - rate * dt)
                 if st["fuel_wet"] <= 0.2:
                     st["seasoning"] = "seasoned"
-        # 海风带盐
-        if sea:
-            base = {"open": 0.025, "semi": 0.012, "covered": 0.004, "inside": 0.002}.get(exposure, 0.0)
-            spray = {"open": 0.08, "semi": 0.04}.get(exposure, 0.0) if wind >= 6 else 0.0
-            st["salt"] = min(4.0, st["salt"] + (base + spray) * dt)
-        # 生锈
-        if material in ("铁", "铜"):
-            rate = 0.06 if st["wet"] > 0.3 else 0.0
-            if sea:
-                rate += {"open": 0.02, "semi": 0.012, "covered": 0.006, "inside": 0.004, "sealed": 0.001}.get(exposure, 0.0) \
-                    * (1 + st["salt"] / 2)
-            if hour["fog"] and exposure in ("open", "semi"):
-                rate += 0.01 * hour["fog"]
-            st["rust"] += rate * (0.5 if material == "铜" else 1.0) * dt
-        # 发霉、泡软、泡胀
-        if material in ("布", "纸", "木"):
-            if st["wet"] > 0.5:
-                st["wet_hours"] += dt
-                if temp > 8:
-                    st["mold"] += 0.04 * dt
+        # 海风带盐：收纳盒/抽屉/刀鞘（sealed）隔绝盐雾，室内极微弱
+        if sea and exposure != "sealed":
+            if exposure == "inside":
+                st["salt"] = min(0.4, st["salt"] + 0.0001 * dt)
             else:
-                st["wet_hours"] = 0.0
-            if sea and cur.month in (6, 7, 8, 9) and exposure in ("inside", "sealed", "covered"):
-                st["mold"] += 0.002 * dt
-            if material == "纸" and st["wet"] >= 0.8:
+                base = {"open": 0.025, "semi": 0.012, "covered": 0.003}.get(exposure, 0.0)
+                spray = {"open": 0.08, "semi": 0.04}.get(exposure, 0.0) if wind >= 6 else 0.0
+                st["salt"] = min(4.0, st["salt"] + (base + spray) * dt)
+        # 生锈：sealed 归零，室内干态（wet < 0.2）下调 20 倍以上，常用锅具与擦油刀剪免锈
+        if material in ("铁", "铜"):
+            oiled = oil_protected_until is not None and cur <= oil_protected_until
+            cookware_safe = is_cookware and exposure in ("inside", "sealed", "covered") and st["wet"] < 0.3
+            if inherently_rust_free or ((oiled or cookware_safe) and st["wet"] < 0.5):
+                rate = 0.0
+            elif exposure == "sealed":
+                rate = 0.01 if st["wet"] > 0.6 else 0.0
+            elif exposure == "inside" and st["wet"] < 0.2:
+                rate = 0.0002 if sea else 0.0
+            else:
+                rate = 0.05 if st["wet"] > 0.3 else 0.0
+                if sea:
+                    rate += {"open": 0.02, "semi": 0.01, "covered": 0.004, "inside": 0.0015}.get(exposure, 0.0) * (1 + st["salt"] / 2)
+                if hour["fog"] and exposure in ("open", "semi"):
+                    rate += 0.008 * hour["fog"]
+            st["rust"] += rate * (0.5 if material == "铜" else 1.0) * dt
+        # 发霉、泡软、泡胀：发霉与温度+闷捂挂钩（通风晾晒不发霉，闷捂 > 48h 才发霉）；木器浸泡 > 48h 才 swollen
+        if material in ("布", "纸", "木"):
+            if st["wet"] > 0.5 and not near_stove:
+                st["wet_hours"] += dt
+                ventilated_airing = (
+                    conditions.get("ventilated") is True
+                    or keep == "挂着通风"
+                    or sunny
+                    or (exposure in ("open", "semi") and wind >= 2 and rain <= 0)
+                )
+                if not ventilated_airing and temp >= 10:
+                    mold_rate = 0.004 if temp < 14 else (0.010 if temp < 20 else (0.016 if temp < 26 else 0.020))
+                    if conditions.get("ventilated") is False or exposure in ("sealed", "covered"):
+                        mold_rate *= 1.0
+                    else:
+                        mold_rate *= 0.75
+                    st["mold"] += mold_rate * dt
+            else:
+                st["wet_hours"] = max(0.0, st["wet_hours"] - 2.0 * dt) if st["wet"] > 0.2 else 0.0
+            if material == "纸" and st["wet"] >= 0.85:
                 st["soaked"] = True
-            if material == "木" and st["wet_hours"] > 6:
+            if material == "木" and st["wet"] >= 0.7 and st["wet_hours"] > 48.0:
                 st["swollen"] = True
             if sunny and exposure == "open":
                 st["fade"] += 0.01 * dt
-        # 被风吹走
+        # 被风吹走：晾衣绳衣物默认夹牢（gate = 6 + 2 = 8），甲板吹落入海门槛提至 ≥8 级狂风
         if exposure in ("open", "semi") and not st["moved"]:
             gate = weight + tied + (2 if exposure == "semi" else 0)
             if wind >= gate:
                 chance = min(0.95, 0.15 * (2.2 ** (wind - gate)))
                 if _hash01(item.get("id"), cur.isoformat()) < chance:
-                    into_sea = sea and wind >= 6 and _has(place, ("甲板", "船", "码头", "防波堤", "栏", "木台", "岸边"))
+                    into_sea = sea and wind >= 8 and _has(place, ("甲板", "船", "码头", "防波堤", "栏", "木台", "岸边"))
                     st["moved"] = {"at": cur + datetime.timedelta(minutes=30), "wind": wind, "sea": into_sea}
         cur = nxt
     st["material"] = material
     st["rusty_look"] = rusty_look
     if fuel:
         moisture = st.get("fuel_wet")
-        st["fuel_state"] = "unknown" if moisture is None else "ready" if moisture <= 0.2 and st["wet"] < 0.25 else "wet" if moisture >= 0.6 else "drying"
+        st["fuel_state"] = (
+            "ready" if (moisture is None or moisture <= 0.25) and st["wet"] < 0.25
+            else "wet" if (moisture or 0.0) >= 0.6 or st["wet"] >= 0.6
+            else "drying"
+        )
         st["fuel_size"] = conditions.get("fuel_size") or ("split" if conditions.get("split") else "log")
-        if st["mold"] >= 2.5:
-            st.update(fuel_safe=False, fuel_reason="木料已经发霉，不能直接作为合适燃柴")
     return st
 
 
@@ -482,24 +546,17 @@ def describe(st: dict | None, food: bool = False) -> str:
         return ""
     bits = []
     if "fuel_state" in st:
-        if st.get("fuel_safe") is False:
-            bits.append("用途：修补或其他材料，不计入可燃柴库存")
-        if st["fuel_state"] != "ready" and st.get("seasoning") == "seasoned":
-            bits.append("原已干的木料返潮，需按实际吸水程度恢复干燥，不按新鲜木重新晾")
-        elif st.get("seasoning") == "green":
-            bits.append("新鲜枝木内部仍含水，需较长期通风干燥，不能晒几天就当干柴")
-        else:
-            bits.append({"unknown": "木料干湿未确认，先检查批次", "ready": "这批木料已干，不必重新晾晒",
-                         "wet": "这批木料仍湿，需要离地通风晾干", "drying": "这批木料尚在干燥，暂不能当干柴"}[st["fuel_state"]])
-        if st.get("fuel_safe") is not True:
-            bits.append(st.get("fuel_reason", "适用性尚未确认") + "，暂不作家用炉燃料")
-        if st.get("fuel_size") == "kindling":
-            bits.append("细枝或边屑只作引火、短时补火，不能替代整晚主柴")
+        if st.get("fuel_safe") is False and st.get("fuel_reason"):
+            bits.append("木料%s，不宜直接烧火" % st["fuel_reason"])
+        elif st.get("saltwater") and st["wet"] >= 0.3:
+            bits.append("刚从海水里捞上来带盐水，淡水冲一冲晒干再烧更好")
+        elif st.get("seasoning") == "green" and st["fuel_state"] != "ready":
+            bits.append("新砍的生木芯里还带水汽，劈开通风晾晒或放炉边烘一烘更耐烧")
     moved = st.get("moved")
     if moved:
         if moved["sea"]:
-            bits.append("%s 被 %d 级风吹进海里了%s" % (moved["at"].strftime("%m-%d %H:%M"), moved["wind"],
-                                                    "" if food else "，不在船上了（要找回来得下水去捞）"))
+            bits.append("%s 被 %d 级狂风吹进海里了%s" % (moved["at"].strftime("%m-%d %H:%M"), moved["wind"],
+                                                        "" if food else "，不在船上了（要找回来得下水去捞）"))
         else:
             bits.append("%s 被 %d 级风吹落到角落里了" % (moved["at"].strftime("%m-%d %H:%M"), moved["wind"]))
     material = st.get("material")
@@ -510,7 +567,7 @@ def describe(st: dict | None, food: bool = False) -> str:
     elif wet >= 0.7:
         bits.append("湿透了%s" % ("（%s 起淋的雨）" % since.strftime("%m-%d %H:%M") if since and not (moved and moved["sea"]) else ""))
     elif wet >= 0.25 and not food:
-        bits.append("还有点潮")
+        bits.append("表皮有点潮，吹吹风或放炉边烘一会儿就干" if "fuel_state" in st else "还有点潮")
     rust = st.get("rust", 0.0)
     if material == "铁" and rust >= 1:
         word = "锈得厉害" if rust >= 8 else ("锈了一层" if rust >= 3 else "起了点锈")
@@ -521,7 +578,7 @@ def describe(st: dict | None, food: bool = False) -> str:
     if mold >= 2.5:
         bits.append("发霉了，有股霉味")
     elif mold >= 1:
-        bits.append("有点霉味")
+        bits.append("闷久了有点霉味")
     salt = st.get("salt", 0.0)
     if salt >= 1 and material in ("布", "木"):
         bits.append("被海风吹得发潮发黏、带咸味")
@@ -530,7 +587,7 @@ def describe(st: dict | None, food: bool = False) -> str:
     if st.get("soaked"):
         bits.append("泡过水，纸软了、字洇开了")
     if st.get("swollen"):
-        bits.append("泡过水，有点胀、变形")
+        bits.append("长期泡水，有点胀、变形")
     fade = st.get("fade", 0.0)
     if fade >= 3:
         bits.append("晒得褪色发脆")

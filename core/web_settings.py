@@ -80,8 +80,6 @@ FIELDS = (
     _field("life_state", "world_notes", "world", "text", "地图与固定设定", _NOTES_DEFAULT,
            "补写和聊天都会读到。每行一条：地点和布局、常关着的门、不能写错的事实。", max=8000),
     # 主动消息
-    _field("life_state", "proactive_done_min_importance", "proactive", "int", "完成事项通知阈值", 3,
-           "角色做完重要度不低于此值（1–5）的事，会主动告诉主人。", min=1, max=5),
     _field("life_state", "proactive_extra_requirements", "proactive", "text", "附加要求", "",
            "附在每次主动消息提示的末尾，留空不加。", max=2000),
     # 角色台词

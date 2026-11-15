@@ -86,6 +86,7 @@ class SleepWebhook:
 
     def __init__(self, service, data_dir: Path) -> None:
         self.service = service
+        self.life = service
         self.config_path = Path(data_dir) / CONFIG_FILE
         self.path, self.token = self._load_or_create_credentials()
         self._mount_task: asyncio.Task | None = None
@@ -137,6 +138,13 @@ class SleepWebhook:
         target = resolve_payload_state(action, query_params, body_bytes)
         if target not in ("asleep", "awake"):
             return 400, {"ok": False, "error": "invalid state; expected sleep or wake"}
+        if hasattr(self.life, "apply_master_sleep"):
+            res = await self.life.apply_master_sleep(target, now)
+            logger.info(
+                "[super_enhance/life] 快捷指令切换主人睡眠状态：%s -> %s",
+                res.get("previous"), res.get("state"),
+            )
+            return 200, res
         before = companion.owner_state(now).get("state", "unknown")
         after = companion.set_sleep_state(target, now)
         companion.safe("apply_refresh", now, self.service.enabled_bots())

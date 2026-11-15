@@ -2,18 +2,13 @@
 
 放法拆成两栏（一步里各写一样，空着的照上一步）：
 - 怎么放（keep）：收着放 / 罩着放 / 敞着放 / 泡在水里 / 挂着通风 / 活养着——管干得快不快、招不招虫、串不串味；
-- 放在哪（spot）：屋里 / 阴凉处 / 地窖 / 井里 / 冰箱 / 冻着 / 屋外 / 太阳底下 / 灶上温着——管多冷多热。
-没写放在哪的，先看放法那栏是不是其实写的放在哪（老数据的「冰箱里」这种），再看地点里有没有「井里」「冰箱」「檐下」这种字，
+- 放在哪（spot）：屋里 / 阴凉处 / 舱底阴凉处 / 海水/冷水镇着 / 船舷海里活养 / 地窖 / 井里 / 冰箱 / 冻着 / 屋外 / 太阳底下 / 灶上温着——管多冷多热。
+没写放在哪的，先看放法那栏是不是其实写的放在哪（老数据的「冰箱里」这种），再看地点里有没有「舱底」「海里活养」「井里」「冰箱」「檐下」这种字，
 都没有算屋里。
 
 坏得多快 = 按温度（20 度 = 1，每高 10 度快 2.5 倍；热着放 55 度以上几乎不坏）× 怎么放的倍数（看东西：豆腐泡水坏得慢，
 生肉泡水反而快）× 整的 / 切开了 / 碰伤了 × 加工（腌着、晒着、熏着都慢下来）。腌、晒、熏按温度、天气走进度，走完了能放多久
-跟着变（腌好的菜按咸菜、晒干的按干货、熏好的按熏货）；之前老掉的那几成带过去，坏了的东西加工不回来。
-
-口感跟能不能吃分开算：从有了起按每一步、每半小时往后推（Sim），每一片按当时的冷热、放法、切没切、天气、热了多久，
-给每种口感的毛病（蔫、回软、出水、坨、凉了、回生发硬、哈喇、跑味、熟过头、发黄、发芽……）攒数，到了门槛就说出来；
-热一热、泡冷水这些能缓回来的跟着减。东西之间的影响（串味、催熟、串潮、生肉汁沾到熟食上）按「放在哪 + 地点」归堆
-（SpaceIndex），同一堆里同一时候在的才算，盖好收着的影响小。
+跟着变（轻腌/暴腌即刻抑菌延命，晒 8～12 个太阳小时成一夜干，晒透按咸鱼干/淡鱼干算）；熟食回锅烧开（热了一下）在未腐败前可杀菌回拨新鲜度。
 """
 
 import datetime
@@ -25,31 +20,82 @@ from .world import parse_time
 
 SLICE_MINUTES = 30
 
+# ---------- 食物大类（与 things.KINDS 共享同一份定义） ----------
+
+KINDS = {
+    # 肉禽蛋水产
+    "生内脏": (10, "发腥变质"),
+    "生鱼虾水产": (12, "发臭"),
+    "生肉禽肉": (16, "发臭"),
+    "熟肉卤味": (30, "变味发黏"),
+    "禽蛋类": (500, "坏掉散黄"),
+    "腊肉腊肠咸鱼": (1440, "受潮哈喇"),
+    # 豆制与乳品
+    "鲜奶乳饮": (12, "发酸结块"),
+    "鲜豆浆豆芽": (14, "发酸发黑"),
+    "鲜水豆腐": (26, "发酸发黏"),
+    "豆干千张": (48, "发酸发黏"),
+    "奶酪黄油": (240, "发霉变味"),
+    # 蔬菜菌菇
+    "娇嫩细叶菜": (40, "蔫黄腐烂"),
+    "耐储大叶菜": (96, "脱水蔫黄"),
+    "茄果瓜豆菜": (120, "软烂长斑"),
+    "菌菇类": (72, "发黏变软"),
+    "耐储根茎瓜菜": (400, "发软烂掉"),
+    "葱姜蒜调味根茎": (720, "干瘪长毛"),
+    # 水果类
+    "娇嫩浆果": (36, "发软长霉"),
+    "普通水果": (72, "发软烂掉"),
+    "耐放硬果": (300, "变质烂掉"),
+    # 主食与面点
+    "熟饭熟面": (18, "馊掉"),
+    "生湿面皮面团": (24, "发酸粘连"),
+    "馒头面包主食": (48, "发硬长霉"),
+    "鲜肉软点心": (24, "变味发馊"),
+    "耐放糕饼点心": (72, "发硬长霉"),
+    # 菜肴汤饮副食
+    "熟菜炒菜": (20, "馊掉"),
+    "熟汤羹粥": (18, "馊掉"),
+    "茶汤鲜饮": (16, "变馊发酸"),
+    "腌菜酱菜泡菜": (720, "长白膜变质"),
+    "坚果炒货": (1440, "哈喇受潮"),
+    "干货调料粮食": (8760, "受潮生虫"),
+    "别的吃的": (48, "坏掉"),
+}
+
 # ---------- 怎么放、放在哪 ----------
 
 KEEPS = ("收着放", "罩着放", "敞着放", "泡在水里", "挂着通风", "活养着")
 DEFAULT_KEEP = "收着放"
-SPOTS = ("屋里", "阴凉处", "地窖", "井里", "冰箱", "冻着", "屋外", "太阳底下", "灶上温着")
-# 海边小镇没电、没冰箱、也没有冰（见地图）：住海边时给补写、记录员挑的「放在哪」里把冰箱、冻着去掉；
-# 老数据里写着这两样的照旧认，不改、不挪
+SPOTS = (
+    "屋里", "阴凉处", "舱底阴凉处", "海水/冷水镇着", "船舷海里活养",
+    "地窖", "井里", "冰箱", "冻着", "屋外", "太阳底下", "灶上温着",
+)
+# 海边船居没有电冰箱，船上也没有地窖、水井；改用舱底阴凉处（吃水线以下铁船底恒温凉爽）、海水/冷水镇着、船舷海里活养。
+# 老数据里写着旧 spot 的照旧认，不改、不挪。
 NO_FRIDGE_HOMES = ("海边小镇",)
-NO_FRIDGE_SPOTS = ("冰箱", "冻着")
+NO_FRIDGE_SPOTS = ("冰箱", "冻着", "地窖", "井里")
+SEASIDE_ONLY_SPOTS = ("舱底阴凉处", "海水/冷水镇着", "船舷海里活养")
 
 
 def spots_for(home: str) -> tuple:
     if str(home or "").strip() in NO_FRIDGE_HOMES:
         return tuple(s for s in SPOTS if s not in NO_FRIDGE_SPOTS)
-    return SPOTS
+    return tuple(s for s in SPOTS if s not in SEASIDE_ONLY_SPOTS)
+
+
 DEFAULT_SPOT = "屋里"
 # 没熟透：中间还生着（煎、煮的时候火候不到），吃了要闹肚子，回锅煎透煮透（热了一下）就好；生着的坏得也快些
 STATES = {"整的": 1.0, "切开了": 1.5, "碰伤了": 1.3, "没熟透": 1.3}
 DEFAULT_STATE = "整的"
 # 一栏的时候的老放法：后四样其实是放在哪（太阳底下那会儿指摆在晒得到的地方，算敞着）
 OLD_KEEPS = {"阴凉处": ("", "阴凉处"), "冰箱里": ("", "冰箱"), "冻着": ("", "冻着"), "太阳底下": ("敞着放", "太阳底下")}
-# 怎么放：按顺序认，先认细的（「盖布」是罩着，「盖上」是收着）
+# 怎么放：按顺序认，先认细的（「盖布」是罩着，「盖上」是收着，「活养」「网兜」先于「吊」）
 KEEP_WORDS = (
+    ("活养", "活养着"), ("网兜", "活养着"), ("竹篓", "活养着"), ("蟹笼", "活养着"),
     ("盖布", "罩着放"), ("纱罩", "罩着放"), ("罩", "罩着放"),
-    ("密封", "收着放"), ("盖", "收着放"), ("扣", "收着放"), ("装", "收着放"), ("罐", "收着放"), ("盒", "收着放"),
+    ("密封", "收着放"), ("拧紧", "收着放"), ("铁桶", "收着放"), ("玻璃瓶", "收着放"),
+    ("盖", "收着放"), ("扣", "收着放"), ("装", "收着放"), ("罐", "收着放"), ("盒", "收着放"),
     ("袋", "收着放"), ("包好", "收着放"), ("保鲜膜", "收着放"), ("柜", "收着放"), ("收", "收着放"),
     ("挂", "挂着通风"), ("吊", "挂着通风"), ("通风", "挂着通风"),
     ("泡", "泡在水里"), ("浸", "泡在水里"), ("水盆", "泡在水里"),
@@ -58,19 +104,32 @@ KEEP_WORDS = (
 )
 # 放在哪：放法那栏或「放在哪」那栏里的说法
 SPOT_WORDS = (
+    ("海里活养", "船舷海里活养"), ("海水活养", "船舷海里活养"), ("船舷海里", "船舷海里活养"),
+    ("吊在海里", "船舷海里活养"), ("吊在船舷", "船舷海里活养"), ("网兜", "船舷海里活养"),
+    ("竹篓", "船舷海里活养"), ("蟹笼", "船舷海里活养"),
+    ("海水/冷水镇着", "海水/冷水镇着"), ("海水镇", "海水/冷水镇着"), ("冷水镇", "海水/冷水镇着"),
+    ("凉水镇", "海水/冷水镇着"), ("水镇", "海水/冷水镇着"), ("冷水盆", "海水/冷水镇着"),
+    ("海水桶", "海水/冷水镇着"), ("浸在海水", "海水/冷水镇着"), ("海水", "海水/冷水镇着"),
+    ("舱底阴凉处", "舱底阴凉处"), ("舱底", "舱底阴凉处"), ("船底", "舱底阴凉处"),
+    ("底舱", "舱底阴凉处"), ("吃水线", "舱底阴凉处"),
     ("冷冻", "冻着"), ("冻", "冻着"), ("冰箱", "冰箱"), ("冷藏", "冰箱"),
     ("地窖", "地窖"), ("窖", "地窖"), ("井里", "井里"), ("井水", "井里"), ("吊在井", "井里"),
     ("阴凉", "阴凉处"), ("背阴", "阴凉处"), ("井边", "阴凉处"),
     ("温着", "灶上温着"), ("温在", "灶上温着"), ("焖在锅", "灶上温着"), ("保温", "灶上温着"), ("灶上温", "灶上温着"),
     ("太阳", "太阳底下"), ("晒", "太阳底下"),
-    ("屋外", "屋外"), ("院子", "屋外"), ("院里", "屋外"), ("檐下", "屋外"), ("门外", "屋外"), ("外头", "屋外"),
-    ("屋里", "屋里"), ("室温", "屋里"), ("常温", "屋里"),
+    ("屋外", "屋外"), ("院子", "屋外"), ("院里", "屋外"), ("檐下", "屋外"), ("门外", "屋外"), ("外头", "屋外"), ("甲板", "屋外"),
+    ("屋里", "屋里"), ("室温", "屋里"), ("常温", "屋里"), ("船舱", "屋里"),
 )
 # 地点里的字只认这些明确的（「灶房」「灶台」只是地方，不算温着）
 PLACE_SPOT_WORDS = (
+    ("海里活养", "船舷海里活养"), ("海水活养", "船舷海里活养"), ("船舷海里", "船舷海里活养"),
+    ("吊在海里", "船舷海里活养"), ("网兜", "船舷海里活养"), ("竹篓", "船舷海里活养"), ("蟹笼", "船舷海里活养"),
+    ("海水镇", "海水/冷水镇着"), ("冷水镇", "海水/冷水镇着"), ("凉水镇", "海水/冷水镇着"),
+    ("冷水盆", "海水/冷水镇着"), ("海水桶", "海水/冷水镇着"), ("海水", "海水/冷水镇着"),
+    ("舱底", "舱底阴凉处"), ("船底", "舱底阴凉处"), ("底舱", "舱底阴凉处"), ("吃水线", "舱底阴凉处"),
     ("冰箱", "冰箱"), ("冷冻", "冻着"), ("冰柜", "冻着"), ("地窖", "地窖"), ("窖里", "地窖"),
     ("井里", "井里"), ("井水", "井里"), ("吊在井", "井里"), ("井边", "阴凉处"), ("背阴", "阴凉处"), ("阴凉", "阴凉处"),
-    ("院子", "屋外"), ("院里", "屋外"), ("檐下", "屋外"), ("屋外", "屋外"), ("门外", "屋外"),
+    ("院子", "屋外"), ("院里", "屋外"), ("檐下", "屋外"), ("屋外", "屋外"), ("门外", "屋外"), ("甲板", "屋外"),
 )
 # 「切开了」之外：剥了皮、削了皮、去了皮也是切开了（露着面）；摔了、压了、磕了是碰伤了
 STATE_WORDS = (("没熟", "没熟透"), ("夹生", "没熟透"), ("不熟", "没熟透"), ("半生", "没熟透"),
@@ -78,6 +137,9 @@ STATE_WORDS = (("没熟", "没熟透"), ("夹生", "没熟透"), ("不熟", "没
                ("碰伤", "碰伤了"), ("磕", "碰伤了"), ("摔", "碰伤了"), ("压坏", "碰伤了"), ("压烂", "碰伤了"),
                ("切", "切开了"), ("剥", "切开了"), ("削", "切开了"), ("去皮", "切开了"), ("剖", "切开了"), ("开封", "切开了"),
                ("整", "整的"))
+SALT_WORDS = ("抹盐", "盐腌", "暴腌", "轻腌", "盐渍", "撒盐", "擦盐", "腌着", "抹了盐", "撒了盐", "腌上")
+LIGHT_SALT_WORDS = ("抹盐", "暴腌", "轻腌", "撒盐", "擦盐", "抹了盐", "撒了盐")
+SEALED_CONTAINER_WORDS = ("铁桶", "密封", "拧紧", "玻璃瓶", "玻璃罐", "铁罐", "瓷罐", "封口", "未开封", "没开封", "没拆")
 
 
 def _clean(value) -> str:
@@ -126,7 +188,7 @@ def norm_state(value) -> str:
 
 def split_keep(keep, spot="", place="") -> tuple:
     """一步写的放法 → (怎么放, 放在哪)：放在哪没写的，先看放法那栏里有没有放在哪的字（「收着放在阴凉处」「冰箱里」），
-    再看地点里有没有明确的字（「井里」「院子」）；都没有的空着（照上一步，最早一步算屋里）。"""
+    再看地点里有没有明确的字（「舱底」「海里活养」「井里」「院子」）；都没有的空着（照上一步，最早一步算屋里）。"""
     cover = norm_keep(keep)
     where = norm_spot(spot)
     if not where:
@@ -134,6 +196,8 @@ def split_keep(keep, spot="", place="") -> tuple:
         where = OLD_KEEPS[text][1] if text in OLD_KEEPS else _match(text, SPOT_WORDS)
     if not where:
         where = _match(_clean(place), PLACE_SPOT_WORDS)
+    if where == "船舷海里活养" and cover in ("", "挂着通风", "泡在水里"):
+        cover = "活养着"
     return cover, where
 
 
@@ -273,7 +337,7 @@ def daytime(moment: datetime.datetime) -> bool:
 
 
 def spot_temp(spot: str, moment: datetime.datetime, weather_text, warm_hours=None) -> float:
-    """放在哪 → 这一刻多少度。地窖、井里常年差不多（冬暖夏凉）；灶上温着按放上去多久了。"""
+    """放在哪 → 这一刻多少度。舱底贴吃水线以下铁船底恒温凉爽；海水/冷水镇着接近表层海水温度。"""
     if spot == "冰箱":
         return 4.0
     if spot == "冻着":
@@ -282,6 +346,12 @@ def spot_temp(spot: str, moment: datetime.datetime, weather_text, warm_hours=Non
         return 10.0 + (month_temp(moment, _table_of(weather_text)) - 15.0) * 0.15
     if spot == "井里":
         return 14.0 + (month_temp(moment, _table_of(weather_text)) - 15.0) * 0.1
+    if spot == "舱底阴凉处":
+        base = 12.0 + (month_temp(moment, _table_of(weather_text)) - 14.5) * 0.45
+        return min(room_temp(moment, weather_text) - 4.0, base)
+    if spot in ("海水/冷水镇着", "船舷海里活养"):
+        base = 12.5 + (month_temp(moment, _table_of(weather_text)) - 14.5) * 0.5
+        return min(room_temp(moment, weather_text) - 4.5, base)
     if spot == "屋外":
         return outdoor_temp(moment, weather_text)
     if spot == "太阳底下":
@@ -317,7 +387,7 @@ VEG = VEG_LEAFY + ("茄果瓜豆菜", "菌菇类", "耐储根茎瓜菜", "葱姜
 FRUIT = ("娇嫩浆果", "普通水果", "耐放硬果")
 PRODUCE = VEG + FRUIT
 RAW_MEAT = ("生内脏", "生鱼虾水产", "生肉禽肉")
-# 住在海边潮：这几类返潮、长霉、生虫快这么多倍（夏天 6–9 月更潮）
+# 住在海边潮：敞开或未密封的干货、炒货、点心、腊货返潮更快；密封罐、拧紧铁桶、未开封罐头或收着放免除此惩罚
 HUMID_HOMES = ("海边小镇",)
 HUMID_KINDS = ("干货调料粮食", "坚果炒货", "耐放糕饼点心", "腊肉腊肠咸鱼")
 HUMID_FACTOR = 1.5
@@ -333,16 +403,31 @@ SWELL_LIFE = 36.0  # 泡发了的干货：跟鲜货差不多，一天半就得�
 # 挂着通风：腊货、干货、葱姜蒜、根茎挂着好；嫩叶菜、浆果、水果、熟食一吹就蔫
 HANG_GOOD = ("腊肉腊肠咸鱼", "干货调料粮食", "葱姜蒜调味根茎", "耐储根茎瓜菜", "耐放硬果")
 HANG_BAD = ("娇嫩细叶菜", "娇嫩浆果", "普通水果") + COOKED
-# 活养着：养这么多个钟头还活着，再久就养死了（照鲜货算坏）
+# 活养着：屋里死水盆养 72h；装网兜/竹篓吊在船舷流动海里活养可活 10～14 天（取 12 天 = 288h）
 LIVE_LIMIT = {"生鱼虾水产": 72.0}
+SEA_LIVE_LIMIT = 288.0
 LIVE_DEFAULT = 240.0
 LIVE_THIN_HOURS = 48.0
-# 凉吃的：这么凉以下算镇着（井水十五六度），这么暖以上慢慢变温
-CHILL_AT = 16.0
+SEA_LIVE_THIN_HOURS = 192.0
+SEA_LIVE_WORDS = ("海里", "海水", "船舷", "网兜", "竹篓", "蟹笼", "码头")
+
+
+def is_sea_live(spot: str, place: str) -> bool:
+    if spot == "船舷海里活养":
+        return True
+    text = _clean(place)
+    return any(w in text for w in SEA_LIVE_WORDS)
+
+
+def live_limit_of(kind: str, spot: str = "", place: str = "") -> float:
+    if kind == "生鱼虾水产" and is_sea_live(spot, place):
+        return SEA_LIVE_LIMIT
+    return LIVE_LIMIT.get(kind, LIVE_DEFAULT)
+
+
+# 凉吃的：这么凉以下算镇着（井水/海水十五六度），这么暖以上慢慢变温
+CHILL_AT = 16.5
 WARM_AT = 20.0
-# 口感还剩几成（网页上的口感条，1 = 跟刚有的时候一样）：每样毛病到了「很」那一档扣掉这么多，到「有点」那档扣它的
-# TEXTURE_SOME，中间按攒的数连着走，过了「很」不再往下扣；没到「有点」不扣（条满就是写着没什么变化）；几样一起的乘起来。
-# 能缓回来的（凉了、变温、发硬）扣得少，有毒的（土豆发绿）扣到底；profile 里写了 hurt 的照它（盐糖结块、发芽有毒、冻豆腐）。
 TEXTURE_HURT = {
     "dry": 0.5, "cut_dry": 0.25, "soggy": 0.5, "weep": 0.45, "mush": 0.55, "cool": 0.3, "chill": 0.3, "melt": 0.7,
     "reheat": 0.45, "burn": 0.45, "refreeze": 0.5, "frozen_bad": 0.7, "thawed": 0.1, "chill_inj": 0.5, "stale": 0.35,
@@ -366,28 +451,33 @@ def cover_rate(keep: str, kind: str) -> float:
     return 1.0
 
 
-# ---------- 加工：腌、晒、熏 ----------
+# ---------- 加工：腌（含轻腌/暴腌）、晒（含一夜干）、熏 ----------
 
 PROCESS_STEPS = ("腌上了", "晒上了", "熏上了")
-# 腌着的时候坏得慢这么多：肉鱼是重盐腌（做腊肉、咸鱼），盐够了几乎不坏；菜腌着也慢
 SALT_SLOW = 0.35
-SALT_SLOW_MEAT = 0.05
+SALT_SLOW_MEAT = 0.30
+LIGHT_SALT_SLOW_MEAT = 0.50
+LIGHT_SALT_LIFE = 72.0       # 鲜鱼肉抹盐轻腌即刻抑菌，常温可放 2.5～3 天（深秋阴凉处 3～4 天）
+OVERNIGHT_DRY_NEED = 9.0     # 盐腌水产晒 8～12 个太阳小时（取 9h）即成「一夜干/半干咸鱼」
+OVERNIGHT_DRY_LIFE = 240.0   # 一夜干/半干咸鱼阴凉通风可放约 10 天
 SALT_SLOW_PRODUCE = 0.25
 SMOKE_SLOW = 0.5   # 熏着的时候
 DRY_SLOW = 0.6     # 晒干到头时慢这么多（晒到一半慢一半）
 
 
 def salt_need(kind: str) -> float:
-    """腌多少个钟头（20 度）算腌好。"""
+    """重盐腌多少个钟头（20 度）算彻底腌透。"""
+    if kind == "生鱼虾水产":
+        return 72.0
     if kind in RAW_MEAT:
-        return 120.0
+        return 96.0
     if kind in PRODUCE + SOY + ("禽蛋类",):
         return 72.0
     return 48.0
 
 
 def salt_life(kind: str, base: float) -> float:
-    """腌好了能放多久：菜、豆腐、蛋按咸菜、咸蛋，肉鱼按咸肉咸鱼。"""
+    """腌透了能放多久：菜、豆腐、蛋按咸菜、咸蛋，肉鱼按咸肉咸鱼。"""
     if kind in RAW_MEAT + ("熟肉卤味",):
         return 1440.0
     if kind in PRODUCE + SOY + ("禽蛋类",):
@@ -396,17 +486,19 @@ def salt_life(kind: str, base: float) -> float:
 
 
 def dry_need(kind: str, salted: bool) -> float:
-    """晒多少（大太阳底下晒一个钟头算 1）算晒干。没腌过的肉晒不干就先坏了。"""
+    """晒多少（大太阳底下晒一个钟头算 1）算彻底晒成鱼干/肉干。
+    抹过盐的咸鱼渗透脱水更快、抑菌防臭，所需日照短于淡鱼干。"""
+    if kind == "生鱼虾水产":
+        return 18.0 if salted else 28.0
     if kind in RAW_MEAT:
-        if salted:
-            return 40.0
-        return 24.0 if kind == "生鱼虾水产" else 60.0
+        return 36.0 if salted else 60.0
     return 30.0
 
 
 def dry_life(kind: str, base: float, salted: bool) -> float:
+    """彻底晒干后的保质期（小时）：咸鱼干/咸肉干盐分+低水分双重抑菌，比淡晒鱼干更耐放（>= 2160h）。"""
     if kind in RAW_MEAT:
-        return 1440.0 if salted else 2160.0
+        return 2880.0 if salted else 1800.0
     if kind in PRODUCE:
         return 4320.0
     return max(base * 6, 720.0)
@@ -429,7 +521,7 @@ def smoke_need(kind: str) -> float:
 
 def smoke_life(kind: str, base: float, salted: bool) -> float:
     if kind in RAW_MEAT:
-        return 2160.0 if salted else 720.0
+        return 2880.0 if salted else 720.0
     if kind in SOY + ("禽蛋类", "熟肉卤味"):
         return 240.0
     return max(base * 3, 240.0)
@@ -441,7 +533,7 @@ def _wind_of(kind: str) -> int:
 
 
 def dry_rate(spot: str, keep: str, moment: datetime.datetime, weather_text) -> float:
-    """这一刻晒干了多少：大太阳底下一个钟头算 1，阴天、多云少些，夜里、屋里几乎不走；下雨天晒在外头的返潮（倒退）。"""
+    """这一刻晒干了多少：大太阳底下一个钟头算 1，阴天、多云少些，夜里海风通风也能慢慢收干；下雨天露天返潮。"""
     kind = weather_kind(weather_text)
     exposed = spot in ("太阳底下", "屋外") and keep != "收着放"
     if exposed and wet_weather(weather_text):
@@ -449,14 +541,14 @@ def dry_rate(spot: str, keep: str, moment: datetime.datetime, weather_text) -> f
     if spot == "太阳底下":
         gust = 1 + 0.06 * _wind_of(kind)
         if not daytime(moment):
-            return 0.2 * gust
+            return 0.25 * gust
         if any(w in kind for w in ("晴热", "暖阳", "回暖", "晴")) and sunny(weather_text):
             return 1.3 * gust
-        return (0.6 if any(w in kind for w in ("多云", "阴", "雾")) else 1.0) * gust
+        return (0.65 if any(w in kind for w in ("多云", "阴", "雾")) else 1.0) * gust
     if spot == "屋外" or keep == "挂着通风":
-        return 0.35 * (0.3 if "雾" in kind else 1.0) * (1 + 0.1 * _wind_of(kind))
+        return 0.4 * (0.3 if "雾" in kind else 1.0) * (1 + 0.1 * _wind_of(kind))
     if spot == "灶上温着":
-        return 0.3
+        return 0.35
     return 0.08 if keep in ("敞着放", "罩着放") else 0.02
 
 
@@ -476,7 +568,6 @@ CRISP_SNACK = ("饼干", "薯片", "仙贝", "米饼", "锅巴", "爆米花", "�
 STICKY_RICE = ("年糕", "粽子", "糯米", "团子", "麻糬", "糍粑", "汤圆", "饭团", "寿司", "大福")
 SPICE_WORDS = ("花椒", "八角", "桂皮", "胡椒", "孜然", "香叶", "咖喱", "辣椒面", "辣椒粉", "五香", "十三香", "茴香",
                "草果", "丁香", "肉桂", "山奈")
-# 磨成粉的香料跑味比整粒的快得多
 GROUND_SPICE = ("椒盐", "胡椒粉", "花椒粉", "辣椒面", "辣椒粉", "五香粉", "十三香", "孜然粉", "咖喱粉", "现磨")
 HERB_CUT = ("葱花", "香菜末", "蒜末", "姜末", "葱末", "蒜泥", "姜丝", "葱段", "香葱")
 COOKED_EGG = ("咸蛋", "皮蛋", "松花", "卤蛋", "茶叶蛋", "煎蛋", "荷包蛋", "蛋羹", "熟蛋", "煮蛋", "炒蛋", "溏心")
@@ -487,7 +578,6 @@ HOT_COOK = ("红烧", "炖", "焖", "烧", "煮", "蒸", "炒", "热")
 COLD_TREATS = ("冰淇淋", "冰激凌", "雪糕", "冰棍", "冰棒", "冰块", "刨冰", "冰沙")
 CHILL_FOODS = ("西瓜", "哈密瓜", "甜瓜", "凉茶", "酸梅汤", "绿豆汤", "冰粉", "凉粉", "果冻", "汽水", "啤酒", "冷面", "凉面",
                "豆花", "仙草", "双皮奶", "布丁", "凉皮")
-# 放熟：（名字里的字, (熟透的钟头, 熟过头, 软烂), 熟过头了能拿去做什么）
 RIPEN = (
     (("香蕉",), (48, 120, 200), "做成香蕉饼"),
     (("猕猴桃", "奇异果"), (96, 240, 400), "打成汁、做果酱"),
@@ -504,10 +594,8 @@ RIPEN = (
     (("枇杷",), (48, 120, 180), "熬枇杷膏"),
     (("苹果",), (336, 800, 1600), "削皮炖水"),
 )
-# 皮厚的不显皱（香蕉、柑橘、瓜）
 THICK_SKIN = ("香蕉", "橘", "橙", "柚", "柑", "西瓜", "南瓜", "冬瓜", "椰子", "菠萝", "榴莲", "哈密瓜")
 RIPE_WORD = {"番茄": "红透了", "西红柿": "红透了", "柿子": "软透了，正甜"}
-# 放着变老、不甜：（字, (有点, 很), (有点…, …了)）
 VEG_AGE = (
     (("玉米",), (12, 36), ("没那么甜了", "不甜了，嚼着发粉")),
     (("豌豆", "甜豆", "荷兰豆", "毛豆"), (12, 36), ("有点老了", "老了，不甜了")),
@@ -518,12 +606,10 @@ VEG_AGE = (
     (("茭白",), (36, 90), ("有点老了", "老了，发糠")),
 )
 SWEETEN = ((("红薯", "地瓜"), 120, "放了几天，更甜了"), (("南瓜",), 240, "放了一阵，更甜更面了"))
-# 发黄：（字或分类, (有点, 很), 有点…, …了）
 YELLOW_NAMES = ((("西兰花", "菜花"), (48, 110), "花球有点发黄", "花球黄了"),
                 (("黄瓜",), (96, 200), "有点发黄", "发黄了"),
                 (("香菜", "葱", "芹菜", "韭菜", "蒜苗"), (48, 120), "叶子有点发黄", "叶子黄了"))
 YELLOW_KINDS = {"娇嫩细叶菜": (30, 72), "耐储大叶菜": (96, 220), "鲜豆浆豆芽": (24, 60)}
-# 发芽：（字, (有点, 很), 有点…, …了, 很了算不算有毒）
 SPROUT = (
     (("土豆", "马铃薯", "洋芋"), (336, 672), "冒了点芽，挖掉芽眼还能吃", "芽长多了，芽和发绿的地方有毒，别吃了", True),
     (("洋葱",), (504, 1080), "冒了点芽", "芽长出来了，芯子发空", False),
@@ -533,7 +619,6 @@ SPROUT = (
     (("芋头",), (480, 960), "冒了点芽", "芽长多了，口感变差", False),
 )
 POTATO = ("土豆", "马铃薯", "洋芋")
-# 怕冷（冰箱里待久了反而坏口感）：（字, 几度以下算冷, 有点…, …了）
 CHILL_INJURY = (
     (("香蕉",), 12.0, "皮冻得有点发黑", "皮全黑了，里面发软"),
     (("芒果", "菠萝", "木瓜", "牛油果"), 10.0, "冻得有点没味", "冻伤了，发软没味"),
@@ -542,11 +627,9 @@ CHILL_INJURY = (
     (("红薯", "地瓜", "芋头"), 10.0, "冻得有点发硬心", "冻坏了，心发硬"),
     (("土豆", "马铃薯", "洋芋"), 6.0, "冻得有点发甜", "冻得发甜，一炒就发黑"),
 )
-# 切开了会发黑的（切口氧化）
 BROWN_NAMES = ("苹果", "梨", "土豆", "马铃薯", "藕", "茄子", "牛油果", "香蕉", "桃", "山药", "芋头", "红薯", "地瓜", "蘑菇", "生菜")
 BITTER_CARROT = ("胡萝卜", "红萝卜")
 BITTER_LETTUCE = ("生菜", "莴苣", "油麦菜", "莴笋")
-# 串味：气味冲的（字 → 多冲）、哪类本身就冲；吸味的（哪类多容易吸）
 ODOR_WORDS = (
     (("榴莲", "臭豆腐", "咸鱼", "鱼干", "虾酱", "腐乳", "韭菜", "蒜泥", "大蒜", "咖喱", "泡菜", "酸菜", "咸菜", "腌菜"), 1.0),
     (("洋葱", "葱", "香菜", "蒜", "卤", "熏", "鱼", "芝士", "奶酪"), 0.8),
@@ -557,17 +640,12 @@ ODOR_KINDS = {"生鱼虾水产": 0.8, "腌菜酱菜泡菜": 0.9, "熟肉卤味":
 ABSORB_KINDS = {"鲜水豆腐": 1.0, "豆干千张": 0.6, "熟饭熟面": 0.9, "馒头面包主食": 0.9, "鲜肉软点心": 0.7,
                 "耐放糕饼点心": 0.8, "鲜奶乳饮": 0.9, "奶酪黄油": 1.0, "禽蛋类": 0.4, "普通水果": 0.15, "娇嫩浆果": 0.3,
                 "熟菜炒菜": 0.4, "熟汤羹粥": 0.5, "茶汤鲜饮": 0.6}
-# 盖没盖对串味：收着盖好的几乎不串
 ODOR_COVER = {"收着放": 0.15, "罩着放": 0.9, "敞着放": 1.0, "挂着通风": 0.8, "泡在水里": 0.6, "活养着": 0.3}
-# 会放出催熟气的（越熟越多）
 ETHYLENE = ((("苹果", "香蕉"), 1.0), (("梨", "桃", "牛油果"), 0.8), (("番茄", "西红柿", "哈密瓜", "甜瓜"), 0.7),
             (("芒果", "李子", "杏", "柿子", "无花果"), 0.6))
-# 吃前不再煮的（沾了生肉汁就麻烦）
 READY_KINDS = ("熟菜炒菜", "熟肉卤味", "熟饭熟面", "熟汤羹粥", "普通水果", "娇嫩浆果", "馒头面包主食", "耐放糕饼点心",
                "鲜肉软点心", "奶酪黄油", "鲜奶乳饮")
-# 冻上了就坏口感的
 FREEZE_BAD_KINDS = ("娇嫩细叶菜", "耐储大叶菜", "茄果瓜豆菜", "娇嫩浆果", "普通水果", "鲜奶乳饮", "禽蛋类", "鲜水豆腐")
-# 冻久了会冻伤的（干货、冰的不算）
 NO_BURN_KINDS = ("干货调料粮食", "坚果炒货", "腌菜酱菜泡菜")
 REFREEZE_KINDS = RAW_MEAT + COOKED + ("鲜肉软点心", "馒头面包主食")
 DRY_TABLE = {
@@ -588,10 +666,15 @@ DRY_TABLE = {
     "鲜水豆腐": (8, 24, "面上有点发干", "发干起皮了", "泡进清水里"),
     "豆干千张": (24, 72, "有点发干", "干硬了", ""),
 }
-# 发干受放在哪的影响（冰箱里干，敞着放进去蔫得更快；地窖、井里潮）
-SPOT_DRY = {"冰箱": 1.4, "地窖": 0.4, "井里": 0.2, "阴凉处": 0.85, "屋外": 1.3, "太阳底下": 2.0, "灶上温着": 1.5}
+SPOT_DRY = {
+    "冰箱": 1.4, "地窖": 0.4, "井里": 0.2, "阴凉处": 0.85, "舱底阴凉处": 0.65,
+    "海水/冷水镇着": 0.3, "船舷海里活养": 0.0, "屋外": 1.3, "太阳底下": 2.0, "灶上温着": 1.5,
+}
 COVER_DRY = {"收着放": 0.3, "罩着放": 0.85, "敞着放": 1.0, "挂着通风": 1.6, "活养着": 0.0}
-SPOT_SOGGY = {"冰箱": 1.6, "地窖": 2.0, "井里": 3.0, "屋外": 1.3, "灶上温着": 1.5, "太阳底下": 0.6, "冻着": 0.2}
+SPOT_SOGGY = {
+    "冰箱": 1.6, "地窖": 2.0, "井里": 3.0, "舱底阴凉处": 1.3, "海水/冷水镇着": 2.0,
+    "船舷海里活养": 2.5, "屋外": 1.3, "灶上温着": 1.5, "太阳底下": 0.6, "冻着": 0.2,
+}
 COVER_SOGGY = {"收着放": 0.12, "罩着放": 0.8, "敞着放": 1.0, "挂着通风": 0.4, "活养着": 1.0}
 
 
@@ -644,7 +727,7 @@ def _base_profile(name, kind) -> dict:
     if _has(name, COLD_TREATS):
         p["melt"] = {"h": (0.15, 0.5), "text": ("开始化了", "化成水了"), "fix": "赶紧放回冻着"}
     elif _has(name, CHILL_FOODS):
-        p["chill"] = {"h": (0.4, 1.2), "text": ("没那么凉了", "变温了，不冰了"), "fix": "放回冰箱或者井里再镇一镇"}
+        p["chill"] = {"h": (0.4, 1.2), "text": ("没那么凉了", "变温了，不冰了"), "fix": "放到冷水或阴凉处再镇一镇"}
     if kind in COOKED + ("鲜肉软点心",):
         if _has(name, LEAFY_DISH):
             texts = ("回锅两回，有点发黄", "热了太多回，菜都黄烂了")
@@ -661,7 +744,7 @@ def _base_profile(name, kind) -> dict:
         p["burn"] = {"h": (336, 1080), "text": ("冻久了，表面有点发干发白", "冻伤了，表面干柴发白"), "fix": ""}
     if kind in REFREEZE_KINDS:
         p["refreeze"] = {"text": ("化过又冻，口感差了点", "化了又冻好几回，又柴又出水")}
-    watery = "weep" in p and not p["weep"].get("tofu")  # 凉拌菜、切开的瓜果这种水汪汪的，冻上也就坏了
+    watery = "weep" in p and not p["weep"].get("tofu")
     if kind in FREEZE_BAD_KINDS or (kind == "熟菜炒菜" and _has(name, LEAFY_DISH)) or watery:
         if kind == "鲜水豆腐":
             p["frozen_bad"] = {"text": "冻成冻豆腐了，一个个小孔，炖汤正好", "neutral": True, "hurt": 0.0}
@@ -750,7 +833,7 @@ def _produce_profile(name, kind, p: dict, fresh: bool) -> None:
         p["brown"] = {"h": (0.4, 2.0), "text": ("切口有点发黄", "切口发黑了"), "fix": "泡清水、挤点柠檬能防"}
     if kind in PRODUCE:
         p["bruise"] = {"h": (6, 24), "text": ("碰伤的地方有点发黑", "碰伤的地方发黑发软了"), "fix": "挖掉那块"}
-    sens = 0.0 if _has(name, THICK_SKIN) else ABSORB_KINDS.get(kind, 0.0)  # 带厚皮的几乎不吸味
+    sens = 0.0 if _has(name, THICK_SKIN) else ABSORB_KINDS.get(kind, 0.0)
     if sens and odor_of(name, kind)[0] < 0.5:
         p["absorb"] = {"h": (2.0, 6.0), "sens": sens}
     if kind in READY_KINDS:
@@ -792,14 +875,13 @@ def ethylene_of(name) -> float:
 
 # ---------- 东西之间：按「放在哪 + 地点」归堆 ----------
 
-ENCLOSED = ("柜", "橱", "罐", "缸", "盒", "坛", "箱", "笼", "篓")
-# 补写、记录员给的地点没写全（只有 area、没有 at）时，地点后面带上这个：网页上看得出来，也不跟别的东西算放在一块
+ENCLOSED = ("柜", "橱", "罐", "缸", "盒", "坛", "箱", "笼", "篓", "舱底")
 VAGUE_PLACE = "没说清放哪"
 
 
 def space_key(spot: str, place: str) -> str:
-    """同一堆的才互相影响：冰箱、冻着、地窖、井里各算一整个；别的按同样冷热 + 同一个地点（没写地点的、没说清放哪的不归堆）。"""
-    if spot in ("冰箱", "冻着", "地窖", "井里"):
+    """同一堆的才互相影响：冰箱、冻着、地窖、井里、舱底阴凉处、船舷海里活养各算一堆；别的按同样冷热 + 同一个地点。"""
+    if spot in ("冰箱", "冻着", "地窖", "井里", "舱底阴凉处", "船舷海里活养"):
         return spot
     text = _clean(place)
     if not text or VAGUE_PLACE in text:
@@ -808,18 +890,22 @@ def space_key(spot: str, place: str) -> str:
 
 
 def space_closeness(key: str) -> float:
-    """这一堆有多闷（串味多容易）：冰箱最闷，柜子、罐子里其次，敞亮的案板、窗台淡，屋外几乎不串。"""
+    """这一堆有多闷（串味多容易）：冰箱最闷，柜子、罐子里其次，船舷海里活养和屋外几乎不串。"""
     if key == "冰箱":
         return 1.3
     if key == "冻着":
         return 0.3
-    if key == "地窖":
-        return 1.0
+    if key in ("地窖", "舱底阴凉处"):
+        return 0.9
     if key == "井里":
         return 0.6
+    if key == "船舷海里活养":
+        return 0.1
     spot, _, place = key.partition("|")
-    if spot in ("屋外", "太阳底下"):
+    if spot in ("屋外", "太阳底下", "船舷海里活养"):
         return 0.2
+    if spot == "海水/冷水镇着":
+        return 0.4
     return 1.2 if any(w in place for w in ENCLOSED) else 0.6
 
 
@@ -830,7 +916,7 @@ class SpaceIndex:
         self.rows: dict = {}
         flat = now.replace(tzinfo=None)
         for item in items:
-            if str(item.get("cat") or "food") != "food":
+            if str(item.get("cat") or "food") != "food" and str(item.get("kind") or "") not in KINDS:
                 continue
             stages = [x for x in item.get("stages") or [] if parse_time(x.get("at")) is not None]
             if not stages:
@@ -891,6 +977,8 @@ class Sim:
         self.kind = str(item.get("kind") or "")
         self.base_life = float(life)
         self.life = float(life)
+        if _has(self.name, ("一夜干", "半干咸鱼")) and self.kind in ("生鱼虾水产", "腊肉腊肠咸鱼"):
+            self.life = max(self.life, OVERNIGHT_DRY_LIFE)
         self.weather_of = weather_of
         self.index = index
         self.quality = quality
@@ -898,12 +986,15 @@ class Sim:
         self.frac = 0.0
         self.bad_since = None
         self.cover, self.spot, self.state, self.place = DEFAULT_KEEP, DEFAULT_SPOT, DEFAULT_STATE, ""
+        self.container_text = " ".join(str(item.get(k) or "") for k in ("name", "look", "origin"))
         self.heat_at = None
         self.reheats = 0
         self.warm_start = None
         self.salted = self.salt_done = False
+        self.light_salt = False
         self.salt_prog = 0.0
         self.drying = self.dry_done = False
+        self.half_dry_done = False
         self.dry_prog = 0.0
         self.rain_wet = 0.0
         self.smoking = self.smoke_done = False
@@ -919,6 +1010,35 @@ class Sim:
         self.odor_from: dict = {}
         self.events: list = []  # 加工做完这种：(时刻, 说法)
 
+    def _activate_salt(self, light: bool = False) -> None:
+        """鲜鱼肉抹盐/盐腌：只要尚未臭透（frac < 1.0），盐分即刻抑菌脱水，回拨临界腐败度并将保鲜期延至 2.5～3 天以上。"""
+        was_salted = self.salted or self.salt_done
+        self.salted = True
+        if light and not was_salted:
+            self.light_salt = True
+        elif not light:
+            self.light_salt = False
+        if not was_salted and self.frac < 1.0:
+            self.frac = min(self.frac, max(0.15, self.frac * 0.45))
+            if self.kind in RAW_MEAT:
+                self.life = max(self.life, LIGHT_SALT_LIFE)
+            elif self.kind in PRODUCE + SOY:
+                self.life = max(self.life, 96.0)
+
+    def _is_sealed_container(self) -> bool:
+        """密封罐、拧紧铁桶、玻璃瓶、未开封罐头或明确收着放：免除海边空气潮湿加速腐败惩罚。"""
+        if self.cover == "收着放":
+            return True
+        text = self.container_text
+        if _has(text, SEALED_CONTAINER_WORDS):
+            return True
+        if "罐头" in text and self.state != "切开了":
+            return True
+        return False
+
+    def _is_live_kept(self) -> bool:
+        return self.cover == "活养着" or (self.spot == "船舷海里活养" and self.kind == "生鱼虾水产" and self.state == DEFAULT_STATE)
+
     # ---- 每一步 ----
 
     def apply(self, stage: dict, moment: datetime.datetime, first: bool = False) -> None:
@@ -929,12 +1049,23 @@ class Sim:
         self.spot = spot or self.spot
         self.state = norm_state(stage.get("state")) or self.state
         self.place = str(stage.get("place") or "") or self.place
+        stage_text = " ".join(str(stage.get(k) or "") for k in ("keep", "spot", "place", "state", "note"))
+        if stage_text.strip():
+            self.container_text = (self.container_text + " " + stage_text).strip()
+        if self.spot == "船舷海里活养" and not cover and self.kind == "生鱼虾水产" and self.state == DEFAULT_STATE:
+            self.cover = "活养着"
         heated = (first and what == "做好了") or what == "热了一下"
         if heated:
             if what == "热了一下":
                 self.reheats += 1
                 if self.state == "没熟透":
                     self.state = DEFAULT_STATE  # 回锅煎透、煮透了
+                # 烧滚杀菌回拨：尚未彻底腐败（frac < 0.85）时，前 3 次回锅有效回拨腐败度，第 4 次轻微抑菌
+                if self.frac < 0.85:
+                    if self.reheats <= 3:
+                        self.frac = min(self.frac, max(0.12, self.frac * 0.35))
+                    elif self.reheats == 4 and self.frac < 0.8:
+                        self.frac = min(self.frac, max(0.30, self.frac * 0.65))
                 # 热一热：凉了的热回来、发硬的饭软回来、回软的炸物复脆、稠了的粥加水
                 for key in ("cool", "stale"):
                     self.acc[key] = 0.0
@@ -944,9 +1075,12 @@ class Sim:
             self.heat_at = moment
         if self.spot == "灶上温着" and (prev_spot != "灶上温着" or heated or first):
             self.warm_start = moment
+        salt_hint = what != "做好了" and _has(stage_text + (" " + self.name if first else ""), SALT_WORDS)
         if what == "腌上了":
-            self.salted = True
-        elif what == "晒上了":
+            self._activate_salt(light=_has(stage_text, LIGHT_SALT_WORDS) and "重盐" not in stage_text)
+        elif salt_hint:
+            self._activate_salt(light=True)
+        if what == "晒上了" or (what != "做好了" and _has(stage_text, ("晒上", "晾晒", "晒鱼", "一夜干")) and self.spot in ("太阳底下", "屋外")):
             self.drying = True
         if what == "熏上了":
             self.smoking = True
@@ -962,16 +1096,21 @@ class Sim:
         return spot_temp(self.spot, moment, weather, warm)
 
     def spoil_rate(self, temp: float) -> float:
-        if self.cover == "活养着":
-            if self.live_hours < LIVE_LIMIT.get(self.kind, LIVE_DEFAULT):
+        if self._is_live_kept():
+            if self.live_hours < live_limit_of(self.kind, self.spot, self.place):
                 return 0.0
         rate = heat_rate(temp) * cover_rate(self.cover, self.kind) * STATES.get(self.state, 1.0)
         if self.cover == "泡在水里" and self.kind in SOAK_SWELL:
             rate *= self.base_life / SWELL_LIFE  # 泡发了：跟鲜货一样快
         if self.salted and not self.salt_done:
-            rate *= SALT_SLOW_MEAT if self.kind in RAW_MEAT else (SALT_SLOW_PRODUCE if self.kind in PRODUCE + SOY else SALT_SLOW)
+            if self.kind in RAW_MEAT:
+                rate *= LIGHT_SALT_SLOW_MEAT if self.light_salt else SALT_SLOW_MEAT
+            elif self.kind in PRODUCE + SOY:
+                rate *= SALT_SLOW_PRODUCE
+            else:
+                rate *= SALT_SLOW
         if self.drying and not self.dry_done:
-            rate *= 1.0 - DRY_SLOW * min(self.dry_prog / dry_need(self.kind, self.salted), 1.0)
+            rate *= 1.0 - DRY_SLOW * min(self.dry_prog / dry_need(self.kind, self.salted or self.salt_done), 1.0)
         if self.smoking and not self.smoke_done:
             rate *= SMOKE_SLOW
         if self.rain_wet > 0 and not self.dry_done:
@@ -986,18 +1125,18 @@ class Sim:
         if not any(w in kind for w in ("小雨", "中雨", "大雨", "暴雨")):
             return False
         from .weathering import exposure_of
-        return exposure_of(self.place, self.spot, self.cover) == "open"
+        return exposure_of(self.place, self.spot, self.cover, food=True) == "open"
 
     def weather_factor(self, moment: datetime.datetime, weather) -> float:
-        """天气让它坏得更快：露天没盖着淋了雨（熟菜淋了雨就不能吃了）；住海边潮，干货、炒货、点心、腊货返潮。"""
+        """天气让它坏得更快：露天没盖着淋了雨（熟菜淋了雨就不能吃了）；海边敞放的干货炒货点心返潮（密封或收着放免除）。"""
         factor = 1.0
         if isinstance(weather, str) and wet_weather(weather) and self.cover not in ("收着放", "泡在水里", "活养着"):
             from .weathering import exposure_of
-            where = exposure_of(self.place, self.spot, self.cover)
+            where = exposure_of(self.place, self.spot, self.cover, food=True)
             if where in ("open", "semi"):
                 factor *= (6.0 if self.kind in COOKED else 2.0) * (1.0 if where == "open" else 0.5)
-        if isinstance(weather, str) and split_home(weather)[0] in HUMID_HOMES and self.kind in HUMID_KINDS \
-                and self.spot not in ("冰箱", "冻着"):
+        if (isinstance(weather, str) and split_home(weather)[0] in HUMID_HOMES and self.kind in HUMID_KINDS
+                and self.spot not in ("冰箱", "冻着") and not self._is_sealed_container()):
             factor *= HUMID_SUMMER if moment.month in (6, 7, 8, 9) else HUMID_FACTOR
         return factor
 
@@ -1019,7 +1158,7 @@ class Sim:
                 self.frac = max(self.frac, 1.0)  # 熟菜露天没盖着淋了一阵雨：泡了雨水，不能吃了
             if self.bad_since is None and self.frac >= 1.0:
                 self.bad_since = nxt
-            if self.cover == "活养着":
+            if self._is_live_kept():
                 self.live_hours += dt
             self._freeze(temp, dt)
             self.last_temp = temp
@@ -1034,7 +1173,7 @@ class Sim:
         self._cur = moment
 
     def _process(self, moment, dt, temp, weather) -> None:
-        if self.salted and not self.salt_done:
+        if self.salted and not self.salt_done and not self.light_salt:
             if temp > -2:
                 self.salt_prog += dt * q10(temp, 1.5, -2, 35)
             if self.salt_prog >= salt_need(self.kind):
@@ -1048,9 +1187,17 @@ class Sim:
                 self.rain_wet += dt
             elif rate > 0.3:
                 self.rain_wet = max(0.0, self.rain_wet - dt)
-            if self.dry_prog >= dry_need(self.kind, self.salted or self.salt_done):
+            salted_flag = self.salted or self.salt_done
+            if (self.kind == "生鱼虾水产" and salted_flag and not self.half_dry_done
+                    and self.dry_prog >= OVERNIGHT_DRY_NEED):
+                self.half_dry_done = True
+                self.life = max(self.life, OVERNIGHT_DRY_LIFE)
+                if self.frac < 1.0:
+                    self.frac = min(self.frac, max(0.10, self.frac * 0.5))
+                self.events.append((moment, "晒成一夜干了"))
+            if self.dry_prog >= dry_need(self.kind, salted_flag):
                 self.dry_done = True
-                self.life = max(self.life, dry_life(self.kind, self.base_life, self.salted or self.salt_done))
+                self.life = max(self.life, dry_life(self.kind, self.base_life, salted_flag))
                 self.events.append((moment, "晒干了"))
         if self.smoking and not self.smoke_done:
             self.smoke_prog += dt
@@ -1084,7 +1231,6 @@ class Sim:
         near = []
         if self.index is not None and any(k in p for k in ("absorb", "drip", "soggy", "ripen", "yellow", "bitter")):
             near = self.index.at(space_key(spot, self.place), moment, self.id)
-        # 催熟气：旁边有苹果、香蕉这些（它们和这件都收着装袋的少一些，冰箱里冷，放得少）
         eth = 0.0
         for n_cover, info in near:
             if info["ethylene"]:
@@ -1097,7 +1243,6 @@ class Sim:
         frozen, wet, near, eth = self._taste_context(moment, weather, p, temp)
         if "dry" in p and not frozen:
             if cover == "泡在水里":
-                # 蔫了的泡进冷水：每半个钟头缓回一半；蔫透了的（过了「蔫了」两倍）只能缓到有点蔫
                 rate = 0.0
                 if p["dry"]["soak_ok"]:
                     have = self.acc.get("dry", 0.0)
@@ -1114,10 +1259,12 @@ class Sim:
             if cover == "泡在水里":
                 rate = 20.0
             else:
-                rate = COVER_SOGGY.get(cover, 1.0) * SPOT_SOGGY.get(spot, 1.0)
-                rate *= 1.6 if wet else (0.85 if sunny(weather) else 1.0)
+                tight = _has(self.container_text, SEALED_CONTAINER_WORDS)
+                c_soggy = 0.03 if tight else COVER_SOGGY.get(cover, 1.0)
+                rate = c_soggy * SPOT_SOGGY.get(spot, 1.0)
+                rate *= 1.6 if wet and not tight else (0.85 if sunny(weather) else 1.0)
                 moist = any(n_cover != "收着放" and (n_cover == "泡在水里" or _hot(info, moment)) for n_cover, info in near)
-                if moist and cover != "收着放":
+                if moist and cover != "收着放" and not tight:
                     rate *= 1.6
                 since = self._since_heat(moment)
                 if cover == "收着放" and p["soggy"].get("fried") and since is not None and since < 0.5:
@@ -1134,7 +1281,10 @@ class Sim:
                 rate = 0.0 if warm < WARM_HOT_HOURS else (0.5 if warm < WARM_END_HOURS else 1.67)
             else:
                 rate = 1.67 * (0.67 if cover == "收着放" else 1.0)
-                rate *= {"冰箱": 4.0, "冻着": 6.0, "井里": 3.0, "地窖": 1.5, "阴凉处": 1.2}.get(spot, 1.0)
+                rate *= {
+                    "冰箱": 4.0, "冻着": 6.0, "井里": 3.0, "海水/冷水镇着": 2.8,
+                    "地窖": 1.5, "舱底阴凉处": 1.4, "阴凉处": 1.2,
+                }.get(spot, 1.0)
                 if temp < 10 and spot in ("屋里", "屋外", "太阳底下"):
                     rate *= 1.4
             self._add("cool", rate * dt)
@@ -1209,7 +1359,7 @@ class Sim:
             self._add("bruise", q10(temp, 1.6, -2, 40) * dt)
         if "absorb" in p and not frozen and cover != "活养着":
             close = space_closeness(space_key(spot, self.place))
-            mine = ODOR_COVER.get(cover, 1.0) * (3.0 if state == "切开了" and self.kind in FRUIT else 1.0)  # 切开的水果最吸味
+            mine = ODOR_COVER.get(cover, 1.0) * (3.0 if state == "切开了" and self.kind in FRUIT else 1.0)
             for n_cover, info in near:
                 if info["odor"] <= 0 or n_cover == "活养着":
                     continue
@@ -1254,9 +1404,16 @@ class Sim:
             else:
                 leveled("cool", p["cool"]["h"], p["cool"]["text"], p["cool"]["fix"])
         if "chill" in p:
-            cold_now = self.spot in ("冰箱", "井里", "冻着") or (self.last_temp is not None and self.last_temp <= 10)
+            cold_now = self.spot in ("冰箱", "井里", "冻着", "海水/冷水镇着", "舱底阴凉处") or (
+                self.last_temp is not None and self.last_temp <= 10
+            )
             if self.chilled >= 1.0 and acc.get("chill", 0.0) < p["chill"]["h"][0] and cold_now:
-                text = "在井里镇得冰凉" if self.spot == "井里" else "镇得正凉"
+                if self.spot == "井里":
+                    text = "在井里镇得冰凉"
+                elif self.spot == "海水/冷水镇着":
+                    text = "用冷水镇得正凉"
+                else:
+                    text = "镇得正凉"
                 out.append({"key": "chill", "level": -1, "text": text, "fix": "", "danger": False})
             else:
                 leveled("chill", p["chill"]["h"], p["chill"]["text"], p["chill"]["fix"])
@@ -1314,12 +1471,15 @@ class Sim:
                 out.append({"key": "marinate", "level": -1, "text": p["marinate"]["text"], "fix": "", "danger": False})
         if "aged" in p and acc.get("aged", 0.0) >= p["aged"]["h"]:
             out.append({"key": "aged", "level": -1, "text": p["aged"]["text"], "fix": "", "danger": False})
-        if self.cover == "活养着":
-            limit = LIVE_LIMIT.get(self.kind, LIVE_DEFAULT)
+        if self._is_live_kept():
+            sea_live = self.kind == "生鱼虾水产" and is_sea_live(self.spot, self.place)
+            limit = SEA_LIVE_LIMIT if sea_live else LIVE_LIMIT.get(self.kind, LIVE_DEFAULT)
+            thin = SEA_LIVE_THIN_HOURS if sea_live else LIVE_THIN_HOURS
             if self.live_hours >= limit:
                 out.append({"key": "live", "level": 2, "text": "养太久，养死了", "fix": "", "danger": False})
-            elif self.live_hours >= LIVE_THIN_HOURS:
-                out.append({"key": "live", "level": 1, "text": "养了两天多，有点瘦了", "fix": "", "danger": False})
+            elif self.live_hours >= thin:
+                msg = "在海里活养了好些天，稍微瘦了点" if sea_live else "养了两天多，有点瘦了"
+                out.append({"key": "live", "level": 1, "text": msg, "fix": "", "danger": False})
         if self.state == "没熟透":
             out.append({"key": "raw", "level": 2, "text": "中间没熟透，吃了要闹肚子", "fix": "回锅煎透、煮透再吃", "danger": True})
         out.extend(self.process_report())
@@ -1333,12 +1493,18 @@ class Sim:
         if self.salted:
             if self.salt_done:
                 out.append({"key": "salt", "level": 0, "text": "腌好了", "fix": "", "danger": False})
+            elif self.light_salt:
+                out.append({"key": "salt", "level": -1, "text": "抹盐轻腌着，紧实入味", "fix": "", "danger": False})
             else:
                 share = min(self.salt_prog / salt_need(self.kind), 0.99)
                 out.append({"key": "salt", "level": 0, "text": "腌着呢，还没腌透（%d 成）" % max(1, int(share * 10)), "fix": "", "danger": False})
         if self.drying:
             if self.dry_done:
                 out.append({"key": "dry_proc", "level": 0, "text": "晒干了", "fix": "", "danger": False})
+            elif self.half_dry_done:
+                out.append({"key": "dry_proc", "level": -1, "text": "晒成一夜干（半干咸鱼）", "fix": "", "danger": False})
+                if self.rain_wet > 0:
+                    out.append({"key": "rain", "level": 1, "text": "淋过雨，返潮了", "fix": "收进屋里，天晴了再晒", "danger": False})
             else:
                 share = min(self.dry_prog / dry_need(self.kind, self.salted or self.salt_done), 0.99)
                 out.append({"key": "dry_proc", "level": 0, "text": "晒到%d成干" % int(share * 10) if share >= 0.1 else "刚晒上",
@@ -1352,14 +1518,12 @@ class Sim:
             out.append({"key": "smoke", "level": 0, "text": "熏着呢（%d 成）" % max(1, int(share * 10)), "fix": "", "danger": False})
         return out
 
-    # 攒着数的这几样按数连着扣；回锅几回、冻过几回、冻坏、化开、养瘦、淋雨、沾生肉汁照 report 给的档
     TEXTURE_ACC = ("dry", "cut_dry", "soggy", "weep", "mush", "chill_inj", "rancid", "aroma", "egg", "veg_age", "yellow",
                    "bitter", "brown", "bruise", "cool", "chill", "melt", "burn", "stale", "sprout", "green", "absorb")
     TEXTURE_LEVELED = ("reheat", "refreeze", "frozen_bad", "thawed", "live", "rain", "drip", "raw")
 
     def texture(self, rows: list) -> float:
-        """口感还剩几成（0～1）：rows 是 report 的结果。这会儿变好了的那样（正热乎、镇得正凉）不扣，熟到正好不扣，
-        跟写出来的口感对得上：没写毛病就是满的。"""
+        """口感还剩几成（0～1）：rows 是 report 的结果。这会儿变好了的那样（正热乎、镇得正凉、一夜干）不扣，熟到正好不扣。"""
         p, acc = self.p, self.acc
         shown = {r["key"]: r["level"] for r in rows}
         left = 1.0
@@ -1378,7 +1542,6 @@ class Sim:
             h1, h2 = p[key]["h"]
             take(key, _degree(acc.get(key, 0.0), h1, h2))
         if "ripen" in p:
-            # 熟到正好吃不扣，熟过头那两档才扣
             _t1, t2, t3 = p["ripen"]["h"]
             take("ripen", _degree(acc.get("ripen", 0.0), t2, t3))
         for key in self.TEXTURE_LEVELED:
@@ -1414,10 +1577,29 @@ def _sprout_rate(temp: float) -> float:
     return q10(temp, 1.5, 15, 40)
 
 
-def simulate(item: dict, life: float, now: datetime.datetime, weather_of, index: SpaceIndex | None = None,
-             quality: bool = False, lookahead_days: int = 45) -> dict:
+class SimResult(dict):
+    """既支持字典下标 sim['frac']，也支持属性访问 sim.frac。"""
+
+    def __getattr__(self, key: str):
+        try:
+            return self[key]
+        except KeyError as exc:
+            raise AttributeError(key) from exc
+
+
+def simulate(item: dict, life, now=None, weather_of=None, index: SpaceIndex | None = None,
+             quality: bool = False, lookahead_days: int = 45) -> SimResult:
     """一件吃的从有了起推到现在（没了就到没了那一刻），再照最后一步的放法往后推，算到几点「快不行了」、几点坏。
-    返回 {frac, bad_since, hurry_at, bad_at, life, events, quality、texture（口感还剩几成；要的话）, alive}。"""
+    兼容两种调用签名：
+    - simulate(item, life_hours, now_dt, weather_of, ...)
+    - simulate(item, now_dt, weather_of, ...)  （自动按 KINDS[item['kind']] 取基础寿命）
+    返回 SimResult({frac, bad_since, hurry_at, bad_at, life, events, quality, texture, alive})。"""
+    if isinstance(life, datetime.datetime):
+        weather_of = now
+        now = life
+        life = KINDS.get(str((item or {}).get("kind") or ""), KINDS["别的吃的"])[0]
+    if weather_of is None:
+        weather_of = lambda _d: "多云"
     flat = now.replace(tzinfo=None)
     stages = [x for x in item.get("stages") or [] if parse_time(x.get("at")) is not None]
     sim = Sim(item, life, weather_of, index, quality)
@@ -1439,9 +1621,12 @@ def simulate(item: dict, life: float, now: datetime.datetime, weather_of, index:
         sim.apply(stage, moment, first=(i == 0))
     if started:
         sim.run(stop)
-    out = {"frac": sim.frac, "bad_since": sim.bad_since, "hurry_at": None, "bad_at": None, "life": sim.life,
-           "events": list(sim.events), "cover": sim.cover, "spot": sim.spot,
-           "alive": sim.cover == "活养着" and sim.live_hours < LIVE_LIMIT.get(sim.kind, LIVE_DEFAULT)}
+    alive_limit = live_limit_of(sim.kind, sim.spot, sim.place)
+    out = SimResult({
+        "frac": sim.frac, "bad_since": sim.bad_since, "hurry_at": None, "bad_at": None, "life": sim.life,
+        "events": list(sim.events), "cover": sim.cover, "spot": sim.spot,
+        "alive": sim._is_live_kept() and sim.live_hours < alive_limit,
+    })
     if quality and started:
         out["quality"] = sim.report(stop)
         out["texture"] = round(sim.texture(out["quality"]), 3)
@@ -1450,7 +1635,6 @@ def simulate(item: dict, life: float, now: datetime.datetime, weather_of, index:
         out["texture"] = 1.0
     if end is not None or not started or sim.frac >= 1.0:
         return out
-    # 照现在的放法往后推（不攒口感）：到哪个钟点「快不行了」、哪个钟点坏
     hurry = 0.8
     sim.quality = False
     limit = flat + datetime.timedelta(days=lookahead_days)

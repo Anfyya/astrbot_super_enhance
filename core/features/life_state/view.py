@@ -9,8 +9,7 @@ from astrbot.api import logger
 
 from ...common import timeutil
 from . import raw_log as raw_log_mod
-from .living_rules import CHAT_LIFECYCLE
-from .world import (WorldStore, detail_of, doing_text, event_text_at, is_event, parse_time, plan_text, progress_of, public_of, real_stop,
+from .world import (WorldStore, detail_of, doing_text, event_text_at, is_event, is_sleep, parse_time, plan_text, progress_of, public_of, real_stop,
                     result_text, staged_of, visible_to)
 
 WEEKDAYS_CN = timeutil.WEEKDAYS_CN
@@ -61,7 +60,7 @@ def merge_close(items: list, gap_minutes: int = FRAGMENT_MINUTES) -> list:
     for index, item in enumerate(items):
         start = parse_time(item.get("start"))
         end = ends[index]
-        if is_event(item) or real_stop(item) or item.get("_fact_error"):
+        if is_event(item) or real_stop(item):
             row = dict(item)
             row["_eff_end"] = end.strftime("%Y-%m-%d %H:%M") if end else ""
             out.append(row)
@@ -147,6 +146,7 @@ def build_world_text(
     label,
     recent: int = 12,
     elsewhere: list | None = None,
+    scene: str = "",
 ) -> str:
     """拼出【世界线】块；viewer 是当前机器人的平台 id。
 
@@ -229,7 +229,8 @@ def build_world_text(
             tags.append("%s 答应了现在就去" % timeutil.day_hm(item.get("now_at")))
         # 只给要做的事；怎么说起的（why，老打算是末尾带钟点的括号）不给她看，不然一遍遍提醒她当时的事
         lines.append("你说过的打算：%s%s" % (plan_text(item), "（%s）" % "，".join(tags) if tags else ""))
-    for item in world.constraints(viewer, active_only=True):
+    eff_scene = str(scene or world.home_at(now) or "").strip()
+    for item in world.constraints(viewer, active_only=True, scene=eff_scene):
         lines.append("主人定的规矩：%s（%s 起%s）" % (
             item.get("text"),
             str(item.get("since") or "")[5:16],
@@ -248,30 +249,37 @@ def build_world_text(
         if item is not None:
             lines.append("%s：%s（%s）" % (name, text, _when(item)))
 
-    # 主人的动向：他自己说的，加上她们写着和主人一起的段（陪他出门、逛夜市时主人跟着这些段走）
-    masters = world.master_trail(date_text)
-    item, text = _latest_visible(masters, viewer, now)
-    if item is not None:
-        # 一下子的事（「吃完了」「到了」）只写那一刻，不写成「13:04 起」挂着；
-        # 老数据里没地点、没结束的主人条目也照这样算
-        moment = is_event(item) or (
-            str(item.get("who") or "") == "master" and not item.get("end") and not str(item.get("place") or "").strip())
-        line = "主人：%s（%s）" % (
-            _master_text(item, text, label, viewer), str(item.get("start"))[11:16] if moment else _when(item))
-        if not str(item.get("place") or "").strip():
-            # 最近这条没写他在哪：补上他最后一次说到的地方（之后没说离开就还在那儿）
-            placed = [x for x in masters if str(x.get("place") or "").strip()]
-            where, _text = _latest_visible(placed, viewer, now)
-            if where is not None:
-                line += "；最后说在%s（%s）" % (where.get("place"), timeutil.day_hm(where.get("start")))
-        # 那条早就结束了：只是他最后一次说到的，不一定是他现在的样子（他走了没说也不知道）
-        anchor = parse_time(item.get("end")) if item.get("end") else parse_time(item.get("start"))
-        # 他没写结束（end 空着）就是默认人还在那儿，不用提醒；只有他自己说了会结束、又早过了的才提
-        if item.get("end") and anchor is not None and now - anchor > datetime.timedelta(minutes=MASTER_STALE_MINUTES):
-            line += "；这之后他没再说过自己在哪、在干什么"
-        lines.append(line)
+    # 主人的动向：优先看此刻是否处于未结束的睡眠段（含跨夜入睡）；否则读今日动向
+    master_cur = world.current("master", now)
+    if master_cur is not None and is_sleep(master_cur) and not master_cur.get("end"):
+        sleep_desc = event_text_at(master_cur, now, detail=True) or (
+            master_cur.get("place") or "睡觉"
+        )
+        sleep_hm = str(master_cur.get("start") or "")[11:16] or timeutil.day_hm(master_cur.get("start"))
+        lines.append("主人：%s（%s 入睡，还在睡）" % (sleep_desc, sleep_hm))
     else:
-        lines.append("主人：%s 还没说过他自己在哪、在干什么" % date_text[5:])
+        masters = world.master_trail(date_text)
+        item, text = _latest_visible(masters, viewer, now)
+        if item is not None:
+            moment = is_event(item) or (
+                str(item.get("who") or "") == "master" and not item.get("end") and not str(item.get("place") or "").strip())
+            if str(item.get("who") or "") == "master" and is_sleep(item) and not item.get("end"):
+                sleep_hm = str(item.get("start") or "")[11:16] or timeutil.day_hm(item.get("start"))
+                line = "主人：%s（%s 入睡，还在睡）" % (_master_text(item, text, label, viewer), sleep_hm)
+            else:
+                line = "主人：%s（%s）" % (
+                    _master_text(item, text, label, viewer), str(item.get("start"))[11:16] if moment else _when(item))
+            if not str(item.get("place") or "").strip():
+                placed = [x for x in masters if str(x.get("place") or "").strip()]
+                where, _text = _latest_visible(placed, viewer, now)
+                if where is not None:
+                    line += "；最后说在%s（%s）" % (where.get("place"), timeutil.day_hm(where.get("start")))
+            anchor = parse_time(item.get("end")) if item.get("end") else parse_time(item.get("start"))
+            if item.get("end") and anchor is not None and now - anchor > datetime.timedelta(minutes=MASTER_STALE_MINUTES):
+                line += "；这之后他没再说过自己在哪、在干什么"
+            lines.append(line)
+        else:
+            lines.append("主人：%s 还没说过他自己在哪、在干什么" % date_text[5:])
     # 主人在别的机器人那边聊着（只给从几点起、和谁、最近一句几点，不给说了什么）
     for bot, first, last in elsewhere or []:
         lines.append("主人 %s 起在和%s聊天，最近一句是 %s" % (
@@ -303,7 +311,11 @@ def world_text(service, bot: str, now: datetime.datetime) -> str:
         logger.warning("[super_enhance/life] 查主人在别处的聊天失败", exc_info=True)
     try:
         service.things.view(now)
-        head = build_world_text(service.world, bot, now, service.bots.label_for, recent=recent, elsewhere=elsewhere)
+        scene = str(service.cfg.get("world_home") or "").strip()
+        head = build_world_text(
+            service.world, bot, now, service.bots.label_for,
+            recent=recent, elsewhere=elsewhere, scene=scene,
+        )
     except Exception:
         logger.warning("[super_enhance/life] 世界线渲染失败", exc_info=True)
         head = ""
@@ -314,14 +326,6 @@ def world_text(service, bot: str, now: datetime.datetime) -> str:
         blocks.append(companion.safe("render", bot, now, default=""))
         blocks.append(LIVING_NOTE)
     if head:
-        blocks.append(CHAT_LIFECYCLE)
-        shelf = service.things.here(service.things.view(now), now)
-        fuel_rows = [service.things.item_line(item, shelf, service.bots.label_for) for item in shelf.values()
-                     if item.get("cat") == "item" and "柴" in str(item.get("kind") or "")
-                     and not any(stage.get("what") in ("用完了", "丢了", "记错了", "送人了")
-                                 for stage in item.get("stages") or [])]
-        if fuel_rows:
-            blocks.append("此刻的柴料（按批次，历史外观不代表当前干湿）：\n" + "\n".join(fuel_rows[-8:]))
         try:
             blocks.append(weather_now_text(service, now))
         except Exception:
@@ -412,7 +416,7 @@ def mood_now_text(service, bot: str, now: datetime.datetime) -> str:
             continue
         if str(item.get("mood") or "").strip():
             ended = parse_time(item.get("end"))
-            if item.get("_fact_error") or ended is None or ended > flat:
+            if ended is None or ended > flat:
                 continue
             latest = str(item["mood"]).strip()
     if latest:

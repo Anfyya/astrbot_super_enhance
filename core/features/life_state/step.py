@@ -21,7 +21,7 @@ from astrbot.api import logger
 
 from ...common import jsonio, llm, timeutil
 
-from .models import profile_umo_for_bot
+from .models import bot_of_umo, profile_umo_for_bot
 from .recorder import norm_time
 from .facts import fact_batch
 from .companionship import LIVING_NOTE, invitation_text
@@ -36,8 +36,8 @@ from . import supply as supply_mod
 from .homewords import localize
 from .menu import meal_slots, meals_text
 from .variety import default_pools, twists_of, when_map, with_when
-from .world import (WorldStore, clean_text, doing_text, event_text_at, fmt_time, is_event, is_sleep, mood_text, parse_steps, parse_time, progress_of, real_stop,
-                    result_text, steps_text, why_text)
+from .world import (MAX_MSG_PURPOSE, WorldStore, clean_flag, clean_text, doing_text, event_text_at, fmt_time, is_event, is_sleep, mood_text,
+                    parse_steps, parse_time, progress_of, real_stop, result_text, steps_text, why_text)
 
 SYSTEM_PROMPT = llm.SYSTEM_PROMPT
 
@@ -57,9 +57,9 @@ JOIN_ROOM_MINUTES = 30
 # 补写失败后隔多久再试（秒）
 RETRY_SECONDS = 180
 # 一次最多往后写这么多小时（从给定时刻和现在里晚的那个算起；睡觉那段不受限）
-HORIZON_HOURS = 2
+HORIZON_HOURS = 4
 # 一次最多写几段
-MAX_SEGMENTS = 6
+MAX_SEGMENTS = 14
 # 往后多远之内的空档要补（撤掉的段留下的）
 FILL_LOOK_HOURS = 24
 # 补空档时最后剩下不到这么多分钟，就把最后一段拉长接上，不再为它调一次模型
@@ -104,8 +104,7 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
    - 没事就写闲着：她手上没有打算、约定、规矩要做的事，也没什么想做的，就写一段闲着，state 填「闲着」：doing 照上面「闲着的样子」里她的写，steps 留空。闲着一段最长一小时，歇够了就接着写下一件事（也可以再歇一段）。
    - 拿起「手边的消遣」来做是做事：state 填「做事」，照常写 steps，result 写做到哪了（看到哪、织了多少）；做到一半去忙别的，回头可以接着做。
    - 睡觉 state 填「睡觉」（见第 5 条）。其余的段都填「做事」。
-4. 每段写 importance（1–5）：这件事做完值不值得跟主人说一声。1 是天天都做的小事（洗碗、走路、收拾东西、把东西搁好）；2 是平常的事（吃饭、洗衣裳、看书）；3 是有点意思的事（出门逛街、去泡足汤、买点心）；4 是做成了一件像样的事、或碰上了新鲜事（修好了东西、捡到稀奇的东西、有人上门托事）；5 是难得的大事（练成一招、碰上意外）。闲着、睡觉写 1。
-   每段还要写 at_home 和 meal：at_home 是这段她人在不在宿舍（屋里、院子、廊下、门口、后头小屋都算 true；出了宿舍去别处、走在路上都算 false）；meal 是这段是不是正在吃饭（吃早饭午饭晚饭、夜宵算 true；做饭、摆碗筷、洗碗都不算）。
+4. 每段写 at_home 和 meal：at_home 是这段她人在不在宿舍（屋里、院子、廊下、门口、后头小屋都算 true；出了宿舍去别处、走在路上都算 false）；meal 是这段是不是正在吃饭（吃早饭午饭晚饭、夜宵算 true；做饭、摆碗筷、洗碗都不算）。
 5. 睡觉也是一段：到了她今天定的入睡时刻，就写一段睡觉，state 填「睡觉」，从入睡时刻一直写到第二天定的起床时刻；睡前那段要在入睡时刻结束。过了入睡时刻还醒着的（比如答应了陪主人熬夜），那件事做完就接着写睡觉，睡到起床时刻。睡觉这段的 place 三选一：「船屋·船舱地铺」「船屋·船舱吊床」「船屋·船舱主人的床上」，doing 跟着写（铺盖/吊床/床），别写别的睡法；吊床只睡得下一个人，主人的床睡得下两个人（主人加一个），地铺能睡两个人。
 6. 下面「还没做的约定」里有钟点的：到那个钟点她要已经在约定的地方、和约定的人在一起。要换地方的，在那之前写一段赶过去，留足路上的工夫；约定那件事从约定的钟点开始写。
 7. **不许生成主人的条目，也不许替主人编他做了什么、说了什么。** 主人在哪只看「主人最近的动向」：他最后说在哪、之后没说离开，就当他还在那儿，她们可以待在他身边、在他旁边做自己的事；他说了出门、去上课、睡了这类，就照那个写，别写他在场。只有一种例外：「各自的打算」里标着「和主人一起」的，是主人提的或答应了的，真做到和主人一起的那一步才写成她和主人一起做，with 里写上 "master"；她自己先做的准备（比如先把要送他的东西做完）是她一个人做，不写 master；同一趟里接着往下的段（比如逛夜市逛到一半换个摊子）也写上 "master"，直到这件事做完、两人分开。在家吃饭默认是三个人一起吃：饭点那段主人在船屋（「主人最近的动向」里没说他出门、去上课、睡了），就写成她们和主人一起吃，with 里写上 "master"；主人不在家，就她们俩吃，给主人留一份收好。除此之外 with 里不写 master。
@@ -113,8 +112,18 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
    「主人说过他要做的事」分两种：只是他自己去做的（上课、出门办事），那段时间他人不在，别把她们写成和他在一起；写着要她们做、或者和她们一起做的（比如晚上和亚托莉一起吃帝王蟹），就是交给她们的事，照着排进去，到时候写成和主人一起，with 写上 "master"——这是照主人说过的写，不算替他编。
 8. 约束优先级最高：写着不许出门的，这段时间就得在屋里。照主人的意思守，别钻字眼上的空子：「不许捞她上来」就别改成给她送饭、递东西，「不许出门」就别叫人把东西送进来。主人罚她的事（扔下水、关在外头、罚站这类），别人也别背着主人替她松；想替她求情的，填 ask_master 问主人一句，主人点头才做。
 9. public 是住在一起的人自然会知道的粗粒度信息（人在哪、大概在干哪类事），可以为空。doing 是细节。
-10. 两人在一起的时段，两边的 start/end 和共同的事要一致，with 互相写上对方的 key；对方手上的事还没做完的，别写成和她在一起。对方不在「这次要你写的」里时，她那段时间做什么以「她们此刻手上的事」和「已经排好、这次不改的」为准，你改不了：只有她那边写的也是这件事、也在这个地方，才能写成和她一起；不然就别把她写进来。
+   两人在一起的时段，两边的 start/end 和共同的事要一致，with 互相写上对方的 key；对方手上的事还没做完的，别写成和她在一起。对方不在「这次要你写的」里时，她那段时间做什么以「她们此刻手上的事」和「已经排好、这次不改的」为准，你改不了：只有她那边写的也是这件事、也在这个地方，才能写成和她一起；不然就别把她写进来。
    丛雨一般人看不见：她一个人在外面时，店家、摊主、路人都看不见她，不会跟她说话、招呼她、夸她、把东西递给她；买东西照常把钱搁在柜台上、自己拿。
+10. **每段自主决定要不要给主人发消息**：每段写 `send_msg`（true/false）、`msg_at`（`"start"` 段刚开始时发，或 `"end"` 段刚做完时发；不发填 `""`）、`msg_purpose`（一句话写清楚这会儿想跟主人说什么事，不发填 `""`）。
+   - **日常固定会说一声的 5 个节点**（只要当时主人没和她待在一块即 `with` 里没写 `"master"`，且主人没在睡觉）：
+     1) **早安**：睡醒起床后的第一段（`msg_at: "start"`，或跨夜睡觉那段的 `"end"`，二选一别重复），跟主人道早安；
+     2) **晚安**：晚上入睡那一段（`state: "睡觉"` **必须填 `msg_at: "start"`**，入睡前说晚安，严禁填 `"end"`）；
+     3) **叫主人吃饭**：早饭、午饭、晚饭或夜宵做好开饭时（主人醒着且没一块做饭），在做饭段的 `"end"` **或** 吃饭段的 `"start"` 挑一处叫主人吃饭（二选一，严禁两段连着标）；
+     4) **出门**：离开宿舍往外走那一段（`at_home` 从 true 变成 false，去码头、镇上、集市、海边、打捞船等，`msg_at: "start"`；只在院子廊下走动或门口几步路丢个东西不算正式出门）；
+     5) **回来**：从外头回到宿舍时（回程段 `"end"` 或到家第一段 `"start"` 二选一），跟主人说一声回来了（买了或捡了什么顺嘴提一句）。
+   - **其余时候由她按性子和眼下境况随心决定**：捞到或捡到好玩的东西、做菜成了或翻车了、修好了某样物件、看到好看的海景天气、突然惦记主人想撒个娇或问句闲话，都可以标 `send_msg: true`；安安静静看书、洗碗、擦桌子、打盹这些平淡日常填 `false`。不设死板条数上限，但先看一眼上面「今天已发过的主动消息」——同一件事别反复说，如果前面连发了好几条主人一直没回，后面除非固定节点就少发一点。
+   - **两人同行防撞车**：两人一块做饭开饭、一块出门、一块回来（`with` 里有对方）时，这类例行节点**只由其中一个人**标 `send_msg: true`（谁掌勺、谁领头办事就谁去说，拿不准就轮流），另一个人同段填 `false`，别同一分钟两个人排队报同一件事；早安、晚安，或者两个人各自碰到不同趣事想分开聊的，各发各的不受限。
+   - **主人睡觉时不吵醒**：只要「主人最近的动向」标着主人在睡觉，例行节点和日常闲聊一律填 `send_msg: false`（不叫醒他吃饭、不报进出）；若两人都要出门不在家，把早饭盖好温着，再在 `items` 里写一张留给主人的字条压在堂屋矮桌上。
 11. 段里是在练「在练的事」里的某件，training 填它的编号（例如 "#2"）；不是在练就留空，不要往里写别的。
 12. 段里做的是「各自的打算」里她的某一条，intent 填那条的编号（例如 "i2"）；不是就留空。标着「现在就去」的，是她刚答应马上去做的：这次就从给你的时刻起先排它，别排在别的事后面；她人还不在做这件事的地方、世界线上也还没在往那边去的，先写一段走过去；可以分成几段（比如先去买、再回来做），每段 intent 都填这个编号。
    标着「挂了几天了」的打算，一直搁着没动：这次给她排一件事把它往前推或了结，照她的性子和眼下的实际情况挑，别每回都是同一种办法。比如：要等主人定日子的，去问主人一句什么时候方便；自己能做的，自己去做了；换个人一起、换个做法；想了想觉得算了，放下了。去问主人只写她去问了，主人怎么答不许替他编。再在 intent_moves 里用编号写这条后来怎样：做完了、放下了的写 "done": true，排它的那几段 intent 填这个编号；还没了结、往前推了一步的写 "done": false，text 写推进以后的打算（照原来的写法：做什么、跟谁、怎么说起的，再加一句这次推进了什么，例如「11-01 问过主人什么时候去，等他回话」），有了新的哪天、几点就写 date、window，排它的那几段 intent 留空。没标的打算不写。
@@ -132,12 +141,13 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
    - 端给主人的（送到主人跟前、递到他手上的那一份）：那一步的 place 写 {{"area": "主人", "at": "跟前", "detail": ""}}（at 一律写「跟前」，递到手上、搁在手边也写跟前；新做好直接端上去的，做好那步就这么写；已有的写一步「挪地方」）。程序见到放在主人跟前的，一个小时后当主人吃完了，所以只端了一部分上去、剩下的还在原处的，端上去的那份别写在原来那件上；摆在桌上大家一起吃的、留给主人温着还没端过去的，area 照常写屋子。
    - 做饭用料先用家里有的，先用快不行了的；新鲜的料（豆腐、菜、鱼肉、蛋、水果）家里没有，就在做饭之前排一段去买回来。米面油盐、调料干货、腌菜这些按量记的（清单里写着「还剩多少克 / 毫升」），用到的也要写：写进那盘菜的 from，再各写一步「用掉一部分」，used 写这次用了多少（「250 克」「3 克」「15 毫升」，照这道菜平常的用量）；标着「快用完了」的，排一段去买（买回来的写 amount，例如「5 斤」「500 毫升」）。家里一直备着、清单里还没记的常备调料（糖、醋这类），头一回用到就写一件 new，what 写「原来就有」，amount 写估计还有多少；别的清单里没有的料要先买。两人一起做的饭、一起吃的饭，things 写在其中一个人那段里。
    - 清单里写了口感的（叶子蔫了、饭发硬了、凉透了、串了味、熟过头了……），排做饭、吃东西时顺手照着处理：凉了的热一热，标着中间没熟透的先回锅煎透、煮透（写一步「热了一下」）再吃，发硬的饭炒成炒饭，蔫了的菜泡会儿冷水，熟过头的香蕉做成饼，串了味的拿去做红烧、麻辣这种重口的菜；标着有毒的（土豆发芽发绿）扔掉。放东西也照常理：剩菜盖好收着；气味冲的（葱蒜、卤味、鱼）跟豆腐、米饭、点心分开放或者都盖好；生肉包好，跟熟食分开放；炸的晾凉了再盖。
+   - 船屋日常做饭、烧水、煎蛋用的是灶台小炭炉配家里常备的闷炭，绝不会因为外头捡的树枝潮了就连饭或煎蛋都做不了（船舱柴炉烧木柴主要用于冷天取暖、顺手烘烤衣物鱼干）。给还在睡或不在家的主人留饭时，必须盖好保温（熬粥、饭团盖在锅里温着，汤面只留汤头等主人醒了现下面条，绝不把煮好的汤面敞口摆在矮桌上泡几个钟头）。
    - kind 从这几类里挑：{kinds}；keep（怎么放）从这几样里挑：{keeps}；spot（放在哪，管冷热）从这几样里挑：{spots}。
 19. **被打断的事后来怎么样了**：上面「被打断、还没交代后来怎么样的事」里每一件，在 stopped_results 里用编号写一句后来怎么样了：撂下不做了、交给谁接着做完了、等手上的事忙完回头接着做完了、或者赶紧几下做完了，挑合情理的写。只写这个人自己怎么处理这件事，不替别人定事实：别人那件做没做完、做出了什么，以世界线上别人那段写的为准（标着「做到……先放下了」的就是没做完），拿不准就写撂下了或者等回头再说。要和你这次排的段对得上：写了回头接着做，就把接着做的那段排上；写了交给对方，对方那段就是接着做这件事。没列出来的不写。
 20. **家里的东西**（吃的以外）：上面「家里的东西」是此刻家里有的（编号、样子、在哪、在谁手上）。段里做了、用了、挪了、交给别人了、接着做了一截的东西，写进这段的 items（没动到就是空数组）：
-   只是拿来读、翻看、摊开看一眼，之后原样放回去，地方、样子、数量都没变的，不算动到它，不写 items；别为了让校验通过硬编一条物品变化。
-   - 已有的写 id、what（挪地方 / 交给 / 用了 / 清点 / 做了一截 / 做好了 / 变了样 / 送人了 / 丢了 / 坏了扔了 / 用完了）、place、holder（交到谁手上）、state（这段做完它什么样，比如「织到两尺长」）；柴炭、火柴、绳料等消耗品及燃柴按生活规程补写 amount（清点数量）/ used（本次用量）/ left（剩余数量）/ purpose（燃用填 "fuel"，作加工原料填 "material"）/ into（加工分拆进了哪个新代号）/ weather（晾放遮雨通风或检查后的柴木条件）。接着做没做完的那件（比如接着织那条围巾），就是清单里那一件，写「做了一截」或「做好了」，不要另建一件。清单里标着「已做好」的已经做完了，不要再排接着做它，也别给它写「做了一截」「做好了」；想再做一样的，就另起一件新的。
-   - 新做出来的、买回来的、捡到的写 new（临时代号 x1、x2……，这一次里每件一个，两个人、几段之间也不重复：丛雨那段用了 x1，亚托莉那段的新东西就从 x2 起）、name（叫得出区别的名字，例如「兔子窗花」）、kind（它是什么，一个词：窗花、围巾、燃柴……）、look（样子）、owner（归谁）、origin（哪来的，如「坡上薪柴地」「船匠边料」「杂货铺」）、from（用哪几件原料做的，没有留空）、what（开始做 / 做好了 / 买回来 / 收到 / 捡到）、amount（消耗品和柴火必填数量与单位，如「1捆」「6份」）、place、state、weather（柴木或晾晒物品填条件，例如坡上捡的已干枯枝填 {{"fuel_source": "land_deadwood", "saltwater": false, "treated": false, "seasoning": "seasoned", "fuel_size": "kindling", "fuel_state": "ready"}}）。清单里还没有、可前面早就有了的（比如前几天起了头的围巾），也写 new，what 写「原来就有」，state 写它现在的样子。
+   只是拿来读、翻看、摊开看一眼，之后原样放回去，地方、样子、数量都没变的，不算动到它，不写 items；别为了让校验通过硬编一条物品变化。船屋里隔音有限，主人睡觉时严禁在船舱里或头顶甲板上敲铁、凿木头、叮当拆修铁器。
+   - 已有的写 id、what（挪地方 / 交给 / 用了 / 清点 / 做了一截 / 做好了 / 变了样 / 送人了 / 丢了 / 坏了扔了 / 用完了）、place、holder（交到谁手上）、state（这段做完它什么样，比如「织到两尺长」）；消耗品可顺带写 amount（清点数量）/ used（本次用量）/ left（剩余数量）。接着做没做完的那件（比如接着织那条围巾），就是清单里那一件，写「做了一截」或「做好了」，不要另建一件。清单里标着「已做好」的已经做完了，不要再排接着做它，也别给它写「做了一截」「做好了」；想再做一样的，就另起一件新的。
+   - 新做出来的、买回来的、捡到的写 new（临时代号 x1、x2……，这一次里每件一个，两个人、几段之间也不重复：丛雨那段用了 x1，亚托莉那段的新东西就从 x2 起）、name（叫得出区别的名字，例如「兔子窗花」）、kind（它是什么，一个词：窗花、围巾、鱼漂……）、look（样子）、owner（归谁）、origin（哪来的，如「杂货铺」「废铁站」「海滩漂流物」）、from（用哪几件原料做的，没有留空）、what（开始做 / 做好了 / 买回来 / 收到 / 捡到）、amount（有明确数量的可填，如「1捆」「3张」）、place、state。清单里还没有、可前面早就有了的（比如前几天起了头的围巾），也写 new，what 写「原来就有」，state 写它现在的样子。
    - 上面写了字、画了东西的（给主人留的纸条、信、便笺、清单、贺卡、画）：look 里把上面写的原话一字不差地写出来，用「」括起来；画的写清楚画了什么。例如 look 写「黄纸条，铅笔写的：『主人，粥在灶上温着，亚托莉去码头了，中午前回来』」，别只写「一张写给主人的纸条」。这段的 steps 里写到她写纸条时也用这句原话。后来谁拿起来看、念给主人听，都照这句说，不能另编。
    - 封着送来的（寄来的信、没拆的包裹、捆好的箱子）：look 写外面看得到的（信封、邮戳、收信人、包裹多大多沉），里面是什么写进 inside——信写原话，用「」括起来；包裹、箱子写装了哪些东西。state 写「封着没拆」。这段的 doing、steps、result 里写到它时，照外面的样子写。拆开留到聊天里，那时候她们照 inside 说。
    - place 和第 18 条一样拆开写，例如 {{"area": "卧房", "at": "针线笸箩", "detail": ""}}、{{"area": "堂屋", "at": "书架", "detail": "第二格"}}。
@@ -161,8 +171,8 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
   "stopped_results": {{}},
   "intent_moves": {{"i3": {{"done": false, "text": "推进以后的打算", "date": "", "window": ""}}}},
   "segments": {{
-    "napcat": [{{"start": "{example_start}", "end": "{example_end}", "place": "", "doing": "一句话写这件事", "steps": [{{"text": "这一阵子她一直在干什么", "minutes": 5}}, {{"text": "第二步", "minutes": 15}}, {{"text": "收尾：用过的东西收好、归位", "minutes": 5}}], "result": "这件事的结果", "state": "做事", "importance": 2, "at_home": true, "meal": false, "public": "", "with": [], "training": "", "intent": "", "from": "照上面哪一样写的", "mood": "这段她什么心情、因为什么", "things": [], "items": []}},
-               {{"start": "{example_end}", "end": "{example_end2}", "place": "", "doing": "下一件事", "steps": [{{"text": "第一步", "minutes": 10}}, {{"text": "收尾", "minutes": 5}}], "result": "这件事的结果", "state": "做事", "importance": 2, "at_home": true, "meal": false, "public": "", "with": [], "training": "", "intent": "", "from": "照上面哪一样写的", "mood": "这段她什么心情、因为什么", "things": [], "items": []}}],
+    "napcat": [{{"start": "{example_start}", "end": "{example_end}", "place": "", "doing": "一句话写这件事", "steps": [{{"text": "这一阵子她一直在干什么", "minutes": 5}}, {{"text": "第二步", "minutes": 15}}, {{"text": "收尾：用过的东西收好、归位", "minutes": 5}}], "result": "这件事的结果", "state": "做事", "send_msg": false, "msg_at": "", "msg_purpose": "", "at_home": true, "meal": false, "public": "", "with": [], "training": "", "intent": "", "from": "照上面哪一样写的", "mood": "这段她什么心情、因为什么", "things": [], "items": []}},
+               {{"start": "{example_end}", "end": "{example_end2}", "place": "", "doing": "下一件事", "steps": [{{"text": "第一步", "minutes": 10}}, {{"text": "收尾", "minutes": 5}}], "result": "这件事的结果", "state": "做事", "send_msg": true, "msg_at": "start", "msg_purpose": "要出门去码头看一眼，跟主人说一声", "at_home": false, "meal": false, "public": "", "with": [], "training": "", "intent": "", "from": "照上面哪一样写的", "mood": "这段她什么心情、因为什么", "things": [], "items": []}}],
     "napcat2": []
   }}
 }}
@@ -232,66 +242,6 @@ def stale_days(item: dict, today: datetime.date) -> int:
     return days if days >= STALE_INTENT_DAYS else 0
 
 
-# ---------- 补写写完后核一遍：步骤里写到的家里的吃的、东西，things / items 里有没有标 ----------
-
-# 一句里有这些字眼的，不是在动它（写日志、聊天、回想、打算、看看够不够），这一句不核
-MENTION_SKIP = ("写", "记", "说", "聊", "讲", "提起", "提到", "想", "梦", "念叨", "打算", "商量", "问", "盘算", "惦记",
-                "回味", "夸", "看看", "瞧瞧", "看一遍", "够不够", "剩多少", "还剩几")
-# 只是拿来读、翻、摊开看的纸类东西，没改地方、没改样子、没消耗，不算动了它。
-# 真拿它去撕、裁、烧、包、擦时，下面这些词不算数，照常核。
-READ_MEDIA = ("报纸", "白纸", "照片", "书", "杂志", "本子", "海图", "画册", "笔记", "作业本")
-READ_ONLY_WORDS = ("翻", "读", "阅", "浏览", "看", "瞧", "抽出", "拿", "取", "抱", "摞", "摊开")
-READ_MUTATION_WORDS = ("撕", "剪", "裁", "烧", "点火", "引火", "包", "擦", "垫", "糊", "塞", "铺", "贴")
-# 菜名前头的做法：「清炒丝瓜」写成「丝瓜」也认
-COOK_HEADS = ("清炒", "红烧", "清蒸", "凉拌", "爆炒", "干煸", "水煮", "糖醋", "油焖", "小炒",
-              "蒸", "炒", "煮", "炖", "煎", "炸", "烤", "卤", "拌", "焖")
-# 太泛的叫法，步骤里写到不算点了哪一件
-GENERIC_NAMES = {"点心", "零嘴", "零食", "饭菜", "剩菜", "剩饭", "早饭", "午饭", "晚饭", "夜宵", "东西", "纸条", "本子",
-                 "盒子", "袋子", "篮子", "书本"}
-# 「蒸好的饭」「剩下的饭」说的是家里那锅米饭（「做好的饭菜」不算）
-RICE_WORDS = re.compile(r"(蒸|煮|焖|剩|热)(好|下)?的饭(?![菜桌点后前盒碗勺])")
-CLAUSE_SPLIT = re.compile(r"[，,。；;！!？?\n]")
-
-
-def name_keys(name, food: bool) -> list:
-    """一件的名字在步骤文字里怎么认：全名；「X的Y」也认 Y；菜名去掉前头的做法也认（清炒丝瓜 → 丝瓜）。
-    一个字的（盐、葱、姜）和太泛的（点心、纸条）不认，免得误伤。"""
-    full = re.sub(r"\s+", "", str(name or ""))
-    out = [full]
-    if "的" in full:
-        out.append(full.rsplit("的", 1)[1])
-    if food:
-        head = next((h for h in COOK_HEADS if full.startswith(h)), "")
-        if head:
-            out.append(full[len(head):])
-    return [x for x in dict.fromkeys(out) if len(x) >= 2 and x not in GENERIC_NAMES]
-
-
-def mentioned(text: str, known: dict) -> set:
-    """文字里写到了 known（认的字 → 那一组）里的哪几个字。一句一句看，有 MENTION_SKIP 字眼的那句跳过；
-    长的先认，短的落在长的里面不算（「鸡蛋糕」里的「鸡蛋」、「麻婆豆腐」里的「豆腐」）。"""
-    keys = sorted(known, key=len, reverse=True)
-    out = set()
-    for clause in CLAUSE_SPLIT.split(str(text or "")):
-        if not clause or any(w in clause for w in MENTION_SKIP):
-            continue
-        if (any(w in clause for w in READ_MEDIA) and any(w in clause for w in READ_ONLY_WORDS)
-                and not any(w in clause for w in READ_MUTATION_WORDS)):
-            continue
-        taken = []
-        for key in keys:
-            at = clause.find(key)
-            while at >= 0:
-                end = at + len(key)
-                if not any(at < b and a < end for a, b in taken):
-                    taken.append((at, end))
-                    out.add(key)
-                at = clause.find(key, at + 1)
-        if "米饭" in known and RICE_WORDS.search(clause):
-            out.add("米饭")
-    return out
-
-
 STATE_WORDS = {"做事": "do", "do": "do", "闲着": "idle", "idle": "idle", "睡觉": "sleep", "sleep": "sleep"}
 
 
@@ -303,6 +253,175 @@ def state_of(raw: dict) -> str:
     if raw.get("idle") is True or str(raw.get("idle")).strip().lower() == "true":
         return "idle"
     return "sleep" if is_sleep({"doing": raw.get("doing")}) else "do"
+
+
+def _trigger_time_of(entry: dict) -> datetime.datetime | None:
+    if not isinstance(entry, dict) or not entry.get("send_msg"):
+        return None
+    if str(entry.get("msg_at") or "") == "start":
+        return parse_time(entry.get("start"))
+    return parse_time(entry.get("end")) or parse_time(entry.get("start"))
+
+
+def _normalize_proactive_fields(raw: dict, prev_entry: dict | None = None) -> dict:
+    """规整单段的 send_msg / msg_at / msg_purpose，含睡觉段晚安防反标护栏。"""
+    if not isinstance(raw, dict):
+        return {"send_msg": False, "msg_at": "", "msg_purpose": ""}
+    send_msg = bool(clean_flag(raw.get("send_msg")))
+    if not send_msg:
+        raw["send_msg"] = False
+        raw["msg_at"] = ""
+        raw["msg_purpose"] = ""
+        return raw
+    purpose = clean_text(raw.get("msg_purpose"), MAX_MSG_PURPOSE)
+    msg_at = str(raw.get("msg_at") or "").strip().lower()
+    sleepy = bool(raw.get("sleep")) or is_sleep(raw) or state_of(raw) == "sleep"
+    if sleepy:
+        if any(w in purpose for w in ("早安", "早上好", "醒了", "起床")):
+            msg_at = "end"
+        else:
+            # 晚安或入睡段一律强制锚定在入睡起点 start，杜绝早起发晚安
+            msg_at = "start"
+    elif msg_at not in ("start", "end"):
+        prev_home = True if prev_entry is None else (clean_flag(prev_entry.get("at_home")) is not False)
+        cur_home = clean_flag(raw.get("at_home"))
+        if cur_home is False and prev_home:
+            msg_at = "start"
+        elif bool(clean_flag(raw.get("meal"))) and any(w in purpose for w in ("吃饭", "开饭", "做好了", "端上")):
+            msg_at = "start"
+        elif any(w in purpose for w in ("早安", "早上好")):
+            msg_at = "start"
+        else:
+            msg_at = "end"
+    if not purpose:
+        purpose = clean_text(raw.get("doing") or raw.get("result"), MAX_MSG_PURPOSE)
+    if not purpose:
+        raw["send_msg"] = False
+        raw["msg_at"] = ""
+        raw["msg_purpose"] = ""
+        return raw
+    raw["send_msg"] = True
+    raw["msg_at"] = msg_at
+    raw["msg_purpose"] = purpose
+    return raw
+
+
+def _sanitize_proactive_nodes(entries: list) -> list:
+    """同一角色相邻主动消息触发点间隔 <= 10 分钟时合并，避免比如做饭段 end 与吃饭段 start 双标连发。"""
+    prev_msg = None
+    prev_t = None
+    for item in entries or []:
+        if not isinstance(item, dict) or not item.get("send_msg"):
+            continue
+        cur_t = _trigger_time_of(item)
+        if prev_msg is not None and prev_t is not None and cur_t is not None:
+            if abs((cur_t - prev_t).total_seconds()) <= 600:
+                p1 = str(prev_msg.get("msg_purpose") or "").strip()
+                p2 = str(item.get("msg_purpose") or "").strip()
+                if p2 and _squash(p2) not in _squash(p1):
+                    if _squash(p1) in _squash(p2):
+                        prev_msg["msg_purpose"] = clean_text(p2, MAX_MSG_PURPOSE)
+                    else:
+                        prev_msg["msg_purpose"] = clean_text(f"{p1}；{p2}", MAX_MSG_PURPOSE)
+                item["send_msg"] = False
+                item["msg_at"] = ""
+                item["msg_purpose"] = ""
+                continue
+        prev_msg = item
+        prev_t = cur_t
+    return entries
+
+
+def _is_greeting_purpose(purpose: str) -> bool:
+    text = str(purpose or "")
+    return any(w in text for w in ("早安", "早上好", "晚安", "睡了", "先睡了", "歇下了"))
+
+
+def _is_routine_joint_node(entry: dict) -> bool:
+    purpose = str(entry.get("msg_purpose") or "")
+    if bool(entry.get("meal")) or entry.get("at_home") is False:
+        return True
+    return any(
+        w in purpose
+        for w in ("吃饭", "开饭", "早饭", "午饭", "晚饭", "夜宵", "出门", "去码头", "去镇上", "去集市", "回来", "回船屋", "回宿舍", "到家")
+    )
+
+
+def _dedup_joint_proactive(written_by_bot: dict, now: datetime.datetime | None = None, world: WorldStore | None = None) -> None:
+    """双人同行例行节点（叫吃饭、同进同出）撞车去重：保留一人主报，早晚安或不同话题保留双发。"""
+    flat = (now or datetime.datetime.now()).replace(tzinfo=None)
+    pool: dict[str, list[dict]] = {}
+    seen_ids: set[tuple[str, str]] = set()
+    for bot, rows in (written_by_bot or {}).items():
+        bucket = pool.setdefault(str(bot), [])
+        for row in rows or []:
+            if isinstance(row, dict) and row.get("send_msg"):
+                bucket.append(row)
+                if row.get("id"):
+                    seen_ids.add((str(row.get("start") or "")[:10], str(row.get("id"))))
+    if world is not None:
+        for back in (0, -1):
+            day = (flat.date() - datetime.timedelta(days=back)).isoformat()
+            for item in world.entries(day):
+                who = str(item.get("who") or "")
+                if not who or who == "master" or not item.get("send_msg") or real_stop(item):
+                    continue
+                key = (day, str(item.get("id") or ""))
+                if key in seen_ids:
+                    continue
+                trig = _trigger_time_of(item)
+                if trig is not None and trig >= flat - datetime.timedelta(minutes=5):
+                    pool.setdefault(who, []).append(item)
+                    seen_ids.add(key)
+    bots = sorted(pool.keys())
+    for i, bot_a in enumerate(bots):
+        for bot_b in bots[i + 1:]:
+            for a in pool.get(bot_a, []):
+                if not a.get("send_msg"):
+                    continue
+                ta = _trigger_time_of(a)
+                if ta is None:
+                    continue
+                for b in pool.get(bot_b, []):
+                    if not b.get("send_msg"):
+                        continue
+                    tb = _trigger_time_of(b)
+                    if tb is None or abs((ta - tb).total_seconds()) > 480:
+                        continue
+                    pa = str(a.get("msg_purpose") or "")
+                    pb = str(b.get("msg_purpose") or "")
+                    if _is_greeting_purpose(pa) or _is_greeting_purpose(pb):
+                        continue
+                    together = (
+                        bot_b in (a.get("with") or [])
+                        or bot_a in (b.get("with") or [])
+                        or (bool(a.get("place")) and a.get("place") == b.get("place") and bool(a.get("meal")) and bool(b.get("meal")))
+                    )
+                    same_topic = bool(_squash(pa)) and _squash(pa) == _squash(pb)
+                    if not together and not same_topic:
+                        continue
+                    if not same_topic and not (_is_routine_joint_node(a) and _is_routine_joint_node(b)):
+                        continue
+                    cook_words = ("做饭", "煮", "煎", "熬", "炒", "掌勺", "端")
+                    a_lead = any(w in str(a.get("doing") or "") for w in cook_words)
+                    b_lead = any(w in str(b.get("doing") or "") for w in cook_words)
+                    if a_lead and not b_lead:
+                        loser = b
+                    elif b_lead and not a_lead:
+                        loser = a
+                    else:
+                        loser = b if ((ta.date().toordinal() + ta.hour) % 2 == 0) else a
+                    loser["send_msg"] = False
+                    loser["msg_at"] = ""
+                    loser["msg_purpose"] = ""
+                    if world is not None and loser.get("id") and loser.get("start"):
+                        world.update(
+                            str(loser.get("start"))[:10],
+                            str(loser.get("id")),
+                            send_msg=False,
+                            msg_at="",
+                            msg_purpose="",
+                        )
 
 
 WEATHER_RULE = ('天气是程序按钟点算好的，补写、记录员、聊天时的她、家里东西的样子用的都是这一份：排出门、晾晒、收东西、在外头干活，照着几点下雨、几点起风写，不要跟它对不上（这时候在下大雨，就别写在甲板上晒太阳）。「家里的吃的」「家里的东西」里写着「按天气算，此刻：……」的（淋湿了、生锈了、受潮了、被风吹走了），是程序照天气算出来的现在的样子；她们动手处理了（晾干、擦干、除锈、洗干净、收进来、下水捞回来），照常给那件写一步，state 写成处理后的样子（例如「晾干了」「锈擦掉了」），程序从那一步起重新算；吹进海里、捞不回来的就别写她还在用。')
@@ -559,7 +678,7 @@ class LifeStep:
 
     def _thing_steps(self, raws, keys: dict, shelf, bot: str = "") -> list:
         """补写给一段标的吃的：临时代号换成程序发的编号（这一次里同一个代号、名字对得上的是同一件，名字对不上另发号）；
-        用了、吃了的得是家里有的（此刻现算的存货）或这一次里新做 / 新买的，对不上的那步丢掉。"""
+        用了、吃了的得是家里有的（此刻现算的存货）或这一次里新做 / 新买的，对不上的单步跳过，绝不整批回滚。"""
         store = getattr(self, "things", None)
         if store is None or shelf is None or not isinstance(raws, list):
             return []
@@ -572,6 +691,10 @@ class LifeStep:
             key = str(raw.get("new") or "").strip()
             name = clean_text(raw.get("name"), 30)
             if key and name and norm_step(raw.get("what")) in START_STEPS:
+                if norm_step(raw.get("what")) == "原来就有":
+                    kind = norm_kind(raw.get("kind"))
+                    if kind not in MEASURED_KINDS or had_before(shelf.values(), name) is not None:
+                        continue
                 self._claim(keys, key, name, bot, store.reserve_id)
         for raw in raws:
             if not isinstance(raw, dict):
@@ -581,26 +704,28 @@ class LifeStep:
             if key:
                 name = clean_text(raw.get("name"), 30)
                 if what not in START_STEPS or not name:
-                    raise FactConflict("新食物需要有效名称和取得方式")
+                    logger.debug("[super_enhance/step] 跳过无效新食物步骤：%s", raw)
+                    continue
                 kind = norm_kind(raw.get("kind"))
                 if what == "原来就有" and (kind not in MEASURED_KINDS or had_before(shelf.values(), name) is not None):
-                    raise FactConflict("%s 不能用原来就有补库存" % name)
+                    logger.debug("[super_enhance/step] 跳过重复原来就有食物：%s", name)
+                    continue
                 step = {"new": self._claim(keys, key, name, bot, store.reserve_id), "name": name, "kind": kind,
                         "origin": clean_text(raw.get("origin"), 60),
                         "from": [x for x in dict.fromkeys(resolve(t) for t in raw.get("from") or []) if x]}
             else:
                 tid = resolve(raw.get("id"))
                 if not tid or what not in MID_STEPS + END_STEPS:
-                    raise FactConflict("食物 %s 不存在或动作无效" % raw.get("id"))
+                    logger.debug("[super_enhance/step] 跳过无效已有食物步骤：%s", raw)
+                    continue
                 step = {"id": tid}
                 into = resolve(raw.get("into"))
                 if into and into != tid:
                     step["into"] = into
-            place = checked_place(raw.get("place"), bool(key), raw.get("name") or step.get("id"))
-            if any(not resolve(token) for token in raw.get("from") or []):
-                raise FactConflict("%s 有无法找到的原料编号" % (raw.get("name") or raw.get("id")))
-            if raw.get("into") and not resolve(raw["into"]):
-                raise FactConflict("做进的成品 %s 没有对应记录" % raw["into"])
+            try:
+                place = checked_place(raw.get("place"), bool(key), raw.get("name") or step.get("id"))
+            except Exception:
+                place = ""
             keep, spot = split_keep(raw.get("keep"), raw.get("spot"), place)
             step.update({"what": what, "left": clean_text(raw.get("left"), 20), "place": place,
                          "keep": keep, "spot": spot, "state": norm_state(raw.get("state")),
@@ -610,8 +735,8 @@ class LifeStep:
         return out
 
     def _item_steps(self, raws, keys: dict, shelf, bot: str = "", seg_place: str = "") -> list:
-        """补写给一段标的东西（吃的以外，段里的 items）：临时代号（x1、x2……）换成程序发的 p 编号（同号不同名另发号，见 _claim）；
-        已有的得是清单里的（此刻现算）或这一次里新记的，对不上的那步丢掉。存进那段的 things，带 cat=item。"""
+        """补写给一段标的东西（吃的以外，段里的 items）：临时代号（x1、x2……）换成程序发的 p 编号；
+        已有的得是清单里的或这一次里新记的，对不上的单步跳过，绝不整批回滚。"""
         store = getattr(self, "things", None)
         if store is None or shelf is None or not isinstance(raws, list):
             return []
@@ -633,7 +758,8 @@ class LifeStep:
             if key:
                 name = clean_text(raw.get("name"), 30)
                 if what not in ITEM_START_STEPS or not name:
-                    raise FactConflict("新物品需要有效名称和取得方式")
+                    logger.debug("[super_enhance/step] 跳过无效新物品步骤：%s", raw)
+                    continue
                 origin = clean_text(raw.get("origin"), 60)
                 if not origin and what == "捡到" and seg_place:
                     origin = clean_text(seg_place, 60)
@@ -645,21 +771,21 @@ class LifeStep:
             else:
                 tid = resolve(raw.get("id"))
                 if not tid or what not in ITEM_MID_STEPS + ITEM_END_STEPS:
-                    raise FactConflict("物品 %s 不存在或动作无效" % raw.get("id"))
+                    logger.debug("[super_enhance/step] 跳过无效已有物品步骤：%s", raw)
+                    continue
                 step = {"id": tid}
                 if raw.get("owner"):
                     step["owner"] = clean_text(raw.get("owner"), 12)
                 into = resolve(raw.get("into"))
                 if into and into != tid:
                     step["into"] = into
-            place = checked_place(raw.get("place"), bool(key), raw.get("name") or step.get("id"))
-            if any(not resolve(token) for token in raw.get("from") or []):
-                raise FactConflict("%s 有无法找到的材料编号" % (raw.get("name") or raw.get("id")))
-            if raw.get("into") and not resolve(raw["into"]):
-                raise FactConflict("做进的成品 %s 没有对应记录" % raw["into"])
+            try:
+                place = checked_place(raw.get("place"), bool(key), raw.get("name") or step.get("id"))
+            except Exception:
+                place = ""
             step.update({"what": what, "place": place, "holder": clean_text(raw.get("holder"), 12),
                          "state": clean_text(raw.get("state"), 40), "step": step_no(raw.get("step")) or ""})
-            for field in ("amount", "used", "left", "purpose", "keep", "spot"):
+            for field in ("amount", "used", "left", "keep", "spot"):
                 if raw.get(field) not in (None, ""):
                     step[field] = clean_text(raw[field], 30)
             conditions = weathering.clean_conditions(raw.get("weather"))
@@ -667,100 +793,6 @@ class LifeStep:
                 step["weather"] = conditions
             out.append({k: v for k, v in step.items() if v not in ("", None, [])})
         return out
-
-    def _unmarked(self, data: dict, tasks: dict, shelf, date_text: str) -> list:
-        """补写写完后核一遍：段里的 doing / steps / result 写到了家里清单上的吃的、东西（或这一次里新添的），
-        这段（和一起做这件事的另一个人同一时候那段）的 things / items 里却没标它，返回一行行的问题；没有就空。
-        名字怎么认见 name_keys / mentioned。同名的几件（好几锅米饭）标了其中一件就算。"""
-        if shelf is None or not isinstance(data, dict):
-            return []
-        segments = data.get("segments") if isinstance(data.get("segments"), dict) else {}
-        groups: dict = {}  # 认的字 → {那几件的编号或临时代号}；没了的那几件只占住字（「蛋炒饭」吃完了，里面的「炒饭」也不另算）
-        names: dict = {}   # 编号 / 临时代号 → 名字（问题里写给模型看）
-
-        def add(token, name, food: bool, alive: bool) -> None:
-            names[token] = name
-            for key in name_keys(name, food):
-                group = groups.setdefault(key, set())
-                if alive:
-                    group.add(token)
-
-        for item in shelf.values():
-            add(str(item.get("id")), item.get("name"), cat_of(item) == CAT_FOOD, is_ended(item) is None)
-        for rows in segments.values():
-            for raw in rows if isinstance(rows, list) else []:
-                for field, food in (("things", True), ("items", False)):
-                    for step in (raw.get(field) if isinstance(raw, dict) else None) or []:
-                        if isinstance(step, dict) and str(step.get("new") or "").strip() and step.get("name"):
-                            add(str(step["new"]).strip(), clean_text(step.get("name"), 30), food, True)
-
-        def tokens(raw: dict) -> tuple:
-            """这段标了的：编号 / 临时代号，和新添的那几件的名字。"""
-            ids, made = set(), []
-            for field in ("things", "items"):
-                for step in raw.get(field) or []:
-                    if not isinstance(step, dict):
-                        continue
-                    for key in ("id", "new", "into"):
-                        text = str(step.get(key) or "").strip()
-                        if text:
-                            found = shelf.find(text) if key != "new" else None
-                            ids.add(str(found.get("id")) if found else text)
-                    for text in step.get("from") or []:
-                        ids.add(str(text).strip())
-                    if step.get("new") and step.get("name"):
-                        made.append(str(step["name"]))
-            return ids, made
-
-        def span(raw: dict):
-            """这段大约的起止（没写结束、写反了的按半小时算）；开始认不出是 (None, None)。"""
-            lo = parse_time(norm_time(raw.get("start"), date_text))
-            if lo is None:
-                return None, None
-            hi = parse_time(norm_time(raw.get("end"), date_text)) if raw.get("end") else None
-            return lo, hi if hi is not None and hi > lo else lo + datetime.timedelta(minutes=30)
-
-        problems = []
-        for bot in tasks:
-            for raw in segments.get(bot) or []:
-                if not isinstance(raw, dict) or state_of(raw) != "do":
-                    continue
-                _texts, _mins = parse_steps(raw.get("steps"))
-                text = "\n".join([str(raw.get("doing") or "")] + [str(x) for x in _texts] + [str(raw.get("result") or "")])
-                hits = [k for k in mentioned(text, groups) if groups.get(k)]
-                if not hits:
-                    continue
-                ids, made = tokens(raw)
-                lo, hi = span(raw)
-                # 一起做的另一个人同一时候那段（这次写的、或者已经排好的）标了也算：两人一起的饭 things 只写在一个人那段里
-                partners = [x for x in (raw.get("with") or []) if x != bot and x != "master"]
-                for other in partners:
-                    for row in segments.get(other) or []:
-                        o_lo, o_hi = span(row) if isinstance(row, dict) else (None, None)
-                        if lo and o_lo and o_lo < hi and lo < o_hi:
-                            more, more_made = tokens(row)
-                            ids |= more
-                            made += more_made
-                    if lo is not None:
-                        for item in self.world.entries(lo.date().isoformat(), other):
-                            s0 = parse_time(item.get("start"))
-                            s1 = parse_time(item.get("end")) if item.get("end") else None
-                            if s0 is not None and s1 is not None and s0 < hi and lo < s1:
-                                more, more_made = tokens(item)
-                                ids |= more
-                                made += more_made
-                missing, told = [], set()
-                for key in sorted(hits, key=lambda k: (-len(k), k)):
-                    if groups[key] & ids or groups[key] & told or any(_same_name(key, name) for name in made):
-                        continue
-                    told |= groups[key]
-                    missing.append("「%s」（%s）" % (key, "、".join(
-                        "%s %s" % (t, names.get(t, "")) for t in sorted(groups[key]))))
-                if missing:
-                    problems.append("- %s %s「%s」：步骤里写到了 %s，这段 things / items 里没标" % (
-                        self.label(bot) or bot, timeutil.day_hm(norm_time(raw.get("start"), date_text)), clean_text(raw.get("doing"), 30),
-                        "、".join(missing)))
-        return problems
 
     def _intention_line(self, item: dict, today: datetime.date | None = None) -> str:
         """补写看到的一条打算：编号（谁，和主人一起，哪天 几点，挂了几天）：内容。"""
@@ -1112,7 +1144,7 @@ class LifeStep:
                         item.get("place") or "",
                         event_text_at(item, flat),
                         "",
-                        mood_text(item) if not item.get("_fact_error") and parse_time(item.get("end")) is not None and parse_time(item["end"]) <= flat else "",
+                        mood_text(item) if parse_time(item.get("end")) is not None and parse_time(item["end"]) <= flat else "",
                     ))
             master = [
                 x for x in self.world.entries(date_text, "master")
@@ -1127,6 +1159,101 @@ class LifeStep:
                 blocks.append("【%s 已经发生的】\n%s" % (date_text, "\n".join(lines)))
         return blocks
 
+    def _today_proactive_block(self, now_or_bots, flat: datetime.datetime | None = None) -> str:
+        """今天 04:00 起已发过的主动消息（含主人是否已回）+ 尚未触发的已排待发节点。"""
+        if flat is None:
+            moment = now_or_bots if isinstance(now_or_bots, datetime.datetime) else self._now()
+            flat = moment.replace(tzinfo=None)
+            bots = list(self.raw_log.enabled_bots()) if self.raw_log is not None else []
+        else:
+            bots = list(now_or_bots or [])
+            flat = flat.replace(tzinfo=None)
+        anchor_day = flat.date() - datetime.timedelta(days=1) if flat.hour < 4 else flat.date()
+        cutoff = datetime.datetime.combine(anchor_day, datetime.time(4, 0))
+        tz = self._now().tzinfo or timeutil.timezone(self.cfg, self.context, "Asia/Shanghai")
+        cutoff_ts = cutoff.replace(tzinfo=tz).timestamp() if tz else cutoff.timestamp()
+        days = sorted({anchor_day.isoformat(), flat.date().isoformat()})
+        sent_lines = []
+        if self.raw_log is not None:
+            raw_rows = []
+            for day in days:
+                try:
+                    raw_rows.extend(self.raw_log.read_day(day) or [])
+                except Exception:
+                    continue
+            by_umo: dict[str, list[dict]] = {}
+            for row in raw_rows:
+                if not isinstance(row, dict):
+                    continue
+                umo = str(row.get("umo") or "")
+                if umo:
+                    by_umo.setdefault(umo, []).append(row)
+            for umo in by_umo:
+                by_umo[umo].sort(key=lambda x: float(x.get("ts") or 0))
+            proactive_hits = []
+            for umo, rows in by_umo.items():
+                bot = bot_of_umo(umo)
+                if bot not in bots:
+                    continue
+                for idx, row in enumerate(rows):
+                    ts = float(row.get("ts") or 0)
+                    if ts < cutoff_ts or row.get("role") != "assistant" or row.get("src") != "proactive":
+                        continue
+                    next_proactive_ts = next(
+                        (
+                            float(r.get("ts") or 0)
+                            for r in rows[idx + 1:]
+                            if r.get("role") == "assistant" and r.get("src") == "proactive"
+                        ),
+                        float("inf"),
+                    )
+                    replied = any(
+                        r.get("role") == "user" and ts < float(r.get("ts") or 0) <= next_proactive_ts
+                        for r in rows[idx + 1:]
+                    )
+                    hm = str(row.get("time") or "")[-5:] or datetime.datetime.fromtimestamp(ts, tz).strftime("%H:%M")
+                    proactive_hits.append((
+                        ts,
+                        "- %s %s：「%s」（%s）" % (
+                            self.label(bot) or bot,
+                            hm,
+                            clean_text(row.get("text"), 70),
+                            "主人已回" if replied else "主人未回",
+                        ),
+                    ))
+            proactive_hits.sort(key=lambda x: x[0])
+            sent_lines = [line for _ts, line in proactive_hits[-16:]]
+        upcoming_lines = []
+        for bot in bots:
+            fired = self.world.fired_msgs(bot) if hasattr(self.world, "fired_msgs") else set()
+            for offset in (0, 1):
+                day = (flat.date() + datetime.timedelta(days=offset)).isoformat()
+                for item in self.world.entries(day, bot):
+                    if not item.get("send_msg") or real_stop(item):
+                        continue
+                    at_tag = str(item.get("msg_at") or "end")
+                    key = f"{day}/{item.get('id')}:{at_tag}"
+                    if key in fired:
+                        continue
+                    trig = _trigger_time_of(item)
+                    if trig is None or trig < flat - datetime.timedelta(minutes=5):
+                        continue
+                    upcoming_lines.append(
+                        "- [已排待发] %s %s（%s）：%s"
+                        % (
+                            self.label(bot) or bot,
+                            timeutil.day_hm(fmt_time(trig)),
+                            "段头" if at_tag == "start" else "段尾",
+                            clean_text(item.get("msg_purpose") or item.get("doing"), 80),
+                        )
+                    )
+        if not sent_lines and not upcoming_lines:
+            return "今天已发过的主动消息：今天 04:00 以来还没主动发过消息。"
+        out = ["今天已发过的主动消息（避免重复说同一件事；若连发多条主人未回则少发非固定节点）："]
+        out.extend(sent_lines)
+        out.extend(upcoming_lines)
+        return "\n".join(out)
+
     def _context_block(self, bots: list, now: datetime.datetime, tasks: dict | None = None) -> str:
         parts = []
         flat = now.replace(tzinfo=None)
@@ -1138,6 +1265,9 @@ class LifeStep:
                 if text:
                     parts.append("%s：\n%s" % (self.label(bot) or bot, text))
         parts.extend(self._history_blocks(bots, flat))
+        proactive_text = self._today_proactive_block(bots, flat)
+        if proactive_text:
+            parts.append(proactive_text)
         # 今天真被打断、还没交代后来怎么样的事：补写在 stopped_results 里写一句（见第 19 条）
         stops = []
         today_text = flat.date().isoformat()
@@ -1190,7 +1320,7 @@ class LifeStep:
                     ))
         if planned:
             parts.append("已经排好、这次不改的：\n" + "\n".join(planned))
-        constraints = self.world.constraints(active_only=True)
+        constraints = self.world.constraints(active_only=True, scene=self.home)
         if constraints:
             parts.append(
                 "生效中的约束：\n"
@@ -1231,6 +1361,18 @@ class LifeStep:
             trail.extend(x for x in self.world.master_trail(day)
                          if parse_time(x.get("start")) is not None and parse_time(x.get("start")) <= flat)
         master_latest = trail[-1] if trail else None
+        master_cur = self.world.current("master", flat)
+        master_sleeping = (master_cur is not None and is_sleep(master_cur)) or bool(
+            companion is not None and companion.safe("resting", flat, default=False)
+        )
+        sleep_room = "船舱" if self.home == "海边小镇" else "卧房"
+        table_spot = "船舱矮桌" if self.home == "海边小镇" else "堂屋矮桌"
+        sleep_tail = (
+            "\n【主人眼下正在%s睡觉（尚未醒来）】除非他主动发消息或起床，后续排程严禁把 master 写进 with，"
+            "严禁在舱内或头顶甲板敲铁凿木弄出大动静；做饭留饭轻手轻脚盖好保温，若两人都要离开住处，须留张字条压在%s上。"
+            % (sleep_room, table_spot)
+            if master_sleeping else ""
+        )
         if master_latest:
             # 最近一条常常没写地点（比如只记了他说的话），地点另取最近一条写了的
             where = next((x for x in reversed(trail) if str(x.get("place") or "").strip()), None)
@@ -1248,7 +1390,10 @@ class LifeStep:
                     % (str(where.get("start"))[5:16], where.get("place"))
                     if where is not None else "；%s 以来还没说过他在哪" % (flat.date() - datetime.timedelta(days=1)).isoformat()[5:]
                 )
+                + sleep_tail
             )
+        elif sleep_tail:
+            parts.append("主人最近的动向（只作参考，不许改写、不许替他编）：" + sleep_tail.lstrip("\n"))
         book = getattr(self, "trainings", None)
         if book is not None:
             try:
@@ -1311,7 +1456,7 @@ class LifeStep:
             return ""
         moment = self._now().replace(tzinfo=None)
         ended = parse_time(entry.get("end"))
-        if entry.get("_fact_error") or ended is None or ended > moment:
+        if ended is None or ended > moment:
             return "%s截至此刻：%s；后续结果尚未发生。" % (what, event_text_at(entry, moment))
         out = "%s结束时她在：%s" % (what, clean_text(entry.get("place") or "", 40) or "（没写地方）")
         if entry.get("at_home") is False:
@@ -1476,9 +1621,9 @@ class LifeStep:
                 return False
             self._save_thought(moment, thought, True)
             data, text = await self._ask_master(data, prompt, text, tasks)
-            data = await self._recheck_things(data, prompt, text, tasks, moment)
             written, missed = self.apply(data, tasks, moment)
-            if missed:
+            total_written = sum(len(x) for x in written.values())
+            if missed and total_written == 0:
                 self.world.note_error("step", "%s 没写到此刻之后" % "、".join(missed))
                 self.world.set_last_step_attempt(fmt_time(moment))
                 logger.warning(
@@ -1487,11 +1632,12 @@ class LifeStep:
                 return False
             self.world.set_last_step(fmt_time(moment))
             self.world.clear_error("step")
-            logger.info("[super_enhance/world] 补写写了 %d 段：%s", sum(len(x) for x in written.values()), "；".join(
+            logger.info("[super_enhance/world] 补写写了 %d 段：%s%s", total_written, "；".join(
                 "%s %s" % (self.label(bot) or bot, "、".join(
                     "%s–%s %s" % (str(x.get("start"))[11:16], str(x.get("end"))[11:16], clean_text(x.get("doing"), 16))
                     for x in rows))
-                for bot, rows in written.items()))
+                for bot, rows in written.items()),
+                "（%s 剩余空档下轮继续）" % "、".join(missed) if missed else "")
             return True
         except Exception as e:
             logger.error("[super_enhance/world] 补写失败：%s", e)
@@ -1607,61 +1753,23 @@ class LifeStep:
                 return []
             await asyncio.sleep(ASK_POLL_SECONDS)
 
-    async def _recheck_things(self, data: dict, prompt: str, text: str, tasks: dict, moment: datetime.datetime) -> dict:
-        """预演事实校验，把没标物品和落库冲突一起打回重写；最多两轮，仍失败则整批不提交。"""
-        date_text = moment.date().isoformat()
-        current, current_text = data, text
-        for attempt in range(3):
-            problems = []
-            try:
-                self._run_cache = {}
-                shelf = self._shelf_at(self._things_moment(tasks, moment))
-                problems.extend(self._unmarked(current, tasks, shelf, date_text))
-                with fact_batch(self, preview=True):
-                    self._apply(current, copy.deepcopy(tasks), moment)
-            except FactConflict as error:
-                problems.append(str(error))
-            if not problems:
-                return current
-            if attempt >= 2:
-                raise FactConflict("补写修订后仍有事实冲突：" + "；".join(problems))
-            logger.info(
-                "[super_enhance/world] 补写事实校验没过，打回重写（第 %d 轮）：\n%s",
-                attempt + 1,
-                "\n".join(problems),
-            )
-            retry = (
-                prompt
-                + "\n\n你上一次的输出：\n" + str(current_text or "").strip()
-                + "\n\n程序校验发现以下物品或资源变化不能成立，成功文字不能先存入世界线：\n"
-                + "\n".join(problems)
-                + "\n照第 18、20 条改：真用到了、吃了、做进了菜、挪了、交给别人了，给那段补上那一步（写 id、what、step；"
-                "做进了菜的也写进那盘菜的 from）；同一件事两个人一起做的，标在其中一个人那段里就行；只是拿来读、翻看、"
-                "摊开看一眼又原样放回的，不算动它，不要硬写 items。原料不足就减量、实际采购后再做或改做别的；"
-                "湿柴不能直接烧，改取已有干柴或先取得。物品编号、步骤、时间和结果一起修正，"
-                "不要删除物品字段却保留成功叙述。重新输出完整 JSON。"
-            )
-            try:
-                again, _thought = await llm.text_chat(
-                    self.context, retry, provider_id=str(self.cfg.get("llm_provider_id") or "").strip(),
-                    timeout=self.timeout, session_id="super_enhance_lifestep", system_prompt=SYSTEM_PROMPT,
-                    attempts=1, log_label="补写重写",
-                )
-            except Exception as e:
-                raise FactConflict("补写修订失败，未提交有冲突的成功结果") from e
-            self._run_cache = {}
-            fixed = llm.extract_json(again)
-            if not isinstance(fixed, dict) or not isinstance(fixed.get("segments"), dict):
-                raise FactConflict("补写修订返回格式无效，未提交成功结果")
-            current, current_text = fixed, again
-        raise FactConflict("补写修订未完成")
-
     def _limit(self, start: datetime.datetime, end, sleepy: bool) -> datetime.datetime:
         """结束时间缺了、早于开始、或长得离谱时规整一下（睡觉那段放宽到 MAX_SLEEP_HOURS）。"""
         cap = datetime.timedelta(hours=MAX_SLEEP_HOURS if sleepy else MAX_SEGMENT_HOURS)
         if end is None or end <= start:
             return start + datetime.timedelta(minutes=45)
         return min(end, start + cap)
+
+    @staticmethod
+    def _normalize_proactive_fields(raw: dict, prev_entry: dict | None = None) -> dict:
+        return _normalize_proactive_fields(raw, prev_entry=prev_entry)
+
+    @staticmethod
+    def _sanitize_proactive_nodes(entries: list) -> list:
+        return _sanitize_proactive_nodes(entries)
+
+    def _dedup_joint_proactive(self, written_by_bot: dict, now: datetime.datetime | None = None) -> None:
+        _dedup_joint_proactive(written_by_bot, now=now, world=self.world)
 
     def apply(self, data: dict, tasks: dict, now: datetime.datetime):
         with fact_batch(self):
@@ -1678,23 +1786,20 @@ class LifeStep:
         bots = list(self.raw_log.enabled_bots())
         written, missed = {}, []
         seed = self._seed_for(date_text) if self.seed_log is not None else None
-        # 段里标的吃的：对照此刻现算的存货；临时代号（n1、n2……）这一次里两个人共用，同一个代号就是同一件
         store = getattr(self, "things", None)
         try:
             shelf = self._shelf_at(self._things_moment(tasks, flat)) if store is not None else None
         except Exception:
             logger.warning("[super_enhance/world] 补写算家里的吃的失败", exc_info=True)
-            raise FactConflict("库存读取失败，未提交无法核对的生活结果")
-        thing_keys: dict = {}
-        item_keys: dict = {}
-        if store is not None:
-            for bot, rows in segments.items():
-                for raw in rows if isinstance(rows, list) else []:
-                    for field, keys, category in (("things", thing_keys, CAT_FOOD), ("items", item_keys, CAT_ITEM)):
-                        for effect in raw.get(field) or []:
-                            if isinstance(effect, dict) and effect.get("new") and effect.get("name"):
-                                self._claim(keys, str(effect["new"]), clean_text(effect["name"], 30), bot,
-                                            lambda category=category: store.reserve_id(category))
+            shelf = None
+        master_cur = self.world.current("master", flat)
+        companion = getattr(self, "companionship", None)
+        master_sleeping = (master_cur is not None and is_sleep(master_cur)) or bool(
+            companion is not None and companion.safe("resting", flat, default=False)
+        )
+
+        # 第一遍：先按每人 MAX_SEGMENTS / horizon / until 截断保留段，杜绝截断段提前预占 ID
+        kept_plans: dict[str, tuple[list, datetime.datetime, datetime.datetime | None]] = {}
         for bot, info in tasks.items():
             start = info["start"]
             if info["mode"] == "open":
@@ -1702,7 +1807,6 @@ class LifeStep:
                 cur_start = parse_time(cur.get("start")) or flat
                 end = parse_time(norm_time(end_current.get(bot), date_text)) if end_current.get(bot) else None
                 if end is None:
-                    # 没给就拿第一段的开始当它的结束
                     raw = (segments.get(bot) or [None])[0]
                     if isinstance(raw, dict):
                         end = parse_time(norm_time(raw.get("start"), date_text))
@@ -1715,7 +1819,6 @@ class LifeStep:
                     cur.get("id"), end=fmt_time(end),
                 )
                 start = end
-            rows = []
             items = [x for x in (segments.get(bot) or []) if isinstance(x, dict)]
             items.sort(key=lambda x: str(norm_time(x.get("start"), date_text) or ""))
             cursor = start
@@ -1724,21 +1827,21 @@ class LifeStep:
             if len(items) > MAX_SEGMENTS:
                 logger.warning("[super_enhance/world] 补写给%s写了 %d 段，一次只收前 %d 段，后面的下次再写",
                                self.label(bot) or bot, len(items), MAX_SEGMENTS)
+            bot_plan = []
             for raw in items[:MAX_SEGMENTS]:
-                if cursor >= horizon and cursor > flat:
+                state = state_of(raw)
+                idle, sleep = state == "idle", state == "sleep"
+                raw_start = parse_time(norm_time(raw.get("start"), date_text)) if raw.get("start") else None
+                if raw_start is not None and raw_start > cursor:
+                    cursor = raw_start
+                if not sleep and cursor >= horizon and cursor > flat:
                     break  # 写得够远了，后面的下次再写
                 if until is not None and cursor >= until:
                     break  # 空档补满了
                 seg_end = parse_time(norm_time(raw.get("end"), date_text)) if raw.get("end") else None
                 if seg_end is not None and seg_end <= cursor:
-                    # 模型把日期写成今天、其实是明天早上（睡觉那段）
                     later = seg_end + datetime.timedelta(days=1)
                     seg_end = later if later > cursor else None
-                raw_with = [str(x) for x in (raw.get("with") or [])]
-                with_list = [x for x in raw_with if x in bots and x != bot]
-                state = state_of(raw)
-                idle, sleep = state == "idle", state == "sleep"
-                # 分了步、写了各步分钟的：这段做多久就是分钟加起来，模型写的 end 不算（闲着、睡觉除外）
                 _texts, minutes = parse_steps(raw.get("steps"))
                 parsed_steps = [{"text": text, "minutes": value} for text, value in zip(_texts, minutes)] if minutes else list(_texts)
                 if minutes and state == "do":
@@ -1748,25 +1851,92 @@ class LifeStep:
                     seg_end = min(seg_end, cursor + datetime.timedelta(minutes=MAX_IDLE_MINUTES))
                 if until is not None:
                     seg_end = min(seg_end, until)
+                bot_plan.append((raw, cursor, seg_end, state, idle, sleep, _texts, parsed_steps))
+                cursor = seg_end
+            kept_plans[bot] = (bot_plan, cursor, until)
+
+        # 第二遍：只为保留下来的段预占新物品 ID
+        thing_keys: dict = {}
+        item_keys: dict = {}
+        if store is not None and shelf is not None:
+            for bot, (bot_plan, _cursor, _until) in kept_plans.items():
+                for raw, _seg_start, _seg_end, state, _idle, _sleep, _texts, _parsed_steps in bot_plan:
+                    if state != "do":
+                        continue
+                    for effect in raw.get("things") or []:
+                        if isinstance(effect, dict) and effect.get("new") and effect.get("name"):
+                            what = norm_step(effect.get("what"))
+                            if what not in START_STEPS:
+                                continue
+                            if what == "原来就有":
+                                kind = norm_kind(effect.get("kind"))
+                                if kind not in MEASURED_KINDS or had_before(shelf.values(), clean_text(effect["name"], 30)) is not None:
+                                    continue
+                            self._claim(thing_keys, str(effect["new"]).strip(), clean_text(effect["name"], 30), bot,
+                                        store.reserve_id)
+                    for effect in raw.get("items") or []:
+                        if isinstance(effect, dict) and effect.get("new") and effect.get("name"):
+                            if norm_step(effect.get("what"), CAT_ITEM) not in ITEM_START_STEPS:
+                                continue
+                            self._claim(item_keys, str(effect["new"]).strip(), clean_text(effect["name"], 30), bot,
+                                        lambda: store.reserve_id(CAT_ITEM))
+
+        # 第三遍：组装条目、规整主动消息与 step_no 夹紧、落库
+        for bot, (bot_plan, final_cursor, until) in kept_plans.items():
+            staged_entries = []
+            for raw, seg_start, seg_end, state, idle, sleep, _texts, parsed_steps in bot_plan:
+                raw_with = [str(x) for x in (raw.get("with") or [])]
+                with_list = [x for x in raw_with if x in bots and x != bot]
                 intent = "" if idle else self.intent_id(raw.get("intent"), bot)
                 if intent in moves and not moves[intent]["done"]:
-                    intent = ""  # 只是往前推了一步（比如去问主人），这段做完不算打算做完，别撤
+                    intent = ""
                 training = self.training_id(raw.get("training"), bot)
-                # 和主人一起：模型这段写了 master，且挂的是「和主人一起」的打算、或紧接着上一段和主人一起（同一趟里接着逛）
-                # 不强塞：打算里她自己先做的准备（先把围巾织完）不算和主人一起
-                prev = rows[-1] if rows else self.world.latest_for(bot, before=fmt_time(cursor))
+                prev = staged_entries[-1] if staged_entries else self.world.latest_for(bot, before=fmt_time(seg_start))
                 prev_with_master = bool(prev) and "master" in (prev.get("with") or []) and not prev.get("sleep")
-                # 在家吃饭默认三个人一起吃（提示词第 7 条）：吃饭那段写了 master 也留着
-                at_meal = bool(raw.get("meal")) and raw.get("at_home") is not False
-                if not idle and not sleep and "master" in raw_with and (
+                at_meal = bool(raw.get("meal")) and raw.get("at_home") is not False and not master_sleeping
+                if not master_sleeping and not idle and not sleep and "master" in raw_with and (
                     self._intent_with_master(intent) or prev_with_master or at_meal
                 ):
                     with_list.append("master")
+                msg_copy = {
+                    "send_msg": raw.get("send_msg"),
+                    "msg_at": raw.get("msg_at"),
+                    "msg_purpose": raw.get("msg_purpose"),
+                    "doing": raw.get("doing"),
+                    "result": raw.get("result"),
+                    "state": raw.get("state"),
+                    "sleep": sleep,
+                    "idle": idle,
+                    "at_home": raw.get("at_home"),
+                    "meal": raw.get("meal"),
+                }
+                _normalize_proactive_fields(msg_copy, prev_entry=prev)
+                if "master" in with_list:
+                    allow_meal_call = bool(
+                        at_meal and not prev_with_master and msg_copy.get("msg_at") == "start"
+                    )
+                    if not allow_meal_call:
+                        msg_copy["send_msg"] = False
+                        msg_copy["msg_at"] = ""
+                        msg_copy["msg_purpose"] = ""
+                things_list = (
+                    self._thing_steps(raw.get("things"), thing_keys, shelf, bot)
+                    + self._item_steps(raw.get("items"), item_keys, shelf, bot, seg_place=str(raw.get("place") or ""))
+                ) if state == "do" else []
+                for effect in things_list:
+                    if not _texts:
+                        effect.pop("step", None)
+                    else:
+                        raw_no = step_no(effect.get("step"))
+                        if raw_no <= 0:
+                            raw_str = str(effect.get("step") or "").strip()
+                            effect["step"] = 1 if raw_str in ("0",) or raw_str.startswith("-") else len(_texts)
+                        else:
+                            effect["step"] = max(1, min(raw_no, len(_texts)))
                 entry = {
                     "who": bot,
                     "kind": "activity",
-                    # 首尾相接：开始一律接在上一段（或给定时刻）后面
-                    "start": fmt_time(cursor),
+                    "start": fmt_time(seg_start),
                     "end": fmt_time(seg_end),
                     "place": raw.get("place"),
                     "doing": raw.get("doing"),
@@ -1775,35 +1945,39 @@ class LifeStep:
                     "idle": idle,
                     "sleep": sleep,
                     "importance": raw.get("importance"),
+                    "send_msg": msg_copy["send_msg"],
+                    "msg_at": msg_copy["msg_at"],
+                    "msg_purpose": msg_copy["msg_purpose"],
                     "at_home": raw.get("at_home"),
                     "meal": raw.get("meal"),
-                    # 点着煤油灯（supply.LAMP_OIL 开着时，程序照这个算煤油还剩多少）
                     **({"lamp": True} if raw.get("lamp") in (True, "true") and not sleep else {}),
                     **({"kerosene": True} if raw.get("kerosene") in (True, "true") else {}),
-                    # 这段她什么心情（第 23 条）：聊天时取已经开始的最近一段写了的那句（view.mood_now_text）
                     "mood": str(raw.get("mood") or "").strip(),
                     "public": raw.get("public"),
                     "with": with_list,
                     "training": training,
                     "intent": intent,
-                    # 溯源：这段是照什么写的（抽到的哪一条 / 打算 / 作息 / 接着前面 / 自己想的），程序对照当天抽到的核过
                     "origin": origin_of(raw.get("from"), bot, seed, intent=intent, training=training),
-                    "things": (self._thing_steps(raw.get("things"), thing_keys, shelf, bot)
-                               + self._item_steps(raw.get("items"), item_keys, shelf, bot, seg_place=str(raw.get("place") or ""))) if state == "do" else [],
+                    "things": things_list,
                     "seen_by": [bot] + with_list,
                     "source": "step",
                     "created": fmt_time(flat),
                 }
-                for effect in entry["things"]:
-                    if not 1 <= step_no(effect.get("step")) <= len(_texts):
-                        raise FactConflict("%s 的物品变化必须绑定有效的分步编号" % entry.get("doing"))
-                record = self.world.add_entry(cursor.date().isoformat(), entry)
+                staged_entries.append(entry)
+
+            _sanitize_proactive_nodes(staged_entries)
+            rows = []
+            cursor = tasks[bot]["start"] if not bot_plan else final_cursor
+            last_ok_end = tasks[bot]["start"]
+            for entry in staged_entries:
+                seg_start = parse_time(entry["start"])
+                record = self.world.add_entry(seg_start.date().isoformat(), entry)
                 if record is None:
                     break
                 rows.append(record)
-                cursor = seg_end
+                last_ok_end = parse_time(record.get("end")) or last_ok_end
+            cursor = last_ok_end if rows else tasks[bot]["start"]
             if until is not None and rows and cursor < until <= cursor + datetime.timedelta(minutes=FILL_STRETCH_MINUTES):
-                # 离后面那段只差一点：最后一段拉长接上，免得剩个小空档再调一次模型
                 last = rows[-1]
                 self.world.update(str(last.get("start"))[:10], last.get("id"), end=fmt_time(until))
                 last["end"] = fmt_time(until)
@@ -1811,7 +1985,6 @@ class LifeStep:
             written[bot] = rows
             if cursor <= flat or (until is not None and not rows):
                 missed.append(self.label(bot) or bot)
-        if store is not None:
-            store.validate_entries([entry for rows in written.values() for entry in rows])
+        _dedup_joint_proactive(written, now=flat, world=self.world)
         self._apply_intent_moves(moves, written, flat)
         return written, missed
