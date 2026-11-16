@@ -21,6 +21,7 @@ from astrbot.core.agent.message import TextPart
 
 from ..common import history_io, text as text_utils, timeutil
 from ..common.bots import BotRegistry, identify_event, session_for
+from .cron_context import is_cron_event
 
 ROUND_FLAG = "_super_enhance_bot_dialog_round"
 SEND_TOOL = "send_message_to_user"
@@ -645,7 +646,7 @@ class BotDialogFeature:
             for bot in dict.fromkeys(enabled or []) if bot and bot != own and self.accounts().get(bot)
         ]
 
-    def send_text(self, own: str, umo: str) -> str:
+    def send_text(self, own: str, umo: str, *, cron: bool = False) -> str:
         others, master = self.others(own), self.master_id()
         where = "当前会话"
         if master and umo == session_for(own, master):
@@ -654,10 +655,15 @@ class BotDialogFeature:
             if umo == session:
                 where = "和%s的私聊" % label
         names = "、".join(label for label, _session in others) or "另一个角色"
+        proactive_hint = (
+            "- 主动找主人说话（比如到点的主动消息）：发给主人（调用发出后本轮即自动结束，不会重复外发）。"
+            if cron
+            else "- 主动找主人说话（比如到点的主动消息）：发给主人。"
+        )
         lines = [
             "发一条 QQ 消息出去（真的发出去，对方会收到，可能回你）。", "", "什么时候用：",
             "- 想问%s一件事、要她回话，或者想跟她当场聊几句：发给她。她回的话会自己来到你这边。" % names,
-            "- 主动找主人说话（比如到点的主动消息）：发给主人。",
+            proactive_hint,
             "- 平时回主人的话直接说就行，不用这个工具。",
             "只是想让%s知道一件事、不需要她回：用 tell，不要用这个。" % names, "",
             "session 只能填下面这几个，照抄，不要自己拼：",
@@ -685,7 +691,10 @@ class BotDialogFeature:
             return
         umo = str(getattr(event, "unified_msg_origin", "") or "")
         own = self._identity(event).bot
-        texts = {SEND_TOOL: self.send_text(own, umo), TELL_TOOL: self.tell_text(own)}
+        texts = {
+            SEND_TOOL: self.send_text(own, umo, cron=is_cron_event(event)),
+            TELL_TOOL: self.tell_text(own),
+        }
         for index, tool in enumerate(tools):
             text = texts.get(getattr(tool, "name", ""))
             if text:
@@ -694,4 +703,8 @@ class BotDialogFeature:
                 tools[index] = guided
 
     async def on_cron_request(self, event, req) -> None:
+        self.apply_tool_guide(event, req)
+
+    async def on_cron_built(self, event, req) -> None:
+        """build_main_agent 重装工具后再次覆盖中文版说明，避免被英文默认说明冲掉。"""
         self.apply_tool_guide(event, req)

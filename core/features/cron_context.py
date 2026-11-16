@@ -16,6 +16,7 @@ AstrBot 的 cron 唤醒（``cron/manager.py::_woke_main_agent``）会把整份�
 普通聊天走的是别处持有的引用，不受影响。
 """
 
+import copy
 import datetime
 import json
 import re
@@ -32,6 +33,8 @@ from . import error_voice
 
 # cron 事件在 extras 里带这两个键；用它把主动对话和普通聊天区分开
 CRON_EXTRA_KEYS = ("cron_job", "cron_payload")
+OUR_CRON_PREFIX = "超级增强·"
+FINAL_CRON_TOOLS = frozenset({"send_message_to_user", "send_view", "tell", "start_doing"})
 CONVERSATION_TTL_SECONDS = 900
 _cron_conversations: dict[str, tuple[object, float]] = {}
 
@@ -49,6 +52,16 @@ def is_cron_event(event) -> bool:
     if isinstance(extras, dict) and any(key in extras for key in CRON_EXTRA_KEYS):
         return True
     return type(event).__name__ == "CronMessageEvent"
+
+
+def is_plugin_cron_event(event) -> bool:
+    if not is_cron_event(event):
+        return False
+    try:
+        job = event.get_extra("cron_job") or {}
+    except Exception:
+        job = {}
+    return isinstance(job, dict) and str(job.get("name") or "").startswith(OUR_CRON_PREFIX)
 
 
 def _prune_cron_conversations() -> None:
@@ -180,11 +193,20 @@ class CronContextFeature:
             result = await orig(*args, **kwargs)
             if result is not None and is_cron_event(event):
                 built = getattr(result, "provider_request", None) or req
+                runner = getattr(result, "agent_runner", None)
+                try:
+                    feature._prepare_built_cron(event, built, runner)
+                except Exception:
+                    logger.error("[super_enhance/cron_ctx] cron 后置工具与一步收尾装配失败", exc_info=True)
                 for hook in list(feature.cron_built_hooks):
                     try:
                         await hook(event, built)
                     except Exception:
                         logger.error("[super_enhance/cron_ctx] cron 请求组好以后的回调失败", exc_info=True)
+                try:
+                    feature._sync_skill_like_tools(runner)
+                except Exception:
+                    logger.error("[super_enhance/cron_ctx] 同步 skills_like 工具集失败", exc_info=True)
             return result
 
         self.patches.add(
@@ -207,6 +229,139 @@ class CronContextFeature:
                 logger.info("[super_enhance/cron_ctx] 已卸载主动对话上下文裁剪")
         except Exception:
             logger.error("[super_enhance/cron_ctx] 卸载失败", exc_info=True)
+
+    # ---------- cron 工具清理与一步收尾 ----------
+
+    def _prepare_built_cron(self, event, built, runner) -> None:
+        """build_main_agent 之后：摘除 cron 不需要的 stay_silent，并为本插件主动对话装一步收尾包装。"""
+        for tool_set in (
+            getattr(built, "func_tool", None),
+            getattr(runner, "_skill_like_raw_tool_set", None),
+        ):
+            if tool_set is not None and hasattr(tool_set, "remove_tool"):
+                tool_set.remove_tool("stay_silent")
+        if runner is not None and is_plugin_cron_event(event):
+            self._install_one_step_finish(event, runner)
+
+    @staticmethod
+    def _sync_skill_like_tools(runner) -> None:
+        raw_set = getattr(runner, "_skill_like_raw_tool_set", None) if runner is not None else None
+        if raw_set is None or getattr(runner, "tool_schema_mode", None) != "skills_like":
+            return
+        req_set = getattr(getattr(runner, "req", None), "func_tool", None)
+        if req_set is not None and hasattr(raw_set, "get_tool"):
+            for t in getattr(req_set, "tools", None) or []:
+                raw_tool = raw_set.get_tool(getattr(t, "name", ""))
+                if raw_tool is not None and getattr(t, "description", None):
+                    raw_tool.description = t.description
+        if getattr(runner, "req", None) is not None and hasattr(raw_set, "get_light_tool_set"):
+            runner.req.func_tool = raw_set.get_light_tool_set()
+        if hasattr(raw_set, "get_param_only_tool_set"):
+            runner._tool_schema_param_set = raw_set.get_param_only_tool_set()
+
+    @staticmethod
+    def _tool_result_map(messages: list) -> dict[str, str]:
+        out: dict[str, str] = {}
+        for msg in messages:
+            role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "role", None)
+            if role != "tool":
+                continue
+            tc_id = str((msg.get("tool_call_id") if isinstance(msg, dict) else getattr(msg, "tool_call_id", "")) or "")
+            content = msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", "")
+            if isinstance(content, list):
+                content = " ".join(
+                    str(p.get("text") if isinstance(p, dict) else getattr(p, "text", "") or "")
+                    for p in content
+                )
+            if tc_id:
+                out[tc_id] = str(content or "")
+        return out
+
+    @classmethod
+    def _should_finish_after_send(cls, current_umo: str, llm_resp, new_messages: list) -> bool:
+        names = list(getattr(llm_resp, "tools_call_name", None) or [])
+        if "send_message_to_user" not in names or not (set(names) <= FINAL_CRON_TOOLS):
+            return False
+        args_list = list(getattr(llm_resp, "tools_call_args", None) or [])
+        ids_list = list(getattr(llm_resp, "tools_call_ids", None) or [])
+        result_by_id = cls._tool_result_map(new_messages)
+        if any("[SYSTEM NOTICE] User sent follow-up messages" in txt for txt in result_by_id.values()):
+            return False
+        sent_current = False
+        for idx, t_name in enumerate(names):
+            if t_name != "send_message_to_user":
+                continue
+            t_args = args_list[idx] if idx < len(args_list) and isinstance(args_list[idx], dict) else {}
+            tc_id = str(ids_list[idx]) if idx < len(ids_list) else ""
+            res_text = result_by_id.get(tc_id, "")
+            if res_text.lstrip().lower().startswith("error"):
+                return False
+            session_arg = str(t_args.get("session") or "").strip()
+            targets_current = (
+                not session_arg
+                or session_arg == current_umo
+                or (":" not in session_arg and bool(current_umo) and current_umo.endswith(":" + session_arg))
+            )
+            if targets_current and (
+                "Message sent to session" in res_text
+                or "主人已明确休息，普通主动消息暂未发送" in res_text
+            ):
+                sent_current = True
+        return sent_current
+
+    @classmethod
+    def _install_one_step_finish(cls, event, runner) -> None:
+        if getattr(runner, "_se_cron_one_step", False):
+            return
+        orig_iter = getattr(runner, "_iter_llm_responses_with_fallback", None)
+        orig_step = getattr(runner, "step", None)
+        if orig_iter is None or orig_step is None:
+            return
+        state = {"llm_resp": None}
+        current_umo = str(getattr(event, "unified_msg_origin", "") or "")
+
+        async def wrapped_iter(*i_args, **i_kwargs):
+            async for resp in orig_iter(*i_args, **i_kwargs):
+                if not getattr(resp, "is_chunk", False):
+                    state["llm_resp"] = resp
+                yield resp
+
+        async def wrapped_step(*s_args, **s_kwargs):
+            state["llm_resp"] = None
+            msgs = getattr(getattr(runner, "run_context", None), "messages", None)
+            msg_start = len(msgs) if isinstance(msgs, list) else 0
+            async for item in orig_step(*s_args, **s_kwargs):
+                yield item
+            if runner.done():
+                return
+            llm_resp = state["llm_resp"]
+            msgs_after = getattr(getattr(runner, "run_context", None), "messages", None)
+            new_msgs = msgs_after[msg_start:] if isinstance(msgs_after, list) else []
+            if llm_resp is None or not cls._should_finish_after_send(current_umo, llm_resp, new_msgs):
+                return
+            from astrbot.core.agent.runners.base import AgentState
+
+            done_resp = copy.copy(llm_resp)
+            done_resp.tools_call_name = []
+            done_resp.tools_call_args = []
+            done_resp.tools_call_ids = []
+            if not getattr(done_resp, "completion_text", ""):
+                done_resp.completion_text = ""
+            runner.final_llm_resp = done_resp
+            runner._transition_state(AgentState.DONE)
+            if getattr(runner, "stats", None) is not None:
+                runner.stats.end_time = time.time()
+            try:
+                await runner.agent_hooks.on_agent_done(runner.run_context, done_resp)
+            except Exception:
+                logger.error("[super_enhance/cron_ctx] 主动对话一步收尾 on_agent_done 出错", exc_info=True)
+            if hasattr(runner, "_resolve_unconsumed_follow_ups"):
+                runner._resolve_unconsumed_follow_ups()
+            logger.info("[super_enhance/cron_ctx] 主动对话已通过 send_message_to_user 发完，一步收尾结束循环（%s）", current_umo)
+
+        runner._iter_llm_responses_with_fallback = wrapped_iter
+        runner.step = wrapped_step
+        runner._se_cron_one_step = True
 
     # ---------- 裁剪 ----------
 
