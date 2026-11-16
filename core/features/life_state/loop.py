@@ -158,16 +158,24 @@ async def world_daily(service, today: datetime.date) -> None:
         except Exception:
             logger.warning("[super_enhance/life] 结算在练的事失败", exc_info=True)
     try:
-        if date_text not in (service.seed_log.load() or {}):
-            from .variety import draw_seed
+        seeds = service.seed_log.load() or {}
+        if date_text not in seeds:
+            from .variety import init_day_seed
 
+            prev_day = (today - datetime.timedelta(days=1)).isoformat()
+            prev_w = str(((seeds.get(prev_day) or {}).get("weather")) or "")
             labels = {b: (service.bots.label_for(b) or b) for b in service.enabled_bots()}
-            seed = draw_seed(date_text, labels=labels, history=service.seed_log.load(), pools=service.pool_store.load(),
-                             home=service.life_step.home)
+            seed = init_day_seed(
+                date_text,
+                labels=labels,
+                history=seeds,
+                prev_weather=prev_w,
+                home=service.life_step.home,
+            )
             service.seed_log.save(date_text, seed)
-            service._debug("世界线：已抽今天的随机起点")
+            service._debug("世界线：已生成今天的天象与初始状态")
     except Exception:
-        logger.warning("[super_enhance/life] 抽今天的随机起点失败", exc_info=True)
+        logger.warning("[super_enhance/life] 生成今天的天象与初始状态失败", exc_info=True)
     await sync_live_jobs(service, date_text)
     await review_if_due(service, service._now())
 

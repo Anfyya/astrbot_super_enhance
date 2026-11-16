@@ -1326,23 +1326,66 @@ class ContextPageApi:
             from .features.life_state import variety
 
             today = life._today()
+            now_flat = life._now().replace(tzinfo=None)
             bots = [{"id": bot, "label": life.bots.label_for(bot) or bot} for bot in life.enabled_bots() or []]
             labels = {b["id"]: b["label"] for b in bots}
+            things_path = getattr(getattr(life, "things", None), "path", None)
+            world_rev = life.world.revision() if hasattr(life.world, "revision") else 0
             key = (
                 today,
+                now_flat.hour,
                 _POOL_SIMS,
                 tuple((b["id"], b["label"]) for b in bots),
                 _mtime_ns(life.pool_store.path),
                 _mtime_ns(life.seed_log.path),
+                _mtime_ns(things_path) if things_path else 0,
+                world_rev,
                 life.life_step.home,
             )
             cached = getattr(self, "_pool_cache", None)
             if cached is None or cached[0] != key:
                 pools = life.pool_store.load()
                 history = life.seed_log.load() or {}
-                # 模拟几百次抽签要零点几秒，放到线程里，别卡住收发消息
-                outlook = await asyncio.to_thread(variety.pool_outlook, pools, history, today, labels, _POOL_SIMS,
-                                                  life.life_step.home)
+                seed_today = history.get(today) if isinstance(history.get(today), dict) else {}
+                tone_today = str(seed_today.get("tone") or "")
+                weather_fn = life.life_step._weather_text_of()
+                home_name = life.life_step.home
+                ctx = await asyncio.to_thread(
+                    variety.build_live_context,
+                    start=now_flat,
+                    end=now_flat + datetime.timedelta(hours=3),
+                    home=home_name,
+                    weather_of=weather_fn,
+                    tone=tone_today,
+                    world=life.world,
+                    store=getattr(life, "things", None),
+                )
+                if now_flat.hour < 18:
+                    night_start = now_flat.replace(hour=20, minute=0)
+                    night_ctx = await asyncio.to_thread(
+                        variety.build_live_context,
+                        start=night_start,
+                        end=night_start + datetime.timedelta(hours=3),
+                        home=home_name,
+                        weather_of=weather_fn,
+                        tone=tone_today,
+                        world=life.world,
+                        store=getattr(life, "things", None),
+                    )
+                else:
+                    night_ctx = ctx
+                outlook = await asyncio.to_thread(
+                    variety.pool_outlook,
+                    pools,
+                    history,
+                    today,
+                    labels,
+                    _POOL_SIMS,
+                    home_name,
+                    ctx,
+                    life.world,
+                    night_ctx,
+                )
                 groups = variety.group_map(pools)
                 data = {
                     "today": today,
@@ -1355,6 +1398,8 @@ class ContextPageApi:
                         {"kind": k, "label": variety.POOL_LABELS[k], "pick": variety.POOL_PICKS[k]}
                         for k in variety.POOL_KINDS
                     ],
+                    "wx_labels": dict(variety.WX_LABELS),
+                    "link_labels": dict(variety.LINK_LABELS),
                     "pools": pools,
                     "view": outlook["bots"],
                     "groups": sorted({g for g in groups.values() if g}),
@@ -1443,10 +1488,11 @@ class ContextPageApi:
             elif action == "update":
                 index = located()
                 raw = payload.get("item")
-                if isinstance(raw, dict) and "when" not in raw:
-                    raw = dict(raw, when=rows[index].get("when") or "")  # 网页没有这一栏：改别的时候留着原来的
-                if isinstance(raw, dict) and "where" not in raw:
-                    raw = dict(raw, where=rows[index].get("where") or "")  # 「在哪」同上
+                if isinstance(raw, dict):
+                    raw = dict(raw)
+                    for keep_k in ("when", "where", "wx", "link", "work", "outdoor"):
+                        if keep_k not in raw and keep_k in rows[index]:
+                            raw[keep_k] = rows[index][keep_k]
                 item = variety.clean_pool_item(kind, raw)
                 if exists(rows, item["text"], index):
                     raise ValueError("这个池子里已经有这一条了")

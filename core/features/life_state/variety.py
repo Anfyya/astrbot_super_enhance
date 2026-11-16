@@ -1026,16 +1026,246 @@ _SEASIDE = (
 DEFAULT_WHERE = {**{t: "穗织" for t in _SUIZHI}, **{t: "海边小镇" for t in _SEASIDE}}
 
 
+WX_LABELS = {
+    "": "不限天气",
+    "sunny": "需晴好/晴夜",
+    "dry": "需无雨且风浪小",
+    "calm": "需风平浪静（可下潜）",
+    "rain": "需正在下雨",
+    "fog": "需起雾",
+    "wind": "需起风浪",
+}
+LINK_LABELS = {
+    "": "无特殊联动",
+    "ship_day": "补给船刚到港时",
+    "charcoal": "缺闷炭时提权",
+    "charcoal_stove": "点柴炉且有干柴时（缺炭提权）",
+    "firewood": "缺干柴时提权",
+    "use_charcoal": "闷炭富余时才抽",
+    "laundry": "近36h未洗衣且无湿衣时",
+    "rainwater": "雨后存水提权",
+    "restock": "缺油盐调料时提权",
+    "ash": "有柴炉灰且有蛋姜番薯时",
+    "preserve_jam": "家里有糖时（熬果酱）",
+    "preserve_pickle": "家里有醋或酱油时（腌渍）",
+    "fish_dry": "家里有盐时（晒鱼干）",
+    "fish_stove": "有盐且有干柴烧炉时（炉烘鱼干）",
+}
+
+# 家务与单件旧物组：船屋一家人共享冷却（一人昨天刚洗过衣裳或晒过铺盖，另一人今天不再紧接着重做）
+SHARED_GROUPS = frozenset((
+    "洗衣裳", "晒铺盖", "存雨水", "下蟹笼", "卖废铁", "备柴", "攒闷炭",
+    "做鱼干", "做保鲜", "打捞所", "修东西", "炭炉烘烤", "摆弄旧零碎", "旧书报",
+))
+
+_GROUP_WX = {
+    "下水打捞": "calm",
+    "水下溜达": "calm",
+    "水下玩": "calm",
+    "晒铺盖": "sunny",
+    "洗衣裳": "dry",
+    "捡冲上来的": "dry",
+    "礁岛": "dry",
+    "旧大楼": "dry",
+    "钓鱼": "dry",
+}
+_ITEM_WX = {
+    # 需下雨
+    "下了一场雨，把船上能接水的桶盆都摆出来接雨水": "rain",
+    "夜里下起雨，舱顶有一处滴水，拿盆接着，听了半宿滴答声": "rain",
+    "外头阴雨返潮，把抹了盐的小鱼串起来挂在烧旺的柴炉烟管旁慢慢烘干": "rain",
+    # 需起雾
+    "夜里海上起了雾，远处一声一声地传来船的汽笛": "fog",
+    "夜雾里传来几声不知哪来的敲击声，竖着耳朵听了半天": "fog",
+    # 需起大风浪
+    "浪大起来，把甲板上没收的东西一样样收进舱里": "wind",
+    "夜里起了风浪，起来看了看缆绳系得牢不牢": "wind",
+    "爬上山顶旧信号塔的第一层平台，被风吹得站不稳": "wind",
+    # 需晴好/晴夜（晒物、看日出晚霞、赏月看星）
+    "早起看日出，或者傍晚追着晚霞走": "sunny",
+    "爬上半沉学校的屋顶天台，看太阳一点点沉进海里": "sunny",
+    "趁日头好，把抹了盐的鲜鱼摊在竹匾上晒成半干的一夜干": "sunny",
+    "洗了一大堆衣服，把被子抱出去晒": "sunny",
+    "两人一起洗衣服、晒被子": "sunny",
+    "坐在檐下的台阶上晒太阳": "sunny",
+    "晚上抬头看星星或月亮看了很久": "sunny",
+    "独自去高处赏月，想了好多事": "sunny",
+    "浮在船篷顶上，看满天的星星": "sunny",
+    "靠在舷窗边，看月光落在海面上": "sunny",
+    "退潮的夜里借着月光下到浅滩，捉出来觅食的小螃蟹": "sunny",
+    "夜里风停了，海面平得像镜子，月亮倒映在水里": "sunny",
+    "夜里潮水退得很低，月光底下露出一片平时看不见的旧街屋顶": "sunny",
+    "坐在廊下，看院子里的月光": "sunny",
+    # 需风平浪静
+    "刮打捞船船底的藤壶和海草，刮了一上午": "calm",
+    # 需无雨且风浪不大（甲板晾晒/露天久待/划船/赶海/爬坡拾柴）
+    "把换来的鱼剖开抹盐，挂在船篷底下风干": "dry",
+    "去坡上薪柴地捡了一捆枯落枝，背回船屋劈开码在通风处晾着当柴": "dry",
+    "两人一起去坡上薪柴地挑拣干枯落枝，捆好背回仓棚码起来": "dry",
+    "去船坞帮老船匠清扫未上漆的实木边料，捆了一兜带回来当引火柴": "dry",
+    "帮晒鱼场的人翻晒鱼干，被塞了几条带回来": "dry",
+    "帮码头上补网的人挑网眼里的海草，换回一小串鱼干": "dry",
+    "把破了的渔网摊在甲板上，一个网眼一个网眼地补": "dry",
+    "帮人在坡上的菜地里拔草、收菜，分到一篮菜": "dry",
+    "划船去楼顶的菜园浇水、摘菜": "dry",
+    "退潮时去礁石上撬牡蛎、捡海螺，装了小半篮当晚上的菜": "dry",
+    "两人一起退潮时去礁石上撬牡蛎、捡海螺": "dry",
+    "退潮时爬上沉船墓场里搁浅的旧船，钻进船舱看了看": "dry",
+    "坐船从旧街上头过，趴在船边看水底下的红绿灯和招牌": "dry",
+    "划船去海里的鸟居那边，在半截立在水里的鸟居底下待了一会儿": "dry",
+    "划船靠近海鸥岩，满岩的海鸥呼啦一下全飞了起来": "dry",
+    "爬上露出水面的高架铁轨，钻进锈掉的电车车厢里转了转": "dry",
+    "爬上山丘上的灯塔那边吹风、看海": "dry",
+    "两人一起沿着海堤走到山丘上的灯塔": "dry",
+    "登上海边悬崖，看底下的浪一下下撞上来": "dry",
+    "在海堤上望着远处半截露出水面的旧城区，看了好久": "dry",
+    "坐在坡上旧观景台的长椅上，看整片泡在水里的旧城区": "dry",
+    "坐在没进水里的老石阶上，看潮水一级级漫上来又退下去": "dry",
+    "去高地的慰灵碑前站了一会儿": "dry",
+    "去坡上朝着海的老墓地走了走，碰见来祭扫的人": "dry",
+    "在高处望着整个镇子发呆": "dry",
+    "去比平时远一点的地方走走": "dry",
+    "一只海鸥落在船栏上不走，跟它大眼瞪小眼": "dry",
+    "看码头边的小孩扎猛子摸贝壳，看了半天": "dry",
+    "在船坞看老船匠补船底，看了好久": "dry",
+    "坐在甲板上补渔网，补着补着看一会儿海": "dry",
+    "坐在甲板上削一截漂来的木头，刻个小玩意儿": "dry",
+    "坐在船头放一竿钓线，钓不钓得上都随它": "dry",
+    "趴在船栏上，拿细绳拴块鱼肉逗螃蟹上钩": "dry",
+    "坐在甲板上，看海": "dry",
+    "坐在码头边上晃着腿，看船进进出出": "dry",
+    "趴在船栏上，看水里的小鱼游来游去": "dry",
+    "坐在船头，吹海风": "dry",
+    "躺在甲板上，看天上的云": "dry",
+    "浮在船篷顶上，望着海面": "dry",
+    "坐在甲板上，望着远处泡在海里的旧城区": "dry",
+    "坐在码头边，看人修船补网": "dry",
+    "坐在船舷上，看潮水把海草推来推去": "dry",
+    "蹲在甲板上，看船篷的影子一点点挪": "dry",
+    "夜里去海堤上站了一会儿，远处旧城区一点灯也没有": "dry",
+    "趴在船栏上，数远处海面上的几点渔火": "dry",
+    "走到背风的海萤湾，看海水泛起一点点蓝光": "dry",
+    "坐在甲板上，望着山丘上灯塔的方向，那灯早就不亮了": "dry",
+    "坐在甲板上，听浪声": "dry",
+    "坐在船头，望着黑漆漆的海": "dry",
+    "裹着薄被坐在甲板上，看海面上偶尔一闪的渔火": "dry",
+    "在河边待了好久，看水、看鱼或打水漂": "dry",
+    "两人一起去温泉街或河边走走": "dry",
+    "在神社后山的竹林里走了走": "dry",
+    "在院子里踢毽子或拍皮球，玩了一阵": "dry",
+    "在院子里站着吹吹风": "dry",
+    "在院子里慢慢转了几圈": "dry",
+    "蹲在院子角落看地上的蚂蚁搬东西": "dry",
+    "在院子里站一会儿，吸几口凉气": "dry",
+}
+
+_GROUP_LINK = {
+    "备柴": "firewood",
+    "洗衣裳": "laundry",
+    "炭炉烘烤": "use_charcoal",
+}
+_ITEM_LINK = {
+    "赶上补给船刚到货，去杂货铺打回食用油、火柴和常备零碎": "ship_day",
+    "去煮盐棚帮着挑海水、往大锅底下添柴，换回满满一罐闷炭": "charcoal",
+    "趁船舱柴炉里的硬柴烧成红炭还没化灰，拿火钳夹进陶罐盖严闷灭攒下闷炭": "charcoal_stove",
+    "给接雨水的桶盆换了一层干净的布滤，存下的雨水烧开了装进罐里": "rainwater",
+    "把接来的雨水静置沉淀后烧开，晾凉了灌进水壶存成凉白开": "rainwater",
+    "家里常用的东西用完了，得去补上": "restock",
+    "拿手里多出来的东西跟人换了一样用得上的": "restock",
+    "筛了一盆柴炉退火冷却后的干草木灰，把鲜鸡蛋和生姜埋进去存好": "ash",
+    "集市收摊前换回几个磕碰的水果，削净加糖熬成果酱趁热封进玻璃瓶": "preserve_jam",
+    "把小鱼或切好的萝卜泡进醋罐和酱油汁里渍上，留着配粥下饭": "preserve_pickle",
+    "把换来的鱼剖开抹盐，挂在船篷底下风干": "fish_dry",
+    "趁日头好，把抹了盐的鲜鱼摊在竹匾上晒成半干的一夜干": "fish_dry",
+    "外头阴雨返潮，把抹了盐的小鱼串起来挂在烧旺的柴炉烟管旁慢慢烘干": "fish_stove",
+}
+
+_EXTRA_OUTDOOR = frozenset((
+    "在集市上挑鱼，跟摊主讲了半天价",
+    "拿手里多出来的东西跟人换了一样用得上的",
+    "去半沉的学校转了转，从二楼进去，在空教室里坐了一会儿",
+    "去半淹的车站，在站前的龙头接水",
+    "在防波堤尽头的小祠前站了一会儿，看出海的人在那儿合掌",
+    "赶上公共澡堂烧水的日子，去泡了个澡",
+    "去山上的老井打水，排队时听人闲聊",
+    "在煮盐的棚子边看人熬海水，锅底慢慢结出白盐",
+    "去码头边的布告板看了看寻物启事和换东西的纸条",
+    "杂货铺有人摇着收音机收大陆的广播，跟着围在旁边听",
+    "去坡上的诊所拿药，顺手帮老医生把药箱搬进屋，老医生多给了两包常用药",
+    "从高地的蓄水塔底下过，塔身滴着水，底下长了一圈青苔",
+    "推开灯塔下守塔人的小石屋，翻了翻桌上那本没写完的值班日志",
+    "扛着一麻袋分好的废铜去收购站过秤，跟人讲了半天价",
+    "蓄水塔放水的日子，拎着桶去塔底下排队接水",
+    "去码头帮渔船卸货，一筐筐往岸上搬，换回两条鱼",
+    "拿捞上来的旧零件去收购站换了一卷新缆绳",
+    "去仓棚把这几天捞上来的东西码好，盖上帆布、压上石头",
+    "有人来仓棚收东西，掀开帆布一样样点给他看，讲好了价",
+    "顺着木梯爬上半淹商店街的二楼，转了转还开着的几家铺子",
+    "在半沉学校的音乐教室里按了按那架受过潮的旧钢琴，有几个键已经不响了",
+    "去煮盐棚帮着挑海水、往大锅底下添柴，换回满满一罐闷炭",
+    "拿家里松脱的锅柄或旧灯具去船坞边的修理铺，找老船匠修配好",
+    "赶上补给船刚到货，去杂货铺打回食用油、火柴和常备零碎",
+    "两人一起去集市买菜买鱼",
+    "两人一起把捞上来的废铁分拣好，扛去收购站换钱",
+    "两人一起出门办一件事",
+    "出门在外，碰上了一点平常没有的热闹",
+    "一个人在外头多待了一会儿，比预想的晚回",
+    "发现一个平时没注意过的角落或小路",
+    "一只猫或一只鸟老在身边转，跟着它走了一段",
+    "替镇上的人跑腿送东西，挣了几个跑腿钱",
+    "镇上有人喊她帮忙修东西或搬重东西，完事给了几个钱或一点吃的",
+))
+
+_INDOOR_EVEN_WITH_WX = frozenset((
+    "晚上抬头看星星或月亮看了很久",
+    "靠在舷窗边，看月光落在海面上",
+    "夜里下起雨，舱顶有一处滴水，拿盆接着，听了半宿滴答声",
+    "外头阴雨返潮，把抹了盐的小鱼串起来挂在烧旺的柴炉烟管旁慢慢烘干",
+    "夜里海上起了雾，远处一声一声地传来船的汽笛",
+    "夜雾里传来几声不知哪来的敲击声，竖着耳朵听了半天",
+    "夜里风停了，海面平得像镜子，月亮倒映在水里",
+    "夜里潮水退得很低，月光底下露出一片平时看不见的旧街屋顶",
+))
+
+
+def _default_meta(text: str) -> dict:
+    grp = _DEFAULT_GROUP.get(text, "")
+    wx = _ITEM_WX.get(text) or _GROUP_WX.get(grp, "")
+    link = _ITEM_LINK.get(text) or _GROUP_LINK.get(grp, "")
+    work = text in WORK_TEXTS
+    outdoor = (text in _EXTRA_OUTDOOR or bool(wx)) and text not in _INDOOR_EVEN_WITH_WX
+    return {"wx": wx, "link": link, "work": work, "outdoor": outdoor}
+
+
 def default_pools() -> dict:
     def per(rows):
-        return [{"text": t, "w": dict(zip(TWIST_PEOPLE, ws)), "group": _DEFAULT_GROUP.get(t, ""),
-                 "when": DEFAULT_WHEN.get(t, ""), "where": DEFAULT_WHERE.get(t, "")} for t, *ws in rows]
+        out = []
+        for t, *ws in rows:
+            meta = _default_meta(t)
+            out.append({
+                "text": t,
+                "w": dict(zip(TWIST_PEOPLE, ws)),
+                "group": _DEFAULT_GROUP.get(t, ""),
+                "when": DEFAULT_WHEN.get(t, ""),
+                "where": DEFAULT_WHERE.get(t, ""),
+                **meta,
+            })
+        return out
 
     return {
         "twists": per(TWISTS),
         "night_twists": per(NIGHT_TWISTS),
-        "together": [{"text": t, "w": w, "group": _DEFAULT_GROUP.get(t, ""), "when": DEFAULT_WHEN.get(t, ""),
-                      "where": DEFAULT_WHERE.get(t, "")} for t, w in TOGETHER_TWISTS],
+        "together": [
+            {
+                "text": t,
+                "w": w,
+                "group": _DEFAULT_GROUP.get(t, ""),
+                "when": DEFAULT_WHEN.get(t, ""),
+                "where": DEFAULT_WHERE.get(t, ""),
+                **_default_meta(t),
+            }
+            for t, w in TOGETHER_TWISTS
+        ],
         "pastimes": per(PASTIMES),
         "idles": per(IDLES),
         "night_idles": per(NIGHT_IDLES),
@@ -1053,7 +1283,7 @@ def _weight(value) -> float:
 
 
 def clean_pool_item(kind: str, item: dict) -> dict:
-    """校验网页提交的一条；不对就抛 ValueError（中文原因）。"""
+    """校验网页或磁盘提交的一条；未传新结构化字段时按默认元数据回填。"""
     if kind not in POOL_KINDS:
         raise ValueError("没有这个池子：%s" % kind)
     if not isinstance(item, dict):
@@ -1082,7 +1312,26 @@ def clean_pool_item(kind: str, item: dict) -> dict:
     where = re.sub(r"\s+", "", str(item.get("where") or ""))
     if len(where) > POOL_WHERE_MAX:
         raise ValueError("「在哪」太长（最多 %d 字）" % POOL_WHERE_MAX)
-    return {"text": text, "w": weight, "group": group, "when": when, "where": where}
+    defaults = _default_meta(text)
+    wx = str(item.get("wx") if "wx" in item and item.get("wx") is not None else defaults["wx"]).strip()
+    if wx not in WX_LABELS:
+        raise ValueError("天气条件不支持：%s" % wx)
+    link = str(item.get("link") if "link" in item and item.get("link") is not None else defaults["link"]).strip()
+    if link not in LINK_LABELS:
+        raise ValueError("联动条件不支持：%s" % link)
+    work = bool(item["work"]) if "work" in item and item.get("work") is not None else bool(defaults["work"])
+    outdoor = bool(item["outdoor"]) if "outdoor" in item and item.get("outdoor") is not None else bool(defaults["outdoor"])
+    return {
+        "text": text,
+        "w": weight,
+        "group": group,
+        "when": when,
+        "where": where,
+        "wx": wx,
+        "link": link,
+        "work": work,
+        "outdoor": outdoor,
+    }
 
 
 def normalize_pools(data) -> dict:
@@ -1122,28 +1371,6 @@ def group_map(pools: dict) -> dict:
     return {item["text"]: item.get("group") or "" for kind in POOL_KINDS for item in pools.get(kind) or []}
 
 
-def rows_for(items: list, name: str, home: str = "", work: bool = True) -> list:
-    """池子里这个人的那份 [(原文, 权重)]，权重 0 的不要。两人一起的权重就一个数。
-    没在 TWIST_PEOPLE 里的角色按每条里最大的那个权重算。
-    home 是现在住在哪（配置 world_home）：写了「在哪」、又不是这一处的不要，是这一处的权重乘 HOME_BOOST；
-    home 空着就不按地方挑（老调用照旧）。讨生活的（WORK_TEXTS）再乘 WORK_BOOST；work=False 不乘（消遣用：
-    11-08 起消遣不乘讨生活那 ×3，不然手边的消遣全被补网、磨刀、拆机器挤满；11-09 起晚上的插曲也不乘）。"""
-    out = []
-    for item in items or []:
-        where = str(item.get("where") or "")
-        if home and where and where != home:
-            continue
-        w = item.get("w")
-        if isinstance(w, dict):
-            weight = w.get(name) if name in TWIST_PEOPLE else max(list(w.values()) or [0])
-        else:
-            weight = w
-        if weight and weight > 0:
-            boost = (HOME_BOOST if home and where == home else 1.0) * (WORK_BOOST if work and item["text"] in WORK_TEXTS else 1.0)
-            out.append((item["text"], float(weight) * boost))
-    return out
-
-
 def _base_weight(item: dict, name: str) -> float:
     w = item.get("w")
     if isinstance(w, dict):
@@ -1151,70 +1378,344 @@ def _base_weight(item: dict, name: str) -> float:
     return float(w or 0)
 
 
-def pool_outlook(pools: dict, history: dict, date_text: str, labels: dict, sims: int = 400, home: str = "") -> dict:
-    """给网页看的：下一次抽（date_text 的第二天）时每人每条的初始权重、乘了冷却的现在权重、同组几条分摊、
-    几天前抽到（同组算）、明天抽中的机会（照 draw_seed 的抽法模拟 sims 次，种子固定，刷新不跳），
-    以及 date_text 当天给每人抽到的。home 同 draw_seed：不是这一处的那几条初始权重算 0（网页上显示成关着的）。"""
-    pools = normalize_pools(pools)
-    groups = group_map(pools)
-    day = datetime.date.fromisoformat(str(date_text))
-    nxt = (day + datetime.timedelta(days=1)).isoformat()
-    history = history or {}
-    counts = {bot: {kind: collections.Counter() for kind in POOL_KINDS} for bot in labels}
-    rng = random.Random("pool_outlook:" + nxt)
-    for _ in range(max(1, int(sims))):
-        seed = draw_seed(nxt, labels=labels, history=history, rng=rng, pools=pools, home=home)
-        for bot in labels:
-            for kind in ("twists", "night_twists", "pastimes", "idles", "night_idles"):
-                counts[bot][kind].update(seed[kind].get(bot) or [])
-            counts[bot]["together"].update(seed["together"])
-    seen = {bot: last_drawn(history, nxt, bot, groups) for bot in labels}
-    both: dict = {}
-    for bot in labels:
-        for key, days in seen[bot].items():
-            both[key] = min(days, both.get(key, days))
-    ago = {bot: drawn_days(history, date_text, bot, groups) for bot in labels}
-    own = {bot: drawn_days(history, date_text, bot, exact=True) for bot in labels}
-    record = history.get(str(date_text)) if isinstance(history.get(str(date_text)), dict) else {}
-    out = {}
-    for bot, name in labels.items():
-        rows_by_kind, today = {}, {}
-        for kind in POOL_KINDS:
-            shared = kind == "together"
-            who = "" if shared else name
-            live = rows_for(pools[kind], who, home, work=kind not in ("pastimes", "night_twists"))
-            size = collections.Counter(cool_key(t, groups) for t, _w in live)
-            cool = both if shared else seen[bot]
-            table = PASTIME_COOLDOWN if kind == "pastimes" else None
-            rows = []
-            for i, item in enumerate(pools[kind]):
-                text = item["text"]
-                key = cool_key(text, groups)
-                elsewhere = bool(home and item.get("where") and item.get("where") != home)
-                base = 0.0 if elsewhere else _base_weight(item, who)
-                factor = cool_factor(cool.get(key), table) if base > 0 else 0.0
-                days = [ago[b].get(key) for b in labels] if shared else [ago[bot].get(key)]
-                days = [d for d in days if d is not None]
-                mine = [own[b].get(text) for b in labels] if shared else [own[bot].get(text)]
-                mine = [d for d in mine if d is not None]
-                rows.append({
-                    "i": i,
-                    "base": round(base, 3),
-                    "factor": round(factor, 3),
-                    "now": round(base * factor, 3),
-                    "split": size.get(key, 0) if base > 0 else 0,
-                    "days": min(days) if days else None,
-                    "own": bool(days) and bool(mine) and min(mine) == min(days),
-                    "chance": round(counts[bot][kind][text] / max(1, int(sims)), 4),
-                })
-            rows_by_kind[kind] = rows
-            value = record.get(kind)
-            if isinstance(value, dict):
-                today[kind] = list(value.get(bot) or [])
+def _is_work(item: dict) -> bool:
+    if "work" in item and item.get("work") is not None:
+        return bool(item["work"])
+    return str(item.get("text") or "") in WORK_TEXTS
+
+
+def _hours_slice(start: datetime.datetime, end: datetime.datetime, weather_of, home: str) -> list[dict]:
+    from . import weather as weather_mod
+
+    flat_a = start.replace(tzinfo=None)
+    flat_b = max(end.replace(tzinfo=None), flat_a + datetime.timedelta(hours=1))
+    cur = flat_a.replace(minute=0, second=0, microsecond=0)
+    out = []
+    cache: dict[str, tuple] = {}
+    while cur < flat_b or not out:
+        day_str = cur.date().isoformat()
+        if day_str not in cache:
+            wtxt = weather_of(cur.date()) if callable(weather_of) else str(weather_of or "多云")
+            cache[day_str] = weather_mod.day_hours(day_str, wtxt, home)
+        out.append(cache[day_str][cur.hour])
+        cur += datetime.timedelta(hours=1)
+    return out
+
+
+def build_live_context(
+    *,
+    start: datetime.datetime,
+    end: datetime.datetime | None = None,
+    home: str = "",
+    weather_of=None,
+    tone: str = "",
+    world=None,
+    store=None,
+    shelf=None,
+) -> dict:
+    """采集当下补写窗口 [start, end] 的真实天气、库存、补给船与洗衣状态，供即时抽签联动。"""
+    flat_start = start.replace(tzinfo=None)
+    flat_end = (end.replace(tzinfo=None) if end is not None else flat_start + datetime.timedelta(hours=3))
+    if flat_end <= flat_start:
+        flat_end = flat_start + datetime.timedelta(hours=2)
+
+    ctx: dict = {
+        "start": flat_start,
+        "end": flat_end,
+        "home": str(home or "").strip(),
+        "tone": str(tone or "").strip(),
+        "has_weather": False,
+        "has_inventory": False,
+        "has_supply": False,
+    }
+
+    if weather_of is not None:
+        try:
+            win_hours = _hours_slice(flat_start, flat_end, weather_of, ctx["home"])
+            ahead_hours = _hours_slice(flat_start, flat_end + datetime.timedelta(hours=2), weather_of, ctx["home"])
+            past_hours = _hours_slice(flat_start - datetime.timedelta(hours=24), flat_start, weather_of, ctx["home"])
+            ctx.update({
+                "has_weather": True,
+                "max_rain": max(float(h.get("rain") or 0.0) for h in win_hours),
+                "soon_rain": max(float(h.get("rain") or 0.0) for h in ahead_hours),
+                "max_wind": max(int(h.get("wind") or 0) for h in win_hours),
+                "max_fog": max(int(h.get("fog") or 0) for h in win_hours),
+                "avg_cloud": sum(float(h.get("cloud") or 0.0) for h in win_hours) / max(1, len(win_hours)),
+                "min_temp": min(float(h.get("temp") or 18.0) for h in win_hours),
+                "rained_recently": any(float(h.get("rain") or 0.0) >= 0.5 for h in past_hours),
+            })
+        except Exception:
+            pass
+
+    if ctx["home"] == "海边小镇" and weather_of is not None:
+        try:
+            from . import supply as supply_mod
+
+            st = supply_mod.state(flat_start, weather_of, ctx["home"])
+            picked = supply_mod.picked_up(flat_start, world, weather_of, ctx["home"]) if world is not None else None
+            ctx.update({
+                "has_supply": True,
+                "ship_recent": int(st.get("since", 99)) <= 1,
+                "ship_unpicked": picked is False,
+            })
+        except Exception:
+            pass
+
+    if store is not None:
+        try:
+            from . import things as things_mod
+            from . import weathering
+
+            if shelf is None:
+                shelf = store.here(store.view(flat_start), flat_start)
+            local_vals = store._local_items(shelf.values(), flat_start)
+            charcoal_g = 0.0
+            wood_bundles = 0.0
+            oil_ml = 0.0
+            salt_g = 0.0
+            sugar_g = 0.0
+            vinegar_ml = 0.0
+            soy_ml = 0.0
+            has_egg_or_root = False
+            has_wet_laundry = False
+
+            for item in local_vals:
+                if things_mod.is_ended(item) is not None:
+                    continue
+                if things_mod.is_charcoal(item):
+                    info = things_mod.measure(item)
+                    charcoal_g += float((info or {}).get("left") or 0.0)
+                    continue
+                if weathering.fuel_item(item):
+                    st_info = things_mod.stock(item)
+                    if st_info is not None:
+                        wood_bundles += float(st_info.get("left") or 0.0)
+                    else:
+                        wood_bundles += 0.5
+                    continue
+                if things_mod.cat_of(item) == things_mod.CAT_FOOD:
+                    info = things_mod.measure(item)
+                    left_val = float((info or {}).get("left") or 0.0)
+                    if store._is_edible_oil(item):
+                        oil_ml += left_val
+                    elif store._is_salt_staple(item):
+                        salt_g += left_val
+                    elif store._is_sugar_staple(item):
+                        sugar_g += left_val
+                    elif store._is_vinegar_staple(item):
+                        vinegar_ml += left_val
+                    elif store._is_soy_staple(item):
+                        soy_ml += left_val
+                    nm = str(item.get("name") or "")
+                    kd = str(item.get("kind") or "")
+                    if kd == "禽蛋类" or any(w in nm for w in ("鸡蛋", "鸭蛋", "姜", "生姜", "番薯", "地瓜", "萝卜")):
+                        has_egg_or_root = True
+                else:
+                    nm = str(item.get("name") or "")
+                    kd = str(item.get("kind") or "")
+                    last_st = (item.get("stages") or [{}])[-1]
+                    st_txt = str(last_st.get("state") or "") + str(item.get("_weather") or "")
+                    if ("衣" in nm or "衣" in kd) and any(w in st_txt for w in ("湿", "潮", "晾", "未干")):
+                        has_wet_laundry = True
+
+            if not has_wet_laundry and world is not None:
+                from .world import parse_time as _parse_time, real_stop as _real_stop
+
+                cutoff = flat_start - datetime.timedelta(hours=36)
+                for back in (0, 1, 2):
+                    d_str = (flat_start.date() - datetime.timedelta(days=back)).isoformat()
+                    for e in world.entries(d_str):
+                        if _real_stop(e):
+                            continue
+                        en_t = _parse_time(e.get("end")) or _parse_time(e.get("start"))
+                        if en_t is None or not cutoff <= en_t <= flat_start:
+                            continue
+                        orig_t = str((e.get("origin") or {}).get("text") or "")
+                        if cool_key(orig_t) == "洗衣裳":
+                            has_wet_laundry = True
+                            break
+
+            items_map = {str(x.get("id")): x for x in local_vals if x.get("id")}
+            has_ash = store._has_ash_or_sand(items_map, flat_start, need_sand=False)
+            ctx.update({
+                "has_inventory": True,
+                "charcoal_g": charcoal_g,
+                "wood_bundles": wood_bundles,
+                "oil_ml": oil_ml,
+                "salt_g": salt_g,
+                "sugar_g": sugar_g,
+                "vinegar_ml": vinegar_ml,
+                "soy_ml": soy_ml,
+                "low_oil": oil_ml <= 40.0,
+                "low_salt": salt_g <= 30.0,
+                "low_vinegar": vinegar_ml <= 50.0,
+                "has_stove_ash": has_ash,
+                "has_egg_or_root": has_egg_or_root,
+                "has_wet_laundry": has_wet_laundry,
+            })
+        except Exception:
+            pass
+
+    return ctx
+
+
+def eval_item(
+    item: dict,
+    name: str,
+    home: str = "",
+    ctx: dict | None = None,
+    *,
+    work: bool = True,
+) -> tuple[float, float, str, str]:
+    """评估单条在当前环境下的权重，返回 (有效基础权重 base, 当前环境权重 live, 拦截原因 blocked, 联动说明 boost_note)。"""
+    where = str(item.get("where") or "")
+    if home and where and where != home:
+        return 0.0, 0.0, "", ""
+    raw_w = _base_weight(item, name)
+    if raw_w <= 0:
+        return 0.0, 0.0, "", ""
+
+    is_work = _is_work(item)
+    base = float(raw_w) * (HOME_BOOST if home and where == home else 1.0) * (WORK_BOOST if work and is_work else 1.0)
+    if not ctx:
+        return base, base, "", ""
+
+    wx = str(item.get("wx") or "")
+    link = str(item.get("link") or "")
+    outdoor = bool(item.get("outdoor"))
+    notes: list[str] = []
+
+    if ctx.get("has_weather"):
+        max_rain = float(ctx.get("max_rain") or 0.0)
+        soon_rain = float(ctx.get("soon_rain") or 0.0)
+        max_wind = int(ctx.get("max_wind") or 0)
+        max_fog = int(ctx.get("max_fog") or 0)
+        avg_cloud = float(ctx.get("avg_cloud") or 1.0)
+
+        if wx == "sunny":
+            if soon_rain >= 0.05:
+                return base, 0.0, "正在下雨或将下雨", ""
+            if avg_cloud > 1.05:
+                return base, 0.0, "天阴无日头/月色", ""
+            if max_wind > 5:
+                return base, 0.0, "风浪偏大", ""
+        elif wx == "dry":
+            if soon_rain >= 0.05:
+                return base, 0.0, "下雨或将下雨", ""
+            if max_wind > 5:
+                return base, 0.0, "风浪偏大", ""
+        elif wx == "calm":
+            if max_rain >= 1.0 or max_wind > 4 or max_fog > 1:
+                return base, 0.0, "风浪或海雾不适下水", ""
+        elif wx == "rain":
+            if max_rain < 0.2:
+                return base, 0.0, "此刻没下雨", ""
+            notes.append("正逢下雨")
+        elif wx == "fog":
+            if max_fog < 1:
+                return base, 0.0, "此刻没起雾", ""
+            notes.append("正逢起雾")
+        elif wx == "wind":
+            if max_wind < 5:
+                return base, 0.0, "此刻风浪不大", ""
+            notes.append("正起风浪")
+
+        if outdoor and wx not in ("rain", "wind") and (max_wind >= 8 or max_rain >= 8.0):
+            return base, 0.0, "狂风暴雨不宜外出", ""
+
+    mult = 1.0
+    if link == "ship_day" and ctx.get("has_supply"):
+        if not ctx.get("ship_recent"):
+            return base, 0.0, "补给船未到港", ""
+        if ctx.get("low_oil") or ctx.get("ship_unpicked"):
+            mult *= 3.5
+            notes.append("补给船到港缺油 ×3.5")
+        else:
+            mult *= 2.0
+            notes.append("补给船到港 ×2")
+
+    if ctx.get("has_inventory"):
+        ch_g = float(ctx.get("charcoal_g") or 0.0)
+        wood_b = float(ctx.get("wood_bundles") or 0.0)
+        if link == "charcoal":
+            if ch_g <= 0:
+                mult *= 4.5
+                notes.append("断炭急需 ×4.5")
+            elif ch_g <= 600:
+                mult *= 2.8
+                notes.append("缺炭提权 ×2.8")
+            elif ch_g >= 2500:
+                mult *= 0.25
+        elif link == "charcoal_stove":
+            if wood_b <= 0:
+                return base, 0.0, "家里没干柴烧柴炉", ""
+            if ctx.get("has_weather") and float(ctx.get("min_temp") or 15.0) > 17.5 and float(ctx.get("max_rain") or 0.0) < 0.2:
+                return base, 0.0, "天暖无雨未点柴炉", ""
+            if ch_g <= 600:
+                mult *= 2.8
+                notes.append("缺炭提权 ×2.8")
+        elif link == "firewood":
+            if wood_b <= 0.25:
+                mult *= 3.8
+                notes.append("断柴急需 ×3.8")
+            elif wood_b < 1.0:
+                mult *= 2.4
+                notes.append("缺柴提权 ×2.4")
+            elif wood_b >= 3.0:
+                mult *= 0.3
+        elif link == "use_charcoal":
+            if ch_g <= 200:
+                return base, 0.0, "闷炭见底省着做饭", ""
+        elif link == "laundry":
+            if ctx.get("has_wet_laundry"):
+                return base, 0.0, "刚洗过或还有湿衣晾着", ""
+        elif link == "rainwater":
+            if ctx.get("rained_recently"):
+                mult *= 2.0
+                notes.append("雨后存水 ×2")
             else:
-                today[kind] = list(value) if isinstance(value, list) else []
-        out[bot] = {"rows": rows_by_kind, "today": today}
-    return {"date": nxt, "sims": int(sims), "bots": out}
+                mult *= 0.45
+        elif link == "restock":
+            if ctx.get("low_oil") or ctx.get("low_salt") or ctx.get("low_vinegar"):
+                mult *= 2.4
+                notes.append("缺油盐调料 ×2.4")
+        elif link == "ash":
+            if not ctx.get("has_stove_ash") or not ctx.get("has_egg_or_root"):
+                return base, 0.0, "缺柴炉灰或无蛋姜番薯", ""
+        elif link == "preserve_jam":
+            if float(ctx.get("sugar_g") or 0.0) < 50:
+                return base, 0.0, "家里糖不够熬果酱", ""
+        elif link == "preserve_pickle":
+            if float(ctx.get("vinegar_ml") or 0.0) < 30 and float(ctx.get("soy_ml") or 0.0) < 40:
+                return base, 0.0, "缺醋和酱油腌渍", ""
+        elif link == "fish_dry":
+            if float(ctx.get("salt_g") or 0.0) < 10:
+                return base, 0.0, "家里没盐抹鱼", ""
+        elif link == "fish_stove":
+            if float(ctx.get("salt_g") or 0.0) < 10 or wood_b <= 0:
+                return base, 0.0, "缺盐或没干柴烘鱼", ""
+
+    tone = str(ctx.get("tone") or "")
+    if tone in ("宅家多", "懒散", "安静"):
+        mult *= 0.5 if outdoor else 1.25
+    elif tone == "外出多":
+        if outdoor:
+            mult *= 1.45
+    elif tone in ("忙碌", "充实紧凑"):
+        if is_work:
+            mult *= 1.35
+
+    return base, base * mult, "", "；".join(notes)
+
+
+def rows_for(items: list, name: str, home: str = "", work: bool = True, ctx: dict | None = None) -> list:
+    """池子里这个人的当前可用候选 [(原文, 权重)]，被地域、角色权重或实时天气/库存门禁拦截的返回空。"""
+    out = []
+    for item in items or []:
+        _base, live, blocked, _note = eval_item(item, name, home, ctx, work=work)
+        if not blocked and live > 0:
+            out.append((item["text"], live))
+    return out
 
 
 class PoolStore:
@@ -1288,7 +1789,6 @@ ACCIDENTS = (
     "船屋有东西出了毛病（舱门卡住、舱板松了之类），折腾了半天",
     "风浪骤起或大雾封港，船出不去、原本要去的地方去不成了，计划全乱",
 )
-# 只在一处碰得上的意外（没写的哪儿都行）。11-09：海边本来就只有柴油到了那几晚才发电、船屋从来没电，谈不上停电；船屋没有水管
 ACCIDENT_WHERE = {
     "镇上停电了大半天，原本的打算全得改": "穗织",
     "住处有东西出了毛病（门锁卡住、水管坏了之类），折腾了半天": "穗织",
@@ -1296,26 +1796,31 @@ ACCIDENT_WHERE = {
     "船屋有东西出了毛病（舱门卡住、舱板松了之类），折腾了半天": "海边小镇",
     "风浪骤起或大雾封港，船出不去、原本要去的地方去不成了，计划全乱": "海边小镇",
 }
+ACCIDENT_WX = {
+    "风浪骤起或大雾封港，船出不去、原本要去的地方去不成了，计划全乱": "bad_wx",
+    "走着走着迷了路，绕了好大一圈才回来": "outdoor_ok",
+    "两人在外面走散了，互相找了好半天": "outdoor_ok",
+}
 
-ACCIDENT_CHANCE = 0.1  # 大约十天碰上一回
-# 每人每天抽几件：白天、晚上各一份；两人一起的当天一份
-DAY_PICK = 4
+ACCIDENT_CHANCE = 0.1  # 全天约十天一回
+WINDOW_ACCIDENT_CHANCE = 0.03  # 按补写窗口抽时单窗概率（白天约 3~4 窗 ≈ 10%/天）
+# 旧全天口径常量保留兼容；实际按窗即时抽签用 WINDOW_PICKS
+DAY_PICK = 2
 NIGHT_PICK = 2
 TOGETHER_PICK = 1
-PASTIME_PICK = 4
-IDLE_PICK = 3
+PASTIME_PICK = 2
+IDLE_PICK = 2
 NIGHT_IDLE_PICK = 2
-POOL_PICKS = {"twists": DAY_PICK, "night_twists": NIGHT_PICK, "together": TOGETHER_PICK, "pastimes": PASTIME_PICK,
-              "idles": IDLE_PICK, "night_idles": NIGHT_IDLE_PICK}
-# 冷却：同一个人抽到过的（插曲、消遣都算），按隔了几天打折；7 天回到原样，再往后每天 +0.03，最多 1.3 倍。
-# 同一天里抽到一条，同组的别的也按「隔 1 天」算
+POOL_PICKS = {
+    "twists": DAY_PICK,
+    "night_twists": NIGHT_PICK,
+    "together": TOGETHER_PICK,
+    "pastimes": PASTIME_PICK,
+    "idles": IDLE_PICK,
+    "night_idles": NIGHT_IDLE_PICK,
+}
 COOLDOWN = {1: 0.03, 2: 0.1, 3: 0.25, 4: 0.45, 5: 0.65, 6: 0.85, 7: 1.0}
-# 住在哪儿，标着那一处的条目（「在哪」写的就是这儿）权重乘这么多，好让那儿的味道出来（2026-11-06 按要求海边 ×3）；
-# 「哪儿都行」的照原样。改回 1 就是原来的抽法
 HOME_BOOST = 3.0
-# 讨生活的那几条（打捞、分拣卖废铁、修船修屋、取水、找吃的、干家务活）：权重再乘 WORK_BOOST（2026-11-06 按要求 ×3），
-# 好让她们白天多干活、少溜达。跟住在哪无关；住海边、又是海边专属的，两样都乘。改回 1 就是原来的抽法
-# 11-09 降成 2（海边专属的讨生活就是 ×6）：亚托莉白天的小事七成都是活，跟主人有关的、看景的几乎抽不到
 WORK_BOOST = 2.0
 WORK_TEXTS = frozenset((
     "退潮了，下到浅滩翻石头、捡冲上来的旧东西",
@@ -1405,14 +1910,12 @@ WORK_TEXTS = frozenset((
 ))
 COOL_BONUS_PER_DAY = 0.03
 COOL_MAX = 1.3
-# 消遣与单旧物摆弄提高冷却力度，避免连续多天翻同一件旧物
 PASTIME_COOLDOWN = {1: 0.1, 2: 0.25, 3: 0.5, 4: 0.75, 5: 0.9, 6: 1.0}
-COOL_LOOKBACK = 17  # 往前看这么多天；再早没抽过的按最多那档算
-ACCIDENT_LOOKBACK = 30  # 30 天内碰过的意外不再碰
+COOL_LOOKBACK = 17
+ACCIDENT_LOOKBACK = 30
 SEED_KEEP_DAYS = 40
-
-# 有昨天的天气时，今天「差不多」的概率；其余按季节挑一种，让它从昨天慢慢变过来
 WEATHER_KEEP = 0.5
+ORIGIN_POOL_KINDS = ("twist", "night_twist", "together", "pastime", "idle", "night_idle")
 
 
 def _season(month: int) -> str:
@@ -1426,7 +1929,6 @@ def _season(month: int) -> str:
 
 
 def _days_back(date_text: str, days: int) -> list[str]:
-    """当天和往前 days 天的日期（含当天：同一天重新生成时也避开上一版抽到的）。"""
     try:
         day = datetime.date.fromisoformat(str(date_text))
     except Exception:
@@ -1434,19 +1936,35 @@ def _days_back(date_text: str, days: int) -> list[str]:
     return [(day - datetime.timedelta(days=n)).isoformat() for n in range(days + 1)]
 
 
-def _pick_cooled(pool, seen: dict, count: int, rng: random.Random, groups: dict | None = None,
-                 table: dict | None = None) -> list:
-    """从 (原文, 权重) 池里按「权重 × 冷却折扣」抽 count 个（不放回）。
-
-    seen 是 {cool_key: 隔了几天}，抽到的会记成 0，同组的后面再抽就按刚抽过算。
-    同组的几条在这个池子里合起来只算一条的分量（各自权重除以同组条数），不然组越大越常来。"""
-    left = list(pool)
+def _pick_cooled(
+    pool,
+    seen: dict,
+    count: int,
+    rng: random.Random,
+    groups: dict | None = None,
+    table: dict | None = None,
+    offered: dict | None = None,
+    exclude_keys: set | None = None,
+) -> list:
+    """从 (原文, 权重) 池里按「权重 × 冷却折扣 × 同日未采用衰减」不放回抽 count 个；同窗另一人已抽的组硬避让。"""
+    if exclude_keys:
+        filtered = [row for row in pool if cool_key(row[0], groups) not in exclude_keys]
+        left = list(filtered if len(filtered) >= count else pool)
+    else:
+        left = list(pool)
     out = []
     for _ in range(min(count, len(left))):
         keys = [cool_key(t, groups) for t, _w in left]
         size = collections.Counter(keys)
-        weights = [w / size[k] * cool_factor(seen.get(k), table) for (_t, w), k in zip(left, keys)]
-        point = rng.random() * sum(weights)
+        weights = []
+        for (t, w), k in zip(left, keys):
+            n_off = int((offered or {}).get(t) or 0)
+            off_decay = (0.4 ** n_off) if n_off > 0 else 1.0
+            weights.append(w / size[k] * cool_factor(seen.get(k), table) * off_decay)
+        total_w = sum(weights)
+        if total_w <= 0:
+            break
+        point = rng.random() * total_w
         index = len(left) - 1
         for i, weight in enumerate(weights):
             point -= weight
@@ -1459,40 +1977,87 @@ def _pick_cooled(pool, seen: dict, count: int, rng: random.Random, groups: dict 
     return out
 
 
-def drawn_days(history: dict, date_text: str, bot: str, groups: dict | None = None, exact: bool = False) -> dict:
-    """这个人每样东西最近一次是几天前抽到的：{cool_key: 天数}（0 是当天；exact 时按原文、不按组）。
-    插曲、晚上的、两人一起的、消遣都算，老格式那份共用的也算；COOL_LOOKBACK 天里没抽到的不在里面。"""
+def drawn_days(
+    history: dict,
+    date_text: str,
+    bot: str,
+    groups: dict | None = None,
+    exact: bool = False,
+    world=None,
+) -> dict:
+    """每个人每样东西最近一次实际发生（或老记录抽中）是几天前：{cool_key: 天数}。
+    给了 world 时优先读取世界线真实落盘的 origin（没发生的不白吃 7 天冷却），且 SHARED_GROUPS 全家共享冷却。"""
+    from .world import real_stop as _real_stop
+
     out: dict = {}
     for back, day in enumerate(_days_back(date_text, COOL_LOOKBACK)):
+        used_world = False
+        if world is not None:
+            entries = world.entries(day)
+            if entries:
+                used_world = True
+                for e in entries:
+                    if str(e.get("who")) == "master" or _real_stop(e):
+                        continue
+                    orig = e.get("origin")
+                    if not isinstance(orig, dict) or orig.get("kind") not in ORIGIN_POOL_KINDS:
+                        continue
+                    text = str(orig.get("text") or "").strip()
+                    if not text:
+                        continue
+                    ck = cool_key(text, groups)
+                    mine = (
+                        str(e.get("who")) == str(bot)
+                        or bot in (e.get("with") or [])
+                        or orig.get("kind") == "together"
+                        or (not exact and ck in SHARED_GROUPS)
+                    )
+                    if mine:
+                        out.setdefault(text if exact else ck, back)
+        if used_world and day < "2026-11-16":
+            continue
         record = (history or {}).get(day)
         if not isinstance(record, dict):
             continue
         for key in ("twists", "night_twists", "together", "pastimes", "idles", "night_idles"):
             value = record.get(key)
-            items = (value.get(bot) or []) if isinstance(value, dict) else (value or [])
-            for text in items if isinstance(items, list) else []:
-                out.setdefault(str(text) if exact else cool_key(text, groups), back)
+            if isinstance(value, dict):
+                own_items = value.get(bot) or []
+                for text in own_items if isinstance(own_items, list) else []:
+                    out.setdefault(str(text) if exact else cool_key(text, groups), back)
+                if not exact:
+                    for other_bot, other_items in value.items():
+                        if other_bot == bot or not isinstance(other_items, list):
+                            continue
+                        for text in other_items:
+                            ck = cool_key(text, groups)
+                            if ck in SHARED_GROUPS:
+                                out.setdefault(ck, back)
+            elif isinstance(value, list):
+                for text in value:
+                    out.setdefault(str(text) if exact else cool_key(text, groups), back)
     return out
 
 
-def last_drawn(history: dict, date_text: str, bot: str, groups: dict | None = None) -> dict:
-    """抽的时候用：隔了几天没抽到，当天的（重新抽时上一版）按隔 1 天算。"""
-    return {key: max(days, 1) for key, days in drawn_days(history, date_text, bot, groups).items()}
+def last_drawn(history: dict, date_text: str, bot: str, groups: dict | None = None, world=None) -> dict:
+    """抽签冷却表：隔了几天没发生（当天的按隔 1 天打折）。"""
+    return {key: max(days, 1) for key, days in drawn_days(history, date_text, bot, groups, world=world).items()}
 
 
 def twists_of(seed: dict, night: bool = False) -> tuple[dict, list]:
-    """当天抽到的插曲：({机器人: [...]}, [两人一起的])。"""
+    """插曲提取：({机器人: [...]}, [两人一起的])。"""
     value = (seed or {}).get("night_twists" if night else "twists")
     together = [] if night else list((seed or {}).get("together") or [])
     return ({bot: list(items or []) for bot, items in value.items()} if isinstance(value, dict) else {}), together
 
 
 def _pick(pool, used: set, count: int, rng: random.Random, weights: dict | None = None) -> list:
-    """从 pool 里抽 count 个，尽量避开 used；避开后不够就从全池抽。weights 给了就按权重抽（不放回）。"""
     fresh = [x for x in pool if x not in used]
     left = list(fresh if len(fresh) >= count else pool)
+    if not left:
+        return []
     if not weights:
-        return rng.sample(left, count)
+        return rng.sample(left, min(count, len(left)))
     out = []
     for _ in range(min(count, len(left))):
         point = rng.random() * sum(weights.get(x, 1.0) for x in left)
@@ -1506,14 +2071,17 @@ def _pick(pool, used: set, count: int, rng: random.Random, weights: dict | None 
 
 
 def _weather(date_text: str, prev_weather: str, rng: random.Random, home: str = "") -> str:
+    from . import weather as weather_mod
+
     try:
         month = int(str(date_text)[5:7])
     except Exception:
         month = 1
     choices = WEATHER_BY_HOME.get(str(home or "").strip(), WEATHER_BY_SEASON)[_season(month)]
-    prev = str(prev_weather or "").strip()
-    if not prev:
+    raw_prev = str(prev_weather or "").strip()
+    if not raw_prev:
         return rng.choice(choices)
+    prev = weather_mod.day_kinds(raw_prev)[0]
     if rng.random() < WEATHER_KEEP:
         return "和昨天差不多（昨天是「%s」），可以有点小起伏" % prev
     pool = [w for w in choices if w not in prev and prev not in w] or list(choices)
@@ -1521,6 +2089,211 @@ def _weather(date_text: str, prev_weather: str, rng: random.Random, home: str = 
         prev,
         rng.choice(pool),
     )
+
+
+def _accident_allowed(acc: str, home: str, ctx: dict | None) -> bool:
+    if home and ACCIDENT_WHERE.get(acc, home) != home:
+        return False
+    rule = ACCIDENT_WX.get(acc, "")
+    if not rule or not ctx or not ctx.get("has_weather"):
+        return rule != "bad_wx"
+    max_wind = int(ctx.get("max_wind") or 0)
+    max_fog = int(ctx.get("max_fog") or 0)
+    max_rain = float(ctx.get("max_rain") or 0.0)
+    if rule == "bad_wx":
+        return max_wind >= 6 or max_fog >= 2 or max_rain >= 8.0
+    if rule == "outdoor_ok":
+        return max_wind < 8 and max_rain < 8.0
+    return True
+
+
+def _used_history_values(history: dict, date_text: str, key: str, days: int, world=None) -> set:
+    out: set = set()
+    for day in _days_back(date_text, days):
+        record = (history or {}).get(day)
+        if isinstance(record, dict):
+            value = record.get(key)
+            if isinstance(value, list):
+                out.update(x for x in value if x)
+            elif value:
+                out.add(value)
+        if key == "accident" and world is not None:
+            for e in world.entries(day):
+                orig = e.get("origin")
+                if isinstance(orig, dict) and orig.get("kind") == "accident" and orig.get("text"):
+                    out.add(str(orig["text"]))
+    return out
+
+
+def init_day_seed(
+    date_text: str,
+    *,
+    labels: dict | None = None,
+    history: dict | None = None,
+    prev_weather: str = "",
+    rng: random.Random | None = None,
+    meals_rng: random.Random | None = None,
+    home: str = "",
+) -> dict:
+    """0 点只定全天客观天象、起床底色心情、基调与三餐参考；插曲/消遣/闲置留到每轮补写按实时处境现抽。"""
+    rng = rng or random.Random()
+    history = history or {}
+    labels = labels or {}
+    if not prev_weather:
+        try:
+            yday = (datetime.date.fromisoformat(str(date_text)) - datetime.timedelta(days=1)).isoformat()
+            prev_weather = str(((history.get(yday) or {}).get("weather")) or "")
+        except Exception:
+            prev_weather = ""
+    moods = {bot: rng.choice(MOODS) for bot in labels}
+    used_tones = _used_history_values(history, date_text, "tone", 1)
+    return {
+        "weather": _weather(date_text, prev_weather, rng, home),
+        "tone": _pick(TONES, used_tones, 1, rng)[0],
+        "twists": {bot: [] for bot in labels},
+        "night_twists": {bot: [] for bot in labels},
+        "together": [],
+        "pastimes": {bot: [] for bot in labels},
+        "idles": {bot: [] for bot in labels},
+        "night_idles": {bot: [] for bot in labels},
+        "moods": moods,
+        "accident": "",
+        "when": {},
+        "meals": draw_meals(date_text, history, meals_rng or random.Random(), home),
+    }
+
+
+def draw_window(
+    date_text: str,
+    *,
+    start: datetime.datetime,
+    end: datetime.datetime | None = None,
+    labels: dict | None = None,
+    pools: dict | None = None,
+    seed: dict | None = None,
+    history: dict | None = None,
+    world=None,
+    ctx: dict | None = None,
+    offered: dict | None = None,
+    rng: random.Random | None = None,
+    home: str = "",
+    night: bool | None = None,
+) -> dict:
+    """每次补写当下窗口 [start, end] 时即时现抽：结合实时天气、库存、补给船、双人避让与真实世界线冷却。"""
+    from .world import real_stop as _real_stop
+
+    rng = rng or random.Random()
+    history = history or {}
+    labels = labels or {}
+    pools = normalize_pools(pools) if pools is not None else default_pools()
+    groups = group_map(pools)
+    base_seed = dict(seed) if isinstance(seed, dict) else {}
+    flat_start = start.replace(tzinfo=None)
+    if night is None:
+        night = flat_start.hour >= 18 or flat_start.hour < 6
+
+    seen = {bot: last_drawn(history, date_text, bot, groups, world=world) for bot in labels}
+
+    # 检查今天是否已经发生过两人一起的插曲或意外
+    had_together_today = False
+    had_accident_today = False
+    if world is not None:
+        for e in world.entries(date_text):
+            if _real_stop(e):
+                continue
+            orig = e.get("origin")
+            if isinstance(orig, dict):
+                if orig.get("kind") == "together":
+                    had_together_today = True
+                elif orig.get("kind") == "accident":
+                    had_accident_today = True
+    if base_seed.get("together"):
+        had_together_today = True
+
+    together: list[str] = []
+    if not night and len(labels) >= 2 and not had_together_today:
+        both: dict = {}
+        for bot in labels:
+            for k, d in seen[bot].items():
+                both[k] = min(d, both.get(k, d))
+        cand_tog = rows_for(pools["together"], "", home, work=True, ctx=ctx)
+        together = _pick_cooled(cand_tog, both, TOGETHER_PICK, rng, groups, offered=(offered or {}).get("together"))
+        for bot in labels:
+            for t in together:
+                seen[bot][cool_key(t, groups)] = 0
+
+    twists, night_twists, pastimes, idles, night_idles = {}, {}, {}, {}, {}
+    # 交替轮转先抽顺序，确保长期两人在共享冷却/同窗避让上完全公平
+    bot_items = list(labels.items())
+    if len(bot_items) >= 2 and (flat_start.toordinal() + flat_start.hour) % 2 == 1:
+        bot_items = list(reversed(bot_items))
+
+    shared_window_keys: set[str] = {cool_key(t, groups) for t in together}
+    for bot, name in bot_items:
+        local_seen = dict(seen[bot])
+        for sk in shared_window_keys:
+            local_seen[sk] = 0
+        off_bot = (offered or {}).get(bot) if isinstance(offered, dict) else None
+        if night:
+            twists[bot] = []
+            night_twists[bot] = _pick_cooled(
+                rows_for(pools["night_twists"], name, home, work=False, ctx=ctx),
+                local_seen, NIGHT_PICK, rng, groups, offered=off_bot, exclude_keys=shared_window_keys,
+            )
+            idles[bot] = []
+            night_idles[bot] = _pick_cooled(
+                rows_for(pools["night_idles"], name, home, work=True, ctx=ctx),
+                local_seen, NIGHT_IDLE_PICK, rng, groups, PASTIME_COOLDOWN, offered=off_bot, exclude_keys=shared_window_keys,
+            )
+        else:
+            twists[bot] = _pick_cooled(
+                rows_for(pools["twists"], name, home, work=True, ctx=ctx),
+                local_seen, DAY_PICK, rng, groups, offered=off_bot, exclude_keys=shared_window_keys,
+            )
+            night_twists[bot] = []
+            idles[bot] = _pick_cooled(
+                rows_for(pools["idles"], name, home, work=True, ctx=ctx),
+                local_seen, IDLE_PICK, rng, groups, PASTIME_COOLDOWN, offered=off_bot, exclude_keys=shared_window_keys,
+            )
+            night_idles[bot] = []
+        pastimes[bot] = _pick_cooled(
+            rows_for(pools["pastimes"], name, home, work=False, ctx=ctx),
+            local_seen, PASTIME_PICK, rng, groups, PASTIME_COOLDOWN, offered=off_bot, exclude_keys=shared_window_keys,
+        )
+        # 同窗双人避让：前一人刚抽到的条目/同组，后一人同窗不再撞车
+        for picked_list in (twists[bot], night_twists[bot], pastimes[bot], idles[bot], night_idles[bot]):
+            for t in picked_list:
+                shared_window_keys.add(cool_key(t, groups))
+
+    accident = ""
+    if not night and not had_accident_today:
+        existing_acc = str(base_seed.get("accident") or "").strip()
+        if existing_acc and _accident_allowed(existing_acc, home, ctx):
+            accident = existing_acc
+        elif rng.random() < WINDOW_ACCIDENT_CHANCE:
+            here_acc = [a for a in ACCIDENTS if _accident_allowed(a, home, ctx)]
+            used_acc = _used_history_values(history, date_text, "accident", ACCIDENT_LOOKBACK, world=world)
+            picked_acc = _pick(here_acc, used_acc, 1, rng)
+            accident = picked_acc[0] if picked_acc else ""
+
+    all_when = when_map(pools)
+    return {
+        "weather": base_seed.get("weather") or "",
+        "tone": base_seed.get("tone") or (ctx or {}).get("tone") or "",
+        "moods": dict(base_seed.get("moods") or {}),
+        "meals": base_seed.get("meals"),
+        "twists": twists,
+        "night_twists": night_twists,
+        "together": together,
+        "pastimes": pastimes,
+        "idles": idles,
+        "night_idles": night_idles,
+        "accident": accident,
+        "when": {
+            t: w for t, w in all_when.items()
+            if any(t in items for items in (*twists.values(), *night_twists.values(), together))
+        },
+    }
 
 
 def draw_seed(
@@ -1532,79 +2305,151 @@ def draw_seed(
     pools: dict | None = None,
     meals_rng: random.Random | None = None,
     home: str = "",
+    ctx: dict | None = None,
+    world=None,
 ) -> dict:
-    """抽当天的随机起点：天气（接着昨天变）、基调、小插曲、每人的心情、偶尔一个意外，还有今天的饭（``menu.draw_meals``）。
-
-    labels 是 {机器人: 角色名}，每人各抽一个心情（不防重复）、各抽一份插曲和消遣（按她在池子里的权重）；
-    两人一起的插曲当天一份。history 是以前每天抽到的（``SeedLog.load()``），用来防重复：
-    插曲和消遣按这个人隔了几天没抽到打折（``cool_factor``，同组算一条；消遣按 ``PASTIME_COOLDOWN``，轻得多）；
-    昨天的基调今天不再抽，30 天内碰过的意外不再碰。pools 是网页改过的池子（``PoolStore.load()``），不给用默认的。
-    饭用另一个随机数（meals_rng，不给就新开一个），不动 rng 原来的抽法（网页「明天抽中」按固定 rng 模拟）。
-    home 是现在住在哪（配置 world_home）：池子里标了「在哪」、不是这一处的那几条不抽（见 rows_for）。
-    """
+    """兼容接口：一口气生成天气 + 当窗候选（供测试或无实时世界线时调用）。"""
     rng = rng or random.Random()
     history = history or {}
-
-    def used(key: str, days: int) -> set:
-        out: set = set()
-        for day in _days_back(date_text, days):
-            record = history.get(day)
-            if not isinstance(record, dict):
-                continue
-            value = record.get(key)
-            if isinstance(value, list):
-                out.update(value)
-            elif value:
-                out.add(value)
-        return out
-
-    pools = normalize_pools(pools) if pools is not None else default_pools()
-    groups = group_map(pools)
     labels = labels or {}
-    moods = {bot: rng.choice(MOODS) for bot in labels}
-    seen = {bot: last_drawn(history, date_text, bot, groups) for bot in labels}
-    together = []
-    if len(labels) >= 2:
-        # 两人一起的两个人都算：按两人里更近抽过的那个打折
-        both = {}
-        for bot in labels:
-            for key, days in seen[bot].items():
-                both[key] = min(days, both.get(key, days))
-        together = _pick_cooled(rows_for(pools["together"], "", home), both, TOGETHER_PICK, rng, groups)
-        for bot in labels:
-            for text in together:
-                seen[bot][cool_key(text, groups)] = 0
-    twists, night_twists, pastimes, idles, night_idles = {}, {}, {}, {}, {}
-    for bot, name in labels.items():
-        twists[bot] = _pick_cooled(rows_for(pools["twists"], name, home), seen[bot], DAY_PICK, rng, groups)
-        night_twists[bot] = _pick_cooled(rows_for(pools["night_twists"], name, home, work=False), seen[bot], NIGHT_PICK, rng, groups)
-        pastimes[bot] = _pick_cooled(rows_for(pools["pastimes"], name, home, work=False), seen[bot], PASTIME_PICK, rng, groups,
-                                     PASTIME_COOLDOWN)
-        idles[bot] = _pick_cooled(rows_for(pools["idles"], name, home), seen[bot], IDLE_PICK, rng, groups, PASTIME_COOLDOWN)
-        night_idles[bot] = _pick_cooled(rows_for(pools["night_idles"], name, home), seen[bot], NIGHT_IDLE_PICK, rng, groups,
-                                        PASTIME_COOLDOWN)
-    accident = ""
-    if rng.random() < ACCIDENT_CHANCE:
-        here = [a for a in ACCIDENTS if not home or ACCIDENT_WHERE.get(a, home) == home]
-        accident = _pick(here, used("accident", ACCIDENT_LOOKBACK), 1, rng)[0]
+    base = init_day_seed(
+        date_text, labels=labels, history=history, prev_weather=prev_weather,
+        rng=rng, meals_rng=meals_rng, home=home,
+    )
+    if ctx is None and base.get("weather"):
+        day_dt = datetime.datetime.fromisoformat(str(date_text)[:10]).replace(hour=10)
+        ctx = build_live_context(start=day_dt, end=day_dt + datetime.timedelta(hours=4), home=home,
+                                 weather_of=lambda _d: base["weather"], tone=base["tone"], world=world)
+    day_win = draw_window(
+        date_text, start=datetime.datetime.fromisoformat(str(date_text)[:10]).replace(hour=10),
+        labels=labels, pools=pools, seed=base, history=history, world=world, ctx=ctx, rng=rng, home=home, night=False,
+    )
+    night_dt = datetime.datetime.fromisoformat(str(date_text)[:10]).replace(hour=20)
+    night_ctx = build_live_context(start=night_dt, end=night_dt + datetime.timedelta(hours=3), home=home,
+                                   weather_of=lambda _d: base["weather"], tone=base["tone"], world=world) if base.get("weather") else ctx
+    night_win = draw_window(
+        date_text, start=night_dt, labels=labels, pools=pools, seed=base, history=history,
+        world=world, ctx=night_ctx, rng=rng, home=home, night=True,
+    )
+    all_when = when_map(normalize_pools(pools) if pools is not None else default_pools())
+    twists = day_win["twists"]
+    night_twists = night_win["night_twists"]
+    together = day_win["together"]
     return {
-        "weather": _weather(date_text, prev_weather, rng, home),
-        "tone": _pick(TONES, used("tone", 1), 1, rng)[0],
+        **base,
         "twists": twists,
         "night_twists": night_twists,
         "together": together,
-        "pastimes": pastimes,
-        "idles": idles,
-        "night_idles": night_idles,
-        "moods": moods,
-        "accident": accident,
-        "when": {t: w for t, w in when_map(pools).items()
-                 if any(t in items for items in (*twists.values(), *night_twists.values(), together))},
-        "meals": draw_meals(date_text, history, meals_rng or random.Random(), home),
+        "pastimes": day_win["pastimes"],
+        "idles": day_win["idles"],
+        "night_idles": night_win["night_idles"],
+        "accident": day_win["accident"],
+        "when": {
+            t: w for t, w in all_when.items()
+            if any(t in items for items in (*twists.values(), *night_twists.values(), together))
+        },
     }
 
+
+def pool_outlook(
+    pools: dict,
+    history: dict,
+    date_text: str,
+    labels: dict,
+    sims: int = 400,
+    home: str = "",
+    ctx: dict | None = None,
+    world=None,
+    night_ctx: dict | None = None,
+) -> dict:
+    """给网页看的实时权重与下一轮抽中概率：结合此刻真实天气、库存、补给船与真实世界线冷却。"""
+    pools = normalize_pools(pools)
+    groups = group_map(pools)
+    day = datetime.date.fromisoformat(str(date_text))
+    nxt = (day + datetime.timedelta(days=1)).isoformat()
+    history = history or {}
+    now_dt = (ctx or {}).get("start") if isinstance(ctx, dict) and isinstance(ctx.get("start"), datetime.datetime) else datetime.datetime.combine(day, datetime.time(12, 0))
+    day_ctx = ctx
+    if night_ctx is None:
+        night_ctx = ctx
+
+    counts = {bot: {kind: collections.Counter() for kind in POOL_KINDS} for bot in labels}
+    rng = random.Random("pool_outlook:" + str(date_text) + ":" + now_dt.strftime("%H"))
+    seed_today = history.get(str(date_text)) if isinstance(history.get(str(date_text)), dict) else {}
+    for _ in range(max(1, int(sims))):
+        w_day = draw_window(
+            str(date_text), start=now_dt.replace(hour=12 if now_dt.hour >= 18 else now_dt.hour),
+            labels=labels, pools=pools, seed=seed_today, history=history, world=world, ctx=day_ctx, rng=rng, home=home, night=False,
+        )
+        w_night = draw_window(
+            str(date_text), start=now_dt.replace(hour=20),
+            labels=labels, pools=pools, seed=seed_today, history=history, world=world, ctx=night_ctx, rng=rng, home=home, night=True,
+        )
+        for bot in labels:
+            counts[bot]["twists"].update(w_day["twists"].get(bot) or [])
+            counts[bot]["pastimes"].update(w_day["pastimes"].get(bot) or [])
+            counts[bot]["idles"].update(w_day["idles"].get(bot) or [])
+            counts[bot]["night_twists"].update(w_night["night_twists"].get(bot) or [])
+            counts[bot]["night_idles"].update(w_night["night_idles"].get(bot) or [])
+            counts[bot]["together"].update(w_day["together"])
+
+    seen = {bot: last_drawn(history, str(date_text), bot, groups, world=world) for bot in labels}
+    both: dict = {}
+    for bot in labels:
+        for key, days in seen[bot].items():
+            both[key] = min(days, both.get(key, days))
+    ago = {bot: drawn_days(history, date_text, bot, groups, world=world) for bot in labels}
+    own = {bot: drawn_days(history, date_text, bot, exact=True, world=world) for bot in labels}
+    record = seed_today
+    out = {}
+    for bot, name in labels.items():
+        rows_by_kind, today = {}, {}
+        for kind in POOL_KINDS:
+            shared = kind == "together"
+            who = "" if shared else name
+            use_work = kind not in ("pastimes", "night_twists")
+            cur_ctx = night_ctx if kind in ("night_twists", "night_idles") else day_ctx
+            live = rows_for(pools[kind], who, home, work=use_work, ctx=cur_ctx)
+            size = collections.Counter(cool_key(t, groups) for t, _w in live)
+            cool = both if shared else seen[bot]
+            table = PASTIME_COOLDOWN if kind in ("pastimes", "idles", "night_idles") else None
+            rows = []
+            for i, item in enumerate(pools[kind]):
+                text = item["text"]
+                key = cool_key(text, groups)
+                base, live_w, blocked, boost_note = eval_item(item, who, home, cur_ctx, work=use_work)
+                factor = cool_factor(cool.get(key), table) if base > 0 else 0.0
+                now_w = 0.0 if blocked else (live_w * factor)
+                eff_factor = (now_w / base) if base > 0 else 0.0
+                days = [ago[b].get(key) for b in labels] if shared or key in SHARED_GROUPS else [ago[bot].get(key)]
+                days = [d for d in days if d is not None]
+                mine = [own[b].get(text) for b in labels] if shared else [own[bot].get(text)]
+                mine = [d for d in mine if d is not None]
+                rows.append({
+                    "i": i,
+                    "base": round(base, 3),
+                    "factor": round(eff_factor, 3),
+                    "cool": round(factor, 3),
+                    "now": round(now_w, 3),
+                    "blocked": blocked,
+                    "boost": boost_note,
+                    "split": size.get(key, 0) if now_w > 0 else 0,
+                    "days": min(days) if days else None,
+                    "own": bool(days) and bool(mine) and min(mine) == min(days),
+                    "chance": round(counts[bot][kind][text] / max(1, int(sims)), 4),
+                })
+            rows_by_kind[kind] = rows
+            value = record.get(kind)
+            if isinstance(value, dict):
+                today[kind] = list(value.get(bot) or [])
+            else:
+                today[kind] = list(value) if isinstance(value, list) else []
+        out[bot] = {"rows": rows_by_kind, "today": today}
+    return {"date": nxt, "sims": int(sims), "bots": out}
+
+
 class SeedLog:
-    """每天抽到的起点存一份（``daily_seeds.json``），之后几天抽的时候避开。"""
+    """每日天象与当日实际发生过的插曲记录（``daily_seeds.json``）。"""
 
     def __init__(self, path) -> None:
         self.path = Path(path)
@@ -1617,7 +2462,6 @@ class SeedLog:
         version = self.path.stat().st_mtime_ns
         if self._cache is not None and self._cache[0] == version:
             return self._cache[1]
-        # 读坏了就抛（10-28 以前也是抛）：调用方当今天没抽、再存一次会把整份抽签历史冲掉
         data = jsonio.load(self.path, {}, strict=True)
         data = data if isinstance(data, dict) else {}
         self._cache = (version, data)
@@ -1627,9 +2471,65 @@ class SeedLog:
         data = self.load()
         old = data.get(date_text) if isinstance(data.get(date_text), dict) else {}
         record = dict(seed)
-        # 只重排一位角色时，另一位当天的心情留着
         record["moods"] = {**(old.get("moods") or {}), **(seed.get("moods") or {})}
         data[date_text] = record
         data = {day: data[day] for day in sorted(data)[-SEED_KEEP_DAYS:]}
         jsonio.save(self.path, data, indent=1)
         self._cache = (self.path.stat().st_mtime_ns, data)
+
+    def record_used(self, date_text: str, written_by_bot: dict, pools: dict | None = None) -> bool:
+        """把本轮补写实际落盘采用的插曲/消遣/闲置/意外追加记入当天 daily_seeds.json（供面板查看与跨日冷却）。"""
+        data = self.load()
+        cur = data.get(date_text)
+        if not isinstance(cur, dict):
+            return False
+        record = {k: (dict(v) if isinstance(v, dict) else list(v) if isinstance(v, list) else v) for k, v in cur.items()}
+        changed = False
+        kind_map = {
+            "twist": "twists",
+            "night_twist": "night_twists",
+            "pastime": "pastimes",
+            "idle": "idles",
+            "night_idle": "night_idles",
+        }
+        all_when = when_map(normalize_pools(pools) if pools is not None else default_pools())
+        when_dict = dict(record.get("when") or {})
+        for bot, entries in (written_by_bot or {}).items():
+            for e in entries or []:
+                orig = e.get("origin") if isinstance(e, dict) else None
+                if not isinstance(orig, dict):
+                    continue
+                okind = str(orig.get("kind") or "")
+                otext = str(orig.get("text") or "").strip()
+                if not otext:
+                    continue
+                if okind == "together":
+                    lst = list(record.get("together") or [])
+                    if otext not in lst:
+                        lst.append(otext)
+                        record["together"] = lst
+                        if otext in all_when:
+                            when_dict[otext] = all_when[otext]
+                        changed = True
+                elif okind == "accident":
+                    if not record.get("accident"):
+                        record["accident"] = otext
+                        changed = True
+                elif okind in kind_map:
+                    field = kind_map[okind]
+                    bucket = dict(record.get(field) or {}) if isinstance(record.get(field), dict) else {}
+                    lst = list(bucket.get(bot) or [])
+                    if otext not in lst:
+                        lst.append(otext)
+                        bucket[bot] = lst
+                        record[field] = bucket
+                        if otext in all_when:
+                            when_dict[otext] = all_when[otext]
+                        changed = True
+        if changed:
+            record["when"] = when_dict
+            data[date_text] = record
+            data = {day: data[day] for day in sorted(data)[-SEED_KEEP_DAYS:]}
+            jsonio.save(self.path, data, indent=1)
+            self._cache = (self.path.stat().st_mtime_ns, data)
+        return changed

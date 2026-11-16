@@ -107,6 +107,7 @@ class LifeStateService:
         )
         self.life_step.promises = self.promises
         self.life_step.trainings = self.trainings
+        self.life_step.pool_store = self.pool_store
         # 补写的人设后面接「后来的变化」：能力清单关着就不接
         self.life_step.abilities = self.abilities if self.abilities_enabled else None
         self.life_step.recorder = self.recorder

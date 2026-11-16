@@ -35,7 +35,7 @@ from . import weathering
 from . import supply as supply_mod
 from .homewords import localize
 from .menu import meal_slots, meals_text
-from .variety import default_pools, twists_of, when_map, with_when
+from .variety import PoolStore, build_live_context, default_pools, draw_window, init_day_seed, twists_of, when_map, with_when
 from .world import (MAX_MSG_PURPOSE, WorldStore, clean_flag, clean_text, doing_text, event_text_at, fmt_time, is_event, is_sleep, mood_text,
                     parse_steps, parse_time, progress_of, real_stop, result_text, steps_text, why_text)
 
@@ -195,9 +195,8 @@ def _squash(text) -> str:
     return "".join(ch for ch in str(text or "") if ch.isalnum())
 
 
-def origin_of(value, bot: str, seed, intent: str = "", training: str = "") -> dict:
-    """补写说的 from 对照当天抽到的核一遍：{"kind": 种类, "text": 那一条的原文或补写写的话}。
-    抽到的那几样按原文认（互相包含也算）；说了是抽到的却对不上，记成 unmatched，原话留着。"""
+def origin_of(value, bot: str, seed, intent: str = "", training: str = "", pools_data: dict | None = None) -> dict:
+    """补写说的 from 对照本轮即时抽到的候选（及当天记录/全池精确原文）核一遍：{"kind": 种类, "text": 原文}。"""
     text = clean_text(value, 80)
     if intent:
         return {"kind": "intent", "text": intent}
@@ -210,8 +209,8 @@ def origin_of(value, bot: str, seed, intent: str = "", training: str = "") -> di
     pools = []
     for key, kind in (("twists", "twist"), ("night_twists", "night_twist"), ("pastimes", "pastime"),
                       ("idles", "idle"), ("night_idles", "night_idle")):
-        value = seed.get(key)
-        items = (value.get(bot) or []) if isinstance(value, dict) else (value or [])
+        val = seed.get(key)
+        items = (val.get(bot) or []) if isinstance(val, dict) else (val or [])
         pools.extend((kind, str(x)) for x in items if isinstance(items, list))
     pools.extend(("together", str(x)) for x in seed.get("together") or [])
     if seed.get("accident"):
@@ -220,6 +219,13 @@ def origin_of(value, bot: str, seed, intent: str = "", training: str = "") -> di
         squashed = _squash(item)
         if squashed and probe and (probe == squashed or (len(probe) >= 4 and (probe in squashed or squashed in probe))):
             return {"kind": kind, "text": item}
+    if isinstance(pools_data, dict) and probe:
+        for key, kind in (("twists", "twist"), ("night_twists", "night_twist"), ("together", "together"),
+                          ("pastimes", "pastime"), ("idles", "idle"), ("night_idles", "night_idle")):
+            for row in pools_data.get(key) or []:
+                item_txt = str(row.get("text") or "") if isinstance(row, dict) else str(row or "")
+                if item_txt and _squash(item_txt) == probe:
+                    return {"kind": kind, "text": item_txt}
     for word, kind in ORIGIN_WORDS.items():
         if probe.startswith(word):
             return {"kind": kind, "text": text}
@@ -442,6 +448,102 @@ class LifeStep:
         self.abilities_txt = abilities_txt
         self.running = False
         self._run_cache: dict = {}
+        self._last_window_seed: dict | None = None
+        self._offered_by_day: dict = {}
+
+    def _pools(self) -> dict:
+        pstore = getattr(self, "pool_store", None)
+        if pstore is not None:
+            try:
+                return pstore.load()
+            except Exception:
+                pass
+        w = getattr(self, "world", None)
+        if w is not None and getattr(w, "root", None) is not None:
+            try:
+                return PoolStore(w.root / "pools.json").load()
+            except Exception:
+                pass
+        return default_pools()
+
+    def _offered_for(self, date_text: str) -> dict:
+        cur = getattr(self, "_offered_by_day", None)
+        if not isinstance(cur, dict) or cur.get("date") != date_text:
+            cur = {"date": date_text, "counts": {}}
+            self._offered_by_day = cur
+        return cur["counts"]
+
+    def _note_offered(self, date_text: str, win_seed: dict) -> None:
+        counts = self._offered_for(date_text)
+        for key in ("twists", "night_twists", "pastimes", "idles", "night_idles"):
+            val = win_seed.get(key)
+            if not isinstance(val, dict):
+                continue
+            for bot, items in val.items():
+                bucket = counts.setdefault(bot, {})
+                for t in items or []:
+                    bucket[t] = int(bucket.get(t) or 0) + 1
+        tog = win_seed.get("together") or []
+        if tog:
+            tb = counts.setdefault("together", {})
+            for t in tog:
+                tb[t] = int(tb.get(t) or 0) + 1
+
+    def _draw_window_for(self, tasks: dict, now: datetime.datetime, labels: dict) -> tuple[dict | None, bool]:
+        flat = now.replace(tzinfo=None)
+        date_text = flat.date().isoformat()
+        seeds_all = {}
+        if self.seed_log is not None:
+            try:
+                seeds_all = self.seed_log.load() or {}
+            except Exception:
+                seeds_all = {}
+        seed = seeds_all.get(date_text) if isinstance(seeds_all.get(date_text), dict) else None
+        if seed is None and self.seed_log is not None:
+            try:
+                seed = init_day_seed(date_text, labels=labels, history=seeds_all, home=self.home)
+                self.seed_log.save(date_text, seed)
+                seeds_all = self.seed_log.load() or seeds_all
+            except Exception:
+                logger.warning("[super_enhance/step] 补建今日初始天象失败", exc_info=True)
+        win_start = min((x["start"] for x in tasks.values() if x.get("start")), default=None) or flat
+        win_end = max(win_start, flat) + datetime.timedelta(hours=HORIZON_HOURS)
+        night = win_start.hour >= NIGHT_FROM or win_start.hour < NIGHT_UNTIL
+        pools = self._pools()
+        store = getattr(self, "things", None)
+        shelf = None
+        if store is not None:
+            try:
+                shelf = self._shelf_at(self._things_moment(tasks, flat))
+            except Exception:
+                shelf = None
+        ctx = build_live_context(
+            start=win_start,
+            end=win_end,
+            home=self.home,
+            weather_of=self._weather_text_of(),
+            tone=str((seed or {}).get("tone") or ""),
+            world=self.world,
+            store=store,
+            shelf=shelf,
+        )
+        win_seed = draw_window(
+            date_text,
+            start=win_start,
+            end=win_end,
+            labels=labels,
+            pools=pools,
+            seed=seed,
+            history=seeds_all,
+            world=self.world,
+            ctx=ctx,
+            offered=self._offered_for(date_text),
+            home=self.home,
+            night=night,
+        )
+        self._last_window_seed = win_seed
+        self._note_offered(date_text, win_seed)
+        return win_seed, night
 
     # ---------- 配置 ----------
 
@@ -604,9 +706,9 @@ class LifeStep:
             rows.append("两人一起：%s" % "；".join(together))
         if rows:
             lines.append(
-                "- %s可能碰上的小事：\n%s\n  她们自己说过的打算优先；打算之外的空档里才用，"
-                "这次补写每人最多用一件，上面今天的条目里写过的别再写。" % (
-                    "今晚" if night else "今天", "\n".join("  - " + row for row in rows))
+                "- %s这阵子可顺手安排的小事（已按接下来几小时的天色与家里现况筛过）：\n%s\n"
+                "  她们自己说过的打算和手头急事优先；有空档时每人最多挑一件自然穿插，不用硬凑。" % (
+                    "今晚" if night else "眼下", "\n".join("  - " + row for row in rows))
             )
         pastimes = seed.get("pastimes") if isinstance(seed.get("pastimes"), dict) else {}
         rows = ["%s：%s" % (labels.get(bot) or bot, "；".join(items))
@@ -1484,12 +1586,8 @@ class LifeStep:
             "- key = %s（%s）" % (bot, self.label(bot) or bot) for bot in bots
         )
         labels = {bot: (self.label(bot) or bot) for bot in bots}
-        date_text = now.date().isoformat()
-        seed = self._seed_for(date_text) if self.seed_log is not None else None
-        # 这次从晚上开始写：随机的小事只给晚上那份，也不给意外
-        first = min((x["start"] for x in tasks.values() if x.get("start")), default=None) or now
-        night = first.hour >= NIGHT_FROM or first.hour < NIGHT_UNTIL
-        seed_text = self._seed_text(seed, labels, night) if seed else ""
+        win_seed, night = self._draw_window_for(tasks, now, labels)
+        seed_text = self._seed_text(win_seed, labels, night) if win_seed else ""
         try:
             seed_text += self._weather_block(min((x["start"] for x in tasks.values() if x.get("start")), default=None) or now, now)
         except Exception:
@@ -1659,6 +1757,7 @@ class LifeStep:
         finally:
             self.running = False
             self._run_cache = {}
+            self._last_window_seed = None
 
     async def _ask_master(self, data: dict, prompt: str, text: str, tasks: dict):
         """补写填了 ask_master：让她借主动对话问主人那一句，等主人回话；回了就把回话交给模型照着重写一遍。
@@ -1797,7 +1896,10 @@ class LifeStep:
         end_current = data.get("end_current") if isinstance(data.get("end_current"), dict) else {}
         bots = list(self.raw_log.enabled_bots())
         written, missed = {}, []
-        seed = self._seed_for(date_text) if self.seed_log is not None else None
+        day_seed = self._seed_for(date_text) if self.seed_log is not None else None
+        win_seed = getattr(self, "_last_window_seed", None)
+        seed = self._merge_origin_seeds(win_seed, day_seed)
+        pools_data = self._pools()
         store = getattr(self, "things", None)
         try:
             shelf = self._shelf_at(self._things_moment(tasks, flat)) if store is not None else None
@@ -1972,7 +2074,7 @@ class LifeStep:
                     "with": with_list,
                     "training": training,
                     "intent": intent,
-                    "origin": origin_of(raw.get("from"), bot, seed, intent=intent, training=training),
+                    "origin": origin_of(raw.get("from"), bot, seed, intent=intent, training=training, pools_data=pools_data),
                     "things": things_list,
                     "seen_by": [bot] + with_list,
                     "source": "step",
@@ -2002,4 +2104,39 @@ class LifeStep:
                 missed.append(self.label(bot) or bot)
         _dedup_joint_proactive(written, now=flat, world=self.world)
         self._apply_intent_moves(moves, written, flat)
+        self._record_used_origins(date_text, written, pools_data)
         return written, missed
+
+    @staticmethod
+    def _merge_origin_seeds(win_seed: dict | None, day_seed: dict | None) -> dict:
+        if not isinstance(win_seed, dict):
+            return day_seed if isinstance(day_seed, dict) else {}
+        if not isinstance(day_seed, dict):
+            return win_seed
+        merged = dict(day_seed)
+        for key in ("twists", "night_twists", "pastimes", "idles", "night_idles"):
+            a = win_seed.get(key) if isinstance(win_seed.get(key), dict) else {}
+            b = day_seed.get(key) if isinstance(day_seed.get(key), dict) else {}
+            merged[key] = {
+                bot: list(dict.fromkeys(list(a.get(bot) or []) + list(b.get(bot) or [])))
+                for bot in set(a) | set(b)
+            }
+        merged["together"] = list(dict.fromkeys(list(win_seed.get("together") or []) + list(day_seed.get("together") or [])))
+        merged["accident"] = win_seed.get("accident") or day_seed.get("accident") or ""
+        return merged
+
+    def _record_used_origins(self, default_date: str, written: dict, pools_data: dict | None = None) -> None:
+        if self.seed_log is None or not written:
+            return
+        by_day: dict[str, dict[str, list]] = {}
+        for bot, rows in (written or {}).items():
+            for row in rows or []:
+                if not isinstance(row, dict) or real_stop(row):
+                    continue
+                d_str = str(row.get("start") or "")[:10] or default_date
+                by_day.setdefault(d_str, {}).setdefault(bot, []).append(row)
+        for d_str, day_written in by_day.items():
+            try:
+                self.seed_log.record_used(d_str, day_written, pools=pools_data)
+            except Exception:
+                logger.warning("[super_enhance/step] 记录当日已采用插曲失败", exc_info=True)

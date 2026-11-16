@@ -1199,7 +1199,7 @@
         <button class="btn quiet ibtn narrow-only" data-icon="menu" data-open-side title="会话列表" type="button"></button>
         <div class="who">
           <span class="av hm" data-icon="cal"></span>
-          <div class="who-t"><span class="who-n">插曲与消遣</span><span class="who-s" id="poolSub">每天从这里抽 · 改了从下一次抽起生效</span></div>
+          <div class="who-t"><span class="who-n">插曲与消遣</span><span class="who-s" id="poolSub">每轮补写按实时天气与库存现抽 · 改了下一轮补写即生效</span></div>
         </div>
         <div class="grow"></div>
         <button class="btn quiet ibtn" id="poolRefresh" data-icon="refresh" title="刷新" type="button"></button>
@@ -3409,7 +3409,16 @@
     var w = {};
     if (kind === "together") { w[""] = it ? fmtW(it.w) : "0.5"; }
     else { people.forEach(function (n) { w[n] = it ? fmtW((it.w || {})[n]) : "0.5"; }); }
-    return { text: it ? it.text : "", w: w, group: it ? (it.group || "") : "", to: kind };
+    return {
+      text: it ? it.text : "",
+      w: w,
+      group: it ? (it.group || "") : "",
+      wx: it ? (it.wx || "") : "",
+      link: it ? (it.link || "") : "",
+      work: !!(it && it.work),
+      outdoor: !!(it && it.outdoor),
+      to: kind
+    };
   }
 
   function poolDay(text) {
@@ -3428,7 +3437,7 @@
       }
       return;
     }
-    $("poolSub").textContent = "下次抽：" + poolDay(d.next) + " 0 点 · 改了从下一次抽起生效";
+    $("poolSub").textContent = "每轮补写按实时天气与库存现抽 · 修改后下一轮补写即生效";
     var who = poolWho(d);
     var wrap = h("div", { class: "plw" });
 
@@ -3476,17 +3485,17 @@
       } }));
     });
     wrap.appendChild(h("div", { class: "pl-note" },
-      h("div", { class: "t", text: (POOL_NOTES[S.poolKind] || "") + " 每天抽 " + (kinfo.pick || 0) + " 件。" }), sortSeg));
+      h("div", { class: "t", text: (POOL_NOTES[S.poolKind] || "") + " 每轮窗口抽 " + (kinfo.pick || 0) + " 件。" }), sortSeg));
     wrap.appendChild(h("div", { id: "poolList" }));
     box.appendChild(wrap);
     renderPoolList();
   }
 
-  // 今天给她抽到的：点一下跳到那一条
+  // 今天实际已采用的：点一下跳到那一条
   function poolToday(d, who) {
     var today = (((d.view || {})[who] || {}).today) || {};
     var label = ((d.bots || []).filter(function (b) { return b.id === who; })[0] || {}).label || who;
-    var card = h("div", { class: "pl-today" }, h("div", { class: "pl-today-h", text: "今天（" + poolDay(d.today) + "）给" + label + "抽到的" }));
+    var card = h("div", { class: "pl-today" }, h("div", { class: "pl-today-h", text: "今天（" + poolDay(d.today) + "）" + label + "已发生的小事与消遣" }));
     var any = false;
     (d.kinds || []).forEach(function (k) {
       var list = today[k.kind] || [];
@@ -3500,7 +3509,7 @@
       });
       card.appendChild(h("div", { class: "pl-today-r" }, h("span", { class: "pl-today-k", text: k.label }), v));
     });
-    if (!any) { card.appendChild(h("div", { class: "muted", style: "font-size:13px", text: "今天还没抽。" })); }
+    if (!any) { card.appendChild(h("div", { class: "muted", style: "font-size:13px", text: "今天还没触发池子条目。" })); }
     return card;
   }
 
@@ -3529,7 +3538,7 @@
     card.appendChild(h("div", { class: "pl-head" }, h("span", { text: "内容" }),
       h("span", { class: "pl-legend", title: "灰色是初始权重；彩色是乘了冷却的现在权重：抽过被压低的是橙色，很久没抽、比初始多出来的那截是绿色" },
         h("i", { class: "lg-b" }), "初始", h("i", { class: "lg-n" }), "现在", h("i", { class: "lg-d" }), "压低", h("i", { class: "lg-u" }), "多出"),
-      h("span", { class: "c", title: "按现在的权重照真实抽法模拟 " + (d.sims || 0) + " 次，明天抽到它的机会", text: "明天抽中" }), h("span")));
+      h("span", { class: "c", title: "按此刻天气、库存与冷却照真实抽法模拟 " + (d.sims || 0) + " 次，下一轮补写抽到它的机会", text: "下轮抽中" }), h("span")));
     var list = h("div", { class: "pl-rows" });
     on.forEach(function (x) { poolRowInto(list, kind, x.it, x.r, scale); });
     if (!on.length) { list.appendChild(h("div", { class: "pl-empty", text: kw ? "没有对得上的。" : "这个池子里还没有给她的。" })); }
@@ -3577,16 +3586,31 @@
     if (it.where) {
       meta.appendChild(h("span", { class: "tag", title: "只在住在「" + it.where + "」时才抽得到", text: "只在" + it.where }));
     }
+    if (it.work) {
+      meta.appendChild(h("span", { class: "tag", title: "讨生活/干家务条目（白天享讨生活加权）", text: "讨生活" }));
+    }
+    if (it.wx && S.pools && S.pools.wx_labels && S.pools.wx_labels[it.wx]) {
+      meta.appendChild(h("span", { class: "tag", text: S.pools.wx_labels[it.wx] }));
+    }
+    if (it.link && S.pools && S.pools.link_labels && S.pools.link_labels[it.link]) {
+      meta.appendChild(h("span", { class: "tag", text: S.pools.link_labels[it.link] }));
+    }
     if (it.group) {
       meta.appendChild(h("span", { class: "tag grp " + groupHue(it.group),
         title: r.split > 1 ? "同组的 " + r.split + " 条算同一回事：一起冷却，在这个池子里合起来只算一条的分量" : "同组的算同一回事，一起冷却",
         text: it.group + (r.split > 1 ? " · " + r.split + " 条分摊" : "") }));
     }
+    if (!off && r.blocked) {
+      meta.appendChild(h("span", { class: "tag warn", text: "此刻不抽：" + r.blocked }));
+    } else if (!off && r.boost) {
+      meta.appendChild(h("span", { class: "tag up", text: r.boost }));
+    }
     if (!off && r.days !== null && r.days !== undefined) {
       var when = r.days === 0 ? "今天" : r.days === 1 ? "昨天" : r.days + " 天前";
-      meta.appendChild(h("span", { class: "tag" + (r.factor < 0.999 ? " warn" : r.factor > 1.001 ? " up" : ""),
-        title: r.own ? "" : "这条没抽到，是同组的另一条抽到了",
-        text: (r.own ? "" : r.days >= 2 ? "同组 " : "同组") + when + "抽到 · ×" + fmtW(r.factor) }));
+      var cval = r.cool !== undefined ? r.cool : r.factor;
+      meta.appendChild(h("span", { class: "tag" + (cval < 0.999 ? " warn" : cval > 1.001 ? " up" : ""),
+        title: r.own ? "" : "这条没发生，是同组或同屋另一条发生过",
+        text: (r.own ? "" : r.days >= 2 ? "同组 " : "同组") + when + "发生 · ×" + fmtW(cval) }));
     }
     row.appendChild(h("div", { class: "pl-tx" }, h("div", { class: "pl-t", text: it.text }), meta));
 
@@ -3654,6 +3678,39 @@
     ((S.pools && S.pools.groups) || []).forEach(function (g) { dl.appendChild(h("option", { value: g })); });
     cols.appendChild(h("div", { class: "wfld" }, h("div", { class: "wfld-l" }, "组", h("span", { class: "n", text: "同一回事的几条填同一个" })), grp, dl));
     form.appendChild(cols);
+
+    var condCols = h("div", { class: "wcols" });
+    var wxSel = h("select", { class: "inp" });
+    var wxMap = (S.pools && S.pools.wx_labels) || { "": "不限天气" };
+    Object.keys(wxMap).forEach(function (k) {
+      wxSel.appendChild(h("option", { value: k, text: wxMap[k], selected: k === (f.wx || "") }));
+    });
+    wxSel.addEventListener("change", function () { f.wx = wxSel.value; });
+    condCols.appendChild(h("div", { class: "wfld" }, h("div", { class: "wfld-l" }, "天气条件", h("span", { class: "n", text: "不符时当轮不抽" })), wxSel));
+
+    var linkSel = h("select", { class: "inp" });
+    var linkMap = (S.pools && S.pools.link_labels) || { "": "无特殊联动" };
+    Object.keys(linkMap).forEach(function (k) {
+      linkSel.appendChild(h("option", { value: k, text: linkMap[k], selected: k === (f.link || "") }));
+    });
+    linkSel.addEventListener("change", function () { f.link = linkSel.value; });
+    condCols.appendChild(h("div", { class: "wfld" }, h("div", { class: "wfld-l" }, "库存/事件联动", h("span", { class: "n", text: "缺料提权或前置门禁" })), linkSel));
+
+    var workSel = h("select", { class: "inp" });
+    [["false", "普通日常"], ["true", "讨生活/家务（白天 ×2）"]].forEach(function (pair) {
+      workSel.appendChild(h("option", { value: pair[0], text: pair[1], selected: String(!!f.work) === pair[0] }));
+    });
+    workSel.addEventListener("change", function () { f.work = workSel.value === "true"; });
+    condCols.appendChild(h("div", { class: "wfld" }, h("div", { class: "wfld-l", text: "性质" }), workSel));
+
+    var outSel = h("select", { class: "inp" });
+    [["false", "舱内/室内"], ["true", "外出/甲板露天"]].forEach(function (pair) {
+      outSel.appendChild(h("option", { value: pair[0], text: pair[1], selected: String(!!f.outdoor) === pair[0] }));
+    });
+    outSel.addEventListener("change", function () { f.outdoor = outSel.value === "true"; });
+    condCols.appendChild(h("div", { class: "wfld" }, h("div", { class: "wfld-l", text: "场所" }), outSel));
+    form.appendChild(condCols);
+
     if (it) {
       var to = h("select", { class: "inp" });
       ((S.pools && S.pools.kinds) || []).forEach(function (k) {
@@ -3670,14 +3727,23 @@
       var t = String(f.text || "").trim();
       if (!t) { toast("内容不能空；想删掉请点删除", { err: true }); return; }
       var w = kind === "together" ? f.w[""] : f.w;
-      var item = { text: t, w: w, group: String(f.group || "").trim() };
+      var item = {
+        text: t,
+        w: w,
+        group: String(f.group || "").trim(),
+        wx: String(f.wx || ""),
+        link: String(f.link || ""),
+        work: !!f.work,
+        outdoor: !!f.outdoor
+      };
       save.disabled = true;
       var p;
       if (!it) {
         p = poolPost({ action: "add", kind: kind, item: item }, "已添加", stop);
       } else {
         var orig = poolForm(kind, it);
-        var changed = t !== it.text || item.group !== orig.group ||
+        var changed = t !== it.text || item.group !== orig.group || item.wx !== orig.wx ||
+          item.link !== orig.link || item.work !== orig.work || item.outdoor !== orig.outdoor ||
           JSON.stringify(w) !== JSON.stringify(kind === "together" ? orig.w[""] : orig.w);
         var first = changed ? post("ctx/pools/edit", { action: "update", kind: kind, index: i, text: it.text, item: item }) : Promise.resolve();
         p = first.then(function () {
@@ -5945,7 +6011,7 @@
   var WORLD_SEED_ROWS = [["twists", "白天的小事"], ["night_twists", "晚上的小事"], ["pastimes", "消遣"],
     ["idles", "白天闲着时"], ["night_idles", "晚上闲着时"]];
   function worldSeedSection(d, who) {
-    var sec = h("div", { class: "lsec" }, lsecHead("这天抽的", "每天 0 点抽好，补写照着排；起床时的心情只是早上的底色，之后看每段写的心情"));
+    var sec = h("div", { class: "lsec" }, lsecHead("天象与当日已发生插曲", "0 点只定天气、底色心情与三餐参考；插曲与消遣在每轮补写时按实时天色和库存现抽，真采用后记入下方"));
     var seed = d.seed || {};
     var card = h("div", { class: "pc", "data-wk": "s:" + who });
     if (!Object.keys(seed).length) {
