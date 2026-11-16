@@ -8,9 +8,11 @@
 
 from __future__ import annotations
 
+import bisect
 import datetime
 import functools
 import hashlib
+import math
 import random
 import re
 
@@ -374,6 +376,241 @@ def now_text(moment: datetime.datetime, text_of, home: str, ahead_hours: int = 6
     if later:
         text += "；接下来：" + "；".join(later)
     return text
+
+
+# ---------- 船舱连续热力学模型（分炉边 / 矮桌铺位中段 / 舱门角落三档远近温差 + 随时间升温退温） ----------
+
+# 各温区参数：(升温常数min, 降温常数min, 铁桶柴炉目标上限℃, 铁桶柴炉最大温升℃, 小炭炉最大温升℃)
+ZONE_PARAMS = {
+    "near": (14.0, 95.0, 22.5, 17.5, 11.0),  # 炉边一两步烤火圈：升温快、辐射热足，火旺时20~22℃
+    "mid":  (42.0, 80.0, 16.0, 11.0, 2.5),   # 矮桌/铺位中段：慢烘，烧满1小时13~15℃（有温度但不算热）
+    "far":  (55.0, 45.0, 10.5, 4.5,  0.5),   # 舱门边/舷窗下/储物角落：烧透也仅8~9℃，停火最先凉回去
+}
+WOOD_TAU_UP, WOOD_TAU_DOWN = ZONE_PARAMS["mid"][0], ZONE_PARAMS["mid"][1]
+CHAR_TAU_UP, CHAR_TAU_DOWN = 25.0, 40.0
+
+
+def _stove_spans_from_world(world, start_day: datetime.date, end_day: datetime.date, clip_until: datetime.datetime | None = None) -> list[tuple[datetime.datetime, datetime.datetime, str]]:
+    """按纯结构化 stove 字段提取 [start_day, end_day] 内的船屋生火区间 [(start, end, 'wood'|'charcoal')]（同刻重叠时 wood 优先）。"""
+    if world is None:
+        return []
+    from .world import parse_time as _parse_time, real_stop as _real_stop
+
+    raw_spans: list[tuple[datetime.datetime, datetime.datetime, str]] = []
+    has_homes = hasattr(world, "home_at") and hasattr(world, "homes") and bool(world.homes())
+    cur_d = start_day
+    while cur_d <= end_day:
+        for entry in world.entries(cur_d.isoformat()):
+            if entry.get("kind") == "event" or _real_stop(entry) or entry.get("at_home") is False:
+                continue
+            if entry.get("meal") or entry.get("sleep"):
+                continue
+            stove = str(entry.get("stove") or "").strip().lower()
+            if stove not in ("wood", "charcoal"):
+                continue
+            st = _parse_time(entry.get("start"))
+            if st is None:
+                continue
+            if clip_until is not None and st > clip_until:
+                continue
+            en = _parse_time(entry.get("end")) if entry.get("end") else ((clip_until + datetime.timedelta(minutes=5)) if clip_until else (st + datetime.timedelta(minutes=45)))
+            if en is None or en <= st:
+                continue
+            if has_homes and world.home_at(st) != "海边小镇":
+                continue
+            raw_spans.append((st, en, stove))
+        cur_d += datetime.timedelta(days=1)
+    if not raw_spans:
+        return []
+
+    pts = sorted({t for s, e, _k in raw_spans for t in (s, e)})
+    atomic: list[tuple[datetime.datetime, datetime.datetime, str]] = []
+    for a, b in zip(pts, pts[1:]):
+        if b <= a:
+            continue
+        mid = a + (b - a) / 2
+        kinds = [k for s, e, k in raw_spans if s <= mid < e]
+        if not kinds:
+            continue
+        chosen = "wood" if "wood" in kinds else "charcoal"
+        if atomic and atomic[-1][2] == chosen and (a - atomic[-1][1]).total_seconds() <= 300:
+            atomic[-1] = (atomic[-1][0], b, chosen)
+        else:
+            atomic.append((a, b, chosen))
+    return atomic
+
+
+def _build_zone_curve(spans: list, text_of, home: str, zone: str):
+    from .food import room_temp
+
+    tau_up_w, tau_down_w, cap_w, max_add_w, max_add_c = ZONE_PARAMS[zone]
+    tau_up_c = 10.0 if zone == "near" else CHAR_TAU_UP
+    tau_down_c = 35.0 if zone == "near" else CHAR_TAU_DOWN
+
+    table = []
+    prev_end: datetime.datetime | None = None
+    prev_delta = 0.0
+    prev_kind = "wood"
+
+    for st, en, kind in spans:
+        if prev_end is None:
+            d_start = 0.0
+        else:
+            gap_min = max(0.0, (st - prev_end).total_seconds() / 60.0)
+            t_dn = tau_down_w if prev_kind == "wood" else tau_down_c
+            d_start = prev_delta * math.exp(-gap_min / t_dn)
+
+        w_txt = "%s::%s" % (home, text_of(st.date())) if home else text_of(st.date())
+        t_base = float(room_temp(st, w_txt))
+        if kind == "wood":
+            t_goal = min(cap_w + 1.0, max(t_base + max_add_w * 0.85, cap_w - 1.5))
+            target = min(max_add_w, max(0.0, t_goal - t_base))
+            tau = tau_up_w if target >= d_start else tau_down_w
+        else:
+            target = min(max_add_c, max(0.0, 20.5 - t_base))
+            tau = tau_up_c if target >= d_start else tau_down_w
+
+        dur_min = max(0.0, (en - st).total_seconds() / 60.0)
+        d_end = target + (d_start - target) * math.exp(-dur_min / tau)
+        table.append((st, en, kind, d_start, d_end, target, tau))
+        prev_end = en
+        prev_delta = d_end
+        prev_kind = kind
+
+    starts = [row[0] for row in table]
+
+    def eval_zone(moment: datetime.datetime) -> tuple[float, dict]:
+        flat = moment.replace(tzinfo=None)
+        if not table:
+            return 0.0, {"mode": "cold", "stove": "", "minutes": 0}
+        idx = bisect.bisect_right(starts, flat) - 1
+        if idx < 0:
+            return 0.0, {"mode": "cold", "stove": "", "minutes": 0}
+        st, en, kind, d_start, d_end, target, tau = table[idx]
+        if flat < en:
+            dt = max(0.0, (flat - st).total_seconds() / 60.0)
+            delta = target + (d_start - target) * math.exp(-dt / tau)
+            return delta, {"mode": "burning", "stove": kind, "minutes": int(round(dt))}
+        ago = max(0.0, (flat - en).total_seconds() / 60.0)
+        t_dn = tau_down_w if kind == "wood" else tau_down_c
+        delta = d_end * math.exp(-ago / t_dn)
+        if delta < 0.6:
+            return delta, {"mode": "cold", "stove": "", "minutes": int(round(ago))}
+        return delta, {"mode": "cooling", "stove": kind, "minutes": int(round(ago))}
+
+    return table, eval_zone
+
+
+def build_cabin_curve(world, start_day: datetime.date, end_day: datetime.date, text_of, home: str = "海边小镇", clip_until: datetime.datetime | None = None, zone: str = "mid"):
+    """构建船舱连续升温/降温解析曲线（默认 mid 矮桌铺位中段），返回 (segments_table, eval_delta_fn)。"""
+    spans = _stove_spans_from_world(world, start_day, end_day, clip_until=clip_until)
+    return _build_zone_curve(spans, text_of, home, zone)
+
+
+def _fmt_dur(minutes: int) -> str:
+    if minutes < 15:
+        return "十来分钟"
+    if minutes < 40:
+        return "约半小时"
+    if minutes < 75:
+        return "约 1 小时"
+    if minutes < 105:
+        return "约 1 个半小时"
+    hrs = round(minutes / 60.0 * 2) / 2
+    if abs(hrs - round(hrs)) < 0.1:
+        return "约 %d 小时" % int(round(hrs))
+    return "约 %d 个半小时" % int(hrs)
+
+
+def cabin_temp_info(moment: datetime.datetime, world, text_of, home: str) -> dict:
+    """计算此刻屋外与船舱内远近三档实时温度（near 炉边 / mid 矮桌铺位中段 / far 舱门角落）及炉火状态。"""
+    from .food import room_temp
+
+    flat = moment.replace(tzinfo=None)
+    hr = day_hours(flat.date().isoformat(), text_of(flat.date()), home)[flat.hour]
+    out_t = float(hr.get("temp", 15.0))
+    feels_t = float(hr.get("feels", out_t))
+    w_txt = "%s::%s" % (home, text_of(flat.date())) if home else text_of(flat.date())
+    base_cabin = float(room_temp(flat, w_txt))
+
+    if home != "海边小镇":
+        return {
+            "outdoor": round(out_t, 1),
+            "feels": round(feels_t, 1),
+            "cabin": round(base_cabin, 1),
+            "near": round(base_cabin, 1),
+            "mid": round(base_cabin, 1),
+            "far": round(base_cabin, 1),
+            "base_cabin": round(base_cabin, 1),
+            "delta": 0.0,
+            "mode": "none",
+            "stove": "",
+            "minutes": 0,
+            "stove_desc": "",
+            "zones_desc": "屋里约 %s 度" % _deg(base_cabin),
+        }
+
+    spans = _stove_spans_from_world(world, flat.date() - datetime.timedelta(days=1), flat.date(), clip_until=flat)
+    _, eval_near = _build_zone_curve(spans, text_of, home, "near")
+    _, eval_mid = _build_zone_curve(spans, text_of, home, "mid")
+    _, eval_far = _build_zone_curve(spans, text_of, home, "far")
+
+    d_near, st_near = eval_near(flat)
+    d_mid, st_mid = eval_mid(flat)
+    d_far, _ = eval_far(flat)
+
+    near_t = min(23.0, base_cabin + d_near)
+    mid_t = min(18.5, base_cabin + d_mid)
+    far_t = min(15.0, base_cabin + d_far) if out_t <= 14.0 else base_cabin + d_far
+
+    # 用 near 的状态识别刚点火/刚停火（因为炉边最先热、最后彻底凉）
+    mode = st_near["mode"] if d_near >= 0.8 else st_mid["mode"]
+    kind = st_near["stove"] or st_mid["stove"]
+    mins = st_near["minutes"]
+
+    if mode == "burning":
+        if kind == "wood":
+            if mins < 22:
+                desc = "铁桶柴炉刚点着%s，只有炉边烤热了，铺位和角落还没缓过来" % _fmt_dur(mins)
+            elif mins < 50:
+                desc = "铁桶柴炉烧了%s，炉边很热，矮桌铺位刚开始回暖" % _fmt_dur(mins)
+            else:
+                desc = "铁桶柴炉已连烧%s，炉边烤得热烘烘，矮桌铺位温乎不冻人，但舱门角落仍微凉" % _fmt_dur(mins)
+        else:
+            desc = "小炭炉正点着（已烧%s），只有凑在炭炉跟前手脸是热的，退开两步舱里仍凉" % _fmt_dur(mins)
+        zones_desc = "炉边约 %s 度、矮桌铺位约 %s 度、舱门角落约 %s 度（%s）" % (
+            _deg(near_t), _deg(mid_t), _deg(far_t), desc
+        )
+    elif mode == "cooling":
+        stove_name = "铁桶柴炉" if kind == "wood" else "小炭炉"
+        if mins < 40:
+            desc = "%s刚停手%s，炉膛旁红炭余温还热，远处已先转凉" % (stove_name, _fmt_dur(mins))
+        elif mins < 95:
+            desc = "%s停火%s，炉边还留着点温热余温，铺位已降下来、角落凉了" % (stove_name, _fmt_dur(mins))
+        else:
+            desc = "%s停火%s，只剩炉壁贴近处微温，船舱大半已凉回去了" % (stove_name, _fmt_dur(mins))
+        zones_desc = "炉边余温约 %s 度、矮桌铺位约 %s 度、舱门角落约 %s 度（%s）" % (
+            _deg(near_t), _deg(mid_t), _deg(far_t), desc
+        )
+    else:
+        desc = "炉子没点、早已凉透，船舱里到处都冷飕飕的" if out_t <= 12.0 else "没点炉火，自然室温"
+        zones_desc = "船舱里约 %s 度（%s）" % (_deg(base_cabin), desc)
+
+    return {
+        "outdoor": round(out_t, 1),
+        "feels": round(feels_t, 1),
+        "cabin": round(mid_t, 1),
+        "near": round(near_t, 1),
+        "mid": round(mid_t, 1),
+        "far": round(far_t, 1),
+        "base_cabin": round(base_cabin, 1),
+        "delta": round(d_mid, 1),
+        "mode": mode,
+        "stove": kind,
+        "minutes": mins,
+        "stove_desc": desc,
+        "zones_desc": zones_desc,
+    }
 
 
 def warnings(moment: datetime.datetime, until: datetime.datetime, text_of, home: str) -> list:

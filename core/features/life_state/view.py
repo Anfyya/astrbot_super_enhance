@@ -327,7 +327,7 @@ def world_text(service, bot: str, now: datetime.datetime) -> str:
         blocks.append(LIVING_NOTE)
     if head:
         try:
-            blocks.append(weather_now_text(service, now))
+            blocks.append(weather_now_text(service, now, bot=bot))
         except Exception:
             logger.warning("[super_enhance/life] 天气注入失败", exc_info=True)
         try:
@@ -380,8 +380,8 @@ def world_text(service, bot: str, now: datetime.datetime) -> str:
     blocks.append(VIEW_NOTE)
     return "\n".join(x for x in blocks if x)
 
-def weather_now_text(service, now: datetime.datetime) -> str:
-    """此刻外头的天气（程序按钟点算的，跟补写、存货用的是同一份）。"""
+def weather_now_text(service, now: datetime.datetime, bot: str = "") -> str:
+    """此刻外头的天气 + 她所在位置的实时环境温度（屋外冷热 vs 屋里没点火/刚点火/烧满1小时/停火退温1小时）。"""
     from . import weather as weather_mod
     seeds = service.seed_log.load() or {}
     known = sorted(k for k, v in seeds.items() if isinstance(v, dict) and v.get("weather"))
@@ -393,17 +393,38 @@ def weather_now_text(service, now: datetime.datetime) -> str:
 
     home = str(service.cfg.get("world_home") or "").strip() or "穗织"
     flat = now.replace(tzinfo=None)
-    cabin_note = ""
+    world = getattr(service, "world", None)
+    th = weather_mod.cabin_temp_info(flat, world, text_of, home)
+    cur = world.current(bot, flat) if (world is not None and bot) else None
+    place = str((cur or {}).get("place") or "").strip()
+    at_home = None if cur is None else cur.get("at_home")
+
+    out_deg = weather_mod._deg(th["outdoor"])
+    feels_deg = weather_mod._deg(th["feels"])
+    out_str = "约 %s 度" % out_deg + ("（体感 %s 度）" % feels_deg if th["outdoor"] - th["feels"] >= 1.5 else "")
+    in_deg = weather_mod._deg(th["cabin"])
+
     if home == "海边小镇":
-        cur_h = weather_mod.hour_at(flat, text_of(flat.date()), home)
-        if float(cur_h.get("temp", 18.0)) <= 12.0 and getattr(service, "things", None) is not None:
-            lit_fn = service.things._fire_lit_fn(flat)
-            if lit_fn is not None and lit_fn(flat):
-                cabin_note = "（船舱里铁桶柴炉烧着或留着封火余温，舱里暖和）"
-            else:
-                cabin_note = "（船舱里这会儿还没生炉火，舱里透着寒气）"
-    return "外头的天气（%s）%s%s。说到天气、冷暖、要不要出门或晾东西时照这个说。" % (
-        flat.strftime("%H:%M"), weather_mod.now_text(flat, text_of, home), cabin_note)
+        if at_home is False:
+            loc = "（%s）" % place if place else ""
+            env_line = "实时环境温度：你现在在外头%s，你身边是屋外温度%s；家里船屋此刻——%s。" % (
+                loc, out_str, th["zones_desc"]
+            )
+        else:
+            loc = "（%s）" % place if place else ""
+            env_line = (
+                "实时环境温度：你现在在家%s——船舱内%s；舱外/甲板此刻%s"
+                "（凑在炉边烤火、坐在矮桌铺上、去舱门角落拿东西或推门上甲板，按你此刻待的具体位置感受冷热）。"
+                % (loc, th["zones_desc"], out_str)
+            )
+    else:
+        if at_home is False:
+            env_line = "实时环境温度：你现在在外头，身边温度%s（屋里此刻约 %s 度）。" % (out_str, in_deg)
+        else:
+            env_line = "实时环境温度：屋里此刻约 %s 度，屋外%s。" % (in_deg, out_str)
+
+    return "外头的天气（%s）%s。\n%s说到天气、冷暖、穿衣、要不要生炉添柴或出门时照这个实际温度说。" % (
+        flat.strftime("%H:%M"), weather_mod.now_text(flat, text_of, home), env_line)
 
 
 def mood_now_text(service, bot: str, now: datetime.datetime) -> str:

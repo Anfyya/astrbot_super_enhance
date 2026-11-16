@@ -2501,6 +2501,32 @@ class ThingStore:
 
         return is_lit
 
+    def _cabin_delta_fn(self, flat: datetime.datetime):
+        if self.world is None:
+            return None
+        if hasattr(self.world, "home_at") and self.world.home_at(flat) != "海边小镇":
+            return None
+        from . import weather as weather_mod
+
+        rev = self.world.revision() if hasattr(self.world, "revision") else 0
+        cache = getattr(self, "_cabin_curve_cache", None)
+        key = (flat.date().isoformat(), rev)
+        if cache is not None and cache[0] == key:
+            eval_at = cache[1]
+        else:
+            raw_w = self._weather_fn(flat)
+            text_of = lambda d: weather_mod.split(raw_w(d))[1]
+            _tbl, eval_at = weather_mod.build_cabin_curve(
+                self.world, flat.date() - datetime.timedelta(days=SCAN_DAYS), flat.date(), text_of, home="海边小镇"
+            )
+            self._cabin_curve_cache = (key, eval_at)
+
+        def delta_of(moment: datetime.datetime) -> float:
+            d_val, _st = eval_at(moment)
+            return d_val
+
+        return delta_of
+
     def profile(self, item: dict, now: datetime.datetime, view=None) -> dict:
         flat = now.replace(tzinfo=None)
         cache = getattr(view, "_food_profiles", None) if view is not None else None
@@ -2533,6 +2559,7 @@ class ThingStore:
             if where and where != self.world.home_at(flat):
                 weather_of = self._weather_at(weather_of, where)
         fire_fn = self._fire_lit_fn(flat)
+        cabin_fn = self._cabin_delta_fn(flat)
         sim_key = self._sim_key(item, flat, view)
         if sim_key is not None and sim_key in self._sim_cache:
             self._sim_cache.move_to_end(sim_key)
@@ -2542,7 +2569,7 @@ class ThingStore:
         hours, word = KINDS.get(str(item.get("kind") or ""), KINDS[DEFAULT_KIND])
         sim = simulate(
             item, hours, flat, weather_of, index=index,
-            quality=True, lookahead_days=LOOKAHEAD_DAYS, fire_lit_fn=fire_fn,
+            quality=True, lookahead_days=LOOKAHEAD_DAYS, fire_lit_fn=fire_fn, cabin_delta_fn=cabin_fn,
         )
         fresh = {
             "x": round(sim["frac"], 3), "level": "还新鲜", "word": word,

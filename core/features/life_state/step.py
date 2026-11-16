@@ -727,6 +727,20 @@ class LifeStep:
         home = self.home
         lines = ["\n- 按钟点的天气（%s 到 %s）：" % (start.strftime("%H:%M"), until.strftime("%m-%d %H:%M")),
                  weather_mod.timeline_text(start, until, text_of, home)]
+        try:
+            th_start = weather_mod.cabin_temp_info(start, self.world, text_of, home)
+            if home == "海边小镇":
+                lines.append(
+                    "- 起步时刻（%s）船屋内外实时温度：屋外/甲板约 %.1f℃（体感 %.1f℃）；船舱内——%s（铁桶柴炉刚点只有炉边热，烧满1小时炉边20℃+、铺位13～15℃温乎、角落仍微凉，停火后远角先凉、炉边余温按小时渐退至无火室温 %.1f℃）。"
+                    % (start.strftime("%H:%M"), th_start["outdoor"], th_start["feels"], th_start["zones_desc"], th_start["base_cabin"])
+                )
+            else:
+                lines.append(
+                    "- 起步时刻（%s）内外实时温度：屋外约 %.1f℃（体感 %.1f℃），屋里约 %.1f℃。"
+                    % (start.strftime("%H:%M"), th_start["outdoor"], th_start["feels"], th_start["cabin"])
+                )
+        except Exception:
+            logger.warning("[super_enhance/step] 船舱实时温度没拼上", exc_info=True)
         warns = weather_mod.warnings(flat, until + datetime.timedelta(hours=3), text_of, home)
         if warns:
             lines.append("- 要提前防着的：\n" + "\n".join("  - " + x for x in warns))
@@ -2732,24 +2746,26 @@ class LifeStep:
             evening_or_night = win_start.hour >= 17 or win_end.hour >= 18 or win_start.hour < 6
             freezing_cold = min_temp <= 6.0
             chilly = freezing_cold or (min_temp <= 13.5) or (evening_or_night and min_temp <= 15.5) or (max_rain >= 0.3 and min_temp <= 16.0)
+            th_win = weather_mod.cabin_temp_info(win_start, self.world, self._weather_text_of(), self.home)
+            cabin_cool = th_win["mode"] != "burning" and th_win["delta"] < 2.5
             if freezing_cold:
-                if not recent_wood:
+                if cabin_cool and not recent_wood:
                     if inv["wood_bundles"] > 0:
                         nudges.append(
-                            "- 严寒生炉过冬：屋外已跌至约 %.0f℃（入夜更冷），船舱不烧炉真冻手冻脚——早起舱冷、外出吹透海风回来或入夜前，顺着冷意抱干柴把铁桶柴炉生旺暖舱（生火/添柴段必填 \"stove\": \"wood\"），睡前拨小封火门压火留余温。"
-                            % min_temp
+                            "- 严寒生炉过冬：屋外已跌至约 %.0f℃，船舱此刻也降到了约 %.0f℃（%s）——早起舱冷、外出吹透海风回来或入夜前，顺着冷意抱干柴把铁桶柴炉生旺暖舱（生火/添柴段必填 \"stove\": \"wood\"），睡前拨小封火门压火留余温。"
+                            % (min_temp, th_win["cabin"], th_win["stove_desc"])
                         )
                     else:
                         nudges.append(
-                            "- 严寒断柴转折：屋外低至约 %.0f℃，冻得想点铁桶柴炉，去摸柴架却发现干柴烧空了——白天无大雨大雪就赶紧去坡上薪柴地或船坞背干柴回来（items 写 new 燃柴入库）再生炉；夜深了就紧塞门缝裹紧厚被，记着明早头一件事去拾柴。"
-                            % min_temp
+                            "- 严寒断柴转折：屋外低至约 %.0f℃、船舱仅约 %.0f℃，冻得想点铁桶柴炉，去摸柴架却发现干柴烧空了——白天无大雨大雪就赶紧去坡上薪柴地或船坞背干柴回来（items 写 new 燃柴入库）再生炉；夜深了就紧塞门缝裹紧厚被，记着明早头一件事去拾柴。"
+                            % (min_temp, th_win["cabin"])
                         )
                 elif 0 < inv["wood_bundles"] < 1.5 and 7 <= win_start.hour <= 16 and max_rain < 0.5:
                     nudges.append(
                         "- 入冬囤柴提醒：天冷早晚都要烧铁桶柴炉，家里干柴只剩 %.2g 捆不够烧两天了——趁白天没雨雪，顺手排一段去坡上薪柴地或船坞多背点干柴囤进仓棚（items 写 new 燃柴入库）。"
                         % inv["wood_bundles"]
                     )
-            elif chilly and not recent_wood:
+            elif chilly and cabin_cool and not recent_wood:
                 if inv["wood_bundles"] > 0:
                     nudges.append(
                         "- 天凉生炉暖舱：这阵子船舱返潮发冷（最低约 %.0f℃），别写成全知提前预判，写成坐着觉得手脚发凉时起身抱干柴把铁桶柴炉生起来暖舱（该段必填 \"stove\": \"wood\"），睡前记得压火看炉。"

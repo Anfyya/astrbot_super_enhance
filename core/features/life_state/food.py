@@ -1026,7 +1026,8 @@ class Sim:
     """一件吃的的时间线：apply（每一步）+ run（推到某个时刻）；坏到几成（frac）、口感攒的数（acc）都在这里。"""
 
     def __init__(
-        self, item: dict, life: float, weather_of, index: SpaceIndex | None = None, quality: bool = False, fire_lit_fn=None
+        self, item: dict, life: float, weather_of, index: SpaceIndex | None = None,
+        quality: bool = False, fire_lit_fn=None, cabin_delta_fn=None,
     ) -> None:
         self.item = item
         self.id = str(item.get("id"))
@@ -1035,6 +1036,7 @@ class Sim:
         self.base_life = float(life)
         self.life = float(life)
         self.fire_lit_fn = fire_lit_fn
+        self.cabin_delta_fn = cabin_delta_fn
         first_stage = (item.get("stages") or [{}])[0] if item.get("stages") else {}
         first_denied = {
             x.strip()
@@ -1218,8 +1220,11 @@ class Sim:
     def temp_at(self, moment: datetime.datetime, weather) -> float:
         warm = (moment - self.warm_start).total_seconds() / 3600.0 if self.warm_start is not None else None
         t = spot_temp(self.spot, moment, weather, warm)
-        if self.spot == "屋里" and self.fire_lit_fn is not None and self.fire_lit_fn(moment):
-            return max(t, 15.0)
+        if self.spot == "屋里":
+            if self.cabin_delta_fn is not None:
+                return min(22.5, t + max(0.0, float(self.cabin_delta_fn(moment))))
+            if self.fire_lit_fn is not None and self.fire_lit_fn(moment):
+                return max(t, 15.0)
         return t
 
     def spoil_rate(self, temp: float) -> float:
@@ -1727,7 +1732,7 @@ class SimResult(dict):
 
 
 def simulate(item: dict, life, now=None, weather_of=None, index: SpaceIndex | None = None,
-             quality: bool = False, lookahead_days: int = 45, fire_lit_fn=None) -> SimResult:
+             quality: bool = False, lookahead_days: int = 45, fire_lit_fn=None, cabin_delta_fn=None) -> SimResult:
     """一件吃的从有了起推到现在（没了就到没了那一刻），再照最后一步的放法往后推，算到几点「快不行了」、几点坏。
     兼容两种调用签名：
     - simulate(item, life_hours, now_dt, weather_of, ...)
@@ -1741,7 +1746,7 @@ def simulate(item: dict, life, now=None, weather_of=None, index: SpaceIndex | No
         weather_of = lambda _d: "多云"
     flat = now.replace(tzinfo=None)
     stages = [x for x in item.get("stages") or [] if parse_time(x.get("at")) is not None]
-    sim = Sim(item, life, weather_of, index, quality, fire_lit_fn=fire_lit_fn)
+    sim = Sim(item, life, weather_of, index, quality, fire_lit_fn=fire_lit_fn, cabin_delta_fn=cabin_delta_fn)
     end = next((x for x in stages if x.get("what") in END_WHATS), None)
     end_at = parse_time(end.get("at")) if end else None
     stop = min(flat, end_at) if end_at else flat
