@@ -21,8 +21,9 @@ from astrbot.api import logger
 from ...common import jsonio
 
 from .food import (
-    DEFAULT_KEEP, DEFAULT_SHIFT, DEFAULT_SPOT, DEFAULT_STATE, KEEPS, KINDS, MONTH_TEMP,
-    PROCESS_STEPS, SLICE_MINUTES, SPOTS, STATES, VAGUE_PLACE, WEATHER_SHIFT,
+    ACID_PICKLE_WORDS, ASH_SAND_WORDS, DEFAULT_KEEP, DEFAULT_SHIFT, DEFAULT_SPOT, DEFAULT_STATE,
+    KEEPS, KINDS, LIGHT_SALT_WORDS, MONTH_TEMP, OIL_SEAL_WORDS, PROCESS_STEPS, SALT_WORDS,
+    SLICE_MINUTES, SPOTS, STATES, SUGAR_PRESERVE_WORDS, VAGUE_PLACE, WEATHER_SHIFT,
     SpaceIndex, month_temp, norm_keep, norm_spot, norm_state, room_temp, simulate,
     split_keep, spots_for, weather_kind, weather_shift,
 )
@@ -672,7 +673,14 @@ def clean_stage(stage: dict, cat: str = CAT_FOOD) -> dict:
                 out[key] = clean_text(stage[key], MAX_LEFT)
     else:
         out["keep"], out["spot"] = split_keep(stage.get("keep"), stage.get("spot"), place_str)
-        out["state"] = norm_state(stage.get("state"))
+        raw_state = clean_text(stage.get("state"), MAX_ITEM_STATE)
+        out["state"] = norm_state(raw_state)
+        if raw_state and raw_state not in STATES and any(
+            w in raw_state for w in SALT_WORDS + SUGAR_PRESERVE_WORDS + ACID_PICKLE_WORDS + OIL_SEAL_WORDS + ASH_SAND_WORDS + ("重盐", "烘", "一夜干")
+        ):
+            prev_note = clean_text(stage.get("note"), MAX_NOTE)
+            if raw_state not in prev_note:
+                stage = dict(stage, note=clean_text((prev_note + "；" + raw_state) if prev_note else raw_state, MAX_NOTE))
         for key in ("amount", "used"):
             value = stage.get(key)
             if isinstance(value, (int, float)) and not isinstance(value, bool):
@@ -1531,6 +1539,10 @@ class ThingStore:
                     item["unit"] = got[1]
             items[tid] = item
             made.append(item)
+        modified_food_steps = []
+        for dish in made:
+            if cat_of(dish) == CAT_FOOD and dish.get("stages"):
+                modified_food_steps.append((dish, dish["stages"][0], True))
         for step in seg["steps"]:
             if not isinstance(step, dict) or step.get("new"):
                 continue
@@ -1558,6 +1570,8 @@ class ThingStore:
             if why:
                 logger.debug("[super_enhance/things] 跳过物品步骤 %s (%s): %s", tid, ref, why)
                 continue
+            if cat == CAT_FOOD:
+                modified_food_steps.append((target, stage, False))
             if stage.get("into") and into in items and tid not in (items[into].get("from") or []):
                 items[into].setdefault("from", []).append(tid)
         for dish in made:
@@ -1578,8 +1592,188 @@ class ThingStore:
                     continue
                 insert_stage(source, clean_stage({"at": at, "what": "用掉一部分", "by": by, "into": dish["id"],
                                                   "note": "做这盘菜时用了，没说用了多少", "src": src, "wl": ref}))
+        if at >= "2026-11-16 09:00":
+            for f_item, f_stage, is_first in modified_food_steps:
+                self._enforce_preservation_materials(items, f_item, f_stage, is_first, at=at, by=by, ref=ref)
         if seg.get("charcoal_grams"):
             self._auto_use_charcoal(items, at=at, grams=int(seg["charcoal_grams"]), by=by, ref=ref)
+
+    @staticmethod
+    def _is_edible_oil(item: dict) -> bool:
+        if cat_of(item) != CAT_FOOD:
+            return False
+        name = re.sub(r"\s+", "", str(item.get("name") or ""))
+        if any(bad in name for bad in ("酱油", "生抽", "老抽", "蚝油", "红油", "葱油", "辣油", "油辣椒", "奶油", "黄油", "煤油", "柴油", "机油", "油浸", "油封", "油条", "葱油饼")):
+            return False
+        return "油" in name and str(item.get("kind") or "") in ("干货调料粮食", DEFAULT_KIND)
+
+    @staticmethod
+    def _is_sugar_staple(item: dict) -> bool:
+        if cat_of(item) != CAT_FOOD or str(item.get("kind") or "") != "干货调料粮食":
+            return False
+        name = re.sub(r"\s+", "", str(item.get("name") or ""))
+        if any(bad in name for bad in ("糖果", "奶糖", "喜糖", "棒棒糖", "糖水", "糖醋", "糖渍")):
+            return False
+        return "糖" in name or "蜜" in name
+
+    @staticmethod
+    def _is_vinegar_staple(item: dict) -> bool:
+        if cat_of(item) != CAT_FOOD or str(item.get("kind") or "") != "干货调料粮食":
+            return False
+        name = re.sub(r"\s+", "", str(item.get("name") or ""))
+        return "醋" in name and not any(bad in name for bad in ("醋拌", "醋泡", "醋渍", "糖醋"))
+
+    @staticmethod
+    def _is_soy_staple(item: dict) -> bool:
+        if cat_of(item) != CAT_FOOD or str(item.get("kind") or "") != "干货调料粮食":
+            return False
+        name = re.sub(r"\s+", "", str(item.get("name") or ""))
+        return any(w in name for w in ("酱油", "生抽", "老抽")) and not any(bad in name for bad in ("酱油渍", "酱油泡", "酱油蛋"))
+
+    @staticmethod
+    def _is_salt_staple(item: dict) -> bool:
+        if cat_of(item) != CAT_FOOD or str(item.get("kind") or "") != "干货调料粮食":
+            return False
+        name = re.sub(r"\s+", "", str(item.get("name") or ""))
+        return "盐" in name and not any(bad in name for bad in ("椒盐", "盐烤", "咸"))
+
+    def _has_ash_or_sand(self, items: dict, moment: datetime.datetime, need_sand: bool) -> bool:
+        local_pool = self._local_items(items.values(), moment)
+        if need_sand:
+            return any(
+                cat_of(x) == CAT_ITEM and is_ended(x) is None and any(w in str(x.get("name") or "") for w in ("沙", "细沙", "干沙"))
+                for x in local_pool
+            )
+        if any(
+            cat_of(x) == CAT_ITEM and is_ended(x) is None and any(w in str(x.get("name") or "") for w in ("草木灰", "炉灰", "木灰", "干灰"))
+            for x in local_pool
+        ):
+            return True
+        # 若家里近期世界线或物品记录里真烧过木柴，炉底自然攒有草木灰
+        if any(
+            weathering.fuel_item(x) and any(s.get("what") in ("用了", "用完了") for s in (x.get("stages") or []))
+            for x in local_pool
+        ):
+            return True
+        if self.world is not None:
+            for back in range(14, -1, -1):
+                day = (moment.date() - datetime.timedelta(days=back)).isoformat()
+                for entry in self.world.entries(day):
+                    end_dt = parse_time(entry.get("end")) if entry.get("end") else None
+                    if end_dt is None or end_dt > moment or real_stop(entry):
+                        continue
+                    txt = "%s %s" % (entry.get("doing") or "", " ".join(clean_steps(entry.get("steps"))))
+                    if any(w in txt for w in ("柴炉", "干柴", "枯枝", "添柴", "烧柴")) and not any(n in txt for n in ("没生", "不点", "生不了")):
+                        return True
+        return False
+
+    def _enforce_preservation_materials(
+        self, items: dict, target_item: dict, target_stage: dict, is_first: bool, at: str, by: str, ref: str
+    ) -> None:
+        """核验保鲜工艺所需真实耗材（油封扣油、糖渍果酱扣糖、醋泡酱渍扣醋/酱油、盐腌扣盐、埋灰沙验灰沙）：
+        - 模型未手写扣料且库存够用时自动补扣；
+        - 家里库存不足最低门槛时，不打回整批世界线，但标记 preserve_denied 拒绝虚空保鲜加成！"""
+        moment = parse_time(at)
+        if moment is None:
+            return
+        what = str(target_stage.get("what") or "")
+        # 外头直接买回来或别人送来的成品（如集市买的咸鱼/果酱）不扣自家调料；但买回鸡蛋直接写埋进家里草木灰仍需验灰
+        homemade = (not is_first) or what == "做好了"
+        stage_text = " ".join(str(target_stage.get(k) or "") for k in ("keep", "spot", "place", "state", "note"))
+        ctx_text = stage_text + (" " + str(target_item.get("name") or "") if (is_first and what == "做好了") else "")
+        denied = []
+
+        def consume_or_deny(tag: str, matcher, dose: float, min_req: float, unit: str, label: str):
+            local_foods = [
+                x for x in self._local_items(items.values(), moment)
+                if matcher(x) and str(x.get("created") or "") <= at and self.can_touch(x, by)
+            ]
+            already = 0.0
+            for src_item in local_foods:
+                info = measure(src_item)
+                if info is None:
+                    continue
+                for st, used_val, _left_val in info.get("rows") or []:
+                    if st.get("wl") == ref and used_val:
+                        already += float(used_val)
+            if already >= min_req:
+                return
+            min_needed = max(0.0, min_req - already)
+            want = max(0.0, dose - already)
+            active = []
+            total_avail = 0.0
+            for src_item in sorted(local_foods, key=lambda x: (str(x.get("created") or ""), str(x.get("id") or ""))):
+                if is_ended(src_item) is not None:
+                    continue
+                info = measure(src_item)
+                avail = float((info or {}).get("left") or 0.0)
+                if avail > 0:
+                    active.append((src_item, avail))
+                    total_avail += avail
+            if total_avail < min_needed:
+                denied.append(tag)
+                return
+            rem = min(total_avail, want)
+            for src_item, avail in active:
+                if rem <= 0:
+                    break
+                take = min(avail, rem)
+                st = clean_stage(
+                    {
+                        "at": at,
+                        "what": "用掉一部分",
+                        "used": "%s%s" % (_num_text(take), unit),
+                        "by": by,
+                        "into": str(target_item.get("id") or ""),
+                        "wl": ref,
+                        "effect": "#auto_preserve_%s_%s" % (tag, target_item.get("id")),
+                        "note": "%s自动扣料" % label,
+                        "src": {"entry": ref, "auto_preserve": tag},
+                    },
+                    CAT_FOOD,
+                )
+                if not insert_stage(src_item, st):
+                    rem -= take
+
+        if homemade:
+            if any(w in ctx_text for w in OIL_SEAL_WORDS):
+                consume_or_deny("oil", self._is_edible_oil, 100.0, 60.0, "毫升", "油封保鲜")
+            if any(w in ctx_text for w in SUGAR_PRESERVE_WORDS):
+                consume_or_deny("sugar", self._is_sugar_staple, 120.0, 60.0, "克", "糖渍果酱")
+            if any(w in ctx_text for w in ACID_PICKLE_WORDS):
+                if any(w in ctx_text for w in ("酱渍", "酱油泡", "酱油渍", "酱油蛋", "糟卤")) and "醋" not in ctx_text:
+                    consume_or_deny("acid", self._is_soy_staple, 100.0, 60.0, "毫升", "酱油渍保鲜")
+                else:
+                    consume_or_deny("acid", self._is_vinegar_staple, 100.0, 60.0, "毫升", "醋泡保鲜")
+            has_sugar_or_acid = any(w in ctx_text for w in SUGAR_PRESERVE_WORDS + ACID_PICKLE_WORDS)
+            if (what == "腌上了" and not has_sugar_or_acid) or (what != "做好了" and any(w in stage_text for w in SALT_WORDS)):
+                light = any(w in stage_text for w in LIGHT_SALT_WORDS) and "重盐" not in stage_text
+                if light:
+                    consume_or_deny("salt", self._is_salt_staple, 15.0, 10.0, "克", "抹盐轻腌")
+                else:
+                    consume_or_deny("salt", self._is_salt_staple, 60.0, 40.0, "克", "重盐腌制")
+
+        ash_ctx = str(target_stage.get("place") or "") + " " + stage_text
+        if any(w in ash_ctx for w in ASH_SAND_WORDS):
+            need_sand = ("沙" in ash_ctx) and ("灰" not in ash_ctx)
+            if not self._has_ash_or_sand(items, moment, need_sand=need_sand):
+                denied.append("ash")
+
+        if denied:
+            src_dict = target_stage.setdefault("src", {})
+            prev = [x for x in str(src_dict.get("preserve_denied") or "").split(",") if x]
+            merged = list(dict.fromkeys(prev + denied))
+            src_dict["preserve_denied"] = ",".join(merged)
+            reason_map = {
+                "oil": "家里食用油不足，未形成油封",
+                "sugar": "家里糖不足，未形成糖渍",
+                "acid": "家里醋/酱油不足，未形成酸酱渍",
+                "salt": "家里食盐不足，未能盐腌",
+                "ash": "家里尚无干草木灰/干沙，未形成埋藏保鲜",
+            }
+            extra_note = "；".join(reason_map[k] for k in denied if k in reason_map)
+            old_note = str(target_stage.get("note") or "").strip()
+            target_stage["note"] = clean_text((old_note + "；" + extra_note) if old_note else extra_note, MAX_NOTE)
 
     def _auto_use_charcoal(self, items: dict, at: str, grams: int, by: str, ref: str) -> None:
         """小炭炉开火做饭自动从现有闷炭/木炭批次扣减克数；绝不凭空生炭，同餐 50 分钟窗内不重复双扣。"""
@@ -2016,6 +2210,49 @@ class ThingStore:
 
         return other
 
+    def _fire_windows(self, flat: datetime.datetime) -> list:
+        """从世界线提取海边船屋真实点着柴炉或小炭炉的时段（含熄火后 2 小时余温），供室内炉边烘干与烟熏核验。"""
+        if self.world is None:
+            return []
+        rev = self.world.revision() if hasattr(self.world, "revision") else 0
+        cache = getattr(self, "_fire_win_cache", None)
+        key = (flat.date().isoformat(), rev)
+        if cache is not None and cache[0] == key:
+            return cache[1]
+        windows = []
+        for back in range(SCAN_DAYS, -1, -1):
+            day = (flat.date() - datetime.timedelta(days=back)).isoformat()
+            for entry in self.world.entries(day):
+                if entry.get("kind") == "event" or real_stop(entry) or entry.get("at_home") is False:
+                    continue
+                st = parse_time(entry.get("start"))
+                en = parse_time(entry.get("end")) if entry.get("end") else (st + datetime.timedelta(minutes=45) if st else None)
+                if st is None or en is None or en <= st:
+                    continue
+                txt = "%s %s %s" % (entry.get("place") or "", entry.get("doing") or "", " ".join(clean_steps(entry.get("steps"))))
+                if any(neg in txt for neg in ("生不了火", "火先不点", "没生火", "没点着")):
+                    continue
+                lit = self._entry_charcoal_grams(entry, en) > 0 or (
+                    any(w in txt for w in ("柴炉", "炉膛", "添柴", "烧柴", "架上去吹旺", "生起小炭炉", "生火"))
+                    and any(p in (entry.get("place") or "船舱") for p in ("船屋", "船舱", "灶"))
+                )
+                if lit:
+                    windows.append((st, en + datetime.timedelta(hours=2)))
+        self._fire_win_cache = (key, windows)
+        return windows
+
+    def _fire_lit_fn(self, flat: datetime.datetime):
+        if self.world is None:
+            return None
+        if hasattr(self.world, "home_at") and self.world.home_at(flat) != "海边小镇":
+            return None
+        windows = self._fire_windows(flat)
+
+        def is_lit(moment: datetime.datetime) -> bool:
+            return any(lo <= moment <= hi for lo, hi in windows)
+
+        return is_lit
+
     def profile(self, item: dict, now: datetime.datetime, view=None) -> dict:
         flat = now.replace(tzinfo=None)
         cache = getattr(view, "_food_profiles", None) if view is not None else None
@@ -2047,6 +2284,7 @@ class ThingStore:
             where = self.where_of(item, flat)
             if where and where != self.world.home_at(flat):
                 weather_of = self._weather_at(weather_of, where)
+        fire_fn = self._fire_lit_fn(flat)
         sim_key = self._sim_key(item, flat, view)
         if sim_key is not None and sim_key in self._sim_cache:
             self._sim_cache.move_to_end(sim_key)
@@ -2056,7 +2294,7 @@ class ThingStore:
         hours, word = KINDS.get(str(item.get("kind") or ""), KINDS[DEFAULT_KIND])
         sim = simulate(
             item, hours, flat, weather_of, index=index,
-            quality=True, lookahead_days=LOOKAHEAD_DAYS,
+            quality=True, lookahead_days=LOOKAHEAD_DAYS, fire_lit_fn=fire_fn,
         )
         fresh = {
             "x": round(sim["frac"], 3), "level": "还新鲜", "word": word,
@@ -2103,9 +2341,10 @@ class ThingStore:
                 return None
         mine = self._digest(item)
         weathers = self._digest(self._weathers(flat))
-        if mine is None or weathers is None:
+        fires = self._digest(self._fire_windows(flat)) if self.world is not None else ""
+        if mine is None or weathers is None or fires is None:
             return None
-        return (flat, mine, shelf, weathers)
+        return (flat, mine, shelf, weathers, fires)
 
     def freshness(self, item: dict, now: datetime.datetime) -> dict:
         return self.profile(item, now)["fresh"]
