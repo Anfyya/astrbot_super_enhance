@@ -324,9 +324,35 @@ def when_text(moment: datetime.datetime, now: datetime.datetime) -> str:
     return moment.strftime("%m-%d") + " " + part_of_day(moment)
 
 
+CHARCOAL_WORDS = ("闷炭", "木炭", "火炭", "桴炭")
+CHARCOAL_EXCLUDE = ("炭笔", "炭条", "炭画", "活性炭")
+CHARCOAL_PACK_GRAMS = 2000
+CHARCOAL_MEAL_GRAMS = 200
+CHARCOAL_LIGHT_GRAMS = 80
+CHARCOAL_LOW_GRAMS = 400
+CHARCOAL_WINDOW_MINUTES = 50
+CHARCOAL_AUTO_SINCE = "2026-11-16 00:00"
+HOT_MEAL_KINDS = ("熟汤羹粥", "熟菜炒菜", "熟饭熟面", "熟肉卤味", "鲜肉软点心", "馒头面包主食")
+COLD_FOOD_WORDS = ("凉拌", "冷盘", "生腌", "冰镇", "沙拉")
+LIGHT_COOK_WORDS = ("煎蛋", "煎鸡蛋", "荷包蛋", "煮蛋", "水煮蛋", "热茶", "姜汤", "开水", "凉白开")
+
+
+def is_charcoal(item: dict) -> bool:
+    """灶台小炭炉用的闷炭 / 木炭（排除炭笔、炭画等非燃料物件）。"""
+    if not isinstance(item, dict) or cat_of(item) != CAT_ITEM:
+        return False
+    name = re.sub(r"\s+", "", str(item.get("name") or ""))
+    kind = re.sub(r"\s+", "", str(item.get("kind") or ""))
+    if any(ex in name for ex in CHARCOAL_EXCLUDE) or kind in ("画", "文具", "书"):
+        return False
+    return any(w in name for w in CHARCOAL_WORDS)
+
+
 def staple_of(item: dict) -> tuple | None:
     """按量记的那件：（单位, 一包多少, 平常一次用多少）；不是按量记的返回 None。"""
     item = item or {}
+    if is_charcoal(item):
+        return "克", CHARCOAL_PACK_GRAMS, CHARCOAL_MEAL_GRAMS
     if cat_of(item) != CAT_FOOD:
         return None
     kind = str(item.get("kind") or "")
@@ -358,24 +384,34 @@ def measure(item: dict) -> dict | None:
     if info is None:
         return None
     unit, pack, per_use = info
+    cat = cat_of(item)
+    starts, _, ends = steps_of(cat)
+    charcoal = is_charcoal(item)
     left, rows, zero = 0.0, [], None
-    for stage in item.get("stages") or []:
+    for idx, stage in enumerate(item.get("stages") or []):
         what = stage.get("what")
         used = None
-        if what in START_STEPS or what == "清点":
+        if (idx == 0 and what in starts) or (cat == CAT_FOOD and what in starts) or what == "清点":
             amount = _guess(stage.get("amount"), pack)
             if amount is None:
                 amount = _guess(stage.get("left"), pack)
             if amount is None:
-                amount = pack if what in START_STEPS else left
-            if what in START_STEPS and parse_amount(stage.get("amount")) is not None:
+                amount = pack if what in starts else left
+            if what in starts and parse_amount(stage.get("amount")) is not None:
                 pack = max(amount, 1.0)
             left = max(0.0, amount)
+        elif charcoal and idx > 0 and what in ("做好了", "变了样", "收到", "买回来"):
+            added = _guess(stage.get("amount"), pack)
+            rest = _guess(stage.get("left"), pack)
+            if added is not None and not stage.get("left"):
+                left = max(0.0, left + added)
+            elif rest is not None:
+                left = max(0.0, rest)
         elif what in ("用完了", "吃完了"):
             used, left = left, 0.0
-        elif what in END_STEPS:
+        elif what in ends:
             left = 0.0
-        elif what in ("用掉一部分", "吃了一部分"):
+        elif what in ("用了", "用掉一部分", "吃了一部分"):
             got = parse_amount(stage.get("used"))
             if got is not None:
                 used = min(max(0.0, got[0]), left)
@@ -384,11 +420,11 @@ def measure(item: dict) -> dict | None:
                 used = max(0.0, left - min(left, rest)) if rest is not None else min(per_use, left)
             left = max(0.0, left - used)
         rows.append((stage, used, left))
-        if left <= 0 and what not in END_STEPS:
+        if left <= 0 and what not in ends:
             zero = zero or stage
-        elif left > 0 and what == "清点":
+        elif left > 0 and (what == "清点" or (charcoal and what in ("做好了", "变了样", "收到", "买回来"))):
             zero = None
-    low_mark = min(max(pack * LOW_SHARE, per_use * LOW_USES), pack * LOW_CAP)
+    low_mark = CHARCOAL_LOW_GRAMS if charcoal else min(max(pack * LOW_SHARE, per_use * LOW_USES), pack * LOW_CAP)
     return {"unit": unit, "pack": pack, "per_use": per_use, "rows": rows, "left": max(0.0, left),
             "zero": zero, "low": 0 < left <= low_mark}
 
@@ -711,6 +747,9 @@ def _same_window_duplicate(old: dict, new: dict, when: datetime.datetime, moment
         # 两边明确写出完全相同的非空剩余量（如两人同做一盘菜都写 used=100g, left=1000g） -> 必然是重复扣减
         if l1 and l1 == l2:
             return True
+        # 自动开火扣炭的补差步（如先扣 80 克煎蛋、同餐又补 120 克熬粥）不算重复
+        if old.get("effect") == "#auto_charcoal" and new.get("effect") == "#auto_charcoal" and u1 and u2 and u1 != u2:
+            return False
         same_actor = bool(old.get("by")) and old.get("by") == new.get("by")
         if same_actor and ((into1 and into2 and into1 != into2) or (u1 and u2 and u1 != u2)):
             return False
@@ -744,7 +783,10 @@ def insert_stage(item: dict, new: dict) -> str:
         if when is not None and _same_window_duplicate(old, new, when, moment):
             return "重复（%s 已经记过%s）" % (str(old.get("at"))[11:16], new["what"])
     end = is_ended(item)
-    if end is not None and (parse_time(end.get("at")) or moment) <= moment and not (end.get("_auto") and new["what"] == "清点"):
+    allow_reopen = end is not None and end.get("_auto") and (
+        new["what"] == "清点" or (is_charcoal(item) and new["what"] in ("做好了", "变了样"))
+    )
+    if end is not None and (parse_time(end.get("at")) or moment) <= moment and not allow_reopen:
         return "它 %s 已经%s了" % (str(end.get("at"))[5:16], end.get("what"))
     if new["what"] in ends and any((parse_time(x.get("at")) or moment) > moment for x in stages):
         return "后面还记着别的步"
@@ -1227,15 +1269,95 @@ class ThingStore:
         except Exception:
             bots = set()
         flat = now.replace(tzinfo=None)
+        has_homes = hasattr(self.world, "home_at")
         out = []
         for back in range(SCAN_DAYS, -1, -1):
             day = (flat.date() - datetime.timedelta(days=back)).isoformat()
             for entry in self.world.entries(day):
                 if bots and str(entry.get("who")) not in bots:
                     continue
-                out.extend(self.entry_segments(entry, "%s/%s" % (day, entry.get("id")), flat))
-        out.sort(key=lambda row: (row["at"], row["start"], row["ref"]))
+                ref = "%s/%s" % (day, entry.get("id"))
+                entry_segs = self.entry_segments(entry, ref, flat)
+                out.extend(entry_segs)
+                end_dt = parse_time(entry.get("end")) if entry.get("end") else None
+                if end_dt is not None and end_dt <= flat and fmt_time(end_dt) >= CHARCOAL_AUTO_SINCE:
+                    home = self.world.home_at(end_dt) if has_homes else ""
+                    if home == "海边小镇":
+                        grams = self._entry_charcoal_grams(entry, flat)
+                        if grams > 0:
+                            end_stamp = fmt_time(end_dt)
+                            out.append({
+                                "at": end_stamp,
+                                "start": entry.get("start") or end_stamp,
+                                "ref": ref,
+                                "key": "%s@charcoal@%s" % (ref, end_stamp),
+                                "by": str(entry.get("who") or ""),
+                                "steps": [],
+                                "charcoal_grams": grams,
+                            })
+        out.sort(key=lambda row: (row["at"], 1 if row.get("charcoal_grams") else 0, row["start"], row["ref"]))
         return out
+
+    @staticmethod
+    def _entry_charcoal_grams(entry: dict, until: datetime.datetime) -> int:
+        """判断海边船屋已完成世界线段是否动用了灶台小炭炉开火做饭/烧水，返回自动扣炭克数（0 / 80 / 200）。"""
+        if not isinstance(entry, dict) or entry.get("kind") == "event" or real_stop(entry):
+            return 0
+        if entry.get("meal") or entry.get("sleep") or entry.get("at_home") is False:
+            return 0
+        end_dt = parse_time(entry.get("end")) if entry.get("end") else None
+        if end_dt is None or end_dt > until or fmt_time(end_dt) < CHARCOAL_AUTO_SINCE:
+            return 0
+        place = str(entry.get("place") or "")
+        if place and not any(w in place for w in ("船屋", "船舱", "灶")):
+            return 0
+        doing = str(entry.get("doing") or "")
+        steps_text = " ".join(clean_steps(entry.get("steps")))
+        all_text = "%s %s" % (doing, steps_text)
+        # 明确只用取暖柴炉烘烤、或只在炉膛架干柴取暖（非做饭）的段不扣小炭炉闷炭
+        if "柴炉" in all_text and "炭炉" not in all_text:
+            return 0
+        best = 0
+        for eff in entry.get("things") or []:
+            if not isinstance(eff, dict):
+                continue
+            cat = norm_cat(eff.get("cat"), eff.get("kind"))
+            if cat != CAT_FOOD:
+                continue
+            what = norm_step(eff.get("what"), CAT_FOOD)
+            if not what and eff.get("new") and eff.get("from"):
+                what = "做好了"
+            name = str(eff.get("name") or "")
+            kind = norm_kind(eff.get("kind") or name)
+            if what == "热了一下":
+                best = max(best, CHARCOAL_LIGHT_GRAMS)
+            elif what == "做好了":
+                if any(cw in name for cw in COLD_FOOD_WORDS):
+                    continue
+                if any(lw in name for lw in LIGHT_COOK_WORDS) and kind in ("禽蛋类", "茶汤鲜饮", DEFAULT_KIND):
+                    best = max(best, CHARCOAL_LIGHT_GRAMS)
+                elif kind in HOT_MEAL_KINDS or re.search(r"煎|炒|煮|熬|焖|炖|烤|蒸|汤|粥|煲|煨", name):
+                    best = max(best, CHARCOAL_MEAL_GRAMS)
+        if best >= CHARCOAL_MEAL_GRAMS:
+            return best
+        # 兜底：段里在灶台/小炭炉做热饭（如熬粥直接喝掉未建 new 菜品），排除纯洗碗擦桌备菜端菜
+        if re.search(r"洗碗|刷碗|擦桌|归置|端到|端上|摆碗|盛出|淘米下锅|洗菜|切菜", doing) and not re.search(
+            r"熬好|煮好|焖好|炒好|炖好|蒸好|烤好|煎好|做好|烧开", doing
+        ):
+            return best
+        if "灶" in place or "炭炉" in all_text:
+            if re.search(
+                r"(熬|煮|焖|炖|炒|蒸|做).{0,12}(粥|饭|汤|面|菜|鱼|肉|早饭|午饭|晚饭|夜宵)"
+                r"|(粥|饭|汤|面|菜|鱼|肉|早饭|午饭|晚饭|夜宵).{0,8}(熬好|煮好|焖好|炖好|炒好|蒸好|做好)",
+                doing,
+            ):
+                best = max(best, CHARCOAL_MEAL_GRAMS)
+            elif re.search(
+                r"(烧开水|烧水|烧一壶水|烧滚|煎.{0,4}蛋|蛋.{0,4}煎好|热.{0,4}(菜|饭|汤|粥))",
+                doing,
+            ):
+                best = max(best, CHARCOAL_LIGHT_GRAMS)
+        return best
 
     @staticmethod
     def entry_segments(entry: dict, ref: str, until: datetime.datetime) -> list:
@@ -1417,6 +1539,8 @@ class ThingStore:
             cat = cat_of(target)
             raw_what = step.get("what")
             stage = stage_of(step, cat, raw_what)
+            if is_charcoal(target) and stage["what"] in ("收到", "买回来") and (stage.get("amount") or stage.get("left")):
+                stage["what"] = "变了样"
             if not stage["what"]:
                 stage["what"] = _infer_what(step, cat)
             if not stage["what"]:
@@ -1448,6 +1572,61 @@ class ThingStore:
                     continue
                 insert_stage(source, clean_stage({"at": at, "what": "用掉一部分", "by": by, "into": dish["id"],
                                                   "note": "做这盘菜时用了，没说用了多少", "src": src, "wl": ref}))
+        if seg.get("charcoal_grams"):
+            self._auto_use_charcoal(items, at=at, grams=int(seg["charcoal_grams"]), by=by, ref=ref)
+
+    def _auto_use_charcoal(self, items: dict, at: str, grams: int, by: str, ref: str) -> None:
+        """小炭炉开火做饭自动从现有闷炭/木炭批次扣减克数；绝不凭空生炭，同餐 50 分钟窗内不重复双扣。"""
+        moment = parse_time(at)
+        if moment is None or grams <= 0:
+            return
+        pool = [x for x in self._local_items(items.values(), moment) if is_charcoal(x)]
+        if not pool:
+            return
+        already_auto = 0.0
+        for ch in pool:
+            info = measure(ch)
+            used_map = {id(s): u for s, u, _l in (info or {}).get("rows") or []}
+            for st in ch.get("stages") or []:
+                if st.get("what") not in ("用了", "用掉一部分", "用完了"):
+                    continue
+                when = parse_time(st.get("at"))
+                if when is None or abs((when - moment).total_seconds()) > CHARCOAL_WINDOW_MINUTES * 60:
+                    continue
+                if st.get("effect") != "#auto_charcoal":
+                    # 模型已在该餐窗口显式写了扣炭，不再叠加自动扣减
+                    return
+                already_auto += float(used_map.get(id(st)) or 0.0)
+        need = max(0.0, float(grams) - already_auto)
+        if need <= 0:
+            return
+        candidates = sorted(
+            (x for x in pool if is_ended(x) is None and str(x.get("created") or "") <= at),
+            key=lambda x: (str(x.get("created") or ""), str(x.get("id") or "")),
+        )
+        for ch in candidates:
+            if need <= 0:
+                break
+            info = measure(ch)
+            avail = float((info or {}).get("left") or 0.0)
+            if avail <= 0:
+                continue
+            take = min(avail, need)
+            stage = clean_stage(
+                {
+                    "at": at,
+                    "what": "用了",
+                    "used": "%s克" % _num_text(take),
+                    "by": by,
+                    "wl": ref,
+                    "effect": "#auto_charcoal",
+                    "note": "小炭炉开火做饭自动扣炭",
+                    "src": {"entry": ref, "auto_cook": "1"},
+                },
+                CAT_ITEM,
+            )
+            if not insert_stage(ch, stage):
+                need -= take
 
     def settle(self, now: datetime.datetime) -> int:
         """世界线里做完满 SETTLE_DAYS 天的段：把它标的那几步沉进 things.json。"""
@@ -2130,10 +2309,44 @@ class ThingStore:
                              "归%s" % self._who(owner, label_fn) if owner else "") if x]
         quantity_left = stock(item)
         if quantity_left is not None:
-            parts.append("现余 %s%s" % (_num_text(quantity_left["left"]), quantity_left["unit"]))
+            low_tag = "，快用完了" if quantity_left.get("low") else ""
+            parts.append("现余 %s%s%s" % (_num_text(quantity_left["left"]), quantity_left["unit"], low_tag))
         if item.get("_weather"):
             parts.append("按天气算，此刻：%s" % item["_weather"])
         return "%s %s〔%s〕：%s" % (item.get("id"), item.get("name"), "；".join(tags), "｜".join(parts))
+
+    def charcoal_summary(self, now: datetime.datetime, view: View) -> str:
+        """海边小镇灶台小炭炉的闷炭/木炭总余量与补给提醒（供 step.py 注入上下文）。"""
+        flat = now.replace(tzinfo=None)
+        if self.world is not None and hasattr(self.world, "home_at"):
+            if self.world.home_at(flat) != "海边小镇":
+                return ""
+        total_g = 0.0
+        for item in self._local_items(view.values(), flat):
+            if not is_charcoal(item) or is_ended(item) is not None:
+                continue
+            info = measure(item)
+            if info is not None:
+                total_g += float(info.get("left") or 0.0)
+        amt = fmt_amount(total_g, "克")
+        if total_g <= 0:
+            return (
+                "【灶台闷炭已用光：现余 0 克！】没弄回新炭之前，船舱灶台的小炭炉点不着火、没法用小炭炉做热饭烧水！"
+                "请先安排：① 去煮盐棚帮着挑海水添柴换一罐闷炭（约2000克），或 ② 去坡上柴料场/集市花零钱买一袋木炭，"
+                "或 ③ 点柴炉烧硬柴尚未化成白灰时专门动手拿火钳把红炭夹进陶罐盖严闷灭（约300~500克，from 填所烧干柴编号）；"
+                "新得的炭不会由程序自动增加，必须在那段的 items 里写 new（name 填「闷炭」或「木炭」，kind 填「燃料」，写清 amount 克数或罐数）入库。"
+            )
+        if total_g <= CHARCOAL_LOW_GRAMS:
+            return (
+                "【灶台闷炭快见底了：现余 %s（只够小炭炉再做一两顿饭）】小炭炉开火做饭由程序自动按顿扣炭（不用手写扣炭），"
+                "但炭绝不会自动凭空增加——请抽空安排：① 去煮盐棚挑海水添柴换一罐闷炭（约2000克），或 ② 去坡上柴料场/集市花零钱买炭，"
+                "或 ③ 公共澡堂烧水日顺手搭把手换半罐，或 ④ 点柴炉烧硬柴还没化灰时专门动手拿火钳夹红炭进陶罐盖严闷灭（约300~500克，from 填所烧干柴编号）；"
+                "真正办成后在那段的 items 里写 new 入库并标明 amount。" % amt
+            )
+        return (
+            "灶台闷炭余量：现余 %s（小炭炉做饭烧水由程序自动按顿扣炭，不用手写扣炭；"
+            "新换来、买来或趁柴炉硬柴未化灰时动手夹进陶罐闷出的炭须在 items 里写 new 入库）。" % amt
+        )
 
     def item_history(self, item: dict, view: View, label_fn=None) -> str:
         head = "%s %s〔%s〕" % (item.get("id"), item.get("name"), item.get("kind") or "东西")
@@ -2161,10 +2374,20 @@ class ThingStore:
                 lines.append("里面：%s" % item["inside"])
         if item.get("from"):
             lines.append("用这几件做的：%s" % "、".join(self._name_of(view, x) for x in item["from"]))
+        info = measure(item)
+        counted = {id(stage): (used, left) for stage, used, left in (info or {}).get("rows") or []}
         for stage in item.get("stages") or []:
             who = self._who(stage.get("by"), label_fn)
             text = "- %s %s%s" % (str(stage.get("at"))[5:16], stage.get("what"), "（%s）" % who if who else "")
             bits = [self._where(stage, label_fn), stage.get("state")]
+            if info is not None and id(stage) in counted:
+                used, left_val = counted[id(stage)]
+                if stage.get("what") in ITEM_START_STEPS and stage is (item.get("stages") or [None])[0]:
+                    bits.append("一共 %s" % fmt_amount(left_val, info["unit"]))
+                elif used is not None:
+                    bits.append("用了 %s，剩 %s" % (fmt_amount(used, info["unit"]), fmt_amount(left_val, info["unit"])))
+                elif stage.get("what") in ("清点", "做好了", "变了样"):
+                    bits.append("现余 %s" % fmt_amount(left_val, info["unit"]))
             if stage.get("owner"):
                 bits.append("归%s" % self._who(stage["owner"], label_fn))
             if stage.get("into"):
