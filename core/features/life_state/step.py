@@ -192,6 +192,7 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
 - `"training"`: 字符串（练在练的事填 `"#编号"`，否则 `""`）；`"intent"`: 字符串（做各自的打算填 `"i编号"`，否则 `""`）。
 - `"from"`: 字符串必填（只准填候选短编号如 `"T1"`/`"G1"`/`"P1"`/`"I1"`/`"A1"`，或枚举 `"routine"` / `"intent"` / `"promise"` / `"rule"` / `"training"` / `"continue:前段事"` / `"self"`；严禁留空或填栏目标题）。
 - `"mood"`: 字符串必填（非空，写明什么心情及具体由头）。
+- `"outfit"`: 字符串必填（非空，写明这段她身上实际穿什么、披裹什么、穿没穿鞋袜，如 `"奶白色水手领长袖连衣裙，冷得把旧毛毯披在肩上，光脚缩在炉边"` 或 `"黑色和服薄披肩配绀紫抹胸常服与绑腿木屐"`。**严守真实家底**：只能穿人设自带的单薄常服/睡衣，或上方「家里的东西」里真在当前住处的衣物铺盖；海边船屋开局没有厚冬衣和厚棉被，严禁凭空编出棉袄/大衣/毛衣/围巾/厚棉被，也严禁给衣物铺盖写 `what="原来就有"`——冷了只能先裹现有薄被毛毯、生铁桶柴炉烤火，或正经排一段去集市/半淹商店街旧衣铺买换回来记入 `items` 后才能穿上）。
 - `"things"`（食物变动数组，没动食物填 `[]`；凡买菜买鱼、赶海收蟹、做饭、热菜、吃饭、保鲜加工必填）：
   - 动已有食物：`{{"id": "w编号或n代号", "what": "用掉一部分|用完了|吃了一部分|吃完了|挪地方|切开了|热了一下|轻腌|重盐腌|糖渍|醋泡|酱渍|油封|灰沙埋|晒上了|炉烘|熏上了|丢了|坏了扔了", "used": "10毫升", "left": "剩余量(用完/吃完必填\"\")", "into": "n1(可选)", "place": {{"area": "船舱", "at": "矮桌", "detail": ""}}, "keep": "罩着放", "spot": "屋里", "state": "整的", "step": 1}}`
   - 新食物入库：`{{"new": "n1", "name": "番薯焖鱼", "kind": "熟菜炒菜", "what": "做好了|买回来|收到|原来就有", "cook": "boil|fry|steam|roast|cold（what=做好了时必填！无食用油时严禁填fry；生鲜/买回填\"\"）", "from": ["w1"], "origin": "集市鱼摊(买回/收到时填)", "amount": "500克(按量记的食材调料填)", "left": "一锅", "place": {{"area": "船舱", "at": "灶上", "detail": "锅里"}}, "keep": "罩着放", "spot": "灶上温着", "step": 2}}`
@@ -207,8 +208,8 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
   "stopped_results": {{}},
   "intent_moves": {{}},
   "segments": {{
-    "napcat": [{{"start": "{example_start}", "end": "{example_end}", "place": "船屋·船舱灶台边", "doing": "生起小炭炉熬一锅咸鱼粥", "steps": [{{"text": "淘米下锅添水，引燃小炭炉", "minutes": 10}}, {{"text": "切碎咸鱼干下锅慢熬", "minutes": 10}}, {{"text": "收尾：盖好锅盖温在灶上，擦净案板", "minutes": 5}}], "result": "熬好了一锅咸鱼粥温在灶上", "state": "做事", "at_home": true, "meal": false, "stove": "charcoal", "lamp": false, "kerosene": false, "water": false, "send_msg": false, "msg_at": "", "msg_purpose": "", "public": "在船舱灶台边熬粥", "with": [], "training": "", "intent": "", "from": "routine", "mood": "早起闻着热粥香气，心里踏实安稳", "things": [{{"id": "w1", "what": "用掉一部分", "used": "150克", "left": "2850克", "into": "n1", "step": 1}}, {{"new": "n1", "name": "咸鱼粥", "kind": "熟汤羹粥", "what": "做好了", "cook": "boil", "from": ["w1"], "left": "一锅", "place": {{"area": "船舱", "at": "灶上", "detail": "锅里"}}, "keep": "罩着放", "spot": "灶上温着", "step": 2}}], "items": []}},
-               {{"start": "{example_end}", "end": "{example_end2}", "place": "海边小镇·码头", "doing": "飘去码头看看打捞船靠岸卸货", "steps": [{{"text": "从船屋飘到码头边站定张望", "minutes": 10}}, {{"text": "看完卸货往回飘到船屋", "minutes": 5}}], "result": "看了一阵热闹回船屋了", "state": "做事", "at_home": false, "meal": false, "stove": "", "lamp": false, "kerosene": false, "water": false, "send_msg": true, "msg_at": "start", "msg_purpose": "要出门去码头看一眼，跟主人说一声", "public": "去码头看船", "with": [], "training": "", "intent": "", "from": "T1", "mood": "想去码头凑个热闹，兴致勃勃的", "things": [], "items": []}}],
+    "napcat": [{{"start": "{example_start}", "end": "{example_end}", "place": "船屋·船舱灶台边", "doing": "生起小炭炉熬一锅咸鱼粥", "steps": [{{"text": "淘米下锅添水，引燃小炭炉", "minutes": 10}}, {{"text": "切碎咸鱼干下锅慢熬", "minutes": 10}}, {{"text": "收尾：盖好锅盖温在灶上，擦净案板", "minutes": 5}}], "result": "熬好了一锅咸鱼粥温在灶上", "state": "做事", "at_home": true, "meal": false, "stove": "charcoal", "lamp": false, "kerosene": false, "water": false, "send_msg": false, "msg_at": "", "msg_purpose": "", "public": "在船舱灶台边熬粥", "with": [], "training": "", "intent": "", "from": "routine", "mood": "早起闻着热粥香气，心里踏实安稳", "outfit": "黑色和服薄披肩配绀紫抹胸常服与木屐", "things": [{{"id": "w1", "what": "用掉一部分", "used": "150克", "left": "2850克", "into": "n1", "step": 1}}, {{"new": "n1", "name": "咸鱼粥", "kind": "熟汤羹粥", "what": "做好了", "cook": "boil", "from": ["w1"], "left": "一锅", "place": {{"area": "船舱", "at": "灶上", "detail": "锅里"}}, "keep": "罩着放", "spot": "灶上温着", "step": 2}}], "items": []}},
+               {{"start": "{example_end}", "end": "{example_end2}", "place": "海边小镇·码头", "doing": "飘去码头看看打捞船靠岸卸货", "steps": [{{"text": "从船屋飘到码头边站定张望", "minutes": 10}}, {{"text": "看完卸货往回飘到船屋", "minutes": 5}}], "result": "看了一阵热闹回船屋了", "state": "做事", "at_home": false, "meal": false, "stove": "", "lamp": false, "kerosene": false, "water": false, "send_msg": true, "msg_at": "start", "msg_purpose": "要出门去码头看一眼，跟主人说一声", "public": "去码头看船", "with": [], "training": "", "intent": "", "from": "T1", "mood": "想去码头凑个热闹，兴致勃勃的", "outfit": "黑色和服薄披肩配绀紫抹胸常服与木屐", "things": [], "items": []}}],
     "napcat2": []
   }}
 }}
@@ -1758,6 +1759,13 @@ class LifeStep:
         out = "%s结束时她在：%s" % (what, clean_text(entry.get("place") or "", 40) or "（没写地方）")
         if entry.get("at_home") is False:
             out += "，人不在宿舍"
+        worn = clean_text(entry.get("outfit") or "", 80)
+        if not worn:
+            from .view import current_outfit_of
+            e_who = str(entry.get("who") or "")
+            worn = current_outfit_of(self.world, e_who, self.label(e_who) or e_who, ended or moment)
+        if worn:
+            out += "（当时身上穿的：%s）" % worn
         if real_stop(entry):
             stopped = clean_text(entry.get("stop_result") or "", 60)
             return out + ("（停下时：%s）。" % stopped if stopped else "。")
@@ -2248,6 +2256,8 @@ class LifeStep:
                     errors.append(f"{tag}：doing 不能为空")
                 if not str(raw.get("mood") or "").strip():
                     errors.append(f"{tag}：mood 不能为空（须写明心情及由头）")
+                if not str(raw.get("outfit") or "").strip():
+                    errors.append(f"{tag}：outfit 不能为空（须写明这段身上实际穿着/披裹什么）")
 
                 if not st_code:
                     errors.append(f"{tag}：state 必须填 \"做事\"、\"闲着\" 或 \"睡觉\" 三选一（当前值={raw.get('state')!r}）")
@@ -2402,6 +2412,11 @@ class LifeStep:
                             errors.append(f"{tag} items[{i_i}]：new 物品必须同时填非空 name 与 kind")
                         if what not in ITEM_START_STEPS:
                             errors.append(f"{tag} items[{i_i}]（{nm}）：new 物品的 what 必须填 开始做/做好了/买回来/收到/捡到/原来就有（当前={eff.get('what')!r}）")
+                        elif seaside and what == "原来就有" and kd in (
+                            "衣物", "衣服", "棉袄", "外套", "大衣", "夹克", "毛衣", "棉衣",
+                            "围巾", "手套", "袜子", "靴子", "被子", "棉被", "厚被", "被褥", "毛毯", "毯子",
+                        ):
+                            errors.append(f"{tag} items[{i_i}]（{nm}）：海边船屋开局无自带厚衣铺盖，严禁给衣物铺盖填 what=\"原来就有\"（须通过买回来/收到/做好了获取）")
                         try:
                             checked_place(eff.get("place"), True, nm or "新物品")
                         except Exception as pe:
@@ -2632,6 +2647,7 @@ class LifeStep:
                     **({"kerosene": True} if raw.get("kerosene") in (True, "true") else {}),
                     **({"water": True} if raw.get("water") in (True, "true") and not sleep else {}),
                     "mood": str(raw.get("mood") or "").strip(),
+                    "outfit": clean_text(raw.get("outfit") or "", 100),
                     "public": raw.get("public"),
                     "with": with_list,
                     "training": training,

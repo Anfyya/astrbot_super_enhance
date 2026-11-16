@@ -807,6 +807,7 @@ class Recorder:
                 "src_quote": raw.get("quote"),
                 "created": fmt_time(now),
                 "stove": stove_val if kind == "activity" and stove_val in ("charcoal", "wood") else "",
+                **({"outfit": clean_text(raw.get("outfit"), 100)} if kind == "activity" and str(raw.get("outfit") or "").strip() else {}),
                 **({"lamp": True} if kind == "activity" and (raw.get("lamp") is True or str(raw.get("lamp") or "").lower() == "true") else {}),
                 **({"kerosene": True} if raw.get("kerosene") is True or str(raw.get("kerosene") or "").lower() == "true" else {}),
                 # 主人叫她现在去做的：做完叫她回来说一声；被打断照实写；后来发现其实没去做，记录员能撤

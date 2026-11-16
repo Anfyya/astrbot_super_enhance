@@ -335,6 +335,10 @@ def world_text(service, bot: str, now: datetime.datetime) -> str:
         except Exception:
             logger.warning("[super_enhance/life] 电和补给注入失败", exc_info=True)
         try:
+            blocks.append(outfit_now_text(service, bot, now))
+        except Exception:
+            logger.warning("[super_enhance/life] 穿搭注入失败", exc_info=True)
+        try:
             blocks.append(mood_now_text(service, bot, now))
         except Exception:
             logger.warning("[super_enhance/life] 心情注入失败", exc_info=True)
@@ -425,6 +429,64 @@ def weather_now_text(service, now: datetime.datetime, bot: str = "") -> str:
 
     return "外头的天气（%s）%s。\n%s说到天气、冷暖、穿衣、要不要生炉添柴或出门时照这个实际温度说。" % (
         flat.strftime("%H:%M"), weather_mod.now_text(flat, text_of, home), env_line)
+
+
+DEFAULT_OUTFITS = {
+    "丛雨": {
+        "awake": "黑色和服薄披肩配绀紫抹胸常服与绑腿木屐（露腋单薄夏秋装，身上没有厚外套）",
+        "sleep": "浅蓝色绣球纹和式睡衣（盖着自己的薄被）",
+    },
+    "亚托莉": {
+        "awake": "奶白色水手领及膝长袖连衣裙（在船舱里常光着脚、出门穿乐福鞋，身上没有厚外套）",
+        "sleep": "浅色棉质宽袖睡裙（盖着旧毛毯）",
+    },
+}
+
+
+def current_outfit_of(world, bot: str, label: str, now: datetime.datetime) -> str:
+    """读取她此刻身上的真实穿搭：优先取最近一段已开始世界线上的结构化 outfit；尚未写过时回退人设自带单薄常服/睡衣。"""
+    from .world import is_sleep as _is_sleep, real_stop as _real_stop
+
+    flat = now.replace(tzinfo=None)
+    cur = world.current(bot, flat) if world is not None else None
+    sleeping = bool(cur is not None and _is_sleep(cur))
+    if world is not None:
+        latest = ""
+        latest_sleep = False
+        for back in (2, 1, 0):
+            d_str = (flat.date() - datetime.timedelta(days=back)).isoformat()
+            for item in world.entries(d_str):
+                if str(item.get("who") or "") != str(bot) or item.get("kind") == "event" or _real_stop(item):
+                    continue
+                st = parse_time(item.get("start"))
+                if st is None or st > flat:
+                    continue
+                worn = str(item.get("outfit") or "").strip()
+                if worn:
+                    latest = worn
+                    latest_sleep = bool(_is_sleep(item))
+        if latest and latest_sleep == sleeping:
+            return latest
+    defaults = DEFAULT_OUTFITS.get(str(label or "").strip()) or {
+        "awake": "平时的单薄常服（没有厚外套）",
+        "sleep": "单薄睡衣",
+    }
+    return defaults["sleep" if sleeping else "awake"]
+
+
+def outfit_now_text(service, bot: str, now: datetime.datetime) -> str:
+    """聊天实时注入她此刻身上穿的衣裳与铺盖实情。"""
+    world = getattr(service, "world", None)
+    label = service.bots.label_for(bot) if getattr(service, "bots", None) is not None else bot
+    worn = current_outfit_of(world, bot, label or bot, now)
+    home = str(service.cfg.get("world_home") or "").strip() or "穗织"
+    tail = (
+        "（海边船屋里没有从穗织带过来的冬衣围巾，除非物品清单里真有后来新买/新换的厚衣棉被，否则别凭空说自己穿着棉袄大衣；"
+        "冷不冷、冻不冻脚，结合你身上这身薄厚和上面的实时环境温度自然流露，不用刻意报衣服全名。）"
+        if home == "海边小镇"
+        else "（结合上面的实时环境温度自然感受，不用刻意报衣服全名。）"
+    )
+    return "你现在身上穿的：%s。%s" % (worn, tail)
 
 
 def mood_now_text(service, bot: str, now: datetime.datetime) -> str:

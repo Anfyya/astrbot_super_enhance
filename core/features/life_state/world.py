@@ -436,6 +436,8 @@ class WorldStore:
             record["water"] = True  # 补写标的这段打了淡水或接存了雨水
         if str(entry.get("mood") or "").strip() and kind != "event":
             record["mood"] = clean_text(entry.get("mood"), MAX_MOOD)  # 补写写的这段她什么心情（聊天取当下这句）
+        if str(entry.get("outfit") or "").strip() and kind != "event":
+            record["outfit"] = clean_text(entry.get("outfit"), 100)  # 这段她身上实际穿什么、披裹什么
         if entry.get("stopped") and isinstance(entry.get("stop_at_step"), int):
             record["stop_at_step"] = entry["stop_at_step"]
         if entry.get("stopped") and str(entry.get("wrap") or "").strip():
@@ -636,6 +638,12 @@ class WorldStore:
                         item.pop(b_flag, None)
             if fields.get("result") is not None:
                 item["result"] = clean_text(fields["result"], MAX_RESULT)
+            if fields.get("outfit") is not None and not is_event(item):
+                val_out = clean_text(fields["outfit"], 100)
+                if val_out:
+                    item["outfit"] = val_out
+                else:
+                    item.pop("outfit", None)
             if (fields.get("end") is not None or fields.get("start") is not None) and fields.get("steps") is None:
                 # 起止改了（截短 / 拉长）：分步跟着按新时长对上，别把十几分钟的分步压进一两分钟里
                 fit_steps(item)

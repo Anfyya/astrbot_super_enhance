@@ -649,8 +649,8 @@ def warnings(moment: datetime.datetime, until: datetime.datetime, text_of, home:
                 max_plunge,
                 at.strftime("%H:%M"),
                 _deg(low_t),
-                "北风灌港骤冷入冬，得翻出厚冬衣、塞紧船舱漏风板缝，把铁桶柴炉生起来暖舱（stove=\"wood\"）"
-                if sea else "气温断崖下跌，出门添厚衣、屋里注意取暖",
+                "北风灌港骤冷入冬，船屋里眼下没有厚冬衣棉被，得赶紧塞紧船舱漏风板缝、把铁桶柴炉生起来暖舱（stove=\"wood\"），裹紧仅有的薄被毛毯抗寒，并想办法去镇上旧衣铺或集市淘换过冬衣物铺盖"
+                if sea else "气温断崖下跌，屋里注意取暖",
             )
         )
     if first_freeze is not None and sea:
