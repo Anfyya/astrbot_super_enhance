@@ -185,7 +185,7 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
 - `"meal"`: 布尔值必填 `true` | `false`（只有正在吃早饭/午饭/晚饭/夜宵填 `true`；备菜、做饭、端菜、洗碗及其余一律填 `false`）。
 - `"stove"`: 字符串三选一必填 `""` | `"charcoal"` | `"wood"`（海边船屋：小炭炉点火做热食/烧水/回锅热菜/炭烤填 `"charcoal"`；铁桶柴炉点火烧柴暖舱/炉烘/烟熏填 `"wood"`；没点火、外出、吃饭、闲着、睡觉或住在穗织一律填 `""`；家里闷炭为 0 时严禁填 `"charcoal"`，干柴为 0 时严禁填 `"wood"`）。
 - `"lamp"`: 布尔值必填 `true` | `false`（海边船屋天黑后点着煤油灯做细活或提灯外出填 `true`；靠炉火微光吃饭闲聊、摸黑、白天或睡觉一律填 `false`；煤油耗尽时严禁填 `true`）。
-- `"kerosene"`: 布尔值必填 `true` | `false`（海边补给船到港日，去码头签领回含煤油配给的那一段填 `true`，其余段一律填 `false`）。
+- `"kerosene"`: 布尔值必填 `true` | `false`（海边补给船到港日去码头签领含煤油的配给，或去坡上杂货铺打回煤油的那一段填 `true`，其余段一律填 `false`）。
 - `"water"`: 布尔值必填 `true` | `false`（海边去蓄水塔/老井/半淹车站打回淡水，或摆桶接存烧开雨水的那一段填 `true`，其余段一律填 `false`）。
 - `"send_msg"`: 布尔值必填 `true` | `false`；为 `true` 时 `"msg_at"` 必填 `"start"` 或 `"end"`（睡觉段晚安必为 `"start"`）、`"msg_purpose"` 必填非空句；为 `false` 时 `"msg_at"` 和 `"msg_purpose"` 均填 `""`。
 - `"public"`: 字符串（同住人可见的粗粒度动向，可填 `""`）；`"with"`: 数组（如 `[]`、`["napcat2"]`、`["napcat", "master"]`）。
@@ -2218,6 +2218,8 @@ class LifeStep:
             bot_has_new_food = False
             bot_has_food_step = False
             bot_has_water_true = False
+            bot_has_kerosene_true = False
+            bot_has_wood_stove = False
             bot_resolved_origins: list[dict] = []
 
             for idx, raw, seg_start, seg_end, st_code in bot_kept:
@@ -2261,6 +2263,8 @@ class LifeStep:
                     errors.append(f"{tag}：非做事段 meal 必须为 false")
                 if raw.get("water") is True:
                     bot_has_water_true = True
+                if raw.get("kerosene") is True:
+                    bot_has_kerosene_true = True
                 if seaside and raw.get("lamp") is True:
                     if sleep:
                         errors.append(f"{tag}：睡觉段 lamp 必须为 false")
@@ -2293,6 +2297,8 @@ class LifeStep:
                         errors.append(f"{tag}：家里闷炭现余 0 克且未先补炭入库，stove 严禁填 \"charcoal\"")
                     elif stove_val == "wood" and inv_state["wood_bundles"] <= 0 and not batch_added_wood:
                         errors.append(f"{tag}：家里干柴为 0 且未先补柴入库，stove 严禁填 \"wood\"")
+                    if stove_val == "wood":
+                        bot_has_wood_stove = True
 
                 raw_intent = str(raw.get("intent") or "").strip()
                 raw_training = str(raw.get("training") or "").strip()
@@ -2413,6 +2419,10 @@ class LifeStep:
                     errors.append(f"{who_lbl}采用了采买/补货插曲「{orig['text']}」，必须在 things 或 items 里写 new 将带回来的东西入库")
                 elif p_link in ("preserve_jam", "preserve_pickle", "fish_dry", "fish_stove", "ash") and not bot_has_food_step:
                     errors.append(f"{who_lbl}采用了保鲜加工插曲「{orig['text']}」，必须在 things 里写出对应的食材保鲜加工步骤")
+                elif p_link == "kerosene" and seaside and not (bot_has_kerosene_true and bot_has_new_item):
+                    errors.append(f"{who_lbl}采用了打煤油插曲「{orig['text']}」，打油那段必须填 \"kerosene\": true 并在 items 里把顺手带回的火柴入库")
+                elif p_link == "wood_stove" and seaside and not bot_has_wood_stove:
+                    errors.append(f"{who_lbl}采用了烧柴炉插曲/消遣「{orig['text']}」，对应段必须填 \"stove\": \"wood\"")
                 elif p_grp == "取淡水" and seaside and not bot_has_water_true:
                     errors.append(f"{who_lbl}采用了取淡水插曲「{orig['text']}」，打水那段必须填 \"water\": true")
 

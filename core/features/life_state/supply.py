@@ -39,6 +39,8 @@ POWER_HOURS = (18, 21)
 # 估「还够几晚」时一晚按几个钟头算、这以前的补给船当领过了（那时还不记领没领）
 LAMP_OIL = True
 LAMP_HOURS = 20
+STORE_KEROSENE_HOURS = 8
+STORE_KEROSENE_TWIST = "拎着空油壶去坡上杂货铺打回一壶煤油，顺手带了一小盒火柴"
 LAMP_CAP = 30
 LAMP_NIGHT = 4
 LAMP_SINCE = datetime.datetime(2026, 11, 6, 21, 0)
@@ -217,6 +219,28 @@ def _has_supply_things(item: dict) -> bool:
     return False
 
 
+def _is_store_kerosene(item: dict) -> bool:
+    orig = item.get("origin") if isinstance(item.get("origin"), dict) else {}
+    return bool(item.get("kerosene")) and str(orig.get("text") or "") == STORE_KEROSENE_TWIST
+
+
+def _store_refills(world, start: datetime.datetime, end: datetime.datetime) -> list[datetime.datetime]:
+    """[start, end) 里去坡上杂货铺打回小壶煤油的时刻列表（按结构化 kerosene=true + origin.text 精确枚举识别）。"""
+    out: list[datetime.datetime] = []
+    day = start.date()
+    while day <= end.date():
+        for item in world.entries(day.isoformat()):
+            if str(item.get("who")) == "master" or item.get("stopped"):
+                continue
+            moment = parse_time(item.get("end")) if item.get("end") else parse_time(item.get("start"))
+            if moment is None or not start <= moment < end:
+                continue
+            if _is_store_kerosene(item):
+                out.append(moment)
+        day += datetime.timedelta(days=1)
+    return sorted(out)
+
+
 def _pickup(world, start: datetime.datetime, end: datetime.datetime):
     """[start, end) 里把这一趟煤油领回来的时刻（纯结构化判定：kerosene=true 或段里入库了补给船配给物资）；没领返回 None。"""
     legacy_cutoff = datetime.datetime(2026, 11, 16, 0, 0)
@@ -228,7 +252,7 @@ def _pickup(world, start: datetime.datetime, end: datetime.datetime):
             moment = parse_time(item.get("end")) if item.get("end") else parse_time(item.get("start"))
             if moment is None or not start <= moment < end:
                 continue
-            if item.get("kerosene"):
+            if item.get("kerosene") and not _is_store_kerosene(item):
                 return moment
             if _has_supply_things(item):
                 return moment
@@ -240,7 +264,7 @@ def _pickup(world, start: datetime.datetime, end: datetime.datetime):
 
 def lamp_left(moment: datetime.datetime, world, text_of, home: str):
     """此刻家里的煤油还够点几个钟头；没开、不住海边、没给世界线、还没来过补给船，返回 None（照老说法）。
-    从头累计历趟补给船：那一趟领回来了才加一桶（LAMP_HOURS，最多存 LAMP_CAP），点了多少减多少，省下的油一直留着。"""
+    从头累计历趟补给船：那一趟领回来了加一桶（LAMP_HOURS），去杂货铺打一壶加 STORE_KEROSENE_HOURS（最多存 LAMP_CAP），点了多少减多少。"""
     if not LAMP_OIL or world is None or home not in weather_mod.SEA_HOMES:
         return None
     flat = moment.replace(tzinfo=None)
@@ -249,13 +273,21 @@ def lamp_left(moment: datetime.datetime, world, text_of, home: str):
         return None
     left = 0.0
     for a, b in zip(arrivals, arrivals[1:] + [flat]):
+        events: list[tuple[datetime.datetime, float]] = []
         got = a if a < LAMP_SINCE else _pickup(world, a, b)
         if got is not None:
-            left = max(left - _lamp_hours(world, a, got), 0.0)
-            left = min(left + LAMP_HOURS, LAMP_CAP)
-            left = max(left - _lamp_hours(world, got, b), 0.0)
-        else:
-            left = max(left - _lamp_hours(world, a, b), 0.0)
+            events.append((got, float(LAMP_HOURS)))
+        for st_ts in _store_refills(world, a, b):
+            events.append((st_ts, float(STORE_KEROSENE_HOURS)))
+        events.sort(key=lambda x: x[0])
+        cur = a
+        for ev_ts, add_h in events:
+            if ev_ts > cur:
+                left = max(left - _lamp_hours(world, cur, ev_ts), 0.0)
+                cur = ev_ts
+            left = min(left + add_h, float(LAMP_CAP))
+        if b > cur:
+            left = max(left - _lamp_hours(world, cur, b), 0.0)
     return left
 
 
