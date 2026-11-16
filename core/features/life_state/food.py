@@ -215,9 +215,11 @@ def split_keep(keep, spot="", place="") -> tuple:
 
 # 穗织是山里的温泉镇：各月平均气温（摄氏度），按月中取值、日子之间线性插
 MONTH_TEMP = (2, 3, 7, 12, 17, 21, 25, 26, 22, 15, 9, 4)
-# 海边小镇照铫子（千叶县，太平洋边上）的各月平均气温：气象厅平年值 1991-2020，四舍五入到 0.5 度
-SEA_MONTH_TEMP = (6.5, 7.0, 9.5, 14.0, 17.5, 20.0, 23.5, 25.5, 23.5, 19.0, 14.5, 9.5)
-# 天气原文前面带「住处::」时按那一处的气温算（operations.weathers 给住在别处的日子加上；没带的照穗织）
+# 海边小镇：2026-11-16 及以前沿用原暖海边曲线（老世界线与存货历史不变）；
+# 2026-11-17 00:00 强寒潮南下断崖入冬，切入偏北山湾冷海港曲线（1~2 月寒夜探 -10℃，白天最高守住 ≥+3℃ 化冻不封港）
+SEA_COLD_SNAP_START = datetime.datetime(2026, 11, 17, 0, 0)
+SEA_MONTH_TEMP_LEGACY = (6.5, 7.0, 9.5, 14.0, 17.5, 20.0, 23.5, 25.5, 23.5, 19.0, 14.5, 9.5)
+SEA_MONTH_TEMP = (-1.5, -1.0, 4.0, 9.5, 14.5, 18.5, 22.5, 24.5, 19.5, 12.5, 4.5, 0.5)
 TEMP_BY_HOME = {"海边小镇": SEA_MONTH_TEMP}
 HOME_TAG = "::"
 
@@ -231,8 +233,13 @@ def split_home(text) -> tuple:
     return "", value
 
 
-def _table_of(weather_text) -> tuple:
-    return TEMP_BY_HOME.get(split_home(weather_text)[0], MONTH_TEMP)
+def _table_of(weather_text, moment: datetime.datetime | None = None) -> tuple:
+    home = split_home(weather_text)[0]
+    if home == "海边小镇":
+        if moment is not None and moment < SEA_COLD_SNAP_START:
+            return SEA_MONTH_TEMP_LEGACY
+        return SEA_MONTH_TEMP
+    return TEMP_BY_HOME.get(home, MONTH_TEMP)
 # 天气（daily_seeds 里抽的那几种）→（比平常高几度，屋里一天里上下差几度）；按顺序认，先认细的
 WEATHER_SHIFT = (
     ("台风", -2, 1.5), ("冷雨", -3, 1.5), ("连着下雨", -2, 1.5), ("海上起雾", -1, 2),
@@ -313,33 +320,64 @@ def _swing(moment: datetime.datetime) -> float:
     return math.sin(2 * math.pi * (hour - 8) / 24)
 
 
+def _compute_room_temp(moment: datetime.datetime, weather_text) -> float:
+    home = split_home(weather_text)[0]
+    shift, amp = weather_shift(weather_text)
+    raw = month_temp(moment, _table_of(weather_text, moment)) + shift + amp * _swing(moment)
+    if home == "海边小镇" and moment >= SEA_COLD_SNAP_START:
+        # 船屋浮在不结冰的港湾海水上且有木舱遮挡，未生火时舱内最低约 3.5℃，水缸蔬菜不结冰
+        return max(raw, 3.5)
+    return raw
+
+
+def _compute_outdoor_temp(moment: datetime.datetime, weather_text) -> float:
+    home = split_home(weather_text)[0]
+    shift, amp = weather_shift(weather_text)
+    sw = _swing(moment)
+    if home == "海边小镇" and moment >= SEA_COLD_SNAP_START:
+        base = month_temp(moment, SEA_MONTH_TEMP) + shift
+        amp_out = amp * OUTDOOR_SWING
+        # 隆冬晴冷/寒风夜山坡陆风辐射降温探底 -10℃，同时保证每天下午最高温必 ≥ +3.5℃（白天化冻、港湾与龙头绝不冻毁）
+        peak = base + amp_out
+        if sw >= 0 and peak < 3.5:
+            val = base + amp_out * sw + (3.5 - peak) * sw
+        elif sw < 0 and base <= -2.5:
+            val = max(-10.0, base + (amp_out + 0.7) * sw)
+        else:
+            val = max(-10.0, base + amp_out * sw)
+        # 2026-11-17 00:00~06:00 寒潮过境：6 小时内从前一日暖秋余温急剧俯冲入冬
+        snap_hours = (moment - SEA_COLD_SNAP_START).total_seconds() / 3600.0
+        if 0.0 <= snap_hours < 6.0:
+            legacy_val = month_temp(moment, SEA_MONTH_TEMP_LEGACY) + shift + amp_out * sw
+            frac = snap_hours / 6.0
+            return legacy_val * (1.0 - frac) + val * frac
+        return val
+    return month_temp(moment, _table_of(weather_text, moment)) + shift + amp * OUTDOOR_SWING * sw
+
+
 def room_temp(moment: datetime.datetime, weather_text) -> float:
     """屋里这一刻的气温：当天平均 + 天气 + 一天里的起伏（下午两点最暖、凌晨两点最凉）。"""
     if isinstance(weather_text, str):
         return _room_temp(moment, weather_text)
-    shift, amp = weather_shift(weather_text)
-    return month_temp(moment, _table_of(weather_text)) + shift + amp * _swing(moment)
+    return _compute_room_temp(moment, weather_text)
 
 
 def outdoor_temp(moment: datetime.datetime, weather_text) -> float:
     """屋外背阴处：跟屋里一样的平均，起伏大（夜里更冷、白天更暖）；冬天夜里会冻上。"""
     if isinstance(weather_text, str):
         return _outdoor_temp(moment, weather_text)
-    shift, amp = weather_shift(weather_text)
-    return month_temp(moment, _table_of(weather_text)) + shift + amp * OUTDOOR_SWING * _swing(moment)
+    return _compute_outdoor_temp(moment, weather_text)
 
 
 # 模拟往后推的那段从「此刻」起每半小时一片，所有吃的走的是同一套时刻：同一时刻、同一天气的气温记住（纯函数）
 @functools.lru_cache(maxsize=8192)
 def _room_temp(moment: datetime.datetime, weather_text: str) -> float:
-    shift, amp = weather_shift(weather_text)
-    return month_temp(moment, _table_of(weather_text)) + shift + amp * _swing(moment)
+    return _compute_room_temp(moment, weather_text)
 
 
 @functools.lru_cache(maxsize=8192)
 def _outdoor_temp(moment: datetime.datetime, weather_text: str) -> float:
-    shift, amp = weather_shift(weather_text)
-    return month_temp(moment, _table_of(weather_text)) + shift + amp * OUTDOOR_SWING * _swing(moment)
+    return _compute_outdoor_temp(moment, weather_text)
 
 
 def daytime(moment: datetime.datetime) -> bool:
@@ -347,21 +385,21 @@ def daytime(moment: datetime.datetime) -> bool:
 
 
 def spot_temp(spot: str, moment: datetime.datetime, weather_text, warm_hours=None) -> float:
-    """放在哪 → 这一刻多少度。舱底贴吃水线以下铁船底恒温凉爽；海水/冷水镇着接近表层海水温度。"""
+    """放在哪 → 这一刻多少度。舱底贴吃水线以下铁船底恒温凉爽（冬季不低于 4℃）；海水/冷水镇着接近不封冻的表层海水温度。"""
     if spot == "冰箱":
         return 4.0
     if spot == "冻着":
         return -18.0
     if spot == "地窖":
-        return 10.0 + (month_temp(moment, _table_of(weather_text)) - 15.0) * 0.15
+        return 10.0 + (month_temp(moment, _table_of(weather_text, moment)) - 15.0) * 0.15
     if spot == "井里":
-        return 14.0 + (month_temp(moment, _table_of(weather_text)) - 15.0) * 0.1
+        return 14.0 + (month_temp(moment, _table_of(weather_text, moment)) - 15.0) * 0.1
     if spot == "舱底阴凉处":
-        base = 12.0 + (month_temp(moment, _table_of(weather_text)) - 14.5) * 0.45
-        return min(room_temp(moment, weather_text) - 4.0, base)
+        base = max(4.0, 12.0 + (month_temp(moment, _table_of(weather_text, moment)) - 14.5) * 0.45)
+        return max(4.0, min(room_temp(moment, weather_text) - 1.5, base))
     if spot in ("海水/冷水镇着", "船舷海里活养"):
-        base = 12.5 + (month_temp(moment, _table_of(weather_text)) - 14.5) * 0.5
-        return min(room_temp(moment, weather_text) - 4.5, base)
+        base = max(4.2, 12.5 + (month_temp(moment, _table_of(weather_text, moment)) - 14.5) * 0.5)
+        return max(4.2, min(room_temp(moment, weather_text) - 1.5, base))
     if spot == "屋外":
         return outdoor_temp(moment, weather_text)
     if spot == "太阳底下":
@@ -1179,7 +1217,10 @@ class Sim:
 
     def temp_at(self, moment: datetime.datetime, weather) -> float:
         warm = (moment - self.warm_start).total_seconds() / 3600.0 if self.warm_start is not None else None
-        return spot_temp(self.spot, moment, weather, warm)
+        t = spot_temp(self.spot, moment, weather, warm)
+        if self.spot == "屋里" and self.fire_lit_fn is not None and self.fire_lit_fn(moment):
+            return max(t, 15.0)
+        return t
 
     def spoil_rate(self, temp: float) -> float:
         if self._is_live_kept():

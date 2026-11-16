@@ -2730,8 +2730,26 @@ class LifeStep:
             min_temp = float(ctx.get("min_temp") or 18.0)
             max_rain = float(ctx.get("max_rain") or 0.0)
             evening_or_night = win_start.hour >= 17 or win_end.hour >= 18 or win_start.hour < 6
-            chilly = (min_temp <= 13.5) or (evening_or_night and min_temp <= 15.5) or (max_rain >= 0.3 and min_temp <= 16.0)
-            if chilly and not recent_wood:
+            freezing_cold = min_temp <= 6.0
+            chilly = freezing_cold or (min_temp <= 13.5) or (evening_or_night and min_temp <= 15.5) or (max_rain >= 0.3 and min_temp <= 16.0)
+            if freezing_cold:
+                if not recent_wood:
+                    if inv["wood_bundles"] > 0:
+                        nudges.append(
+                            "- 严寒生炉过冬：屋外已跌至约 %.0f℃（入夜更冷），船舱不烧炉真冻手冻脚——早起舱冷、外出吹透海风回来或入夜前，顺着冷意抱干柴把铁桶柴炉生旺暖舱（生火/添柴段必填 \"stove\": \"wood\"），睡前拨小封火门压火留余温。"
+                            % min_temp
+                        )
+                    else:
+                        nudges.append(
+                            "- 严寒断柴转折：屋外低至约 %.0f℃，冻得想点铁桶柴炉，去摸柴架却发现干柴烧空了——白天无大雨大雪就赶紧去坡上薪柴地或船坞背干柴回来（items 写 new 燃柴入库）再生炉；夜深了就紧塞门缝裹紧厚被，记着明早头一件事去拾柴。"
+                            % min_temp
+                        )
+                elif 0 < inv["wood_bundles"] < 1.5 and 7 <= win_start.hour <= 16 and max_rain < 0.5:
+                    nudges.append(
+                        "- 入冬囤柴提醒：天冷早晚都要烧铁桶柴炉，家里干柴只剩 %.2g 捆不够烧两天了——趁白天没雨雪，顺手排一段去坡上薪柴地或船坞多背点干柴囤进仓棚（items 写 new 燃柴入库）。"
+                        % inv["wood_bundles"]
+                    )
+            elif chilly and not recent_wood:
                 if inv["wood_bundles"] > 0:
                     nudges.append(
                         "- 天凉生炉暖舱：这阵子船舱返潮发冷（最低约 %.0f℃），别写成全知提前预判，写成坐着觉得手脚发凉时起身抱干柴把铁桶柴炉生起来暖舱（该段必填 \"stove\": \"wood\"），睡前记得压火看炉。"

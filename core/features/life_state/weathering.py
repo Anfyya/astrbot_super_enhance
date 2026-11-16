@@ -180,8 +180,10 @@ def storage_conditions(stage: dict) -> dict:
     return out
 
 
-# 月平均气温
-MONTH_TEMP = {"海边小镇": (6.5, 7.0, 9.5, 14.0, 17.5, 20.0, 23.5, 25.5, 23.5, 19.0, 14.5, 9.5)}
+# 月平均气温（海边小镇自 2026-11-17 00:00 寒潮起切入偏北冷海港曲线）
+SEA_COLD_SNAP_START = datetime.datetime(2026, 11, 17, 0, 0)
+SEA_MONTH_TEMP_LEGACY = (6.5, 7.0, 9.5, 14.0, 17.5, 20.0, 23.5, 25.5, 23.5, 19.0, 14.5, 9.5)
+MONTH_TEMP = {"海边小镇": (-1.5, -1.0, 4.0, 9.5, 14.5, 18.5, 22.5, 24.5, 19.5, 12.5, 4.5, 0.5)}
 DEFAULT_MONTH_TEMP = (2, 3, 7, 12, 17, 21, 25, 26, 22, 15, 9, 4)
 
 
@@ -260,6 +262,8 @@ def _hash01(*parts) -> float:
 
 
 def _month_temp(home: str, moment: datetime.datetime) -> float:
+    if home == "海边小镇" and moment < SEA_COLD_SNAP_START:
+        return SEA_MONTH_TEMP_LEGACY[moment.month - 1]
     return (MONTH_TEMP.get(home) or DEFAULT_MONTH_TEMP)[moment.month - 1]
 
 

@@ -383,6 +383,9 @@ def warnings(moment: datetime.datetime, until: datetime.datetime, text_of, home:
     inside = "舱里" if sea else "屋里"
     first_wind = {}
     first_rain = None
+    first_freeze = None
+    max_plunge = 0.0
+    plunge_at = None
     cur = moment.replace(minute=0, second=0, microsecond=0)
     while cur < until:
         hour = day_hours(cur.date().isoformat(), text_of(cur.date()), home)[cur.hour]
@@ -391,8 +394,34 @@ def warnings(moment: datetime.datetime, until: datetime.datetime, text_of, home:
                 first_wind[level] = (cur, hour["wind"])
         if first_rain is None and hour["rain"] >= 2.5:
             first_rain = (cur, rain_word(hour["rain"], hour.get("snow", False)))
+        t_cur = float(hour.get("temp", 15.0))
+        if first_freeze is None and t_cur <= -0.5:
+            first_freeze = (cur, t_cur)
+        prev_day = cur - datetime.timedelta(days=1)
+        t_prev = float(day_hours(prev_day.date().isoformat(), text_of(prev_day.date()), home)[prev_day.hour].get("temp", t_cur))
+        if t_prev - t_cur > max_plunge:
+            max_plunge = t_prev - t_cur
+            plunge_at = (cur, t_cur)
         cur += datetime.timedelta(hours=1)
     lines = []
+    if max_plunge >= 7.0 and plunge_at is not None:
+        at, low_t = plunge_at
+        lines.append(
+            "强寒潮急剧降温（比昨天同期骤降约 %.0f 度，%s 前后跌至约 %s 度）：%s"
+            % (
+                max_plunge,
+                at.strftime("%H:%M"),
+                _deg(low_t),
+                "北风灌港骤冷入冬，得翻出厚冬衣、塞紧船舱漏风板缝，把铁桶柴炉生起来暖舱（stove=\"wood\"）"
+                if sea else "气温断崖下跌，出门添厚衣、屋里注意取暖",
+            )
+        )
+    if first_freeze is not None and sea:
+        at, fz_t = first_freeze
+        lines.append(
+            "约 %s 起屋外跌破零度（低至约 %s 度）：甲板上敞放的淡水桶盆夜里会结冰，饮用淡水记得拎进船舱，睡前给铁桶柴炉添柴压小封火门留余温（白天回升到 3 度以上会化冻，港湾海水不封冻）"
+            % (at.strftime("%H:%M"), _deg(fz_t))
+        )
     if 10 in first_wind:
         at, w = first_wind[10]
         lines.append("约 %s 起风到 %d 级：%s没系住的东西基本都留不住，%s" % (

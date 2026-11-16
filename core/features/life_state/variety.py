@@ -25,13 +25,12 @@ WEATHER_BY_SEASON = {
     "autumn": ("秋高气爽的晴天", "多云", "小雨", "清早起雾", "大风降温", "阴天微凉"),
     "winter": ("晴冷", "阴天", "小雪", "寒风", "雨夹雪", "冬日暖阳"),
 }
-# 海边小镇的天气（住在海边时抽这份）：照铫子的平年值（气象厅 1991-2020），太平洋边上冬天不冷、几乎不下雪，
-# 夏天湿闷，9、10 月雨最多；海上常起雾、起风，夏秋偶尔台风
+# 海边小镇的天气（偏北山湾海港：海港不封冻，但 11 月中下旬寒潮骤冷入冬，1~2 月寒夜探零下十度、白天回升至 3 度以上化冻）
 SEA_WEATHER_BY_SEASON = {
     "spring": ("晴", "多云", "春雨绵绵", "海上起雾", "起风", "阴天"),
     "summer": ("晴热", "闷热", "雷阵雨", "午后暴雨", "海上起雾", "傍晚起了凉风"),
-    "autumn": ("秋高气爽的晴天", "多云", "连着下雨", "台风过境，风大雨大", "海上起雾", "阴天微凉"),
-    "winter": ("晴冷", "阴天", "寒风", "海上起雾", "冷雨", "冬日暖阳"),
+    "autumn": ("秋高气爽的晴天", "多云", "连着下雨", "大风降温", "台风过境，风大雨大", "海上起雾", "阴天微凉"),
+    "winter": ("晴冷", "阴天", "寒风", "海上起雾", "冷雨", "雨夹雪", "冬日暖阳"),
 }
 WEATHER_BY_HOME = {"海边小镇": SEA_WEATHER_BY_SEASON}
 
@@ -1858,17 +1857,29 @@ def eval_item(
                 return base, 0.0, "家里没干柴烧柴炉", ""
             if ctx.get("has_weather") and float(ctx.get("min_temp") or 15.0) > 17.5 and float(ctx.get("max_rain") or 0.0) < 0.2:
                 return base, 0.0, "天暖无雨未点柴炉", ""
-            if ctx.get("has_weather") and float(ctx.get("min_temp") or 15.0) <= 10.0:
-                mult *= 1.5
-                notes.append("天寒围炉 ×1.5")
+            if ctx.get("has_weather"):
+                mt = float(ctx.get("min_temp") or 15.0)
+                if mt <= 0.0:
+                    mult *= 2.8
+                    notes.append("严寒围炉 ×2.8")
+                elif mt <= 6.0:
+                    mult *= 2.2
+                    notes.append("天寒围炉 ×2.2")
+                elif mt <= 11.0:
+                    mult *= 1.5
+                    notes.append("天凉围炉 ×1.5")
         elif link == "firewood":
-            if wood_b <= 0.25:
-                mult *= 3.8
-                notes.append("断柴急需 ×3.8")
-            elif wood_b < 1.0:
-                mult *= 2.4
-                notes.append("缺柴提权 ×2.4")
-            elif wood_b >= 3.0:
+            cold_season = ctx.get("has_weather") and float(ctx.get("min_temp") or 15.0) <= 8.0
+            low_thresh = 2.0 if cold_season else 1.0
+            urg_thresh = 0.75 if cold_season else 0.25
+            full_thresh = 4.5 if cold_season else 3.0
+            if wood_b <= urg_thresh:
+                mult *= 4.2 if cold_season else 3.8
+                notes.append("寒冬缺柴急需 ×4.2" if cold_season else "断柴急需 ×3.8")
+            elif wood_b < low_thresh:
+                mult *= 2.6 if cold_season else 2.4
+                notes.append("过冬备柴提权 ×2.6" if cold_season else "缺柴提权 ×2.4")
+            elif wood_b >= full_thresh:
                 mult *= 0.3
         elif link == "use_charcoal":
             if ch_g <= 200:
@@ -2380,6 +2391,8 @@ def _pick(pool, used: set, count: int, rng: random.Random, weights: dict | None 
 def _weather(date_text: str, prev_weather: str, rng: random.Random, home: str = "") -> str:
     from . import weather as weather_mod
 
+    if str(date_text)[:10] == "2026-11-17" and str(home or "").strip() == "海边小镇":
+        return "北风寒潮南下，一夜间急转成「寒风」"
     try:
         month = int(str(date_text)[5:7])
     except Exception:

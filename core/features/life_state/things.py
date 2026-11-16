@@ -2484,7 +2484,8 @@ class ThingStore:
                 stove = str(entry.get("stove") or "").strip().lower()
                 lit = stove in ("wood", "charcoal") or self._entry_charcoal_grams(entry, en) > 0
                 if lit:
-                    windows.append((st, en + datetime.timedelta(hours=2)))
+                    warm_tail = datetime.timedelta(hours=4 if stove == "wood" else 2)
+                    windows.append((st, en + warm_tail))
         self._fire_win_cache = (key, windows)
         return windows
 

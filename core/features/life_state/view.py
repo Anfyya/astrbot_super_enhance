@@ -393,8 +393,17 @@ def weather_now_text(service, now: datetime.datetime) -> str:
 
     home = str(service.cfg.get("world_home") or "").strip() or "穗织"
     flat = now.replace(tzinfo=None)
-    return "外头的天气（%s）%s。说到天气、要不要出门、晾的东西时照这个说。" % (
-        flat.strftime("%H:%M"), weather_mod.now_text(flat, text_of, home))
+    cabin_note = ""
+    if home == "海边小镇":
+        cur_h = weather_mod.hour_at(flat, text_of(flat.date()), home)
+        if float(cur_h.get("temp", 18.0)) <= 12.0 and getattr(service, "things", None) is not None:
+            lit_fn = service.things._fire_lit_fn(flat)
+            if lit_fn is not None and lit_fn(flat):
+                cabin_note = "（船舱里铁桶柴炉烧着或留着封火余温，舱里暖和）"
+            else:
+                cabin_note = "（船舱里这会儿还没生炉火，舱里透着寒气）"
+    return "外头的天气（%s）%s%s。说到天气、冷暖、要不要出门或晾东西时照这个说。" % (
+        flat.strftime("%H:%M"), weather_mod.now_text(flat, text_of, home), cabin_note)
 
 
 def mood_now_text(service, bot: str, now: datetime.datetime) -> str:
