@@ -139,6 +139,16 @@ STATE_WORDS = (("没熟", "没熟透"), ("夹生", "没熟透"), ("不熟", "没
                ("整", "整的"))
 SALT_WORDS = ("抹盐", "盐腌", "暴腌", "轻腌", "盐渍", "撒盐", "擦盐", "腌着", "抹了盐", "撒了盐", "腌上")
 LIGHT_SALT_WORDS = ("抹盐", "暴腌", "轻腌", "撒盐", "擦盐", "抹了盐", "撒了盐")
+SUGAR_PRESERVE_WORDS = ("果酱", "糖渍", "蜜渍", "糖水罐头", "熬糖", "糖腌", "蜜饯", "果脯")
+ACID_PICKLE_WORDS = ("醋泡", "醋渍", "酸泡", "泡醋", "酱渍", "酱油泡", "酱油渍", "糟卤", "糖醋泡", "酸萝卜", "醋海带", "醋泡鱼", "酱油蛋")
+OIL_SEAL_WORDS = ("油封", "油浸", "熟油封", "淋油封", "猪油封", "鱼油封", "葱油", "辣油", "油辣椒")
+ASH_SAND_WORDS = ("草木灰", "炉灰", "干灰", "木灰", "干沙", "细沙", "沙土埋", "灰埋", "埋在灰", "埋进灰", "埋在沙", "埋进沙")
+STOVE_DRY_WORDS = ("柴炉", "炉边", "炉旁", "炭炉边", "烟管", "火炉边", "烘着", "烘干", "烘鱼", "烤干")
+SUGAR_PRESERVE_LIFE = 1080.0   # 果酱/糖渍蜜渍高渗透压抑菌，常温密封可放约 45 天
+ACID_PICKLE_LIFE = 336.0       # 醋泡鱼/酱油渍蛋等酸度高盐抑菌，常温可放约 14 天
+ACID_VEG_LIFE = 720.0          # 醋泡萝卜/海带/糖蒜等素菜酸渍，常温可放约 30 天
+OIL_SEAL_LIFE = 540.0          # 熟油油封隔绝空气（油浸小鱼干/菌菇/肉酱/葱油），常温可放约 22 天
+ASH_SAND_LIFE = 2160.0         # 冷却干草木灰/干沙埋藏鲜蛋、生姜、番薯萝卜，常温可放约 90 天
 SEALED_CONTAINER_WORDS = ("铁桶", "密封", "拧紧", "玻璃瓶", "玻璃罐", "铁罐", "瓷罐", "封口", "未开封", "没开封", "没拆")
 
 
@@ -532,8 +542,12 @@ def _wind_of(kind: str) -> int:
     return int(m.group(1)) if m else 2
 
 
-def dry_rate(spot: str, keep: str, moment: datetime.datetime, weather_text) -> float:
-    """这一刻晒干了多少：大太阳底下一个钟头算 1，阴天、多云少些，夜里海风通风也能慢慢收干；下雨天露天返潮。"""
+def dry_rate(spot: str, keep: str, moment: datetime.datetime, weather_text, place: str = "", extra_text: str = "") -> float:
+    """这一刻晒干了多少：大太阳底下一个钟头算 1，阴天、多云少些，夜里海风通风也能慢慢收干；
+    阴雨/海雾天挂在室内柴炉边或烟管旁借热气烘烤也能稳定快速脱水（0.85/h）；露天淋雨返潮。"""
+    stove_ctx = _clean(place + " " + extra_text)
+    if any(w in stove_ctx for w in STOVE_DRY_WORDS) and spot not in ("太阳底下", "屋外"):
+        return 0.85
     kind = weather_kind(weather_text)
     exposed = spot in ("太阳底下", "屋外") and keep != "收着放"
     if exposed and wet_weather(weather_text):
@@ -546,9 +560,11 @@ def dry_rate(spot: str, keep: str, moment: datetime.datetime, weather_text) -> f
             return 1.3 * gust
         return (0.65 if any(w in kind for w in ("多云", "阴", "雾")) else 1.0) * gust
     if spot == "屋外" or keep == "挂着通风":
+        if any(w in stove_ctx for w in STOVE_DRY_WORDS):
+            return 0.85
         return 0.4 * (0.3 if "雾" in kind else 1.0) * (1 + 0.1 * _wind_of(kind))
     if spot == "灶上温着":
-        return 0.35
+        return 0.55
     return 0.08 if keep in ("敞着放", "罩着放") else 0.02
 
 
@@ -977,8 +993,15 @@ class Sim:
         self.kind = str(item.get("kind") or "")
         self.base_life = float(life)
         self.life = float(life)
+        init_text = " ".join(str(item.get(k) or "") for k in ("name", "look", "origin"))
         if _has(self.name, ("一夜干", "半干咸鱼")) and self.kind in ("生鱼虾水产", "腊肉腊肠咸鱼"):
             self.life = max(self.life, OVERNIGHT_DRY_LIFE)
+        if _has(init_text, SUGAR_PRESERVE_WORDS):
+            self.life = max(self.life, SUGAR_PRESERVE_LIFE)
+        if _has(init_text, ACID_PICKLE_WORDS):
+            self.life = max(self.life, ACID_VEG_LIFE if self.kind in PRODUCE + ("干货调料粮食", "腌菜酱菜泡菜") else ACID_PICKLE_LIFE)
+        if _has(init_text, OIL_SEAL_WORDS):
+            self.life = max(self.life, OIL_SEAL_LIFE)
         self.weather_of = weather_of
         self.index = index
         self.quality = quality
@@ -986,13 +1009,18 @@ class Sim:
         self.frac = 0.0
         self.bad_since = None
         self.cover, self.spot, self.state, self.place = DEFAULT_KEEP, DEFAULT_SPOT, DEFAULT_STATE, ""
-        self.container_text = " ".join(str(item.get(k) or "") for k in ("name", "look", "origin"))
+        self.container_text = init_text
+        self.last_stage_text = ""
         self.heat_at = None
         self.reheats = 0
         self.warm_start = None
         self.salted = self.salt_done = False
         self.light_salt = False
         self.salt_prog = 0.0
+        self.sugar_preserved = _has(init_text, SUGAR_PRESERVE_WORDS)
+        self.acid_pickled = _has(init_text, ACID_PICKLE_WORDS)
+        self.oil_sealed = _has(init_text, OIL_SEAL_WORDS)
+        self.ash_buried = False
         self.drying = self.dry_done = False
         self.half_dry_done = False
         self.dry_prog = 0.0
@@ -1050,10 +1078,38 @@ class Sim:
         self.state = norm_state(stage.get("state")) or self.state
         self.place = str(stage.get("place") or "") or self.place
         stage_text = " ".join(str(stage.get(k) or "") for k in ("keep", "spot", "place", "state", "note"))
+        self.last_stage_text = stage_text
         if stage_text.strip():
             self.container_text = (self.container_text + " " + stage_text).strip()
+        full_step_ctx = stage_text + (" " + self.name if first else "")
         if self.spot == "船舷海里活养" and not cover and self.kind == "生鱼虾水产" and self.state == DEFAULT_STATE:
             self.cover = "活养着"
+        # 1) 糖渍 / 熬果酱
+        if _has(full_step_ctx, SUGAR_PRESERVE_WORDS):
+            if not self.sugar_preserved and self.frac < 0.9:
+                self.frac = min(self.frac, max(0.10, self.frac * 0.35))
+            self.sugar_preserved = True
+            self.life = max(self.life, SUGAR_PRESERVE_LIFE)
+        # 2) 醋泡 / 酱油渍 / 糟卤
+        if _has(full_step_ctx, ACID_PICKLE_WORDS):
+            if not self.acid_pickled and self.frac < 0.9:
+                self.frac = min(self.frac, max(0.12, self.frac * 0.40))
+            self.acid_pickled = True
+            target_life = ACID_VEG_LIFE if self.kind in PRODUCE + ("干货调料粮食", "腌菜酱菜泡菜") else ACID_PICKLE_LIFE
+            self.life = max(self.life, target_life)
+        # 3) 熟油油封 / 油浸隔绝空气
+        if _has(full_step_ctx, OIL_SEAL_WORDS):
+            if not self.oil_sealed and self.frac < 0.85:
+                self.frac = min(self.frac, max(0.10, self.frac * 0.35))
+            self.oil_sealed = True
+            self.life = max(self.life, OIL_SEAL_LIFE)
+        # 4) 柴炉冷却草木灰 / 干沙土埋藏（鲜蛋、生姜、番薯萝卜）
+        if _has(self.place + " " + stage_text, ASH_SAND_WORDS):
+            self.ash_buried = True
+            if self.kind in ("禽蛋类", "耐储根茎瓜菜", "葱姜蒜调味根茎"):
+                self.life = max(self.life, ASH_SAND_LIFE)
+        elif stage.get("place") and not _has(str(stage.get("place") or ""), ASH_SAND_WORDS):
+            self.ash_buried = False
         heated = (first and what == "做好了") or what == "热了一下"
         if heated:
             if what == "热了一下":
@@ -1075,12 +1131,16 @@ class Sim:
             self.heat_at = moment
         if self.spot == "灶上温着" and (prev_spot != "灶上温着" or heated or first):
             self.warm_start = moment
-        salt_hint = what != "做好了" and _has(stage_text + (" " + self.name if first else ""), SALT_WORDS)
-        if what == "腌上了":
+        salt_hint = what != "做好了" and _has(full_step_ctx, SALT_WORDS)
+        if what == "腌上了" and not (_has(full_step_ctx, SUGAR_PRESERVE_WORDS) or _has(full_step_ctx, ACID_PICKLE_WORDS)):
             self._activate_salt(light=_has(stage_text, LIGHT_SALT_WORDS) and "重盐" not in stage_text)
         elif salt_hint:
             self._activate_salt(light=True)
-        if what == "晒上了" or (what != "做好了" and _has(stage_text, ("晒上", "晾晒", "晒鱼", "一夜干")) and self.spot in ("太阳底下", "屋外")):
+        # 5) 晴天晾晒 或 阴雨/海雾天挂在柴炉边/烟管旁借热气烘烤脱水
+        stove_drying_hint = what != "做好了" and _has(stage_text, ("烘鱼", "烘干", "炉边烘", "柴炉边烘", "烟管旁烘", "挂在炉边"))
+        if what == "晒上了" or stove_drying_hint or (
+            what != "做好了" and _has(stage_text, ("晒上", "晾晒", "晒鱼", "一夜干")) and self.spot in ("太阳底下", "屋外")
+        ):
             self.drying = True
         if what == "熏上了":
             self.smoking = True
@@ -1113,6 +1173,14 @@ class Sim:
             rate *= 1.0 - DRY_SLOW * min(self.dry_prog / dry_need(self.kind, self.salted or self.salt_done), 1.0)
         if self.smoking and not self.smoke_done:
             rate *= SMOKE_SLOW
+        if self.oil_sealed:
+            rate *= 0.45
+        if self.sugar_preserved:
+            rate *= 0.50
+        if self.acid_pickled:
+            rate *= 0.55
+        if self.ash_buried and self.kind in ("禽蛋类", "耐储根茎瓜菜", "葱姜蒜调味根茎"):
+            rate *= 0.40
         if self.rain_wet > 0 and not self.dry_done:
             rate *= 1.3
         return rate
@@ -1181,7 +1249,7 @@ class Sim:
                 self.life = max(self.life, salt_life(self.kind, self.base_life))
                 self.events.append((moment, "腌好了"))
         if self.drying and not self.dry_done:
-            rate = dry_rate(self.spot, self.cover, moment, weather)
+            rate = dry_rate(self.spot, self.cover, moment, weather, place=self.place, extra_text=self.last_stage_text)
             self.dry_prog = max(0.0, self.dry_prog + rate * dt)
             if rate < 0:
                 self.rain_wet += dt
@@ -1241,7 +1309,7 @@ class Sim:
     def _taste(self, moment, dt, temp, weather) -> None:
         p, cover, spot, state = self.p, self.cover, self.spot, self.state
         frozen, wet, near, eth = self._taste_context(moment, weather, p, temp)
-        if "dry" in p and not frozen:
+        if "dry" in p and not frozen and not self.oil_sealed and not self.ash_buried:
             if cover == "泡在水里":
                 rate = 0.0
                 if p["dry"]["soak_ok"]:
