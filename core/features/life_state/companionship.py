@@ -13,34 +13,26 @@ from .facts import fact_batch
 
 
 LIVING_NOTE = """
-共同生活：她们有自己的事情，也有各自与主人的相处。沿着真实聊天、未完的话题和眼前的事，
-自然产生想靠近、分享、炫耀、一起待一会儿的念头；没有任务也可以亲近，不必每段提主人或讨夸奖。
-知道主人在附近时，可以写她走近、展示、邀请和安静相伴；这不等于主人已经回应或参与，with 不为“想着他”而填写。
-主人明确休息时，船舱里的音量、敲打的位置、早餐和共同活动的安排要考虑他还没醒；
-她们可以轻松地做自己的事，也会把想说的话、想分享的东西留到合适时候，不必守床或故意消沉。
-留饭记在实际的桌面或容器并盖好保温，没交接不写放进主人手里，不替他吃完。
-主人的入睡与起床由快捷指令即时写入世界线；以世界线与主人即时状态为准，不被较旧的聊天描写覆盖。没回复不等于出门、睡着、同意或拒绝；地点不明就不编位置。
-待回应的邀请可以先放着，其他生活继续；只有主人的真实回应能把它变成共同约定。
-这些是写作依据，不要求固定句式、次数或话题比例。
+共同生活与当家分工：主人是这条船屋与打捞所真正的当家人（船长），丛雨外人看不见、无法独自对外交易，亚托莉是打下手的机器人搭档。
+家里动用攒下的钱置办大件（如买过冬厚衣、换厚棉被、修船屋大设施）、接镇上人的正经打捞委托单、拆看捞上来的上锁铁盒或封口旧物，都必须等主人拿主意拍板，绝不越俎代庖替主人定完干完。
+发出去请主人拿主意的事（待拍板事项 d 编号）在主人明确回话前一直保持挂起等待：没回复绝不等于“默认同意她自己看着办”，等待期间只做生火、打水、看船、简单糊口等日常维持，等主人一句话发下来再推进。
+知道主人在附近或醒着时，遇上做饭吃什么、钱先花在哪、新鲜发现，自然去问主人或拉主人一起；主人明确休息时，考虑声音与留饭保温，待问的事先记下等他醒后再问。
 """.strip()
 
 RECORDER_NOTE = """
-【共同生活的可选记录】
-主动消息也可作为她提出邀请的证据，不作为主人的命令或同意。下面 q 编号是尚待接续的邀请，
-回复“好”“晚点”等要结合原话认清指向；有歧义就暂不确认，不影响本批其他记录。
-可以额外输出 companionship 对象；没有相关内容可省略，不必凑字段：
+【共同生活与当家拍板记录】
+主动消息里她向主人请示拿主意的问题（下面列出的待拍板 d 编号）或提出的邀请（q 编号），结合主人本批原话接续；没有相关内容可省略：
 owner: {"place":"明确地点或空", "quote":"主人本批原话"}。
-主人的睡眠与清醒状态已由快捷指令独立维护，不要根据聊天推测或填写睡眠/清醒状态；仅在主人明确交代了位置时记录 place。
+主人的睡眠与清醒状态已由快捷指令独立维护，不要根据聊天推测睡眠状态；仅在主人明确交代位置时记录 place。
+decisions: [{"id":"已有 d 编号", "choice":"主人拍板定下的具体做法/买哪样/接不接", "quote":"主人本批拍板原话",
+             "status":"resolved/deferred/cancelled", "with_master":false, "date":"明确日期或空", "window":"明确时间段或空", "now":true}]。
+只有主人明确回话拿了主意才填 resolved（程序会自动转成可执行打算；主人说陪她一起去办填 with_master=true，只发话让她去买/去办填 false）；主人说“等会再说”填 deferred；说“都别买/算了”填 cancelled；没提到该 d 编号就不要动它（继续挂起等主人回话）。
 notes: [{"text":"值得后续接上的具体内容", "kind":"preference/topic/experience",
          "scope":"today/lasting", "quote":"本批原话", "supersedes":"被明确更正的笔记编号或空"}]。
-临时口味写 today，长期喜好须有依据；彼此私聊不自动共享，不重复记录纯寒暄。
 invitations: [{"id":"已有 q 编号；新提议留空", "text":"要一起做什么", "quote":"本批对应原话",
                "status":"pending/accepted/deferred/declined/cancelled/completed",
                "date":"明确日期或空", "window":"明确时间段或空", "now":false}]。
-pending 用她实际发出的提议原话；accepted/deferred/declined/cancelled/completed 用主人本批明确回应，
-不能拿她说“主人答应了”代替。没定时间的同意不推定现在就做；完成需要已实际做过的依据。
-已有 q 邀请的回应只写在这里，程序会接入普通打算，不要再给同一件事另写一组 intentions。
-未被邀请记录覆盖的主人安排、普通打算，仍按原规则记。只记有原话支持的部分，缺了就略过。
+已有 q 邀请或 d 待拍板事项的回应只写在这里，程序会自动接入普通打算，不要再给同一件事重复写 intentions，更不要因为后面聊了别的话题就把主人刚答应的打算塞进 drop_intentions。
 """.strip()
 
 
@@ -69,7 +61,7 @@ class Companionship:
     def _data(self):
         state = self.world._load_state()
         data = state.setdefault("companionship", {})
-        for key in ("observations", "invitations", "notes", "notices"):
+        for key in ("observations", "invitations", "notes", "notices", "decisions"):
             data.setdefault(key, [])
         return data
 
@@ -468,6 +460,84 @@ class Companionship:
                       "date": str(entry.get("start"))[:10], "intent": token}
             self._transition(row, "completed", source)
 
+    def is_protected_intent(self, token: str) -> bool:
+        """检查某条 intention 是否来自主人已明确答应的邀请或已拍板的当家决定（记录员换话题时不得误撤）。"""
+        if not token:
+            return False
+        for row in self._data()["invitations"]:
+            latest = row["history"][-1] if row.get("history") else {}
+            if latest.get("status") == "accepted" and latest.get("intent") == token:
+                return True
+        for dec in self._data().get("decisions") or []:
+            if dec.get("status") == "resolved" and dec.get("intent") == token:
+                return True
+        return False
+
+    def open_decision(self, bot: str, question: str, now: datetime.datetime, *, sent: bool = False) -> dict | None:
+        """登记一条挂起等主人拍板的家里事（d 编号）；主人未回话前绝不自动超时替主人做主。"""
+        body = clean_text(question, 320)
+        if not bot or not body:
+            return None
+        data = self._data()
+        decs = data.setdefault("decisions", [])
+        scene = self._scene()
+        for existing in decs:
+            if existing.get("scene") == scene and existing.get("status") in ("idea", "pending") and _key(existing.get("question")) == _key(body):
+                if sent and existing.get("status") == "idea":
+                    existing["status"] = "pending"
+                    existing["asked_at"] = fmt_time(now)
+                    self._save()
+                return existing
+        row = {
+            "id": self._id("d"),
+            "bot": bot,
+            "scene": scene,
+            "question": body,
+            "status": "pending" if sent else "idea",
+            "created": fmt_time(now),
+            "created_ts": self._ts(now),
+            "asked_at": fmt_time(now) if sent else "",
+            "choice": "",
+            "intent": "",
+        }
+        decs.append(row)
+        data["decisions"] = decs[-48:]
+        self._save()
+        return row
+
+    def mark_decision_asked(self, dec_id: str, now: datetime.datetime) -> None:
+        for row in self._data().get("decisions") or []:
+            if row.get("id") == dec_id:
+                row["status"] = "pending"
+                row["asked_at"] = fmt_time(now)
+                row["attempted"] = self._ts(now)
+                self._save()
+                return
+
+    def pending_decisions(self, now: datetime.datetime | None = None, bot: str = "") -> list[dict]:
+        scene = self._scene()
+        out = []
+        for row in self._data().get("decisions") or []:
+            if row.get("scene") != scene or row.get("status") not in ("idea", "pending"):
+                continue
+            if bot and row.get("bot") != bot:
+                continue
+            out.append(dict(row))
+        return out
+
+    def today_ask_count(self, now: datetime.datetime) -> int:
+        day = now.date().isoformat()
+        cnt = sum(
+            1 for r in (self._data().get("decisions") or [])
+            if r.get("scene") == self._scene() and str(r.get("created") or "")[:10] == day
+        )
+        cnt += sum(
+            1 for r in (self._data().get("invitations") or [])
+            if r.get("scene") == self._scene() and str((r.get("source") or {}).get("date") or "") == day
+            and (r.get("source") or {}).get("role") in ("wish", "assistant")
+        )
+        return cnt
+
     def reconcile(self, now):
         """普通打算被网页或原有清理逻辑撤下后，不再反复提示仍约好了。"""
         active = {x["id"] for x in self.world.intentions()}
@@ -479,6 +549,10 @@ class Companionship:
             if token and token not in active:
                 source = {"key": "withdrawn:" + token, "role": "system", "ts": self._ts(now), "date": ""}
                 self._transition(row, "cancelled", source)
+        for dec in self._data().get("decisions") or []:
+            if dec.get("status") == "resolved" and dec.get("intent") and dec["intent"] not in active:
+                dec["status"] = "completed"
+                self._save()
 
     def apply_record(self, umo, raw, items, now):
         """可选字段逐项采纳；缺少来源的只略过该项，绝不退回整批。返回新约定。"""
@@ -508,6 +582,61 @@ class Companionship:
                           "supersedes": str(note.get("supersedes") or "")})
             self._save()
         plans = []
+        for d_raw in raw.get("decisions") or []:
+            if not isinstance(d_raw, dict):
+                continue
+            d_status = str(d_raw.get("status") or "").strip()
+            if d_status not in ("resolved", "deferred", "cancelled"):
+                continue
+            d_source = self._match(items, d_raw.get("quote"), "user")
+            if not d_source:
+                continue
+            d_id = str(d_raw.get("id") or "").strip()
+            decs = self._data().get("decisions") or []
+            target_dec = next((x for x in decs if x.get("id") == d_id and x.get("scene") == self._scene()), None)
+            if target_dec is None and not d_id:
+                open_mine = [x for x in decs if x.get("scene") == self._scene() and x.get("status") in ("pending", "idea") and x.get("bot") == bot]
+                if len(open_mine) == 1:
+                    target_dec = open_mine[0]
+                else:
+                    open_all = [x for x in decs if x.get("scene") == self._scene() and x.get("status") in ("pending", "idea")]
+                    if len(open_all) == 1:
+                        target_dec = open_all[0]
+            if target_dec is None or target_dec.get("status") not in ("pending", "idea"):
+                continue
+            if d_status == "deferred":
+                target_dec["deferred_at"] = fmt_time(now)
+                self._save()
+                continue
+            if d_status == "cancelled":
+                target_dec["status"] = "cancelled"
+                target_dec["choice"] = clean_text(d_raw.get("choice") or d_source["quote"], 200)
+                self._save()
+                continue
+            choice_txt = clean_text(d_raw.get("choice") or d_source["quote"], 320)
+            if not choice_txt:
+                continue
+            d_day = clean_text(d_raw.get("date"), 10)
+            d_day = d_day if re.fullmatch(r"\d{4}-\d\d-\d\d", d_day) and parse_time(d_day + " 00:00") else ""
+            d_win = clean_text(d_raw.get("window"), 60)
+            target_dec["status"] = "resolved"
+            target_dec["choice"] = choice_txt
+            target_dec["resolved_at"] = fmt_time(now)
+            self._data()["refresh_ts"] = max(float(self._data().get("refresh_ts") or 0), float(d_source["ts"]))
+            self._save()
+            plans.append({
+                "who": target_dec.get("bot") or bot,
+                "text": choice_txt,
+                "why": "当家拍板 %s（原问：%s；主人准话：%s）" % (
+                    target_dec["id"], clean_text(target_dec.get("question"), 80), clean_text(d_source["quote"], 80)
+                ),
+                "with": ["master"] if d_raw.get("with_master") is True else [],
+                "date": d_day,
+                "window": d_win,
+                "now": d_raw.get("now") is not False and not d_day and not d_win,
+                "since": fmt_time(datetime.datetime.fromtimestamp(d_source["ts"], self.world.tz)),
+                "_decision_id": target_dec["id"],
+            })
         for change in raw.get("invitations") or []:
             if not isinstance(change, dict):
                 continue
@@ -553,7 +682,15 @@ class Companionship:
         return plans
 
     def bind_plan(self, plan, record):
-        if not record or not plan.get("_companion_id"):
+        if not record:
+            return
+        if plan.get("_decision_id"):
+            for dec in self._data().get("decisions") or []:
+                if dec.get("id") == plan["_decision_id"]:
+                    dec["intent"] = record["id"]
+                    self._save()
+                    break
+        if not plan.get("_companion_id"):
             return
         for row in self._data()["invitations"]:
             if row["id"] == plan["_companion_id"]:
@@ -583,6 +720,10 @@ class Companionship:
             if item["id"] in replaced or (item["scope"] != "lasting" and item["source"].get("date") != now.date().isoformat()):
                 continue
             lines.append("%s 相处近况：%s" % (item["id"], item["text"]))
+        for dec in self.pending_decisions(now)[-4:]:
+            who_tag = (self.label(dec["bot"]) + " ") if dec.get("bot") and dec.get("bot") != bot else ""
+            st_lbl = "已问主人、正等主人拍板拿主意（未回话前严禁擅自替主人做主！）" if dec.get("status") == "pending" else "待等主人醒后请示拍板"
+            lines.append("%s %s%s：%s" % (dec["id"], who_tag, st_lbl, clean_text(dec.get("question"), 260)))
         for item in self.invitations(bot, now)[-5:]:
             name = {"idea": "想提出，还没问过", "pending": "已问，等回应，不代表已答应",
                     "accepted": "已约定", "in_progress": "正在进行"}.get(item["status"], item["status"])

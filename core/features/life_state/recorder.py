@@ -898,12 +898,21 @@ class Recorder:
 
     def _apply_intentions(self, data: dict, umo: str, now: datetime.datetime, bots: set,
                           flat_now: datetime.datetime) -> None:
-        # 先撤掉过时的打算（按编号），再记这次新说的
+        # 先撤掉过时的打算（按编号），再记这次新说的；主人已答应的邀请或刚拍板的决定绝不因换话题误撤
+        companion = getattr(self, "companionship", None)
+        existing_map = {str(x.get("id")): x for x in self.world.intentions()}
         for token in data.get("drop_intentions") or []:
             token = str(token or "").strip()
             if not token:
                 continue
             if re.match(r"^i\d+$", token):
+                if companion is not None and companion.safe("is_protected_intent", token, default=False):
+                    logger.info("[super_enhance/world] 保护主人已确认的约定/拍板 %s，忽略记录员自动撤回", token)
+                    continue
+                old_int = existing_map.get(token) or {}
+                if "master" in (old_int.get("with") or []):
+                    logger.info("[super_enhance/world] 保护与主人绑定的打算 %s，忽略记录员自动撤回", token)
+                    continue
                 self.world.drop_intention(token)
             else:
                 # 编号对不上就不动（宁可少撤一条，也不误清这个人的全部打算）

@@ -167,9 +167,15 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
 22. **丛雨怎么移动**：丛雨平时是飘着的，脚不沾地，赶路就飘过去，累了或者撒娇时才落地走两步。她那几段里换地方、出门、回来、凑到谁跟前，都照这个写。
 23. **每段写 mood：这段她是什么心情、因为什么**，一句话，由头写在里头（比如「收音机拆开擦了半天还是不响，有点不服气」「主人还没回来，心里惦记着」「早上那锅鱼馊了，还有点闷」「被主人夸了，心里美滋滋的」）。聊天时她只看得到这一句，光写「有点不服气」「有点闷」，她不知道是冲着什么，就会往主人身上撒；所以冲着哪件事、哪样东西，就写明哪件事、哪样东西。心情跟着事走：从她上一段的心情接着往下写（上面已经发生的、手上的事后面写着当时的心情；今天头一段从起床时的底色起），这段碰上的事、主人说的话、过了多久都会让它变——闹别扭的气会慢慢消，高兴的劲头也会过去，别一整天都是同一个心情。心情不好要有由头，由头得是世界线或聊天记录里真有的事（可以就是这段里写出来的一件小事）；起床就带着、说不上由头的，写明「说不上为什么」，过一阵就淡了。睡觉那段写睡前的心情。
 24. **给外人帮忙、干活不白帮**：她们给镇上的人（家里人以外）搭手干活、跑腿、修东西、搬东西、照看东西，人家总会给点什么：几个钱、一点吃的、一样用得上的东西，或者讲好的工钱、打捞费。写进那段的 steps 和 result（谁给的、给了什么）；拿回来的吃的、东西照第 18、20 条记进 things。顺手扶一把、递个东西这种小事不算。丛雨一般人看不见，人家不知道是她帮的，别排她一个人给外人干活；跟亚托莉一起干的，回报给亚托莉。
+25. **当家权限硬锁（没有主人真转不动）**：
+   - **主人是船长与当家人**，丛雨外人看不见（无法独自向镇上人买东西或谈事），亚托莉只是打下手的机器人（算不清大账、不准擅自动大笔家底、不准私自接委托深潜涉险）。
+   - **大件置办与大钱花销锁死归主人拍板**：买过冬厚衣/棉袄、换厚棉被、修船屋大件设施、卖大宗打捞废铜定价——若上方「各自的打算 / 主人说过他要做的事」里**还没有**主人明确准话，亚托莉最多只能去旧衣铺/集市**打听回价钱行情**（不许写 `items` 入库买回来！），并在顶层 `ask_master` 填 `kind: "decision"` 发消息把行情和二选一方案报给主人拿主意；**在主人回话拍板之前，本轮及后续所有段严禁擅自替主人拍板买定大件！** 等主人已在聊天里发话拍板（上方出现对应 `i` 编号打算）后，去采买的那一段必须填 `from: "intent"` 且 `intent` 填该 `i` 编号（或与 `master` 同行 `with: ["master"]`）。
+   - **打捞接单与封口战利品归船长（主人）**：镇上人来下单捞东西，亚托莉只记下对方要捞什么、出多少报酬，填 `ask_master`（`kind: "decision"`）问主人接不接、什么时候带船去；平时捞上来的上锁小铁箱、封口药瓶或稀罕旧物，一律搁在 `船舱·矮桌`（`state` 写 `"封着没拆，留着等主人看"`），严禁她俩在后台自己撬开拆完。
+   - **伙食分「凑合糊口」与「主人在家/点菜开火」**：若主人没点菜、也没约好这顿一起吃，她俩自己只熬碗白粥配咸菜、烤块番薯或热口剩菜简单对付（省柴省炭省油盐，不做一荤一素一汤的大菜）；快到晚饭点想做上方参考菜单里的正经热菜锅物时，先填 `ask_master`（`kind: "decision"`）问主人今晚想吃哪样、回不回来吃。
+   - **禁止纯日报式 `send_msg`**：严禁干完活发“废铁搬完啦跟主人汇报一声”“配给领回来啦通知一声”这种不需要主人参与的事后工作简报！联系主人优先用 `ask_master`（事前请主人拿主意 `decision` 或约主人一起做某事 `invite`），段内 `send_msg` 只在早晚问候或真有急事喊主人时用。
 {world_notes}
 {step_notes}
-要问主人的（ask_master）：who 写谁来问，question 写一句话。已接下的小事只是做法没定时，kind 写 decision，先按合适做法把整份写完，程序可短等回话再调整。她自己想邀请主人一起做点什么、分享发现或一起待一会儿，也可以主动提出，kind 写 invite；只排自己的准备和其他生活，不写主人已经答应或共同做完。邀请会单独保留，主人晚些回复也能接上，不必让整段生活停着等。主人明确休息时考虑声音、活动位置、早餐和醒来后的相处，普通问题留到合适时候；既不替他醒来，也不要求她们整天守着。没合适的问题就留空，不为凑互动硬问。
+要问主人的（ask_master，必填拿主意入口）：who 写谁来问（`"napcat"` 或 `"napcat2"`），question 写发给主人的那句自然口语问话，kind 写 `"decision"`（请当家主人拍板：先买厚棉衣还是换厚棉被、接不接打捞单、晚饭做哪道菜等）或 `"invite"`（喊主人一起做件事、一起拆看捞上来的旧物等）。**铁律：凡填了 `ask_master` 请主人拍板的事，本轮 `segments` 里只排「打听行情 / 备好手头杂活 / 等主人准话」，绝不许在本轮 `segments` 里提前把那件待拍板的事直接做完！** 程序会把这件待拍板事项挂起（主人哪怕过半天再回话，到时候再排进去做；主人没回话前就老老实实干日常维持杂活等准话）。只有主人正在睡觉、或者上方已经挂着待主人拍板的 `d` 事项尚未回复时，`ask_master` 才留空。
 
 注意：**不要输出 intentions，也不要写任何「接下来打算」**。上面「各自的打算」里如果有，是之前说好要做的，照着走就行；标着「挂了几天了」的，只在 intent_moves 里写它后来怎样（第 12 条）。
 
@@ -913,7 +919,10 @@ class LifeStep:
             )
         meals = meals_text(seed.get("meals"))
         if meals:
-            lines.append(meals)
+            lines.append(
+                meals
+                + "\n  （注：以上菜名是「主人在家开伙或主人点头想吃」时的备选——若主人没点过菜，可填 ask_master 拿两样问主人想吃哪个；主人没发话也没一起吃时，她俩自己只熬清粥、烤番薯简单糊口，不单做大菜。）"
+            )
         return "\n".join(lines)
 
     def training_id(self, value, bot: str) -> str:
@@ -1632,6 +1641,17 @@ class LifeStep:
         promises = self._promise_lines(flat)
         if promises:
             parts.append("还没做的约定：\n" + "\n".join(promises))
+        companion = getattr(self, "companionship", None)
+        if companion is not None:
+            pend_decs = companion.safe("pending_decisions", flat, default=[]) or []
+            if pend_decs:
+                parts.append(
+                    "【待当家主人拍板的事（主人尚未回话前保持挂起，严禁擅自替主人做主买定大件或私自接单！）】：\n"
+                    + "\n".join(
+                        "- %s（%s）：%s" % (d.get("id"), self.label(d.get("bot")) or d.get("bot"), d.get("question"))
+                        for d in pend_decs
+                    )
+                )
         store = getattr(self, "things", None)
         if store is not None:
             try:
@@ -1694,6 +1714,18 @@ class LifeStep:
             )
         elif sleep_tail:
             parts.append("主人最近的动向（只作参考，不许改写、不许替他编）：" + sleep_tail.lstrip("\n"))
+        if companion is not None and not master_sleeping and 8 <= flat.hour <= 22:
+            pend_decs = companion.safe("pending_decisions", flat, default=[]) or []
+            pend_invs = [
+                q for b in bots for q in (companion.safe("invitations", b, flat, default=[]) or [])
+                if q.get("status") == "pending"
+            ]
+            asked_today = int(companion.safe("today_ask_count", flat, default=0) or 0)
+            if not pend_decs and not pend_invs and asked_today < 3:
+                parts.append(
+                    "【当家人参与提示】主人此刻醒着，今天已请示/邀约 %d 次且没有挂着未回的问题——本轮若涉及「置办过冬大件打听到了行情」「有人来打捞船找船长接单」「快到正餐点拿不准主人回不回来吃或吃哪样」「捞到了封口旧物想喊主人一起拆看」，请优先填写顶层 ask_master（kind 填 \"decision\" 或 \"invite\"）向主人发话，且本轮 segments 只排准备与日常维持杂活、等主人回话拍板！"
+                    % asked_today
+                )
         book = getattr(self, "trainings", None)
         if book is not None:
             try:
@@ -1896,11 +1928,13 @@ class LifeStep:
         tasks: dict,
         moment: datetime.datetime,
         log_prefix: str = "补写",
+        *,
+        master_replied: bool = False,
     ) -> tuple[dict | None, str, str, list[str]]:
         """对模型返回的 JSON 执行纯结构化字段校验；不兜底瞎猜，有缺失或违规字段时把报错逐条发回模型重试（最多 MAX_VALIDATE_RETRIES 次）。"""
         cur_text, cur_thought = raw_text, thought
         data = llm.extract_json(cur_text)
-        errors = ["返回内容不是合法的 JSON 对象"] if not isinstance(data, dict) else self.validate_payload(data, tasks, moment)
+        errors = ["返回内容不是合法的 JSON 对象"] if not isinstance(data, dict) else self.validate_payload(data, tasks, moment, master_replied=master_replied)
         for retry_idx in range(1, MAX_VALIDATE_RETRIES + 1):
             if not errors:
                 return data, cur_text, cur_thought, []
@@ -1928,7 +1962,7 @@ class LifeStep:
             )
             self._run_cache = {}
             data = llm.extract_json(cur_text)
-            errors = ["返回内容不是合法的 JSON 对象"] if not isinstance(data, dict) else self.validate_payload(data, tasks, moment)
+            errors = ["返回内容不是合法的 JSON 对象"] if not isinstance(data, dict) else self.validate_payload(data, tasks, moment, master_replied=master_replied)
         return (data if not errors else None), cur_text, cur_thought, errors
 
     async def run(self, now: datetime.datetime | None = None, force: bool = False) -> bool:
@@ -2000,10 +2034,12 @@ class LifeStep:
             self._last_cand_map = None
 
     async def _ask_master(self, data: dict, prompt: str, text: str, tasks: dict, moment: datetime.datetime | None = None):
-        """补写填了 ask_master：让她借主动对话问主人那一句，等主人回话；回了就把回话交给模型照着重写一遍。
-        没回、没问出去、出错，都照用第一次写的（她自己拿主意）。返回 (data, 模型原文)。"""
+        """补写填了 ask_master：
+        - invite：登记共同邀请并发出，不假设主人已答应；
+        - decision：登记当家待拍板事项（d 编号）并发出；若主人 90 秒内秒回则当场按主人准话重排，
+          若主人暂未回话则持久挂起该 d 事项（绝不“超时就替主人自作主张干掉”！等主人几小时后在聊天回话时再由记录员解锁推进）。"""
         ask = data.get("ask_master")
-        question = clean_text(ask.get("question"), 120) if isinstance(ask, dict) else ""
+        question = clean_text(ask.get("question"), 160) if isinstance(ask, dict) else ""
         if not question:
             return data, text
         bots = list(self.raw_log.enabled_bots())
@@ -2012,45 +2048,58 @@ class LifeStep:
             who = next((bot for bot in tasks if bot in bots), bots[0] if bots else "")
         planner = getattr(self, "planner", None)
         companion = getattr(self, "companionship", None)
-        if companion is not None:
-            now = self._now().replace(tzinfo=None)
-            is_invite = ask.get("kind") == "invite" or (ask.get("kind") != "decision" and invitation_text(question))
-            if is_invite:
-                # 邀请不占住后台两分钟，也不把沉默当同意；缺可选记录时其余生活照常落库。
-                starts = [x.get("start") for x in tasks.values() if isinstance(x.get("start"), datetime.datetime)]
-                when = max(now, min(starts)) if starts else now
-                idea = companion.safe("wish", who, question, when)
-                if (idea and idea["bot"] == who and idea["history"][-1]["status"] == "idea" and when <= now
-                        and not companion.safe("resting", now, default=False) and planner is not None):
-                    if await planner.ask_now(who, question, invitation_id=idea["id"]):
-                        companion.safe("attempted", idea["id"], now)
-                return data, text
-            if companion.safe("resting", now, default=False):
-                return data, text
+        now = self._now().replace(tzinfo=None)
+        starts = [x.get("start") for x in tasks.values() if isinstance(x.get("start"), datetime.datetime)]
+        when = max(now, min(starts)) if starts else now
+        is_resting = bool(companion is not None and companion.safe("resting", now, default=False))
+        is_invite = ask.get("kind") == "invite" or (ask.get("kind") != "decision" and invitation_text(question))
+
+        if companion is not None and is_invite:
+            idea = companion.safe("wish", who, question, when)
+            if (idea and idea["bot"] == who and idea["history"][-1]["status"] == "idea" and when <= now
+                    and not is_resting and planner is not None):
+                if await planner.ask_now(who, question, invitation_id=idea["id"]):
+                    companion.safe("attempted", idea["id"], now)
+            return data, text
+
+        # decision（请当家主人拍板）：主人睡着时先存为 idea 等醒后再问；醒着时立即发消息并持久挂起 d 事项
+        dec = companion.safe("open_decision", who, question, when, sent=False) if companion is not None else None
+        dec_id = str((dec or {}).get("id") or "")
+        if is_resting:
+            logger.info("[super_enhance/world] 主人正在休息，待拍板事项 %s（%s）先挂起等醒后再问", dec_id, question[:50])
+            return data, text
+
         targets = planner.targets_of(who) if planner is not None and planner.enabled and who else []
         if not targets:
-            logger.info("[super_enhance/world] 补写想让%s问主人「%s」，可主动对话没开或没配会话，照第一次写的",
-                        self.label(who) or who, question)
+            logger.info("[super_enhance/world] 补写登记待拍板事项 %s「%s」，主动对话未开，留待聊天中请示", dec_id, question[:50])
             return data, text
         umo = targets[0]
         since = time.time()
-        if not await planner.ask_now(who, question):
+        if not await planner.ask_now(who, question, invitation_id=dec_id):
             return data, text
+        if companion is not None and dec_id:
+            companion.safe("mark_decision_asked", dec_id, now)
         asked = await self._wait_asked(umo, since)
         if asked is None:
-            logger.warning("[super_enhance/world] 补写让%s问主人「%s」，%d 秒里没见她问出去，照第一次写的",
-                           self.label(who) or who, question, ASK_SEND_SECONDS)
             return data, text
         replies = await self._wait_replies(umo, float(asked.get("ts") or since))
         name = self.label(who) or who
         if not replies:
-            logger.info("[super_enhance/world] %s %s 问了主人「%s」，%d 秒里主人没回，照第一次写的（她自己拿主意）",
-                        name, asked.get("time") or "", clean_text(asked.get("text"), 60), ASK_WAIT_SECONDS)
+            logger.info("[super_enhance/world] %s 已向主人发出请示 %s「%s」，主人暂未回话，保持挂起等主人发话（绝不擅自替主人做主）",
+                        name, dec_id, clean_text(asked.get("text"), 60))
             return data, text
         said = "；".join("%s「%s」" % (x.get("time") or "", clean_text(x.get("text"), 200)) for x in replies)
-        note = ("%s %s 问了主人：「%s」。主人回了：%s。照主人说的把整份 JSON 重新写出来（跟你原来写的一样就照原样），ask_master 留空。"
+        if companion is not None and dec_id:
+            for row in companion._data().get("decisions") or []:
+                if row.get("id") == dec_id:
+                    row["status"] = "resolved"
+                    row["choice"] = said[:200]
+                    row["resolved_at"] = fmt_time(self._now().replace(tzinfo=None))
+                    companion._save()
+                    break
+        note = ("%s %s 请示了当家主人：「%s」。主人当场拍板回了：%s。现在已获主人准许，请照主人定下的话把整份 JSON 重新写出来执行，ask_master 留空。"
                 % (name, asked.get("time") or "", clean_text(asked.get("text"), 200), said))
-        logger.info("[super_enhance/world] 补写问主人有回话，照着重写：%s", note[:200])
+        logger.info("[super_enhance/world] 主人当场拍板回话，照准话重写：%s", note[:200])
         retry = prompt + "\n\n你上一次的输出：\n" + str(text or "").strip() + "\n\n" + note
         try:
             again, again_thought = await llm.text_chat(
@@ -2059,13 +2108,13 @@ class LifeStep:
                 attempts=2, log_label="补写照主人回话重写",
             )
         except Exception as e:
-            logger.warning("[super_enhance/world] 补写照主人回话重写失败，照用第一次的：%s", e)
+            logger.warning("[super_enhance/world] 补写照主人回话重写失败，暂保挂起前维持段：%s", e)
             return data, text
         self._run_cache = {}
         val_moment = moment or self._now().replace(tzinfo=None)
-        fixed, again, _t, errs = await self._validate_with_retries(retry, again, again_thought, tasks, val_moment, "回话重写")
+        fixed, again, _t, errs = await self._validate_with_retries(retry, again, again_thought, tasks, val_moment, "回话重写", master_replied=True)
         if fixed is None:
-            logger.warning("[super_enhance/world] 补写照主人回话重写未通过结构化校验（%s），照用第一次的", "；".join(errs[:3]))
+            logger.warning("[super_enhance/world] 补写照主人回话重写未通过结构化校验（%s），暂保维持段", "；".join(errs[:3]))
             return data, text
         return fixed, again
 
@@ -2123,7 +2172,7 @@ class LifeStep:
     def _dedup_joint_proactive(self, written_by_bot: dict, now: datetime.datetime | None = None) -> None:
         _dedup_joint_proactive(written_by_bot, now=now, world=self.world)
 
-    def validate_payload(self, data: dict, tasks: dict, now: datetime.datetime) -> list[str]:
+    def validate_payload(self, data: dict, tasks: dict, now: datetime.datetime, *, master_replied: bool = False) -> list[str]:
         """纯结构化字段与库存一致性校验（不扫正文关键词、不做静默兜底修补）。返回报错列表，为空即合法。"""
         if not isinstance(data, dict):
             return ["顶层必须是 JSON 对象"]
@@ -2152,6 +2201,14 @@ class LifeStep:
             shelf = None
         inv_state = self._live_inventory_state(tasks, flat, shelf)
         seaside = self.home == "海边小镇"
+        comp_ref = getattr(self, "companionship", None)
+        chat_intent_ids = {
+            str(x.get("id"))
+            for x in (self.world.intentions() or [])
+            if str(x.get("source") or "") == "chat"
+            or "master" in (x.get("with") or [])
+            or (comp_ref is not None and comp_ref.safe("is_protected_intent", str(x.get("id") or ""), default=False))
+        }
 
         from .things import is_charcoal
 
@@ -2451,6 +2508,13 @@ class LifeStep:
                             "围巾", "手套", "袜子", "靴子", "被子", "棉被", "厚被", "被褥", "铺盖", "毛毯", "毯子",
                         ):
                             errors.append(f"{tag} items[{i_i}]（{nm}）：海边船屋开局无自带厚衣铺盖，严禁给衣物铺盖填 what=\"原来就有\"（须通过买回来/收到/做好了获取）")
+                        elif seaside and what in ("买回来", "收到") and kd in (
+                            "冬衣", "厚衣", "棉袄", "外套", "大衣", "夹克", "毛衣", "棉衣", "棉袍", "棉被", "厚被", "被褥", "铺盖",
+                        ) and not (master_replied or (intent_id and intent_id in chat_intent_ids) or "master" in [str(x) for x in (raw.get("with") or [])]):
+                            errors.append(
+                                f"{tag} items[{i_i}]（{nm}）：置办过冬厚衣/棉被属于家里大额开销，未经当家主人发话拍板（该段未绑定主人确认的 intent 且未与 master 同行）"
+                                f"严禁擅自买回入库！本段请只写去打听价钱行情，并在顶层 ask_master 填 kind=\"decision\" 发消息请主人拿主意"
+                            )
                         try:
                             checked_place(eff.get("place"), True, nm or "新物品")
                         except Exception as pe:
@@ -2486,8 +2550,8 @@ class LifeStep:
                 p_grp = str(p_row.get("group") or "")
                 if p_link in ("charcoal", "charcoal_stove", "firewood") and not eff_new_item:
                     errors.append(f"{who_lbl}采用了燃料获取插曲「{orig['text']}」，必须在完成段的 items 里写 new 将新得的燃料/燃柴入库")
-                elif p_link == "winter_gear" and not eff_new_item:
-                    errors.append(f"{who_lbl}采用了置办过冬衣物铺盖插曲「{orig['text']}」，必须在完成段的 items 里写 new 将淘换来的厚衣/棉被入库")
+                elif p_link == "winter_gear" and master_replied and not eff_new_item:
+                    errors.append(f"{who_lbl}在主人当场拍板后采用了置办过冬衣物插曲「{orig['text']}」，必须在 items 里写 new 将买换回的厚衣/棉被入库")
                 elif p_link == "barter_item" and not (eff_used_item and eff_new_item):
                     errors.append(f"{who_lbl}采用了以物易物插曲「{orig['text']}」，必须在 items 里同时写消耗的旧物（id）与换回的新物（new）")
                 elif p_link in ("ship_day", "restock") and not (eff_new_item or eff_new_food):
@@ -2830,7 +2894,7 @@ class LifeStep:
                     )
                 if not ctx.get("has_winter_gear") and 8 <= win_start.hour <= 16 and max_rain < 1.0:
                     nudges.append(
-                        "- 单衣过冬提醒：天已骤冷，船屋里目前还没有置办齐厚冬衣和厚棉被——若手里有打捞攒下的钱或鱼干，白天可去半淹商店街二楼旧衣铺或集市淘换厚棉衣、厚袜或旧棉被（买/换回来须在 items 里写 new 入库后才能穿盖）。"
+                        "- 单衣过冬与请示当家人：天已骤冷，船屋里还没有厚冬衣和厚棉被——未经主人点头不许擅自动家底买大件！白天可先去半淹商店街旧衣铺或集市布摊打听好厚棉衣与旧棉被的价钱，并在 ask_master 里填 kind=\"decision\" 报给主人拍板先买哪样。"
                     )
             elif chilly and cabin_cool and not recent_wood:
                 if inv["wood_bundles"] > 0:
