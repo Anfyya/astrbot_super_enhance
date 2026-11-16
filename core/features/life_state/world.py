@@ -425,6 +425,9 @@ class WorldStore:
         }
         if entry.get("tool") == "start_doing" and kind != "event":
             record["tool"] = "start_doing"
+        if kind != "event":
+            stove_val = str(entry.get("stove") or "").strip().lower()
+            record["stove"] = stove_val if stove_val in ("charcoal", "wood") else ""
         if entry.get("lamp") and kind != "event":
             record["lamp"] = True  # 补写标的点着煤油灯（supply.LAMP_OIL）
         if entry.get("kerosene"):
@@ -620,6 +623,9 @@ class WorldStore:
                 item["at_home"] = clean_flag(fields["at_home"])
             if fields.get("meal") is not None:
                 item["meal"] = bool(clean_flag(fields["meal"]))
+            if fields.get("stove") is not None and not is_event(item):
+                stove_val = str(fields["stove"] or "").strip().lower()
+                item["stove"] = stove_val if stove_val in ("charcoal", "wood") else ""
             if fields.get("result") is not None:
                 item["result"] = clean_text(fields["result"], MAX_RESULT)
             if (fields.get("end") is not None or fields.get("start") is not None) and fields.get("steps") is None:

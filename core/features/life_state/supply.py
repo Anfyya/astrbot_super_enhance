@@ -85,22 +85,9 @@ SHIP_EVENTS = (
 )
 SHIP_TWO_EVENTS = 0.25  # 一趟碰上两样事的机会
 EXTRAS_SINCE = datetime.date(2026, 11, 10)  # 这以前的船照老样子（世界线里已经写好了：米面、罐头和一桶煤油，码头上没别的事）
-# 世界线里「领回煤油」的说法（段上没写 kerosene 时，照做的事认；排除扑空、没来、推迟、白跑等假阳性）
-PICKUP_RE = re.compile(
-    r"^(?!.*(?:扑空|白跑|空手|没领到|没领成|没领上|未能领|没能领|还没领|没去领|还没去领|船没来|船没到|船未到|推迟没来|没靠岸|未靠岸))"
-    r".*(?:领.{0,6}(?:补给|煤油|配给)|(?:煤油|油桶|补给|配给).{0,6}(?:领|拎|提|打|搬)回)",
-    re.DOTALL,
-)
-PICKUP_FAIL_RE = re.compile(
-    r"扑空|白跑|空手|没领到|没领成|没领上|未能领|没能领|还没领|没去领|还没去领|打算去领|准备去领|再去领|等船来"
-)
-PICKUP_DELAY_RE = re.compile(r"没来|未到|还没到|没到|没靠岸|未靠岸|推迟|顺延|晚点")
-PICKUP_GOT_RE = re.compile(
-    r"(?:领|拎|提|打|搬)回.{0,8}(?:补给|煤油|配给|油桶)|(?:煤油|油桶|补给|配给).{0,6}(?:领|拎|提|打|搬)回"
-)
 LAMP_LOOK = (
     "船屋里只有唯一一盏煤油灯，平时搁在矮桌上（一人提走外用时，舱内另一人就没有煤油灯可用）；"
-    "柴炉或小炭炉烧旺时的炉火微光足够围炉吃饭、喝汤、闲聊，只有做针线、读书写字、修精细零件等细活才需点煤油灯；"
+    "柴炉或小炭炉烧旺时的炉火微光足够围炉吃饭、喝汤、闲聊，只有做针线、读书写字、修精细零件等细活或夜里提灯出门时才需点煤油灯；"
     "亚托莉有夜视眼，独自夜行、起夜或摸黑理东西无需提走船屋唯一的煤油灯；煤油金贵，一般睡前就吹灭"
 )
 
@@ -219,8 +206,20 @@ def _lamp_hours(world, start: datetime.datetime, end: datetime.datetime) -> floa
     return total / 3600
 
 
+def _has_supply_things(item: dict) -> bool:
+    for eff in item.get("things") or []:
+        if not isinstance(eff, dict) or not eff.get("new"):
+            continue
+        what = str(eff.get("what") or "").strip()
+        origin = str(eff.get("origin") or "")
+        if what in ("", "收到", "买回来") and ("补给" in origin or "配给" in origin):
+            return True
+    return False
+
+
 def _pickup(world, start: datetime.datetime, end: datetime.datetime):
-    """[start, end) 里她们把这一趟的煤油领回来的时刻（那段做完的时候）；没领返回 None。"""
+    """[start, end) 里把这一趟煤油领回来的时刻（纯结构化判定：kerosene=true 或段里入库了补给船配给物资）；没领返回 None。"""
+    legacy_cutoff = datetime.datetime(2026, 11, 16, 0, 0)
     day = start.date()
     while day <= end.date():
         for item in world.entries(day.isoformat()):
@@ -231,12 +230,9 @@ def _pickup(world, start: datetime.datetime, end: datetime.datetime):
                 continue
             if item.get("kerosene"):
                 return moment
-            said = "%s %s" % (item.get("doing") or "", item.get("result") or "")
-            if PICKUP_FAIL_RE.search(said):
-                continue
-            if PICKUP_DELAY_RE.search(said) and not PICKUP_GOT_RE.search(said):
-                continue
-            if PICKUP_RE.search(said):
+            if _has_supply_things(item):
+                return moment
+            if moment < legacy_cutoff and "码头" in str(item.get("place") or "") and item.get("things"):
                 return moment
         day += datetime.timedelta(days=1)
     return None
@@ -350,8 +346,7 @@ def step_text(start: datetime.datetime, until: datetime.datetime, text_of, home:
     upcoming = st["next"]
     if upcoming and upcoming["sure"] and start <= _at(upcoming) <= until:
         lines.append("  - 补给船 %s %02d:00 前后靠码头，送柴油和各家的配给。这一趟家里那份是：%s（照这个写，别另添）。"
-                     "码头上这趟：%s。要去码头当面签领家里那份"
-                     "（须亚托莉出面签领，可亚托莉独自去或与丛雨、主人同行；镇民看不见丛雨，丛雨不可独自签领配给）：不领，往后几天就没煤油点灯，吃的也接不上%s"
+                     "码头上这趟：%s。要去码头把家里那份领回来：不领，往后几天就没煤油点灯，吃的也接不上%s"
                      % (_md(upcoming["day"]), upcoming["hour"], upcoming["ration"], _events_text(upcoming),
                         "；家里那份里有一桶煤油，领回来的那段写 \"kerosene\": true（这桶煤油不用写进 things，程序另外算）" if left is not None else ""))
         after = state(_at(upcoming), text_of, home)
@@ -366,15 +361,15 @@ def step_text(start: datetime.datetime, until: datetime.datetime, text_of, home:
         if st["last"] and st["last"]["day"] == start.date():
             got = picked_up(start, world, text_of, home)
             if got is None:
-                lines.append("  - 今天这一趟家里那份（%s）须亚托莉出面去码头签领；世界线里已经领过了就不用再去" % st["last"]["ration"])
+                lines.append("  - 今天这一趟家里那份（%s）要去码头领回来；世界线里已经领过了就不用再去" % st["last"]["ration"])
             elif not got:
-                lines.append("  - 今天这一趟家里那份（%s）还没去码头领（须亚托莉出面当面签领，丛雨不可独自签领）：不领，往后几天就没煤油点灯；"
+                lines.append("  - 今天这一趟家里那份（%s）还没去码头领：不领，往后几天就没煤油点灯；"
                              "领回来的那段写 \"kerosene\": true（这桶煤油不用写进 things，程序另外算）；码头上这趟：%s"
                              % (st["last"]["ration"], _events_text(st["last"])))
         lines.append("  - " + "；".join(_tonight(st, left)))
     if left is not None:
-        lines.append("  - 天黑以后船屋里点着煤油灯做细活的那段，写 \"lamp\": true（两个人在同一盏灯底下，各自那段都写）；"
-                     "靠柴炉/炭炉微光围炉吃饭闲聊、亚托莉凭夜视眼摸黑行事、人在外头或睡着了都不写 lamp；唯一煤油灯被一人提走时另一人舱内无灯可用；煤油点完了就别再写")
+        lines.append("  - 天黑以后只要点着这盏煤油灯（不论在船舱做针线、读写等细活，还是提着煤油灯去甲板、码头或镇上），那段都写 \"lamp\": true（两人在同一盏灯底下各自都写）；"
+                     "靠柴炉/炭炉微光围炉吃饭闲聊、亚托莉凭夜视眼摸黑行事或睡着了都不写 lamp；唯一煤油灯被一人提走时另一人舱内无灯可用；煤油点完了就别再写")
     return "\n".join(lines)
 
 

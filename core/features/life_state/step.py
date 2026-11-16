@@ -133,15 +133,15 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
 16. **两个人一起做的事，细节只能有一个版本，而且要写到具体**：with 里写了对方、两人一起做的事（一起吃饭、一起做点心、一起出门、一起翻一本书）——吃的是什么菜、谁掌的勺、买了什么、书或报纸上讲了什么、路上碰见了谁、做出来的东西什么样，先在聊天记录和已经写好的段落里找，找到就照原样用；找不到就由你定一份具体的（不许写成「菜炒好了、东西买回来了」这种没内容的话），两边的 doing/steps/result 都用同一份。措辞可以随视角不同，事实、名字、数量必须完全一样。只有一个人做的事不强制写具体。
 17. **亚托莉做饭的写法**：家常那几样练熟的照常做好；做没做过的新菜、复杂的大菜容易出岔子，平时做饭也容易失手（盐搁重了、火候偏了、形状歪了、奶油打过了头、化了、码得乱七八糟）。翻车之后吃的时候要写出难吃的样（皱眉、咽得慢、吃两口就放下），别写成吃得精光、像多好吃。翻车了丛雨也可能接手补救，或者干脆重做一道，把灶上收拾干净就翻篇。她嘴上怪火候怪锅，下次照旧认真学，别写成她怕进厨房。
 18. **家里的吃的**：上面「家里的吃的」是此刻家里有的（编号、剩多少、放在哪、还能放到什么时候）。段里动到家里的吃的，写进这段的 things（没动到就是空数组）：
-   - 用了、吃了家里有的：写 id（编号）、what（用掉一部分 / 用完了 / 吃了一部分 / 吃完了）、left（这段做完还剩多少，用完、吃完写空——用完、吃完必须单独写一步，what 填「用完了」或「吃完了」，别把「吃完了」塞进 left 里）；做进了这一次新做的菜，into 写那盘菜的临时代号。换了地方或放法、切开了：what 写「挪地方」或「切开了」，写上新的 place / keep（怎么放）/ spot（放在哪）/ state。剩菜回锅、凉了热一热：what 写「热了一下」。开始腌、晒、熏：what 写「腌上了」「晒上了」「熏上了」，晒、熏写上 spot（晒在太阳底下、挂在屋外风干、搁灶上熏）。扔掉：what 写「丢了」或「坏了扔了」。
-   - 做出来的菜、买回来的、别人给的：写 new（临时代号 n1、n2……，这一次里每件一个，两个人、几段之间也不重复；编号由程序发）、name、kind、what（做好了 / 买回来 / 收到）、left、place、keep、spot；做的菜 from 写用了哪几件（编号或这一次的临时代号），买来的 origin 写在哪买的。
+   - 用了、吃了家里有的：写 id（编号）、what（用掉一部分 / 用完了 / 吃了一部分 / 吃完了）、left（这段做完还剩多少，用完、吃完写空——用完、吃完必须单独写一步，what 填「用完了」或「吃完了」，别把「吃完了」塞进 left 里）；做进了这一次新做的菜，into 写那盘菜的临时代号。换了地方或放法、切开了：what 写「挪地方」或「切开了」，写上新的 place / keep（怎么放）/ spot（放在哪）/ state。剩菜回锅、凉了热一热：what 写「热了一下」。保鲜加工请直接填明确动作 what：轻腌（抹盐短保）/ 重盐腌 / 糖渍（熬果酱蜜渍）/ 醋泡 / 酱渍 / 油封 / 灰沙埋（草木灰或干沙埋蛋薯生姜）/ 晒上了（填 spot：太阳底下或屋外）/ 炉烘（借炉热烘烤，须该段 stove="wood"）/ 熏上了。扔掉：what 写「丢了」或「坏了扔了」。
+   - 做出来的菜、买回来的、别人给的：写 new（临时代号 n1、n2……，这一次里每件一个，两个人、几段之间也不重复；编号由程序发）、name、kind、what（做好了 / 买回来 / 收到）、left、place、keep、spot；自己做出来的熟食（what 填「做好了」）加上 cook（五选一：`"boil"` 水煮熬粥炖汤 / `"fry"` 油煎爆炒油焖 / `"steam"` 清蒸 / `"roast"` 炭烤烘煨 / `"cold"` 凉拌冷食；买来的或生鲜不填）；做的菜 from 写用了哪几件（编号或这一次的临时代号），买来的 origin 写在哪买的。做菜用油、糖、醋、酱油、盐做 `油封`、`糖渍`、`醋泡`、`酱渍`、`轻腌/重盐腌` 时要看家里有没有够量库存——**家里食用油已用光时，`cook` 严禁填 `"fry"`（改选 boil/steam/roast/cold），也不许做 `"油封"`**。
    - place 拆开写，别连成一句：area 是在哪间屋、哪个地方（不在宿舍的写那个地方，例如「镇外梯田的农家灶房」）；at 是搁在那儿的什么上、什么里（矮桌、柜格、案上、灶上、水盆、书架、窗台……）；detail 是再细一点的哪一格、哪个容器里（桌角、第二格、竹筛里、锅里），说不上来就空着。area 和 at 都得有，光写一间屋不算。例如 {{"area": "堂屋", "at": "矮桌", "detail": "桌角"}}、{{"area": "灶房", "at": "案上", "detail": "竹筛里"}}、{{"area": "灶房", "at": "柜格", "detail": ""}}。拿在手上、揣在身上的：area 写谁，at 写手上、袖子里、菜篮里，例如 {{"area": "亚托莉", "at": "手上", "detail": ""}}。这是东西搁在哪，不是人在哪，别照抄这段的 place；挑的时候照常理（剩菜盖好搁灶上或柜格，点心、糖搁堂屋柜里或盒子里，米面调料在灶房柜格）；没挪地方的不写 place。
    - 每一步都写 step：这件事发生在这段分步里的第几步（从 1 数，例如第 2 步「下锅炒」用掉鸡蛋、做好蛋炒饭就写 2，第 3 步吃完就写 3）。这段要是中途被打断，只有做到了的那几步才算数。
    - 这一次里先做好、后面又吃掉的菜，吃饭那段也要写一步：id 填它的临时代号（n1 这种），what 写吃完了或吃了一部分，left 写还剩多少（比如给主人留的那份）。
    - 端给主人的（送到主人跟前、递到他手上的那一份）：那一步的 place 写 {{"area": "主人", "at": "跟前", "detail": ""}}（at 一律写「跟前」，递到手上、搁在手边也写跟前；新做好直接端上去的，做好那步就这么写；已有的写一步「挪地方」）。程序见到放在主人跟前的，一个小时后当主人吃完了，所以只端了一部分上去、剩下的还在原处的，端上去的那份别写在原来那件上；摆在桌上大家一起吃的、留给主人温着还没端过去的，area 照常写屋子。
    - 做饭用料先用家里有的，先用快不行了的；新鲜的料（豆腐、菜、鱼肉、蛋、水果）家里没有，就在做饭之前排一段去买回来。米面油盐、调料干货、腌菜这些按量记的（清单里写着「还剩多少克 / 毫升」），用到的也要写：写进那盘菜的 from，再各写一步「用掉一部分」，used 写这次用了多少（「250 克」「3 克」「15 毫升」，照这道菜平常的用量）；标着「快用完了」的，排一段去买（买回来的写 amount，例如「5 斤」「500 毫升」）。家里一直备着、清单里还没记的常备调料（糖、醋这类），头一回用到就写一件 new，what 写「原来就有」，amount 写估计还有多少；别的清单里没有的料要先买。两人一起做的饭、一起吃的饭，things 写在其中一个人那段里。
    - 清单里写了口感的（叶子蔫了、饭发硬了、凉透了、串了味、熟过头了……），排做饭、吃东西时顺手照着处理：凉了的热一热，标着中间没熟透的先回锅煎透、煮透（写一步「热了一下」）再吃，发硬的饭炒成炒饭，蔫了的菜泡会儿冷水，熟过头的香蕉做成饼，串了味的拿去做红烧、麻辣这种重口的菜；标着有毒的（土豆发芽发绿）扔掉。放东西也照常理：剩菜盖好收着；气味冲的（葱蒜、卤味、鱼）跟豆腐、米饭、点心分开放或者都盖好；生肉包好，跟熟食分开放；炸的晾凉了再盖。
-   - 船屋灶台小炭炉烧闷炭（或木炭）：开火做饭烧水时程序会自动按顿从家里现有闷炭库存里扣减，不用在 items 里手写扣炭；若闷炭已用光为 0，在弄回新炭之前小炭炉点不着火。闷炭产出不会自动增加（光烧柴炉不处理只会烧成白灰），快见底时须安排：① 趁柴炉硬柴烧成红炭尚未化灰时专门动手拿火钳夹进陶罐盖严闷灭（from 填所烧干柴编号，一次约 300~500 克），或 ② 去煮盐棚帮着挑海水添柴换一罐（约 2000 克），或 ③ 去坡上柴料场/集市花零钱买木炭、赶上澡堂烧水日搭把手换半罐——真办成那段必须在 items 里写 new 入库并写清 amount。给还在睡或不在家的主人留饭时，必须盖好保温（熬粥、饭团盖在锅里温着，汤面只留汤头等主人醒了现下面条，绝不把煮好的汤面敞口摆在矮桌上泡几个钟头）。
+   - 段内是否开火（stove，三选一）：每段填 `"stove": ""`（没点火：备菜、洗碗、吃饭、聊天、外出、睡觉填 `""`；仅站在灶边商量菜单也没点火）、`"charcoal"`（船屋灶台小炭炉真点着开火做饭、烧水、热菜、煎蛋）或 `"wood"`（船屋柴炉真点着烧柴取暖、烘烤衣物/鱼干或烟熏；穗织住处统一填 `""`）。小炭炉烧闷炭/木炭由程序按顿自动从家里闷炭库存扣减，不用在 items 里手写扣炭；若闷炭已用光为 0，在弄回新炭之前小炭炉点不着火（`stove` 不能填 `"charcoal"`）。闷炭产出不会自动增加（光烧柴炉不处理只会烧成白灰），快见底时须安排：① 趁柴炉硬柴烧成红炭尚未化灰时专门动手拿火钳夹进陶罐盖严闷灭（from 填所烧干柴编号，items 写 new 入库），或 ② 去煮盐棚帮着挑海水添柴换一罐，或 ③ 去坡上柴料场/集市花零钱买木炭、赶上澡堂烧水日搭把手换半罐。点柴炉（`stove="wood"`）时记得消耗干柴（items 记用了哪捆柴），冷柴炉烘不干鱼也熏不熟东西。给还在睡或不在家的主人留饭时，必须盖好保温（熬粥、饭团盖在锅里温着，汤面只留汤头等主人醒了现下面条，绝不把煮好的汤面敞口摆在矮桌上泡几个钟头）。
    - kind 从这几类里挑：{kinds}；keep（怎么放）从这几样里挑：{keeps}；spot（放在哪，管冷热）从这几样里挑：{spots}。
 19. **被打断的事后来怎么样了**：上面「被打断、还没交代后来怎么样的事」里每一件，在 stopped_results 里用编号写一句后来怎么样了：撂下不做了、交给谁接着做完了、等手上的事忙完回头接着做完了、或者赶紧几下做完了，挑合情理的写。只写这个人自己怎么处理这件事，不替别人定事实：别人那件做没做完、做出了什么，以世界线上别人那段写的为准（标着「做到……先放下了」的就是没做完），拿不准就写撂下了或者等回头再说。要和你这次排的段对得上：写了回头接着做，就把接着做的那段排上；写了交给对方，对方那段就是接着做这件事。没列出来的不写。
 20. **家里的东西**（吃的以外）：上面「家里的东西」是此刻家里有的（编号、样子、在哪、在谁手上）。段里做了、用了、挪了、交给别人了、接着做了一截的东西，写进这段的 items（没动到就是空数组）：
@@ -171,8 +171,8 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
   "stopped_results": {{}},
   "intent_moves": {{"i3": {{"done": false, "text": "推进以后的打算", "date": "", "window": ""}}}},
   "segments": {{
-    "napcat": [{{"start": "{example_start}", "end": "{example_end}", "place": "", "doing": "一句话写这件事", "steps": [{{"text": "这一阵子她一直在干什么", "minutes": 5}}, {{"text": "第二步", "minutes": 15}}, {{"text": "收尾：用过的东西收好、归位", "minutes": 5}}], "result": "这件事的结果", "state": "做事", "send_msg": false, "msg_at": "", "msg_purpose": "", "at_home": true, "meal": false, "public": "", "with": [], "training": "", "intent": "", "from": "照上面哪一样写的", "mood": "这段她什么心情、因为什么", "things": [], "items": []}},
-               {{"start": "{example_end}", "end": "{example_end2}", "place": "", "doing": "下一件事", "steps": [{{"text": "第一步", "minutes": 10}}, {{"text": "收尾", "minutes": 5}}], "result": "这件事的结果", "state": "做事", "send_msg": true, "msg_at": "start", "msg_purpose": "要出门去码头看一眼，跟主人说一声", "at_home": false, "meal": false, "public": "", "with": [], "training": "", "intent": "", "from": "照上面哪一样写的", "mood": "这段她什么心情、因为什么", "things": [], "items": []}}],
+    "napcat": [{{"start": "{example_start}", "end": "{example_end}", "place": "", "doing": "一句话写这件事", "steps": [{{"text": "这一阵子她一直在干什么", "minutes": 5}}, {{"text": "第二步", "minutes": 15}}, {{"text": "收尾：用过的东西收好、归位", "minutes": 5}}], "result": "这件事的结果", "state": "做事", "stove": "", "send_msg": false, "msg_at": "", "msg_purpose": "", "at_home": true, "meal": false, "public": "", "with": [], "training": "", "intent": "", "from": "照上面哪一样写的", "mood": "这段她什么心情、因为什么", "things": [], "items": []}},
+               {{"start": "{example_end}", "end": "{example_end2}", "place": "", "doing": "下一件事", "steps": [{{"text": "第一步", "minutes": 10}}, {{"text": "收尾", "minutes": 5}}], "result": "这件事的结果", "state": "做事", "stove": "", "send_msg": true, "msg_at": "start", "msg_purpose": "要出门去码头看一眼，跟主人说一声", "at_home": false, "meal": false, "public": "", "with": [], "training": "", "intent": "", "from": "照上面哪一样写的", "mood": "这段她什么心情、因为什么", "things": [], "items": []}}],
     "napcat2": []
   }}
 }}
@@ -727,8 +727,12 @@ class LifeStep:
             except Exception:
                 place = ""
             keep, spot = split_keep(raw.get("keep"), raw.get("spot"), place)
+            cook = str(raw.get("cook") or "").strip().lower()
+            if cook not in ("boil", "fry", "steam", "roast", "cold"):
+                cook = ""
             step.update({"what": what, "left": clean_text(raw.get("left"), 20), "place": place,
                          "keep": keep, "spot": spot, "state": norm_state(raw.get("state")),
+                         "cook": cook,
                          "amount": clean_text(raw.get("amount"), 20), "used": clean_text(raw.get("used"), 20),
                          "step": step_no(raw.get("step")) or ""})
             out.append({k: v for k, v in step.items() if v not in ("", None, []) or k == "left"})
@@ -1356,6 +1360,10 @@ class LifeStep:
                     charcoal_line = store.charcoal_summary(moment, shelf)
                     if charcoal_line:
                         parts.append(charcoal_line)
+                if hasattr(store, "cooking_staple_alert"):
+                    staple_line = store.cooking_staple_alert(moment, shelf)
+                    if staple_line:
+                        parts.append(staple_line)
             except Exception:
                 logger.warning("[super_enhance/world] 补写算家里的吃的失败", exc_info=True)
         # 主人的动向：他自己说的，加上她们写着和主人一起的段（陪他出门时主人跟着这些段走）
@@ -1937,6 +1945,8 @@ class LifeStep:
                             effect["step"] = 1 if raw_str in ("0",) or raw_str.startswith("-") else len(_texts)
                         else:
                             effect["step"] = max(1, min(raw_no, len(_texts)))
+                raw_stove = str(raw.get("stove") or "").strip().lower()
+                stove_val = raw_stove if raw_stove in ("charcoal", "wood") and not sleep and not idle else ""
                 entry = {
                     "who": bot,
                     "kind": "activity",
@@ -1948,6 +1958,7 @@ class LifeStep:
                     "result": None if state != "do" else raw.get("result"),
                     "idle": idle,
                     "sleep": sleep,
+                    "stove": stove_val,
                     "importance": raw.get("importance"),
                     "send_msg": msg_copy["send_msg"],
                     "msg_at": msg_copy["msg_at"],

@@ -72,56 +72,121 @@ USE_STEPS = ("用掉一部分", "用完了")
 STEPS = START_STEPS + MID_STEPS + END_STEPS
 STEP_WORDS = (
     ("热了", "热了一下"), ("热一热", "热了一下"), ("热一下", "热了一下"), ("回锅", "热了一下"), ("复热", "热了一下"), ("烧开", "热了一下"),
-    ("抹盐", "腌上了"), ("撒盐", "腌上了"), ("擦盐", "腌上了"), ("暴腌", "腌上了"), ("轻腌", "腌上了"), ("盐渍", "腌上了"),
-    ("糖渍", "腌上了"), ("蜜渍", "腌上了"), ("醋泡", "腌上了"), ("醋渍", "腌上了"), ("酱渍", "腌上了"), ("酱油渍", "腌上了"), ("酱油泡", "腌上了"), ("糟卤", "腌上了"),
+    ("轻腌", "轻腌"), ("暴腌", "轻腌"), ("抹盐", "轻腌"), ("撒盐", "轻腌"), ("擦盐", "轻腌"),
+    ("重盐腌", "重盐腌"), ("重盐", "重盐腌"), ("盐渍", "重盐腌"),
+    ("糖渍", "糖渍"), ("蜜渍", "糖渍"), ("做果酱", "糖渍"), ("熬果酱", "糖渍"),
+    ("醋泡", "醋泡"), ("醋渍", "醋泡"),
+    ("酱渍", "酱渍"), ("酱油渍", "酱渍"), ("酱油泡", "酱渍"), ("糟卤", "酱渍"),
+    ("油封", "油封"), ("油浸", "油封"),
+    ("灰沙埋", "灰沙埋"), ("埋进", "灰沙埋"), ("埋在", "灰沙埋"),
+    ("炉烘", "炉烘"), ("烘干", "炉烘"), ("烘着", "炉烘"), ("炉边烘", "炉烘"), ("烟管旁烘", "炉烘"),
+    ("风干", "晒上了"), ("晾干", "晒上了"), ("晒", "晒上了"), ("熏", "熏上了"),
     ("腌", "腌上了"),
-    ("风干", "晒上了"), ("晾干", "晒上了"), ("烘干", "晒上了"), ("烘着", "晒上了"), ("炉边烘", "晒上了"), ("烟管旁烘", "晒上了"), ("晒", "晒上了"), ("熏", "熏上了"),
-    ("油封", "挪地方"), ("油浸", "挪地方"), ("埋进", "挪地方"), ("埋在", "挪地方"),
     ("原来", "原来就有"), ("本来", "原来就有"), ("一直有", "原来就有"), ("清点", "清点"), ("盘点", "清点"),
     ("记错", "记错了"), ("用完", "用完了"), ("用光", "用完了"), ("吃完", "吃完了"), ("吃光", "吃完了"),
     ("坏了", "坏了扔了"), ("扔", "丢了"), ("倒掉", "丢了"), ("丢", "丢了"),
-    ("送来", "收到"), ("送的", "收到"), ("被送", "收到"), ("送", "送人了"),
-    ("买", "买回来"), ("捡", "收到"), ("拾", "收到"), ("捞", "收到"), ("收下", "收到"), ("收到", "收到"),
+    ("送来", "收到"), ("送的", "收到"), ("被送", "收到"), ("送人", "送人了"), ("送给", "送人了"), ("送出去", "送人了"),
+    ("买", "买回来"), ("捡到", "收到"), ("捡来", "收到"), ("捡回", "收到"), ("拾到", "收到"), ("拾回", "收到"), ("捞到", "收到"), ("捞起", "收到"), ("收下", "收到"), ("收到", "收到"), ("收到了", "收到"),
     ("做好", "做好了"), ("做了", "做好了"), ("煮好", "做好了"), ("烤好", "做好了"), ("蒸好", "做好了"),
-    ("挪", "挪地方"), ("搬", "挪地方"), ("放", "挪地方"), ("搁", "挪地方"), ("挂", "挪地方"), ("变了样", "挪地方"),
-    ("切", "切开了"), ("剖", "切开了"), ("剥", "切开了"), ("削", "切开了"),
-    ("用", "用掉一部分"), ("吃", "吃了一部分"),
+    ("挪", "挪地方"), ("搬", "挪地方"), ("放进", "挪地方"), ("放在", "挪地方"), ("放回", "挪地方"), ("放到", "挪地方"), ("放入", "挪地方"), ("搁", "挪地方"), ("挂", "挪地方"), ("变了样", "挪地方"),
+    ("切开", "切开了"), ("切了", "切开了"), ("切好", "切开了"), ("切块", "切开了"), ("切片", "切开了"), ("切丝", "切开了"), ("剖开", "切开了"), ("剥开", "切开了"), ("削皮", "切开了"),
+    ("用掉", "用掉一部分"), ("用了", "用掉一部分"), ("吃掉", "吃了一部分"), ("吃了", "吃了一部分"),
 )
 KEEP_LEFT_STEPS = ("挪地方", "切开了", "热了一下") + PROCESS_STEPS
 
-# ---------- 按量记的（米面油盐、调料干货、腌菜，或显式带克/毫升单位的食物） ----------
+# ---------- 按量记的（米面油盐、调料干货、或显式带克/毫升单位的食物） ----------
 
-MEASURED_KINDS = ("干货调料粮食", "腌菜酱菜泡菜")
+MEASURED_KINDS = ("干货调料粮食",)
 STAPLES = (
     (("淀粉", "生粉"), "克", 400, 10),
-    (("醋",), "毫升", 500, 10),
-    (("料酒", "米酒", "黄酒"), "毫升", 500, 10),
+    (("香油", "麻油"), "毫升", 250, 3),
     (("酱油", "生抽", "老抽"), "毫升", 500, 10),
     (("蚝油",), "毫升", 500, 10),
-    (("香油", "麻油"), "毫升", 250, 3),
-    (("油",), "毫升", 1800, 20),
+    (("料酒", "米酒", "黄酒"), "毫升", 500, 10),
+    (("米醋", "陈醋", "香醋", "白醋", "黑醋", "果醋", "食醋"), "毫升", 500, 10),
+    (("食用油", "植物油", "花生油", "菜籽油", "玉米油", "大豆油", "橄榄油", "调和油", "色拉油", "葵花籽油", "猪油", "牛油", "米糠油", "茶油"), "毫升", 1800, 20),
     (("豆瓣",), "克", 500, 15),
     (("豆豉",), "克", 200, 10),
     (("味噌",), "克", 500, 25),
     (("椒盐",), "克", 100, 3),
     (("花椒",), "克", 100, 2),
-    (("辣椒",), "克", 100, 5),
+    (("干辣椒", "辣椒粉", "辣椒面", "辣椒碎", "朝天椒", "小米椒"), "克", 100, 5),
     (("芝麻",), "克", 200, 10),
-    (("盐",), "克", 500, 3),
-    (("糖",), "克", 500, 5),
-    (("面粉", "白面"), "克", 2500, 250),
-    (("面条", "挂面"), "克", 1000, 200),
+    (("食盐", "海盐", "精盐", "粗盐", "岩盐", "细盐", "食用盐", "井盐", "湖盐"), "克", 500, 3),
+    (("白糖", "红糖", "冰糖", "绵白糖", "砂糖", "黄糖", "黑糖", "蔗糖", "蜂蜜", "麦芽糖"), "克", 500, 5),
+    (("面条", "挂面", "拉面", "乌冬", "荞麦面", "手擀面", "细面", "阳春面", "意面"), "克", 1000, 200),
+    (("面粉", "白面", "小麦粉", "全麦粉", "高筋粉", "中筋粉", "低筋粉", "玉米面", "粗面粉"), "克", 2500, 250),
     (("糯米",), "克", 2500, 200),
-    (("米",), "克", 5000, 250),
+    (("大米", "白米", "糙米", "粳米", "籼米", "小米", "黑米", "紫米", "红米", "香米", "珍珠米", "东北米", "长粒米", "丝苗米"), "克", 5000, 250),
     (("香菇", "蘑菇"), "克", 250, 20),
     (("木耳",), "克", 200, 10),
     (("笋干",), "克", 250, 50),
     (("海带", "昆布"), "克", 250, 20),
     (("裙带菜",), "克", 100, 5),
     (("紫菜",), "克", 50, 5),
-    (("茶",), "克", 250, 5),
-    (("萝卜",), "克", 1500, 50),
+    (("茶叶", "绿茶", "红茶", "乌龙茶", "麦茶", "玄米茶", "煎茶", "焙茶", "抹茶", "花茶", "菊花茶", "普洱", "铁观音"), "克", 250, 5),
+    (("萝卜干", "干萝卜", "白萝卜干"), "克", 1500, 50),
 )
+
+
+def _match_staple(raw_name: str, kind: str) -> tuple | None:
+    """仅对干货调料粮食匹配常见默认包装，避免「醋拌萝卜丝」等成品菜被误当整瓶醋。"""
+    if kind != "干货调料粮食":
+        return None
+    name = re.sub(r"\s+", "", str(raw_name or ""))
+    if not name:
+        return None
+    if any(k in name for k in ("香油", "麻油")):
+        return "毫升", 250, 3
+    if any(k in name for k in ("酱油", "生抽", "老抽")) and not any(b in name for b in ("酱油渍", "酱油泡", "酱油蛋")):
+        return "毫升", 500, 10
+    if "花椒" in name and "花椒油" not in name:
+        return "克", 100, 2
+    if "辣椒" in name and not any(b in name for b in ("辣椒油", "油辣椒", "辣椒酱", "辣椒炒")) and (
+        name == "辣椒" or any(k in name for k in ("干辣椒", "辣椒粉", "辣椒面", "辣椒碎", "朝天椒", "小米椒"))
+    ):
+        return "克", 100, 5
+    if "芝麻" in name and not any(b in name for b in ("芝麻糊", "芝麻饼", "芝麻糖", "芝麻酱")):
+        return "克", 200, 10
+    for keys, unit, pack, per in STAPLES:
+        if keys == ("花椒",) or keys == ("芝麻",):
+            continue
+        if any(k in name for k in keys):
+            return unit, pack, per
+    if not any(b in name for b in ("醋拌", "醋泡", "醋渍", "糖醋", "醋溜")) and (
+        name == "醋" or name.endswith(("瓶醋", "罐醋", "壶醋", "袋醋", "醋"))
+    ):
+        return "毫升", 500, 10
+    if not any(
+        b in name
+        for b in (
+            "酱油", "生抽", "老抽", "蚝油", "香油", "麻油", "红油", "葱油", "辣油", "油辣椒", "辣椒油",
+            "花椒油", "藤椒油", "奶油", "黄油", "煤油", "柴油", "机油", "油浸", "油封", "油条", "油饼",
+            "油炸", "油泼", "油酥",
+        )
+    ) and (name == "油" or name.endswith(("瓶油", "罐油", "桶油", "壶油", "用油", "炒菜油"))):
+        return "毫升", 1800, 20
+    if not any(b in name for b in ("椒盐", "盐烤", "咸", "盐水", "盐焗", "盐渍")) and (
+        name == "盐" or name.endswith(("包盐", "袋盐", "罐盐", "瓶盐", "盐"))
+    ):
+        return "克", 500, 3
+    if not any(b in name for b in ("糖果", "奶糖", "喜糖", "棒棒糖", "糖水", "糖醋", "糖渍", "冰糖葫芦", "糖霜", "焦糖")) and (
+        name == "糖" or name.endswith(("包糖", "袋糖", "罐糖", "瓶糖", "盒糖", "糖"))
+    ):
+        return "克", 500, 5
+    if not any(b in name for b in ("方便面", "泡面", "拌面", "炒面", "汤面", "干脆面")) and (
+        name == "面" or name.endswith(("袋面", "包面", "斤面", "面"))
+    ):
+        return "克", 2500, 250
+    if not any(b in name for b in ("玉米", "虾米", "米酒", "米醋", "米粉", "米线", "米糕", "米饭", "米粥", "爆米花")) and (
+        name == "米" or name.endswith(("袋米", "包米", "罐米", "斤米", "米"))
+    ):
+        return "克", 5000, 250
+    if not any(b in name for b in ("奶茶", "茶泡饭", "茶碗蒸", "茶叶蛋", "茶点")) and (
+        name == "茶" or name.endswith("茶")
+    ):
+        return "克", 250, 5
+    return None
 MEASURED_DEFAULT = {"干货调料粮食": ("克", 500, 10), "腌菜酱菜泡菜": ("克", 1000, 50)}
 LOW_SHARE = 0.15
 LOW_USES = 4
@@ -141,6 +206,7 @@ _AMOUNT_RE = re.compile(
     re.IGNORECASE,
 )
 FRACTION_WORDS = (
+    ("一小包", 0.08), ("小包", 0.1), ("一小袋", 0.08), ("小袋", 0.1), ("一小把", 0.06), ("一小撮", 0.02),
     ("见底", 0.08), ("罐底", 0.08), ("袋底", 0.08), ("瓶底", 0.08), ("一点点", 0.08), ("一丁点", 0.08), ("少许", 0.08),
     ("没剩多少", 0.1), ("不多了", 0.2), ("小半", 0.3), ("多半", 0.65), ("大半", 0.7), ("一半", 0.5), ("半", 0.5),
     ("快满", 0.95), ("满", 1.0), ("没开封", 1.0), ("没拆", 1.0), ("整", 1.0),
@@ -163,17 +229,17 @@ ITEM_END_STEPS = ("送人了", "丢了", "坏了扔了", "用完了", "记错了
 ITEM_STEPS = tuple(dict.fromkeys(ITEM_START_STEPS + ITEM_MID_STEPS + ITEM_END_STEPS))
 ITEM_STEP_WORDS = (
     ("记错", "记错了"), ("清点", "清点"), ("盘点", "清点"), ("用完", "用完了"), ("用光", "用完了"), ("坏了扔", "坏了扔了"), ("扔", "丢了"), ("丢", "丢了"),
-    ("送人", "送人了"), ("送出去", "送人了"), ("送来", "收到"), ("送的", "收到"), ("赢", "收到"),
-    ("原来", "原来就有"), ("本来", "原来就有"), ("一直有", "原来就有"), ("捡", "捡到"), ("拾", "捡到"),
+    ("送人", "送人了"), ("送给", "送人了"), ("送出去", "送人了"), ("送来", "收到"), ("送的", "收到"), ("赢", "收到"),
+    ("原来", "原来就有"), ("本来", "原来就有"), ("一直有", "原来就有"), ("捡到", "捡到"), ("捡来", "捡到"), ("捡回", "捡到"), ("拾到", "捡到"), ("拾回", "捡到"),
     ("起头", "开始做"), ("开始", "开始做"), ("动手", "开始做"),
     ("做完", "做好了"), ("做好", "做好了"), ("织好", "做好了"), ("缝好", "做好了"), ("剪好", "做好了"),
     ("画好", "做好了"), ("写好", "做好了"), ("完工", "做好了"),
     ("一截", "做了一截"), ("接着", "做了一截"), ("织了", "做了一截"), ("缝了", "做了一截"),
     ("修", "变了样"), ("补", "变了样"), ("洗", "变了样"), ("晾", "变了样"), ("晒", "变了样"), ("擦", "变了样"),
     ("弄脏", "变了样"), ("坏", "变了样"), ("改", "变了样"),
-    ("收起", "挪地方"), ("收好", "挪地方"), ("买", "买回来"), ("收", "收到"),
-    ("挪", "挪地方"), ("搬", "挪地方"), ("搁", "挪地方"), ("放", "挪地方"), ("挂", "挪地方"), ("压", "挪地方"),
-    ("交", "交给"), ("给", "交给"), ("递", "交给"), ("用", "用了"),
+    ("收起", "挪地方"), ("收好", "挪地方"), ("买", "买回来"), ("收到", "收到"), ("收到了", "收到"), ("收下", "收到"),
+    ("挪", "挪地方"), ("搬", "挪地方"), ("放进", "挪地方"), ("放在", "挪地方"), ("放回", "挪地方"), ("放到", "挪地方"), ("放入", "挪地方"), ("搁", "挪地方"), ("挂", "挪地方"), ("压", "挪地方"),
+    ("交给", "交给"), ("交到", "交给"), ("递给", "交给"), ("拿给", "交给"), ("给了", "交给"), ("用掉", "用了"), ("用了", "用了"), ("使用", "用了"),
 )
 MAX_LOOK = 120
 MAX_INSIDE = 300
@@ -262,7 +328,7 @@ def fraction_of(text) -> float | None:
 
 def _num_text(value: float) -> str:
     value = max(0.0, float(value))
-    return str(int(round(value))) if value >= 10 or value == int(value) else ("%.1f" % value).rstrip("0").rstrip(".")
+    return str(int(round(value))) if value >= 10 or value == int(value) else ("%.2f" % value).rstrip("0").rstrip(".")
 
 
 def fmt_amount(value: float, unit: str) -> str:
@@ -294,7 +360,7 @@ HURRY_AT = 0.8
 
 
 def _pick(value, choices, words=(), default=""):
-    """模型写的说法对到固定的几样上：先全等，再按同义词，再按互相包含；都对不上用 default。"""
+    """模型写的说法对到固定的几样上：先全等，再按明确同义词；对不上用 default。"""
     text = re.sub(r"\s+", "", str(value or ""))
     if not text:
         return default
@@ -303,9 +369,6 @@ def _pick(value, choices, words=(), default=""):
     for word, target in words:
         if word in text:
             return target
-    for key in choices:
-        if text in key or key in text:
-            return key
     return default
 
 
@@ -339,6 +402,14 @@ CHARCOAL_LIGHT_GRAMS = 80
 CHARCOAL_LOW_GRAMS = 400
 CHARCOAL_WINDOW_MINUTES = 50
 CHARCOAL_AUTO_SINCE = "2026-11-16 00:00"
+COOK_AUTO_SINCE = "2026-11-16 12:30"
+WOOD_BUNDLE_PER_BURN = 0.25
+WOOD_WINDOW_MINUTES = 50
+COOK_FRY_OIL_ML = 15.0
+COOK_LIGHT_FRY_OIL_ML = 8.0
+COOK_SALT_G = 3.0
+SAVORY_COOK_KINDS = ("熟菜炒菜", "熟汤羹粥", "熟肉卤味")
+COOK_WAYS = ("boil", "fry", "steam", "roast", "cold")
 HOT_MEAL_KINDS = ("熟汤羹粥", "熟菜炒菜", "熟饭熟面", "熟肉卤味", "鲜肉软点心", "馒头面包主食")
 COLD_FOOD_WORDS = ("凉拌", "冷盘", "生腌", "冰镇", "沙拉")
 LIGHT_COOK_WORDS = ("煎蛋", "煎鸡蛋", "荷包蛋", "煮蛋", "水煮蛋", "热茶", "姜汤", "开水", "凉白开")
@@ -363,16 +434,30 @@ def staple_of(item: dict) -> tuple | None:
     if cat_of(item) != CAT_FOOD:
         return None
     kind = str(item.get("kind") or "")
+    stages = item.get("stages") or []
+    first = stages[0] if stages else {}
     unit_override = item.get("unit")
     if not unit_override and kind not in MEASURED_KINDS:
-        first = (item.get("stages") or [{}])[0] if item.get("stages") else {}
         got = parse_amount(first.get("amount")) or parse_amount(first.get("left"))
         if got is not None and got[1]:
             unit_override = got[1]
         else:
             return None
+    if not unit_override and first:
+        has_any = False
+        parsed_any = False
+        for field in ("amount", "left"):
+            raw_val = first.get(field)
+            raw_text = str(raw_val or "").strip()
+            if raw_text:
+                has_any = True
+                if parse_amount(raw_val) is not None or fraction_of(raw_val) is not None:
+                    parsed_any = True
+                    break
+        if has_any and not parsed_any:
+            return None
     name = re.sub(r"\s+", "", str(item.get("name") or ""))
-    found = next(((unit, pack, per) for keys, unit, pack, per in STAPLES if any(k in name for k in keys)), None)
+    found = _match_staple(name, kind)
     unit, pack, per = found or MEASURED_DEFAULT.get(kind) or MEASURED_DEFAULT["干货调料粮食"]
     return unit_override or unit, pack, per
 
@@ -450,6 +535,8 @@ def stock(item: dict):
         return measured
     left, unit, zero = None, "", None
     starts, _, ends = steps_of(cat_of(item))
+    kind = re.sub(r"\s+", "", str(item.get("kind") or ""))
+    is_consumable = weathering.fuel_item(item) or kind in ("燃料", "燃柴", "火柴", "蜡烛")
     for stage in item.get("stages") or []:
         what = stage.get("what")
         amount = quantity(stage.get("amount")) or quantity(stage.get("left"))
@@ -467,8 +554,11 @@ def stock(item: dict):
             used = quantity(stage.get("used"))
             if used and used[1] in ("", unit):
                 left = max(0.0, left - max(0.0, used[0]))
-            elif amount and amount[1] in ("", unit):
-                left = max(0.0, min(left, amount[0]))
+            elif amount and amount[1] in ("", unit) and amount[0] < left:
+                left = max(0.0, amount[0])
+            elif what in ("用了", "用掉一部分") and is_consumable:
+                step_used = {"捆": 0.25, "袋": 0.25, "箱": 0.1, "盒": 0.02, "瓶": 0.05, "罐": 0.05}.get(unit, 1.0)
+                left = max(0.0, left - step_used)
             if left <= 0:
                 zero = stage
     return {"left": left, "unit": unit, "zero": zero, "per_use": 0.0} if left is not None else None
@@ -690,6 +780,9 @@ def clean_stage(stage: dict, cat: str = CAT_FOOD) -> dict:
         for key in ("fresh_note", "taste_note"):
             if str(stage.get(key) or "").strip():
                 out[key] = clean_text(stage.get(key), MAX_NOTE)
+        cook_val = str(stage.get("cook") or "").strip().lower()
+        if cook_val in COOK_WAYS:
+            out["cook"] = cook_val
     conditions = weathering.clean_conditions(stage.get("weather"))
     if conditions:
         out["weather"] = conditions
@@ -1046,6 +1139,13 @@ class ThingStore:
             if got is not None and got[1]:
                 item["unit"] = got[1]
         self._load().setdefault("items", []).append(item)
+        if cat == CAT_FOOD and first.get("at") >= "2026-11-16 09:00":
+            src_dict = first.get("src") if isinstance(first.get("src"), dict) else {}
+            if not src_dict.get("manual"):
+                items_map = {str(x.get("id")): x for x in self._load().get("items") or []}
+                rec_ref = str(first.get("wl") or ("rec@%s@%s" % (first.get("at"), item["id"])))
+                self._enforce_preservation_materials(items_map, item, first, is_first=True, at=first["at"], by=first.get("by", ""), ref=rec_ref)
+                self._auto_cook_staples(items_map, item, first, at=first["at"], by=first.get("by", ""), ref=rec_ref)
         self._save()
         return item, ""
 
@@ -1093,6 +1193,13 @@ class ThingStore:
             cleaned["what"] = _infer_what(stage, cat_of(item))
         why = insert_stage(item, cleaned)
         if not why:
+            if cat_of(item) == CAT_FOOD and str(cleaned.get("at") or "") >= "2026-11-16 09:00":
+                src_dict = cleaned.get("src") if isinstance(cleaned.get("src"), dict) else {}
+                if not src_dict.get("manual"):
+                    items_map = {str(x.get("id")): x for x in self._load().get("items") or []}
+                    rec_ref = str(cleaned.get("wl") or ("rec@%s@%s" % (cleaned.get("at"), item.get("id"))))
+                    self._enforce_preservation_materials(items_map, item, cleaned, is_first=False, at=cleaned["at"], by=cleaned.get("by", ""), ref=rec_ref)
+                    self._auto_cook_staples(items_map, item, cleaned, at=cleaned["at"], by=cleaned.get("by", ""), ref=rec_ref)
             self._save()
         return why
 
@@ -1309,12 +1416,34 @@ class ThingStore:
                                 "steps": [],
                                 "charcoal_grams": grams,
                             })
-        out.sort(key=lambda row: (row["at"], 1 if row.get("charcoal_grams") else 0, row["start"], row["ref"]))
+                        if self._entry_wood_lit(entry, flat):
+                            end_stamp = fmt_time(end_dt)
+                            out.append({
+                                "at": end_stamp,
+                                "start": entry.get("start") or end_stamp,
+                                "ref": ref,
+                                "key": "%s@wood@%s" % (ref, end_stamp),
+                                "by": str(entry.get("who") or ""),
+                                "steps": [],
+                                "wood_burn": True,
+                            })
+        out.sort(key=lambda row: (row["at"], 1 if (row.get("charcoal_grams") or row.get("wood_burn")) else 0, row["start"], row["ref"]))
         return out
 
     @staticmethod
+    def _entry_wood_lit(entry: dict, until: datetime.datetime) -> bool:
+        if not isinstance(entry, dict) or entry.get("kind") == "event" or real_stop(entry):
+            return False
+        if entry.get("meal") or entry.get("sleep") or entry.get("at_home") is False:
+            return False
+        if str(entry.get("stove") or "").strip().lower() != "wood":
+            return False
+        end_dt = parse_time(entry.get("end")) if entry.get("end") else None
+        return end_dt is not None and end_dt <= until and fmt_time(end_dt) >= CHARCOAL_AUTO_SINCE
+
+    @staticmethod
     def _entry_charcoal_grams(entry: dict, until: datetime.datetime) -> int:
-        """判断海边船屋已完成世界线段是否动用了灶台小炭炉开火做饭/烧水，返回自动扣炭克数（0 / 80 / 200）。"""
+        """按结构化 stove 与 things 判断海边船屋是否使用灶台小炭炉，返回自动扣炭克数（0 / 80 / 200）。"""
         if not isinstance(entry, dict) or entry.get("kind") == "event" or real_stop(entry):
             return 0
         if entry.get("meal") or entry.get("sleep") or entry.get("at_home") is False:
@@ -1322,14 +1451,8 @@ class ThingStore:
         end_dt = parse_time(entry.get("end")) if entry.get("end") else None
         if end_dt is None or end_dt > until or fmt_time(end_dt) < CHARCOAL_AUTO_SINCE:
             return 0
-        place = str(entry.get("place") or "")
-        if place and not any(w in place for w in ("船屋", "船舱", "灶")):
-            return 0
-        doing = str(entry.get("doing") or "")
-        steps_text = " ".join(clean_steps(entry.get("steps")))
-        all_text = "%s %s" % (doing, steps_text)
-        # 明确只用取暖柴炉烘烤、或只在炉膛架干柴取暖（非做饭）的段不扣小炭炉闷炭
-        if "柴炉" in all_text and "炭炉" not in all_text:
+        stove = str(entry.get("stove") or "").strip().lower()
+        if stove == "wood":
             return 0
         best = 0
         for eff in entry.get("things") or []:
@@ -1341,37 +1464,34 @@ class ThingStore:
             what = norm_step(eff.get("what"), CAT_FOOD)
             if not what and eff.get("new") and eff.get("from"):
                 what = "做好了"
-            name = str(eff.get("name") or "")
-            kind = norm_kind(eff.get("kind") or name)
+            cook = str(eff.get("cook") or "").strip().lower()
+            kind = norm_kind(eff.get("kind") or eff.get("name"))
             if what == "热了一下":
-                best = max(best, CHARCOAL_LIGHT_GRAMS)
-            elif what == "做好了":
-                if any(cw in name for cw in COLD_FOOD_WORDS):
-                    continue
-                if any(lw in name for lw in LIGHT_COOK_WORDS) and kind in ("禽蛋类", "茶汤鲜饮", DEFAULT_KIND):
+                if cook != "cold":
                     best = max(best, CHARCOAL_LIGHT_GRAMS)
-                elif kind in HOT_MEAL_KINDS or re.search(r"煎|炒|煮|熬|焖|炖|烤|蒸|汤|粥|煲|煨", name):
-                    best = max(best, CHARCOAL_MEAL_GRAMS)
-        if best >= CHARCOAL_MEAL_GRAMS:
+            elif what == "做好了":
+                if cook == "cold":
+                    continue
+                if cook in ("boil", "fry", "steam", "roast"):
+                    if kind in ("禽蛋类", "茶汤鲜饮") and cook in ("boil", "fry"):
+                        best = max(best, CHARCOAL_LIGHT_GRAMS)
+                    else:
+                        best = max(best, CHARCOAL_MEAL_GRAMS)
+                else:
+                    name = str(eff.get("name") or "")
+                    if any(cw in name for cw in COLD_FOOD_WORDS):
+                        continue
+                    if any(lw in name for lw in LIGHT_COOK_WORDS) and kind in ("禽蛋类", "茶汤鲜饮", DEFAULT_KIND):
+                        best = max(best, CHARCOAL_LIGHT_GRAMS)
+                    elif kind in HOT_MEAL_KINDS:
+                        best = max(best, CHARCOAL_MEAL_GRAMS)
+        if best > 0:
             return best
-        # 兜底：段里在灶台/小炭炉做热饭（如熬粥直接喝掉未建 new 菜品），排除纯洗碗擦桌备菜端菜
-        if re.search(r"洗碗|刷碗|擦桌|归置|端到|端上|摆碗|盛出|淘米下锅|洗菜|切菜", doing) and not re.search(
-            r"熬好|煮好|焖好|炒好|炖好|蒸好|烤好|煎好|做好|烧开", doing
-        ):
-            return best
-        if "灶" in place or "炭炉" in all_text:
-            if re.search(
-                r"(熬|煮|焖|炖|炒|蒸|做).{0,12}(粥|饭|汤|面|菜|鱼|肉|早饭|午饭|晚饭|夜宵)"
-                r"|(粥|饭|汤|面|菜|鱼|肉|早饭|午饭|晚饭|夜宵).{0,8}(熬好|煮好|焖好|炖好|炒好|蒸好|做好)",
-                doing,
-            ):
-                best = max(best, CHARCOAL_MEAL_GRAMS)
-            elif re.search(
-                r"(烧开水|烧水|烧一壶水|烧滚|煎.{0,4}蛋|蛋.{0,4}煎好|热.{0,4}(菜|饭|汤|粥))",
-                doing,
-            ):
-                best = max(best, CHARCOAL_LIGHT_GRAMS)
-        return best
+        if stove == "charcoal":
+            st_dt = parse_time(entry.get("start")) if entry.get("start") else None
+            mins = (end_dt - st_dt).total_seconds() / 60.0 if (st_dt is not None and end_dt > st_dt) else 0.0
+            return CHARCOAL_MEAL_GRAMS if mins >= 20 else CHARCOAL_LIGHT_GRAMS
+        return 0
 
     @staticmethod
     def entry_segments(entry: dict, ref: str, until: datetime.datetime) -> list:
@@ -1442,7 +1562,7 @@ class ThingStore:
                 fields.update(holder=step.get("holder"), owner=step.get("owner"),
                               amount=step.get("amount"), used=step.get("used"), keep=step.get("keep"), spot=step.get("spot"))
             else:
-                fields.update(keep=step.get("keep"), spot=step.get("spot"), amount=step.get("amount"), used=step.get("used"))
+                fields.update(keep=step.get("keep"), spot=step.get("spot"), amount=step.get("amount"), used=step.get("used"), cook=step.get("cook"))
             return clean_stage(fields, cat)
 
         made = []
@@ -1595,15 +1715,21 @@ class ThingStore:
         if at >= "2026-11-16 09:00":
             for f_item, f_stage, is_first in modified_food_steps:
                 self._enforce_preservation_materials(items, f_item, f_stage, is_first, at=at, by=by, ref=ref)
+        if at >= COOK_AUTO_SINCE:
+            for dish in made:
+                if cat_of(dish) == CAT_FOOD and dish.get("stages"):
+                    self._auto_cook_staples(items, dish, dish["stages"][0], at=at, by=by, ref=ref)
         if seg.get("charcoal_grams"):
             self._auto_use_charcoal(items, at=at, grams=int(seg["charcoal_grams"]), by=by, ref=ref)
+        if seg.get("wood_burn"):
+            self._auto_use_wood(items, at=at, by=by, ref=ref)
 
     @staticmethod
     def _is_edible_oil(item: dict) -> bool:
         if cat_of(item) != CAT_FOOD:
             return False
         name = re.sub(r"\s+", "", str(item.get("name") or ""))
-        if any(bad in name for bad in ("酱油", "生抽", "老抽", "蚝油", "红油", "葱油", "辣油", "油辣椒", "奶油", "黄油", "煤油", "柴油", "机油", "油浸", "油封", "油条", "葱油饼")):
+        if any(bad in name for bad in ("酱油", "生抽", "老抽", "蚝油", "红油", "葱油", "辣油", "油辣椒", "辣椒油", "花椒油", "藤椒油", "奶油", "黄油", "煤油", "柴油", "机油", "油浸", "油封", "油条", "葱油饼", "油酥", "油炸", "油泼")):
             return False
         return "油" in name and str(item.get("kind") or "") in ("干货调料粮食", DEFAULT_KIND)
 
@@ -1649,7 +1775,6 @@ class ThingStore:
             for x in local_pool
         ):
             return True
-        # 若家里近期世界线或物品记录里真烧过木柴，炉底自然攒有草木灰
         if any(
             weathering.fuel_item(x) and any(s.get("what") in ("用了", "用完了") for s in (x.get("stages") or []))
             for x in local_pool
@@ -1660,93 +1785,126 @@ class ThingStore:
                 day = (moment.date() - datetime.timedelta(days=back)).isoformat()
                 for entry in self.world.entries(day):
                     end_dt = parse_time(entry.get("end")) if entry.get("end") else None
-                    if end_dt is None or end_dt > moment or real_stop(entry):
+                    if end_dt is None or end_dt > moment or real_stop(entry) or entry.get("at_home") is False:
                         continue
-                    txt = "%s %s" % (entry.get("doing") or "", " ".join(clean_steps(entry.get("steps"))))
-                    if any(w in txt for w in ("柴炉", "干柴", "枯枝", "添柴", "烧柴")) and not any(n in txt for n in ("没生", "不点", "生不了")):
+                    if str(entry.get("stove") or "").strip().lower() == "wood":
                         return True
         return False
+
+    def _collect_local_staples(self, items: dict, moment: datetime.datetime, at: str, by: str, matcher, ref: str, eff_prefix: str = "", target_id: str = ""):
+        local_foods = [
+            x for x in self._local_items(items.values(), moment)
+            if matcher(x) and str(x.get("created") or "") <= at and self.can_touch(x, by)
+        ]
+        already = 0.0
+        already_matched = False
+        has_eff = False
+        wl_ref = "" if ref.startswith("rec@") else ref
+        for src_item in local_foods:
+            if eff_prefix and any(st.get("effect") == eff_prefix for st in (src_item.get("stages") or [])):
+                has_eff = True
+                already_matched = True
+            info = measure(src_item)
+            if info is None:
+                continue
+            for st, used_val, _left_val in info.get("rows") or []:
+                if target_id and str(st.get("into") or "") == target_id:
+                    already_matched = True
+                if wl_ref and st.get("wl") == wl_ref and used_val:
+                    already += float(used_val)
+                    already_matched = True
+        active = []
+        total_avail = 0.0
+        for src_item in sorted(local_foods, key=lambda x: (str(x.get("created") or ""), str(x.get("id") or ""))):
+            if is_ended(src_item) is not None:
+                continue
+            info = measure(src_item)
+            avail = float((info or {}).get("left") or 0.0)
+            if avail > 0:
+                active.append((src_item, avail))
+                total_avail += avail
+        return already, already_matched, has_eff, active, total_avail
+
+    def _deduct_from_active(self, active: list, take_total: float, unit: str, at: str, by: str, target_id: str, ref: str, eff_id: str, note: str, src_tag: dict) -> None:
+        rem = take_total
+        wl_ref = "" if ref.startswith("rec@") else ref
+        for src_item, avail in active:
+            if rem <= 0:
+                break
+            take = min(avail, rem)
+            st = clean_stage(
+                {
+                    "at": at,
+                    "what": "用掉一部分",
+                    "used": "%s%s" % (_num_text(take), unit),
+                    "by": by,
+                    "into": target_id,
+                    "wl": wl_ref,
+                    "effect": eff_id,
+                    "note": note,
+                    "src": dict({"entry": ref}, **src_tag),
+                },
+                CAT_FOOD,
+            )
+            if not insert_stage(src_item, st):
+                rem -= take
 
     def _enforce_preservation_materials(
         self, items: dict, target_item: dict, target_stage: dict, is_first: bool, at: str, by: str, ref: str
     ) -> None:
         """核验保鲜工艺所需真实耗材（油封扣油、糖渍果酱扣糖、醋泡酱渍扣醋/酱油、盐腌扣盐、埋灰沙验灰沙）：
-        - 模型未手写扣料且库存够用时自动补扣；
-        - 家里库存不足最低门槛时，不打回整批世界线，但标记 preserve_denied 拒绝虚空保鲜加成！"""
+        - 优先按结构化 what（油封/糖渍/醋泡/酱渍/轻腌/重盐腌/灰沙埋）判定，兼容旧字段描述；
+        - 库存不足最低门槛时标记 preserve_denied 拒绝虚空保鲜加成。"""
         moment = parse_time(at)
         if moment is None:
             return
         what = str(target_stage.get("what") or "")
-        # 外头直接买回来或别人送来的成品（如集市买的咸鱼/果酱）不扣自家调料；但买回鸡蛋直接写埋进家里草木灰仍需验灰
         homemade = (not is_first) or what == "做好了"
         stage_text = " ".join(str(target_stage.get(k) or "") for k in ("keep", "spot", "place", "state", "note"))
         ctx_text = stage_text + (" " + str(target_item.get("name") or "") if (is_first and what == "做好了") else "")
+        target_id = str(target_item.get("id") or "")
         denied = []
 
         def consume_or_deny(tag: str, matcher, dose: float, min_req: float, unit: str, label: str):
-            local_foods = [
-                x for x in self._local_items(items.values(), moment)
-                if matcher(x) and str(x.get("created") or "") <= at and self.can_touch(x, by)
-            ]
-            already = 0.0
-            for src_item in local_foods:
-                info = measure(src_item)
-                if info is None:
-                    continue
-                for st, used_val, _left_val in info.get("rows") or []:
-                    if st.get("wl") == ref and used_val:
-                        already += float(used_val)
+            eff_id = "#auto_preserve_%s_%s" % (tag, target_id)
+            already, _matched, has_eff, active, total_avail = self._collect_local_staples(
+                items, moment, at, by, matcher, ref, eff_prefix=eff_id
+            )
+            if has_eff:
+                return
             if already >= min_req:
                 return
             min_needed = max(0.0, min_req - already)
             want = max(0.0, dose - already)
-            active = []
-            total_avail = 0.0
-            for src_item in sorted(local_foods, key=lambda x: (str(x.get("created") or ""), str(x.get("id") or ""))):
-                if is_ended(src_item) is not None:
-                    continue
-                info = measure(src_item)
-                avail = float((info or {}).get("left") or 0.0)
-                if avail > 0:
-                    active.append((src_item, avail))
-                    total_avail += avail
             if total_avail < min_needed:
                 denied.append(tag)
                 return
-            rem = min(total_avail, want)
-            for src_item, avail in active:
-                if rem <= 0:
-                    break
-                take = min(avail, rem)
-                st = clean_stage(
-                    {
-                        "at": at,
-                        "what": "用掉一部分",
-                        "used": "%s%s" % (_num_text(take), unit),
-                        "by": by,
-                        "into": str(target_item.get("id") or ""),
-                        "wl": ref,
-                        "effect": "#auto_preserve_%s_%s" % (tag, target_item.get("id")),
-                        "note": "%s自动扣料" % label,
-                        "src": {"entry": ref, "auto_preserve": tag},
-                    },
-                    CAT_FOOD,
-                )
-                if not insert_stage(src_item, st):
-                    rem -= take
+            self._deduct_from_active(
+                active, min(total_avail, want), unit, at, by, target_id, ref, eff_id, "%s自动扣料" % label, {"auto_preserve": tag}
+            )
 
         if homemade:
-            if any(w in ctx_text for w in OIL_SEAL_WORDS):
+            if what == "油封" or any(w in ctx_text for w in OIL_SEAL_WORDS):
                 consume_or_deny("oil", self._is_edible_oil, 100.0, 60.0, "毫升", "油封保鲜")
-            if any(w in ctx_text for w in SUGAR_PRESERVE_WORDS):
+            if what == "糖渍" or any(w in ctx_text for w in SUGAR_PRESERVE_WORDS):
                 consume_or_deny("sugar", self._is_sugar_staple, 120.0, 60.0, "克", "糖渍果酱")
-            if any(w in ctx_text for w in ACID_PICKLE_WORDS):
+            if what == "酱渍":
+                consume_or_deny("acid", self._is_soy_staple, 100.0, 60.0, "毫升", "酱油渍保鲜")
+            elif what == "醋泡":
+                consume_or_deny("acid", self._is_vinegar_staple, 100.0, 60.0, "毫升", "醋泡保鲜")
+            elif any(w in ctx_text for w in ACID_PICKLE_WORDS):
                 if any(w in ctx_text for w in ("酱渍", "酱油泡", "酱油渍", "酱油蛋", "糟卤")) and "醋" not in ctx_text:
                     consume_or_deny("acid", self._is_soy_staple, 100.0, 60.0, "毫升", "酱油渍保鲜")
                 else:
                     consume_or_deny("acid", self._is_vinegar_staple, 100.0, 60.0, "毫升", "醋泡保鲜")
-            has_sugar_or_acid = any(w in ctx_text for w in SUGAR_PRESERVE_WORDS + ACID_PICKLE_WORDS)
-            if (what == "腌上了" and not has_sugar_or_acid) or (what != "做好了" and any(w in stage_text for w in SALT_WORDS)):
+            has_sugar_or_acid = what in ("糖渍", "醋泡", "酱渍") or any(w in ctx_text for w in SUGAR_PRESERVE_WORDS + ACID_PICKLE_WORDS)
+            if what == "轻腌":
+                consume_or_deny("salt", self._is_salt_staple, 15.0, 10.0, "克", "抹盐轻腌")
+            elif what == "重盐腌":
+                consume_or_deny("salt", self._is_salt_staple, 60.0, 40.0, "克", "重盐腌制")
+            elif what not in ("糖渍", "醋泡", "酱渍", "油封", "灰沙埋") and (
+                (what == "腌上了" and not has_sugar_or_acid) or (what != "做好了" and any(w in stage_text for w in SALT_WORDS))
+            ):
                 light = any(w in stage_text for w in LIGHT_SALT_WORDS) and "重盐" not in stage_text
                 if light:
                     consume_or_deny("salt", self._is_salt_staple, 15.0, 10.0, "克", "抹盐轻腌")
@@ -1754,7 +1912,7 @@ class ThingStore:
                     consume_or_deny("salt", self._is_salt_staple, 60.0, 40.0, "克", "重盐腌制")
 
         ash_ctx = str(target_stage.get("place") or "") + " " + stage_text
-        if any(w in ash_ctx for w in ASH_SAND_WORDS):
+        if what == "灰沙埋" or any(w in ash_ctx for w in ASH_SAND_WORDS):
             need_sand = ("沙" in ash_ctx) and ("灰" not in ash_ctx)
             if not self._has_ash_or_sand(items, moment, need_sand=need_sand):
                 denied.append("ash")
@@ -1774,6 +1932,95 @@ class ThingStore:
             extra_note = "；".join(reason_map[k] for k in denied if k in reason_map)
             old_note = str(target_stage.get("note") or "").strip()
             target_stage["note"] = clean_text((old_note + "；" + extra_note) if old_note else extra_note, MAX_NOTE)
+
+    def _auto_cook_staples(self, items: dict, dish: dict, stage: dict, at: str, by: str, ref: str) -> None:
+        """按结构化 cook 自动扣炒煎用油（8ml/15ml）及热菜用盐（3g）；若已在 from 中记了盐/酱油/咸菜/腊鱼则不再重复扣盐。"""
+        if at < COOK_AUTO_SINCE or cat_of(dish) != CAT_FOOD or str(stage.get("what") or "") != "做好了":
+            return
+        cook = str(stage.get("cook") or "").strip().lower()
+        if cook not in ("boil", "fry", "steam", "roast"):
+            return
+        moment = parse_time(at)
+        if moment is None:
+            return
+        dish_id = str(dish.get("id") or "")
+        dkind = str(dish.get("kind") or "")
+        if cook == "fry":
+            dose = COOK_LIGHT_FRY_OIL_ML if dkind == "禽蛋类" else COOK_FRY_OIL_ML
+            eff_id = "#auto_cook_oil_%s" % dish_id
+            _already, matched, _has_eff, active, total_avail = self._collect_local_staples(
+                items, moment, at, by, self._is_edible_oil, ref, eff_prefix=eff_id, target_id=dish_id
+            )
+            if not matched and total_avail > 0:
+                self._deduct_from_active(
+                    active, min(total_avail, dose), "毫升", at, by, dish_id, ref, eff_id, "炒煎用油自动扣减", {"auto_cook": "oil"}
+                )
+        if dkind in SAVORY_COOK_KINDS:
+            salted = False
+            for sid in dish.get("from") or []:
+                src_item = items.get(sid)
+                if not src_item:
+                    continue
+                skind = str(src_item.get("kind") or "")
+                sname = re.sub(r"\s+", "", str(src_item.get("name") or ""))
+                if (
+                    self._is_salt_staple(src_item)
+                    or self._is_soy_staple(src_item)
+                    or skind in ("腌菜酱菜泡菜", "腊肉腊肠咸鱼")
+                    or any(w in sname for w in ("蚝油", "味噌", "豆瓣", "豆豉"))
+                ):
+                    salted = True
+                    break
+            if not salted:
+                eff_id = "#auto_cook_salt_%s" % dish_id
+                _already, matched, _has_eff, active, total_avail = self._collect_local_staples(
+                    items, moment, at, by, self._is_salt_staple, ref, eff_prefix=eff_id, target_id=dish_id
+                )
+                if not matched and total_avail > 0:
+                    self._deduct_from_active(
+                        active, min(total_avail, COOK_SALT_G), "克", at, by, dish_id, ref, eff_id, "做菜用盐自动扣减", {"auto_cook": "salt"}
+                    )
+
+    def _auto_use_wood(self, items: dict, at: str, by: str, ref: str) -> None:
+        """柴炉点火取暖/烘烤/烟熏若 50 分钟窗内未手写消耗燃料，自动扣减 0.25 捆干柴。"""
+        moment = parse_time(at)
+        if moment is None:
+            return
+        pool = [x for x in self._local_items(items.values(), moment) if weathering.fuel_item(x)]
+        if not pool:
+            return
+        for wood in pool:
+            for st in wood.get("stages") or []:
+                if st.get("what") not in ("用了", "用掉一部分", "用完了"):
+                    continue
+                when = parse_time(st.get("at"))
+                if when is not None and abs((when - moment).total_seconds()) <= WOOD_WINDOW_MINUTES * 60:
+                    return
+        candidates = sorted(
+            (x for x in pool if is_ended(x) is None and str(x.get("created") or "") <= at),
+            key=lambda x: (str(x.get("created") or ""), str(x.get("id") or "")),
+        )
+        for wood in candidates:
+            info = stock(wood)
+            if info is not None and float(info.get("left") or 0.0) > 0:
+                unit = info.get("unit") or "捆"
+                step_amt = WOOD_BUNDLE_PER_BURN if unit in ("捆", "袋") else 1.0
+                take = min(float(info["left"]), step_amt)
+                stage = clean_stage(
+                    {
+                        "at": at,
+                        "what": "用了",
+                        "used": "%s%s" % (_num_text(take), unit),
+                        "by": by,
+                        "wl": ref,
+                        "effect": "#auto_wood",
+                        "note": "柴炉开火烧柴自动扣减",
+                        "src": {"entry": ref, "auto_wood": "1"},
+                    },
+                    CAT_ITEM,
+                )
+                insert_stage(wood, stage)
+                return
 
     def _auto_use_charcoal(self, items: dict, at: str, grams: int, by: str, ref: str) -> None:
         """小炭炉开火做饭自动从现有闷炭/木炭批次扣减克数；绝不凭空生炭，同餐 50 分钟窗内不重复双扣。"""
@@ -2211,7 +2458,7 @@ class ThingStore:
         return other
 
     def _fire_windows(self, flat: datetime.datetime) -> list:
-        """从世界线提取海边船屋真实点着柴炉或小炭炉的时段（含熄火后 2 小时余温），供室内炉边烘干与烟熏核验。"""
+        """从世界线按结构化 stove 与做饭烧炭记录提取海边船屋开火时段（含熄火后 2 小时余温）。"""
         if self.world is None:
             return []
         rev = self.world.revision() if hasattr(self.world, "revision") else 0
@@ -2219,23 +2466,23 @@ class ThingStore:
         key = (flat.date().isoformat(), rev)
         if cache is not None and cache[0] == key:
             return cache[1]
+        has_homes = hasattr(self.world, "home_at")
         windows = []
         for back in range(SCAN_DAYS, -1, -1):
             day = (flat.date() - datetime.timedelta(days=back)).isoformat()
             for entry in self.world.entries(day):
                 if entry.get("kind") == "event" or real_stop(entry) or entry.get("at_home") is False:
                     continue
+                if entry.get("meal") or entry.get("sleep"):
+                    continue
                 st = parse_time(entry.get("start"))
                 en = parse_time(entry.get("end")) if entry.get("end") else (st + datetime.timedelta(minutes=45) if st else None)
                 if st is None or en is None or en <= st:
                     continue
-                txt = "%s %s %s" % (entry.get("place") or "", entry.get("doing") or "", " ".join(clean_steps(entry.get("steps"))))
-                if any(neg in txt for neg in ("生不了火", "火先不点", "没生火", "没点着")):
+                if has_homes and self.world.home_at(en) != "海边小镇":
                     continue
-                lit = self._entry_charcoal_grams(entry, en) > 0 or (
-                    any(w in txt for w in ("柴炉", "炉膛", "添柴", "烧柴", "架上去吹旺", "生起小炭炉", "生火"))
-                    and any(p in (entry.get("place") or "船舱") for p in ("船屋", "船舱", "灶"))
-                )
+                stove = str(entry.get("stove") or "").strip().lower()
+                lit = stove in ("wood", "charcoal") or self._entry_charcoal_grams(entry, en) > 0
                 if lit:
                     windows.append((st, en + datetime.timedelta(hours=2)))
         self._fire_win_cache = (key, windows)
@@ -2592,6 +2839,37 @@ class ThingStore:
             "灶台闷炭余量：现余 %s（小炭炉做饭烧水由程序自动按顿扣炭，不用手写扣炭；"
             "新换来、买来或趁柴炉硬柴未化灰时动手夹进陶罐闷出的炭须在 items 里写 new 入库）。" % amt
         )
+
+    def cooking_staple_alert(self, now: datetime.datetime, view: View) -> str:
+        """做饭常用调料（食用油、食盐）耗尽或见底提醒（供 step.py 注入上下文）。"""
+        flat = now.replace(tzinfo=None)
+        local_foods = self._local_items(view.values(), flat)
+        oil_ml = 0.0
+        salt_g = 0.0
+        for item in local_foods:
+            if is_ended(item) is not None:
+                continue
+            info = measure(item)
+            left = float((info or {}).get("left") or 0.0)
+            if left <= 0:
+                continue
+            if self._is_edible_oil(item):
+                oil_ml += left
+            elif self._is_salt_staple(item):
+                salt_g += left
+        notes = []
+        if oil_ml <= 0:
+            notes.append(
+                '【家里食用油已用光：现余 0 毫升！】cook 严禁填 "fry"（只能选 boil 水煮/熬煮、steam 清蒸、roast 烘烤或 cold 凉拌），'
+                "也做不了「油封」保鲜！须先买回或领到食用油并在 items 写 new 入库。"
+            )
+        elif oil_ml <= 60:
+            notes.append("【食用油快见底了：现余 %s】省着用，不够 60 毫升时做不成「油封」保鲜。" % fmt_amount(oil_ml, "毫升"))
+        if salt_g <= 0:
+            notes.append("【家里食盐已用光：现余 0 克！】做不出盐腌保鲜，做菜也放不了盐，须先补充食盐入库。")
+        elif salt_g <= 20:
+            notes.append("【食盐快见底了：现余 %s】记得抽空添一点盐。" % fmt_amount(salt_g, "克"))
+        return "\n".join(notes)
 
     def item_history(self, item: dict, view: View, label_fn=None) -> str:
         head = "%s %s〔%s〕" % (item.get("id"), item.get("name"), item.get("kind") or "东西")

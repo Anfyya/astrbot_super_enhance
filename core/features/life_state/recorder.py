@@ -116,7 +116,7 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
    - kind 从这几类里挑：{kinds}。origin 写哪来的（谁在哪买的、谁送的）；自己做的留空。
    - 做菜：做好的那盘菜是新的一件，第一步「做好了」，from 写用了清单里哪几件（写编号；这一批里新记的写临时代号；用到的米面油盐、调料也写上）；用掉的每一件，各记一步「用掉一部分」或「用完了」，into 写那盘菜，按量记的写上 used。用的料清单里没有的，from 里就不写它，一件都对不上就留空。买来的、别人送的熟菜，from 留空。剩下的菜还是那一件，又吃了就记「吃了一部分」「吃完了」。
    - 已有的那件又发生了一步：写 id（清单里的编号；这一批里新记的写临时代号）和这一步。同样的东西有好几件、说不清是哪件的，记在最早有的那件上。
-   - 每一步写：at（发生的时刻 YYYY-MM-DD HH:MM）、what（{steps}）、left（这一步之后还剩多少，比如「两块」「小半锅」；用完、吃完写空——用完、吃完必须单独写一步，what 填「用完了」或「吃完了」，别把「吃完了」塞进 left 里）、amount / used（按量记的才写，见上）、place（搁在哪，写法见下一条）、keep（怎么放：{keeps}）、spot（放在哪，管冷热：{spots}；屋里常温的不用写）、state（整的 / 切开了 / 碰伤了 / 没熟透）、by（谁：napcat / napcat2 / master，别人写名字）、into（用掉是做进了哪盘菜）、quote（摘原文里说这件事的那句话）。place、keep、spot、state 跟上一步一样的不用写。剩菜回锅、凉了热一热记一步「热了一下」；端回锅里重新煎透、煮透、再蒸一下、回炉也是「热了一下」（她说已经下锅了就记，不用等做完）；聊天里说出来中间没熟、夹生、没煎透的，在说出来的那一刻给那件记一步「清点」，state 写「没熟透」，left 照原样；开始腌、晒、熏记「腌上了」「晒上了」「熏上了」（晒、熏写上 spot，比如太阳底下、屋外）。
+   - 每一步写：at（发生的时刻 YYYY-MM-DD HH:MM）、what（{steps}）、left（这一步之后还剩多少，比如「两块」「小半锅」；用完、吃完写空——用完、吃完必须单独写一步，what 填「用完了」或「吃完了」，别把「吃完了」塞进 left 里）、amount / used（按量记的才写，见上）、cook（自己刚做出的熟菜才填五选一：boil/fry/steam/roast/cold，其余不填）、place（搁在哪，写法见下一条）、keep（怎么放：{keeps}）、spot（放在哪，管冷热：{spots}；屋里常温的不用写）、state（整的 / 切开了 / 碰伤了 / 没熟透）、by（谁：napcat / napcat2 / master，别人写名字）、into（用掉是做进了哪盘菜）、quote（摘原文里说这件事的那句话）。place、keep、spot、state 跟上一步一样的不用写。剩菜回锅、凉了热一热记一步「热了一下」；端回锅里重新煎透、煮透、再蒸一下、回炉也是「热了一下」（她说已经下锅了就记，不用等做完）；聊天里说出来中间没熟、夹生、没煎透的，在说出来的那一刻给那件记一步「清点」，state 写「没熟透」，left 照原样；保鲜加工直接填明确动作 what：轻腌 / 重盐腌 / 糖渍 / 醋泡 / 酱渍 / 油封 / 灰沙埋 / 晒上了 / 炉烘 / 熏上了（晒、炉烘、熏写上 spot）。
    - place 拆开写，别连成一句：area 是在哪间屋、哪个地方（不在宿舍的写那个地方，例如「镇外梯田的农家灶房」）；at 是搁在那儿的什么上、什么里（矮桌、柜格、案上、灶上、水盆、书架、窗台……）；detail 是再细一点的哪一格、哪个容器里（桌角、第二格、竹筛里、锅里），说不上来就空着。area 和 at 都得有，光写一间屋不算。例如 {{"area": "堂屋", "at": "矮桌", "detail": "桌角"}}、{{"area": "灶房", "at": "案上", "detail": "竹筛里"}}、{{"area": "灶房", "at": "柜格", "detail": ""}}。拿在手上、揣在身上的：area 写谁，at 写手上、袖子里、菜篮里，例如 {{"area": "亚托莉", "at": "手上", "detail": ""}}。聊天里没说搁在哪的，照常理挑一处（剩菜盖好搁灶上或柜格，点心、糖搁堂屋柜里或盒子里，米面调料在灶房柜格）；没挪地方的不写 place。
    - 「记错了」只用在清单里确实记错了的那件（根本没这回事）。
    - 聊天里主人或她说吃了、吃完了、用了、用完了清单上的某件（世界线里做的、算进清单的也算），就给那件记一步（吃了一部分 / 吃完了 / 用掉一部分 / 用完了），别漏：没点名的（主人只说「吃完了」），按前面几句在说哪件认（刚提醒他吃的、刚端给他的那件），例如前面说「蒸鸡蛋糕切好码在盘里了」，主人说「吃完了」，就给蒸鸡蛋糕记「吃完了」或「吃了一部分」，别记到别的菜上；认不出是哪件的不记。
@@ -134,7 +134,7 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
 {{
   "entries": [
     {{"who": "napcat", "kind": "activity", "start": "2026-10-11 09:00", "end": "2026-10-11 09:40", "place": "", "doing": "",
-      "public": "", "with": [], "training": "", "seen_by": [], "asked": false, "upset": false, "quote": "摘一句原文"}}
+      "public": "", "with": [], "training": "", "seen_by": [], "stove": "", "lamp": false, "kerosene": false, "asked": false, "upset": false, "quote": "摘一句原文"}}
   ],
   "constraints": [
     {{"who": "napcat", "text": "练成收放之前不许出藏经阁", "public": "在藏经阁闭关练功",
@@ -216,9 +216,6 @@ def _digest(text: str) -> str:
 FREE_SHIFT_MINUTES = 10
 # 两人「一起」做的同一件新事：两边开始的时刻差这么多分钟以内才算是同一件（两边各自收尾的时间可能不一样）
 PAIR_NEAR_MINUTES = 15
-# 主人生她气、训她这类事（记录员没写 upset 时按 doing 认）；说的是气消了、原谅了的不算
-UPSET_WORDS = re.compile(r"训斥|训了|训她|挨训|挨骂|骂了|骂她|数落|责备|责怪|呵斥|教训|发火|发脾气|生.{0,3}气|动了?气|恼了|冷着|闹别扭|赌气|不理她")
-UPSET_OFF = re.compile(r"气消|消气|不生.{0,3}气了|原谅|和好|哄好")
 
 
 @dataclass
@@ -793,6 +790,7 @@ class Recorder:
                 logger.info("[super_enhance/world] 记录员记的「%s」撞上%s用现在去做写的 %s，不另记",
                             clean_text(raw.get("doing"), 30), self.label(who) or who, mine.get("id"))
                 continue
+            stove_val = str(raw.get("stove") or "").strip().lower()
             entry = {
                 "who": who,
                 "kind": kind,
@@ -808,6 +806,9 @@ class Recorder:
                 "src_umo": umo,
                 "src_quote": raw.get("quote"),
                 "created": fmt_time(now),
+                "stove": stove_val if kind == "activity" and stove_val in ("charcoal", "wood") else "",
+                **({"lamp": True} if kind == "activity" and (raw.get("lamp") is True or str(raw.get("lamp") or "").lower() == "true") else {}),
+                **({"kerosene": True} if raw.get("kerosene") is True or str(raw.get("kerosene") or "").lower() == "true" else {}),
                 # 主人叫她现在去做的：做完叫她回来说一声；被打断照实写；后来发现其实没去做，记录员能撤
                 "asked": bool(raw.get("asked")) and kind == "activity" and who != "master",
             }
@@ -839,11 +840,9 @@ class Recorder:
 
     @staticmethod
     def _upset(raw: dict) -> bool:
-        """这件事是不是主人训她、生她气这类会影响心情的：记录员标了 upset 就算；没标的按 doing 里的字认（说气消了的不算）。"""
-        if raw.get("upset") is True or str(raw.get("upset") or "").strip().lower() == "true":
-            return True
-        text = str(raw.get("doing") or "")
-        return bool(UPSET_WORDS.search(text)) and not UPSET_OFF.search(text)
+        """只认记录员显式标注的结构化 upset 字段，不再用正则猜测中文句子。"""
+        val = raw.get("upset")
+        return val is True or str(val or "").strip().lower() == "true"
 
     def _apply_constraints(self, data: dict, umo: str, now: datetime.datetime, batch: list) -> None:
         """记新规矩、撤规矩。谁的规矩变了，两个人后面补写排的、还没开始的段都撤掉，由补写按新规矩重排
@@ -1651,6 +1650,7 @@ class Recorder:
             place = checked_place(raw.get("place"), new, raw.get("name") or raw.get("id"))
         except Exception:
             place = ""
+        cook_val = str(raw.get("cook") or "").strip().lower()
         return {
             "at": at,
             "what": raw.get("what"),
@@ -1658,6 +1658,7 @@ class Recorder:
             "place": place,
             "keep": raw.get("keep"),
             "state": raw.get("state"),
+            "cook": cook_val if cook_val in ("boil", "fry", "steam", "roast", "cold") else "",
             "amount": raw.get("amount"),
             "used": raw.get("used"),
             "holder": self._by(raw.get("holder")) if raw.get("holder") else "",
