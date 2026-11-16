@@ -810,6 +810,7 @@ class Recorder:
                 **({"outfit": clean_text(raw.get("outfit"), 100)} if kind == "activity" and str(raw.get("outfit") or "").strip() else {}),
                 **({"lamp": True} if kind == "activity" and (raw.get("lamp") is True or str(raw.get("lamp") or "").lower() == "true") else {}),
                 **({"kerosene": True} if raw.get("kerosene") is True or str(raw.get("kerosene") or "").lower() == "true" else {}),
+                **({"water": True} if kind == "activity" and (raw.get("water") is True or str(raw.get("water") or "").lower() == "true") else {}),
                 # 主人叫她现在去做的：做完叫她回来说一声；被打断照实写；后来发现其实没去做，记录员能撤
                 "asked": bool(raw.get("asked")) and kind == "activity" and who != "master",
             }
@@ -1213,6 +1214,12 @@ class Recorder:
             "msg_purpose": planned.get("msg_purpose") or "",
             "meal": planned.get("meal"),
             "at_home": planned.get("at_home"),
+            "stove": planned.get("stove") or "",
+            **({"lamp": True} if planned.get("lamp") else {}),
+            **({"kerosene": True} if planned.get("kerosene") else {}),
+            **({"water": True} if planned.get("water") else {}),
+            **({"outfit": planned["outfit"]} if planned.get("outfit") else {}),
+            **({"mood": planned["mood"]} if planned.get("mood") else {}),
             "intent": planned.get("intent") or "",
             "origin": planned.get("origin"),
         }
@@ -1434,6 +1441,8 @@ class Recorder:
             "public": after.get("public"), "with": [], "seen_by": [to],
             "steps": [x for x in rest if x.get("minutes")] or [x.get("text") for x in rest],
             "things": steps, "source": "step", "at_home": after.get("at_home"), "importance": after.get("importance"),
+            "stove": after.get("stove") or "",
+            **({"lamp": True} if after.get("lamp") else {}),
             "send_msg": bool(after.get("send_msg")) and after.get("msg_at") == "end",
             "msg_at": "end" if bool(after.get("send_msg")) and after.get("msg_at") == "end" else "",
             "msg_purpose": (after.get("msg_purpose") or "") if bool(after.get("send_msg")) and after.get("msg_at") == "end" else "",

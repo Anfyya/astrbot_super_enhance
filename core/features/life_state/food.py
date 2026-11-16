@@ -412,6 +412,8 @@ def spot_temp(spot: str, moment: datetime.datetime, weather_text, warm_hours=Non
             return LUKEWARM_TEMP
     temp = room_temp(moment, weather_text)
     if spot == "阴凉处":
+        if split_home(weather_text)[0] == "海边小镇" and moment >= SEA_COLD_SNAP_START:
+            return max(3.0, temp - 2.5)
         return temp - 4.0
     return temp
 
@@ -1225,6 +1227,8 @@ class Sim:
                 return min(22.5, t + max(0.0, float(self.cabin_delta_fn(moment))))
             if self.fire_lit_fn is not None and self.fire_lit_fn(moment):
                 return max(t, 15.0)
+        elif self.spot == "阴凉处" and self.cabin_delta_fn is not None:
+            return min(15.0, t + 0.4 * max(0.0, float(self.cabin_delta_fn(moment))))
         return t
 
     def spoil_rate(self, temp: float) -> float:

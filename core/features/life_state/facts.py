@@ -13,7 +13,7 @@ def fact_batch(owner, *, preview=False):
             continue
         fields = {}
         for key in ("_days", "_state", "_routine", "_data", "_revision", "_dirty_days",
-                    "_view_cache", "_weather_cache", "_sim_cache"):
+                    "_view_cache", "_weather_cache", "_sim_cache", "_fire_win_cache", "_cabin_curve_cache"):
             if hasattr(store, key):
                 fields[key] = copy.deepcopy(getattr(store, key))
         tracked.append((store, fields))

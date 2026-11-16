@@ -2352,8 +2352,12 @@ class ThingStore:
                     step["into"] = into
             place_str = _place_text(raw.get("place"))
             keep, spot = split_keep(raw.get("keep"), raw.get("spot"), place_str)
+            cook = str(raw.get("cook") or "").strip().lower()
+            if cook not in ("boil", "fry", "steam", "roast", "cold"):
+                cook = ""
             step.update({"what": what, "left": clean_text(raw.get("left"), MAX_LEFT), "place": place_str,
                          "keep": keep, "spot": spot, "state": norm_state(raw.get("state")),
+                         "cook": cook,
                          "amount": clean_text(raw.get("amount"), MAX_LEFT), "used": clean_text(raw.get("used"), MAX_LEFT),
                          "step": step_no(raw.get("step")) or ""})
             out.append({k: v for k, v in step.items() if v not in ("", None, []) or k == "left"})
@@ -2517,7 +2521,7 @@ class ThingStore:
             raw_w = self._weather_fn(flat)
             text_of = lambda d: weather_mod.split(raw_w(d))[1]
             _tbl, eval_at = weather_mod.build_cabin_curve(
-                self.world, flat.date() - datetime.timedelta(days=SCAN_DAYS), flat.date(), text_of, home="海边小镇"
+                self.world, flat.date() - datetime.timedelta(days=SCAN_DAYS), flat.date() + datetime.timedelta(days=2), text_of, home="海边小镇"
             )
             self._cabin_curve_cache = (key, eval_at)
 

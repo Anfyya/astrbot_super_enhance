@@ -714,6 +714,8 @@ class LifeStep:
 
         def text_of(day):
             key = day.isoformat()
+            if key == "2026-11-17" and key not in seeds and self.home == "海边小镇":
+                return "北风寒潮南下，一夜间急转成「寒风」"
             older = [k for k in known if k <= key]
             return str(seeds[older[-1]]["weather"]) if older else "多云"
 
@@ -2151,13 +2153,19 @@ class LifeStep:
         inv_state = self._live_inventory_state(tasks, flat, shelf)
         seaside = self.home == "海边小镇"
 
+        from .things import is_charcoal
+
         errors: list[str] = []
         batch_food_keys: set[str] = set()
         batch_item_keys: set[str] = set()
-        batch_added_charcoal = False
-        batch_added_wood = False
-        batch_added_oil = False
-        batch_added_kerosene = False
+        first_charcoal_at: datetime.datetime | None = None
+        first_wood_at: datetime.datetime | None = None
+        first_oil_at: datetime.datetime | None = None
+        first_kerosene_at: datetime.datetime | None = None
+        batch_any = {
+            "new_item": False, "used_item": False, "new_food": False, "food_step": False,
+            "water": False, "kerosene": False, "wood_stove": False,
+        }
 
         # 先收集保留段内跨人共享的 new 临时代号及本批次新增燃料/调料/煤油标记（全部按结构化字段判）
         kept_by_bot: dict[str, tuple[list[tuple[int, dict, datetime.datetime, datetime.datetime, str]], datetime.datetime, datetime.datetime | None]] = {}
@@ -2207,23 +2215,39 @@ class LifeStep:
                 if until is not None:
                     seg_end = min(seg_end, until)
                 bot_kept.append((idx, raw, cursor, seg_end, st_code))
-                cursor = seg_end
                 if raw.get("kerosene") is True:
-                    batch_added_kerosene = True
+                    batch_any["kerosene"] = True
+                    if first_kerosene_at is None or cursor < first_kerosene_at:
+                        first_kerosene_at = cursor
+                if raw.get("water") is True:
+                    batch_any["water"] = True
                 if st_code == "do":
+                    if raw.get("stove") == "wood":
+                        batch_any["wood_stove"] = True
                     for eff in raw.get("things") or []:
-                        if isinstance(eff, dict) and eff.get("new"):
-                            batch_food_keys.add(str(eff["new"]).strip())
-                            if str(eff.get("kind") or "") == "干货调料粮食" and store is not None and store._is_edible_oil({"cat": CAT_FOOD, "name": eff.get("name"), "kind": "干货调料粮食"}):
-                                batch_added_oil = True
+                        if isinstance(eff, dict):
+                            batch_any["food_step"] = True
+                            if eff.get("new"):
+                                batch_any["new_food"] = True
+                                batch_food_keys.add(str(eff["new"]).strip())
+                                if str(eff.get("kind") or "") == "干货调料粮食" and store is not None and store._is_edible_oil({"cat": CAT_FOOD, "name": eff.get("name"), "kind": "干货调料粮食"}):
+                                    if first_oil_at is None or cursor < first_oil_at:
+                                        first_oil_at = cursor
                     for eff in raw.get("items") or []:
-                        if isinstance(eff, dict) and eff.get("new"):
-                            batch_item_keys.add(str(eff["new"]).strip())
-                            item_probe = {"cat": CAT_ITEM, "name": eff.get("name"), "kind": eff.get("kind")}
-                            if str(eff.get("kind") or "") == "燃料":
-                                batch_added_charcoal = True
-                            if weathering.fuel_item(item_probe) or str(eff.get("kind") or "") == "燃柴":
-                                batch_added_wood = True
+                        if isinstance(eff, dict):
+                            if eff.get("new"):
+                                batch_any["new_item"] = True
+                                batch_item_keys.add(str(eff["new"]).strip())
+                                item_probe = {"cat": CAT_ITEM, "name": eff.get("name"), "kind": eff.get("kind")}
+                                if is_charcoal(item_probe):
+                                    if first_charcoal_at is None or cursor < first_charcoal_at:
+                                        first_charcoal_at = cursor
+                                if weathering.fuel_item(item_probe) or str(eff.get("kind") or "") == "燃柴":
+                                    if first_wood_at is None or cursor < first_wood_at:
+                                        first_wood_at = cursor
+                            else:
+                                batch_any["used_item"] = True
+                cursor = seg_end
             kept_by_bot[bot] = (bot_kept, cursor, until)
 
         # 逐人逐段做纯结构化校验
@@ -2232,7 +2256,10 @@ class LifeStep:
             if not bot_kept:
                 errors.append(f"{who_lbl}（{bot}）：没有有效段落")
                 continue
-            if final_cursor <= flat or (until is not None and not bot_kept):
+            if until is not None:
+                if final_cursor <= tasks[bot]["start"]:
+                    errors.append(f"{who_lbl}（{bot}）：补空档最后一段结束时刻（{fmt_time(final_cursor)}）必须晚于空档起点（{fmt_time(tasks[bot]['start'])}）")
+            elif final_cursor <= flat:
                 errors.append(f"{who_lbl}（{bot}）：最后一段结束时刻（{fmt_time(final_cursor)}）必须晚于当前时刻（{fmt_time(flat)}）")
 
             bot_has_new_item = False
@@ -2242,6 +2269,7 @@ class LifeStep:
             bot_has_water_true = False
             bot_has_kerosene_true = False
             bot_has_wood_stove = False
+            bot_has_partner = False
             bot_resolved_origins: list[dict] = []
 
             for idx, raw, seg_start, seg_end, st_code in bot_kept:
@@ -2289,10 +2317,12 @@ class LifeStep:
                     bot_has_water_true = True
                 if raw.get("kerosene") is True:
                     bot_has_kerosene_true = True
+                if raw.get("with"):
+                    bot_has_partner = True
                 if seaside and raw.get("lamp") is True:
                     if sleep:
                         errors.append(f"{tag}：睡觉段 lamp 必须为 false")
-                    elif not (inv_state.get("lamp_ok") or batch_added_kerosene):
+                    elif not (inv_state.get("lamp_ok") or (first_kerosene_at is not None and first_kerosene_at <= seg_end)):
                         errors.append(f"{tag}：家里煤油已点完且未领新煤油，lamp 不能填 true")
 
                 if raw.get("send_msg") is True:
@@ -2317,10 +2347,10 @@ class LifeStep:
                         errors.append(f"{tag}：非海边住处 stove 必须填 \"\"")
                     elif stove_val != "" and (st_code != "do" or raw.get("at_home") is False or raw.get("meal") is True):
                         errors.append(f"{tag}：外出、吃饭、闲着或睡觉段没有生火，stove 必须填 \"\"")
-                    elif stove_val == "charcoal" and inv_state["charcoal_g"] <= 0 and not batch_added_charcoal:
-                        errors.append(f"{tag}：家里闷炭现余 0 克且未先补炭入库，stove 严禁填 \"charcoal\"")
-                    elif stove_val == "wood" and inv_state["wood_bundles"] <= 0 and not batch_added_wood:
-                        errors.append(f"{tag}：家里干柴为 0 且未先补柴入库，stove 严禁填 \"wood\"")
+                    elif stove_val == "charcoal" and inv_state["charcoal_g"] <= 0 and not (first_charcoal_at is not None and first_charcoal_at <= seg_end):
+                        errors.append(f"{tag}：家里闷炭现余 0 克且在此之前未补炭入库，stove 严禁填 \"charcoal\"")
+                    elif stove_val == "wood" and inv_state["wood_bundles"] <= 0 and not (first_wood_at is not None and first_wood_at <= seg_end):
+                        errors.append(f"{tag}：家里干柴为 0 且在此之前未补柴入库，stove 严禁填 \"wood\"")
                     if stove_val == "wood":
                         bot_has_wood_stove = True
 
@@ -2379,20 +2409,24 @@ class LifeStep:
                             if ck not in ("boil", "fry", "steam", "roast", "cold"):
                                 errors.append(f"{tag} things[{t_i}]（{nm}）：what=\"做好了\" 时必须填 cook（boil/fry/steam/roast/cold 五选一）")
                             else:
-                                if ck == "fry" and inv_state["oil_ml"] is not None and inv_state["oil_ml"] <= 0 and not batch_added_oil:
-                                    errors.append(f"{tag} things[{t_i}]（{nm}）：家里食用油现余 0 毫升且未补油，cook 严禁填 \"fry\"")
+                                has_oil_now = (inv_state["oil_ml"] is None or inv_state["oil_ml"] > 0) or (first_oil_at is not None and first_oil_at <= seg_end)
+                                if ck == "fry" and not has_oil_now:
+                                    errors.append(f"{tag} things[{t_i}]（{nm}）：家里食用油现余 0 毫升且在此之前未补油，cook 严禁填 \"fry\"")
                                 if seaside and raw.get("at_home") is True and ck in ("boil", "fry", "steam", "roast") and stove_val not in ("charcoal", "wood"):
                                     errors.append(f"{tag} things[{t_i}]（{nm}）：在船屋做好热食（cook=\"{ck}\"）时，该段 stove 必须填 \"charcoal\" 或 \"wood\"，不能填 \"\"")
                     else:
                         tid = str(eff.get("id") or "").strip()
-                        found = tid in batch_food_keys or (shelf.find(tid) is not None if shelf is not None else bool(tid))
+                        shelf_food = shelf.find(tid) if (shelf is not None and tid) else None
+                        found = tid in batch_food_keys or (
+                            (shelf_food is not None and is_ended(shelf_food) is None) if shelf is not None else bool(tid)
+                        )
                         if not tid or not found:
-                            errors.append(f"{tag} things[{t_i}]：id={tid!r} 在当前库存或本轮新建代号中不存在")
+                            errors.append(f"{tag} things[{t_i}]：id={tid!r} 在当前可用库存或本轮新建代号中不存在（或早已吃完用完）")
                         if what not in MID_STEPS + END_STEPS:
                             errors.append(f"{tag} things[{t_i}]（{tid}）：已有食物的 what={eff.get('what')!r} 不合法")
                         if what in ("用完了", "吃完了") and str(eff.get("left") or "").strip():
                             errors.append(f"{tag} things[{t_i}]（{tid}）：what=\"{what}\" 时 left 必须填空串 \"\"")
-                        if what == "油封" and inv_state["oil_ml"] is not None and inv_state["oil_ml"] < 60 and not batch_added_oil:
+                        if what == "油封" and inv_state["oil_ml"] is not None and inv_state["oil_ml"] < 60 and not (first_oil_at is not None and first_oil_at <= seg_end):
                             errors.append(f"{tag} things[{t_i}]（{tid}）：家里食用油不足 60 毫升，不能做 \"油封\"")
                         if what == "炉烘" and stove_val != "wood":
                             errors.append(f"{tag} things[{t_i}]（{tid}）：做 what=\"炉烘\" 时该段 stove 必须填 \"wood\"")
@@ -2413,8 +2447,8 @@ class LifeStep:
                         if what not in ITEM_START_STEPS:
                             errors.append(f"{tag} items[{i_i}]（{nm}）：new 物品的 what 必须填 开始做/做好了/买回来/收到/捡到/原来就有（当前={eff.get('what')!r}）")
                         elif seaside and what == "原来就有" and kd in (
-                            "衣物", "衣服", "棉袄", "外套", "大衣", "夹克", "毛衣", "棉衣",
-                            "围巾", "手套", "袜子", "靴子", "被子", "棉被", "厚被", "被褥", "毛毯", "毯子",
+                            "衣物", "衣服", "衣裳", "冬衣", "厚衣", "棉袄", "外套", "大衣", "夹克", "毛衣", "棉衣", "棉袍",
+                            "围巾", "手套", "袜子", "靴子", "被子", "棉被", "厚被", "被褥", "铺盖", "毛毯", "毯子",
                         ):
                             errors.append(f"{tag} items[{i_i}]（{nm}）：海边船屋开局无自带厚衣铺盖，严禁给衣物铺盖填 what=\"原来就有\"（须通过买回来/收到/做好了获取）")
                         try:
@@ -2426,33 +2460,45 @@ class LifeStep:
                         tid = str(eff.get("id") or "").strip()
                         shelf_hit = shelf.find(tid) if (shelf is not None and tid) else None
                         found = tid in batch_item_keys or (
-                            (shelf_hit is not None and str(shelf_hit.get("cat") or "") == CAT_ITEM) if shelf is not None else bool(tid)
+                            (shelf_hit is not None and str(shelf_hit.get("cat") or "") == CAT_ITEM and is_ended(shelf_hit) is None)
+                            if shelf is not None else bool(tid)
                         )
                         if not tid or not found:
-                            errors.append(f"{tag} items[{i_i}]：id={tid!r} 在当前物品清单或本轮新建代号中不存在")
+                            errors.append(f"{tag} items[{i_i}]：id={tid!r} 在当前可用物品清单或本轮新建代号中不存在（或早已用完丢弃）")
                         if what not in ITEM_MID_STEPS + ITEM_END_STEPS:
                             errors.append(f"{tag} items[{i_i}]（{tid}）：已有物品的 what={eff.get('what')!r} 不合法")
 
-            # 按池子条目的结构化 link / group 核对是否漏写对应的台账变动（零正文关键词猜测）
+            # 按池子条目的结构化 link / group 核对是否漏写对应的台账变动（同行/双人插曲支持跨人共享核销，避免重复入库）
             for orig in bot_resolved_origins:
                 if orig["kind"] not in ("twist", "night_twist", "together", "pastime"):
                     continue
+                shared_ok = orig["kind"] == "together" or bot_has_partner
+                eff_new_item = bot_has_new_item or (shared_ok and batch_any["new_item"])
+                eff_used_item = bot_has_used_item or (shared_ok and batch_any["used_item"])
+                eff_new_food = bot_has_new_food or (shared_ok and batch_any["new_food"])
+                eff_food_step = bot_has_food_step or (shared_ok and batch_any["food_step"])
+                eff_water = bot_has_water_true or (shared_ok and batch_any["water"])
+                eff_kerosene = bot_has_kerosene_true or (shared_ok and batch_any["kerosene"])
+                eff_wood_stove = bot_has_wood_stove or (shared_ok and batch_any["wood_stove"])
+
                 p_row = pool_meta.get(orig["text"]) or {}
                 p_link = str(p_row.get("link") or "")
                 p_grp = str(p_row.get("group") or "")
-                if p_link in ("charcoal", "charcoal_stove", "firewood") and not bot_has_new_item:
+                if p_link in ("charcoal", "charcoal_stove", "firewood") and not eff_new_item:
                     errors.append(f"{who_lbl}采用了燃料获取插曲「{orig['text']}」，必须在完成段的 items 里写 new 将新得的燃料/燃柴入库")
-                elif p_link == "barter_item" and not (bot_has_used_item and bot_has_new_item):
+                elif p_link == "winter_gear" and not eff_new_item:
+                    errors.append(f"{who_lbl}采用了置办过冬衣物铺盖插曲「{orig['text']}」，必须在完成段的 items 里写 new 将淘换来的厚衣/棉被入库")
+                elif p_link == "barter_item" and not (eff_used_item and eff_new_item):
                     errors.append(f"{who_lbl}采用了以物易物插曲「{orig['text']}」，必须在 items 里同时写消耗的旧物（id）与换回的新物（new）")
-                elif p_link in ("ship_day", "restock") and not (bot_has_new_item or bot_has_new_food):
+                elif p_link in ("ship_day", "restock") and not (eff_new_item or eff_new_food):
                     errors.append(f"{who_lbl}采用了采买/补货插曲「{orig['text']}」，必须在 things 或 items 里写 new 将带回来的东西入库")
-                elif p_link in ("preserve_jam", "preserve_pickle", "fish_dry", "fish_stove", "ash") and not bot_has_food_step:
+                elif p_link in ("preserve_jam", "preserve_pickle", "fish_dry", "fish_stove", "ash") and not eff_food_step:
                     errors.append(f"{who_lbl}采用了保鲜加工插曲「{orig['text']}」，必须在 things 里写出对应的食材保鲜加工步骤")
-                elif p_link == "kerosene" and seaside and not (bot_has_kerosene_true and bot_has_new_item):
+                elif p_link == "kerosene" and seaside and not (eff_kerosene and eff_new_item):
                     errors.append(f"{who_lbl}采用了打煤油插曲「{orig['text']}」，打油那段必须填 \"kerosene\": true 并在 items 里把顺手带回的火柴入库")
-                elif p_link == "wood_stove" and seaside and not bot_has_wood_stove:
+                elif p_link == "wood_stove" and seaside and not eff_wood_stove:
                     errors.append(f"{who_lbl}采用了烧柴炉插曲/消遣「{orig['text']}」，对应段必须填 \"stove\": \"wood\"")
-                elif p_grp == "取淡水" and seaside and not bot_has_water_true:
+                elif p_grp == "取淡水" and seaside and not eff_water:
                     errors.append(f"{who_lbl}采用了取淡水插曲「{orig['text']}」，打水那段必须填 \"water\": true")
 
         return errors
@@ -2681,7 +2727,7 @@ class LifeStep:
                 last["end"] = fmt_time(until)
                 cursor = until
             written[bot] = rows
-            if cursor <= flat or (until is not None and not rows):
+            if (until is None and cursor <= flat) or (until is not None and not rows):
                 missed.append(self.label(bot) or bot)
         _dedup_joint_proactive(written, now=flat, world=self.world)
         self._apply_intent_moves(moves, written, flat)
@@ -2772,14 +2818,19 @@ class LifeStep:
                             % (min_temp, th_win["cabin"], th_win["stove_desc"])
                         )
                     else:
+                        bed_word = "被褥" if ctx.get("has_thick_quilt") else "薄被和旧毛毯"
                         nudges.append(
-                            "- 严寒断柴转折：屋外低至约 %.0f℃、船舱仅约 %.0f℃，冻得想点铁桶柴炉，去摸柴架却发现干柴烧空了——白天无大雨大雪就赶紧去坡上薪柴地或船坞背干柴回来（items 写 new 燃柴入库）再生炉；夜深了就紧塞门缝裹紧厚被，记着明早头一件事去拾柴。"
-                            % (min_temp, th_win["cabin"])
+                            "- 严寒断柴转折：屋外低至约 %.0f℃、船舱仅约 %.0f℃，冻得想点铁桶柴炉，去摸柴架却发现干柴烧空了——白天无大雨大雪就赶紧去坡上薪柴地或船坞背干柴回来（items 写 new 燃柴入库）再生炉；夜深了就紧塞门缝裹紧%s，记着明早头一件事去拾柴。"
+                            % (min_temp, th_win["cabin"], bed_word)
                         )
                 elif 0 < inv["wood_bundles"] < 1.5 and 7 <= win_start.hour <= 16 and max_rain < 0.5:
                     nudges.append(
                         "- 入冬囤柴提醒：天冷早晚都要烧铁桶柴炉，家里干柴只剩 %.2g 捆不够烧两天了——趁白天没雨雪，顺手排一段去坡上薪柴地或船坞多背点干柴囤进仓棚（items 写 new 燃柴入库）。"
                         % inv["wood_bundles"]
+                    )
+                if not ctx.get("has_winter_gear") and 8 <= win_start.hour <= 16 and max_rain < 1.0:
+                    nudges.append(
+                        "- 单衣过冬提醒：天已骤冷，船屋里目前还没有置办齐厚冬衣和厚棉被——若手里有打捞攒下的钱或鱼干，白天可去半淹商店街二楼旧衣铺或集市淘换厚棉衣、厚袜或旧棉被（买/换回来须在 items 里写 new 入库后才能穿盖）。"
                     )
             elif chilly and cabin_cool and not recent_wood:
                 if inv["wood_bundles"] > 0:

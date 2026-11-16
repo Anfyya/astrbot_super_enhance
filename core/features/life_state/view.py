@@ -392,6 +392,8 @@ def weather_now_text(service, now: datetime.datetime, bot: str = "") -> str:
 
     def text_of(day):
         key = day.isoformat()
+        if key == "2026-11-17" and key not in seeds and str(service.cfg.get("world_home") or "").strip() == "海边小镇":
+            return "北风寒潮南下，一夜间急转成「寒风」"
         older = [k for k in known if k <= key]
         return str(seeds[older[-1]]["weather"]) if older else "多云"
 
@@ -451,9 +453,8 @@ def current_outfit_of(world, bot: str, label: str, now: datetime.datetime) -> st
     cur = world.current(bot, flat) if world is not None else None
     sleeping = bool(cur is not None and _is_sleep(cur))
     if world is not None:
-        latest = ""
-        latest_sleep = False
-        for back in (2, 1, 0):
+        latest_by_sleep = {False: "", True: ""}
+        for back in (4, 3, 2, 1, 0):
             d_str = (flat.date() - datetime.timedelta(days=back)).isoformat()
             for item in world.entries(d_str):
                 if str(item.get("who") or "") != str(bot) or item.get("kind") == "event" or _real_stop(item):
@@ -463,10 +464,9 @@ def current_outfit_of(world, bot: str, label: str, now: datetime.datetime) -> st
                     continue
                 worn = str(item.get("outfit") or "").strip()
                 if worn:
-                    latest = worn
-                    latest_sleep = bool(_is_sleep(item))
-        if latest and latest_sleep == sleeping:
-            return latest
+                    latest_by_sleep[bool(_is_sleep(item))] = worn
+        if latest_by_sleep[sleeping]:
+            return latest_by_sleep[sleeping]
     defaults = DEFAULT_OUTFITS.get(str(label or "").strip()) or {
         "awake": "平时的单薄常服（没有厚外套）",
         "sleep": "单薄睡衣",
@@ -527,6 +527,8 @@ def _weather_text_of(service):
 
     def text_of(day):
         key = day.isoformat()
+        if key == "2026-11-17" and key not in seeds and str(service.cfg.get("world_home") or "").strip() == "海边小镇":
+            return "北风寒潮南下，一夜间急转成「寒风」"
         older = [k for k in known if k <= key]
         return str(seeds[older[-1]]["weather"]) if older else "多云"
 

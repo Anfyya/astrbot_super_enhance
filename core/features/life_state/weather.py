@@ -413,7 +413,11 @@ def _stove_spans_from_world(world, start_day: datetime.date, end_day: datetime.d
                 continue
             if clip_until is not None and st > clip_until:
                 continue
-            en = _parse_time(entry.get("end")) if entry.get("end") else ((clip_until + datetime.timedelta(minutes=5)) if clip_until else (st + datetime.timedelta(minutes=45)))
+            if entry.get("end"):
+                en = _parse_time(entry.get("end"))
+            else:
+                cap_en = st + datetime.timedelta(hours=3)
+                en = min(cap_en, clip_until + datetime.timedelta(minutes=5)) if clip_until else (st + datetime.timedelta(minutes=45))
             if en is None or en <= st:
                 continue
             if has_homes and world.home_at(st) != "海边小镇":
@@ -468,7 +472,7 @@ def _build_zone_curve(spans: list, text_of, home: str, zone: str):
             tau = tau_up_w if target >= d_start else tau_down_w
         else:
             target = min(max_add_c, max(0.0, 20.5 - t_base))
-            tau = tau_up_c if target >= d_start else tau_down_w
+            tau = tau_up_c if target >= d_start else tau_down_c
 
         dur_min = max(0.0, (en - st).total_seconds() / 60.0)
         d_end = target + (d_start - target) * math.exp(-dur_min / tau)
@@ -649,7 +653,7 @@ def warnings(moment: datetime.datetime, until: datetime.datetime, text_of, home:
                 max_plunge,
                 at.strftime("%H:%M"),
                 _deg(low_t),
-                "北风灌港骤冷入冬，船屋里眼下没有厚冬衣棉被，得赶紧塞紧船舱漏风板缝、把铁桶柴炉生起来暖舱（stove=\"wood\"），裹紧仅有的薄被毛毯抗寒，并想办法去镇上旧衣铺或集市淘换过冬衣物铺盖"
+                "北风灌港骤冷入冬，得赶紧塞紧船舱漏风板缝、把铁桶柴炉生起来暖舱（stove=\"wood\"）；若还没置办过冬厚衣棉被，就先裹紧现有的薄被毛毯抗寒、白天去旧衣铺或集市淘换御寒衣物铺盖"
                 if sea else "气温断崖下跌，屋里注意取暖",
             )
         )
