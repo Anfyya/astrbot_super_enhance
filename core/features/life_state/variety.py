@@ -628,6 +628,11 @@ GROUPS = {
         "给接雨水的桶盆换了一层干净的布滤，存下的雨水烧开了装进罐里",
         "把接来的雨水静置沉淀后烧开，晾凉了灌进水壶存成凉白开",
     ),
+    "取淡水": (
+        "蓄水塔放水的日子，拎着桶去塔底下排队接水",
+        "去山上的老井打水，排队时听人闲聊",
+        "去半淹的车站，在站前的龙头接水",
+    ),
     "炭炉烘烤": (
         "围在小炭炉边煨番薯、顺手把半干的小鱼干烘得微焦喷香",
         "守在小炭炉边慢慢烤番薯、烘几条小鱼干",
@@ -1045,6 +1050,7 @@ LINK_LABELS = {
     "laundry": "近36h未洗衣且无湿衣时",
     "rainwater": "雨后存水提权",
     "restock": "缺油盐调料时提权",
+    "barter_item": "以物易物（须扣旧物并入库新物）",
     "ash": "有柴炉灰且有蛋姜番薯时",
     "preserve_jam": "家里有糖时（熬果酱）",
     "preserve_pickle": "家里有醋或酱油时（腌渍）",
@@ -1054,7 +1060,7 @@ LINK_LABELS = {
 
 # 家务与单件旧物组：船屋一家人共享冷却（一人昨天刚洗过衣裳或晒过铺盖，另一人今天不再紧接着重做）
 SHARED_GROUPS = frozenset((
-    "洗衣裳", "晒铺盖", "存雨水", "下蟹笼", "卖废铁", "备柴", "攒闷炭",
+    "洗衣裳", "晒铺盖", "存雨水", "取淡水", "下蟹笼", "卖废铁", "备柴", "攒闷炭",
     "做鱼干", "做保鲜", "打捞所", "修东西", "炭炉烘烤", "摆弄旧零碎", "旧书报",
 ))
 
@@ -1172,6 +1178,7 @@ _ITEM_LINK = {
     "把接来的雨水静置沉淀后烧开，晾凉了灌进水壶存成凉白开": "rainwater",
     "家里常用的东西用完了，得去补上": "restock",
     "拿手里多出来的东西跟人换了一样用得上的": "restock",
+    "拿捞上来的旧零件去收购站换了一卷新缆绳": "barter_item",
     "筛了一盆柴炉退火冷却后的干草木灰，把鲜鸡蛋和生姜埋进去存好": "ash",
     "集市收摊前换回几个磕碰的水果，削净加糖熬成果酱趁热封进玻璃瓶": "preserve_jam",
     "把小鱼或切好的萝卜泡进醋罐和酱油汁里渍上，留着配粥下饭": "preserve_pickle",
@@ -1764,7 +1771,7 @@ def foil_reason(item: dict, ctx: dict | None, groups: dict | None = None) -> str
         if wx == "calm" and (max_rain >= 1.0 or max_wind > 4 or max_fog > 1):
             if max_rain < 4.0:
                 return "拿好家伙到船边一看海面风浪发浑（或起了海雾），下不去水"
-        if wx in ("sunny", "dry") and max_rain < 0.8 and (grp in _FOIL_DRY_GROUPS or "晒" in text or "晾" in text):
+        if wx in ("sunny", "dry") and max_rain < 0.8 and grp in _FOIL_DRY_GROUPS:
             if soon_rain >= 0.05:
                 return "探头看海面阴云压过来、海风潮湿眼看要落雨"
             if wx == "sunny" and avg_cloud > 1.05:

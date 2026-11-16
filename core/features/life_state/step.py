@@ -35,7 +35,7 @@ from . import weathering
 from . import supply as supply_mod
 from .homewords import localize
 from .menu import meal_slots, meals_text
-from .variety import PoolStore, build_live_context, default_pools, draw_window, init_day_seed, twists_of, when_map, with_when
+from .variety import PoolStore, build_live_context, cool_key, default_pools, draw_window, group_map, init_day_seed, twists_of, when_map, with_when
 from .world import (MAX_MSG_PURPOSE, WorldStore, clean_flag, clean_text, doing_text, event_text_at, fmt_time, is_event, is_sleep, mood_text,
                     parse_steps, parse_time, progress_of, real_stop, result_text, steps_text, why_text)
 
@@ -60,6 +60,8 @@ RETRY_SECONDS = 180
 HORIZON_HOURS = 4
 # 一次最多写几段
 MAX_SEGMENTS = 14
+# 结构化字段校验未通过时最多打回重试几次（不兜底瞎猜，让模型按报错补齐合法字段）
+MAX_VALIDATE_RETRIES = 3
 # 往后多远之内的空档要补（撤掉的段留下的）
 FILL_LOOK_HOURS = 24
 # 补空档时最后剩下不到这么多分钟，就把最后一段拉长接上，不再为它调一次模型
@@ -127,7 +129,15 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
 11. 段里是在练「在练的事」里的某件，training 填它的编号（例如 "#2"）；不是在练就留空，不要往里写别的。
 12. 段里做的是「各自的打算」里她的某一条，intent 填那条的编号（例如 "i2"）；不是就留空。标着「现在就去」的，是她刚答应马上去做的：这次就从给你的时刻起先排它，别排在别的事后面；她人还不在做这件事的地方、世界线上也还没在往那边去的，先写一段走过去；可以分成几段（比如先去买、再回来做），每段 intent 都填这个编号。
    标着「挂了几天了」的打算，一直搁着没动：这次给她排一件事把它往前推或了结，照她的性子和眼下的实际情况挑，别每回都是同一种办法。比如：要等主人定日子的，去问主人一句什么时候方便；自己能做的，自己去做了；换个人一起、换个做法；想了想觉得算了，放下了。去问主人只写她去问了，主人怎么答不许替他编。再在 intent_moves 里用编号写这条后来怎样：做完了、放下了的写 "done": true，排它的那几段 intent 填这个编号；还没了结、往前推了一步的写 "done": false，text 写推进以后的打算（照原来的写法：做什么、跟谁、怎么说起的，再加一句这次推进了什么，例如「11-01 问过主人什么时候去，等他回话」），有了新的哪天、几点就写 date、window，排它的那几段 intent 留空。没标的打算不写。
-13. 每段写 from：这段是照上面哪一样写的。照「可能碰上的小事」「手边的消遣」「闲着的样子」「今天会碰上一件意外」里的某一样写的，照抄那一样的原文；照打算、约定、规矩、在练的事、作息（起床、三餐、睡觉）写的，写「打算」「约定」「规矩」「在练」「作息」；接着前面已经做过的某件事往下写的，写「接着：」再加那件事；都不是、自己想的，写「自己想的」。
+13. **每段必填结构化溯源 `from`**（严禁留空，也严禁偷懒填「可能碰上的小事」「手边的消遣」「闲着的样子」这类栏目标题！只允许填以下值之一）：
+   - 采用了上面「今天的情况」里的某条候选：直接填它前面的**短编号**（如 `"T1"`、`"G1"`、`"P1"`、`"I1"`、`"A1"`，或一字不差照抄那条完整原句）；
+   - 做「各自的打算」：填 `"intent"`（且该段 `intent` 字段必填对应编号如 `"i282"`）；
+   - 做「还没做的约定」：填 `"promise"`；
+   - 守「生效中的约束」：填 `"rule"`；
+   - 练「在练的事」：填 `"training"`（且该段 `training` 字段必填对应编号如 `"#2"`）；
+   - 日常作息（起床洗漱、做三餐、吃三餐、饭后洗碗收桌、入睡）：填 `"routine"`；
+   - 顺着前面某段接着往下做（如回程、收尾、继续做完）：填 `"continue:前段做的事"`（如 `"continue:在集市挑鱼"`）；
+   - 都不是、按眼下实况自己起意做的事：填 `"self"`。
 14. 接着前面已经写过的事往下写时，前面写定的东西照原样沿用：写过的内容、放在哪、做出来的是什么，都和前面写的一致。前面留下的也要有交代：吃完饭剩下的饭菜，收尾那步按常理收好（盖好、放到该放的地方，写进 things）；做了一半的东西，后面合适的时候可以接着做，不打算做了就收起来。
 15. **同一类事一天里做过一次就不要再排**（比如今天已经做过点心、炖过汤，就别再排第二次）；主人对做出来的东西提的意见（「甜度再多一点」「汤有点淡」）**不等于叫她现在去做**——当天不重做，想改的留到以后（改配方、下次做的时候再试），现在照常排别的事。
 16. **两个人一起做的事，细节只能有一个版本，而且要写到具体**：with 里写了对方、两人一起做的事（一起吃饭、一起做点心、一起出门、一起翻一本书）——吃的是什么菜、谁掌的勺、买了什么、书或报纸上讲了什么、路上碰见了谁、做出来的东西什么样，先在聊天记录和已经写好的段落里找，找到就照原样用；找不到就由你定一份具体的（不许写成「菜炒好了、东西买回来了」这种没内容的话），两边的 doing/steps/result 都用同一份。措辞可以随视角不同，事实、名字、数量必须完全一样。只有一个人做的事不强制写具体。
@@ -162,21 +172,43 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
 要问主人的（ask_master）：who 写谁来问，question 写一句话。已接下的小事只是做法没定时，kind 写 decision，先按合适做法把整份写完，程序可短等回话再调整。她自己想邀请主人一起做点什么、分享发现或一起待一会儿，也可以主动提出，kind 写 invite；只排自己的准备和其他生活，不写主人已经答应或共同做完。邀请会单独保留，主人晚些回复也能接上，不必让整段生活停着等。主人明确休息时考虑声音、活动位置、早餐和醒来后的相处，普通问题留到合适时候；既不替他醒来，也不要求她们整天守着。没合适的问题就留空，不为凑互动硬问。
 
 注意：**不要输出 intentions，也不要写任何「接下来打算」**。上面「各自的打算」里如果有，是之前说好要做的，照着走就行；标着「挂了几天了」的，只在 intent_moves 里写它后来怎样（第 12 条）。
-输出前自检（防漏字段）：
-- `from` 必须照抄上面候选里的**完整原句**，严禁偷懒只填「可能碰上的小事」「手边的消遣」「闲着的样子」这类栏目标题；
-- 凡写了买菜买鱼、赶海收蟹、去收购站换东西、帮工换吃的、捡柴、换/闷木炭、筛草木灰，必须同步填进该段 `things` 或 `items`（换东西要同时写消耗旧物 `用了/用完了` 与换回新物 `new`）；
-- 海边开小炭炉做热饭烧水填 `"stove": "charcoal"`（新做熟食必填 `cook`），点铁桶柴炉暖舱烘物填 `"stove": "wood"`，夜里点灯必填 `"lamp": true`，领回补给船配给必填 `"kerosene": true`。
 
-输出 JSON（end_current 只给上面说了「先定做完时刻」的人写；intent_moves 只写标着「挂了几天了」的打算，没有就留空）：
+### 结构化字段必填规范（程序会逐字段强校验，缺字段或填错枚举将直接打回重写！）
+每个 segment 对象**必须完整包含以下所有键**：
+- `"start"`, `"end"`: `"YYYY-MM-DD HH:MM"`（`end` 晚于 `start`）。
+- `"place"`: 具体地点字符串（非空）。
+- `"doing"`: 一句话写清这段做什么（非空）。
+- `"state"`: 三选一必填 `"做事"` | `"闲着"` | `"睡觉"`。
+  - 当 `"state": "做事"` 时：`"steps"` 必填 1~5 步数组 `[{{"text": "...", "minutes": 15}}]`，`"result"` 必填非空结果句；
+  - 当 `"state": "闲着"` 或 `"睡觉"` 时：`"steps"` 填 `[]`，`"result"` 填 `""`，`"things"` 与 `"items"` 填 `[]`。
+- `"at_home"`: 布尔值必填 `true` | `false`（人在住处/船屋内、甲板、储物舱填 `true`；离开住处去码头/集市/镇上/水下或走在路上填 `false`；睡觉段必为 `true`）。
+- `"meal"`: 布尔值必填 `true` | `false`（只有正在吃早饭/午饭/晚饭/夜宵填 `true`；备菜、做饭、端菜、洗碗及其余一律填 `false`）。
+- `"stove"`: 字符串三选一必填 `""` | `"charcoal"` | `"wood"`（海边船屋：小炭炉点火做热食/烧水/回锅热菜/炭烤填 `"charcoal"`；铁桶柴炉点火烧柴暖舱/炉烘/烟熏填 `"wood"`；没点火、外出、吃饭、闲着、睡觉或住在穗织一律填 `""`；家里闷炭为 0 时严禁填 `"charcoal"`，干柴为 0 时严禁填 `"wood"`）。
+- `"lamp"`: 布尔值必填 `true` | `false`（海边船屋天黑后点着煤油灯做细活或提灯外出填 `true`；靠炉火微光吃饭闲聊、摸黑、白天或睡觉一律填 `false`；煤油耗尽时严禁填 `true`）。
+- `"kerosene"`: 布尔值必填 `true` | `false`（海边补给船到港日，去码头签领回含煤油配给的那一段填 `true`，其余段一律填 `false`）。
+- `"water"`: 布尔值必填 `true` | `false`（海边去蓄水塔/老井/半淹车站打回淡水，或摆桶接存烧开雨水的那一段填 `true`，其余段一律填 `false`）。
+- `"send_msg"`: 布尔值必填 `true` | `false`；为 `true` 时 `"msg_at"` 必填 `"start"` 或 `"end"`（睡觉段晚安必为 `"start"`）、`"msg_purpose"` 必填非空句；为 `false` 时 `"msg_at"` 和 `"msg_purpose"` 均填 `""`。
+- `"public"`: 字符串（同住人可见的粗粒度动向，可填 `""`）；`"with"`: 数组（如 `[]`、`["napcat2"]`、`["napcat", "master"]`）。
+- `"training"`: 字符串（练在练的事填 `"#编号"`，否则 `""`）；`"intent"`: 字符串（做各自的打算填 `"i编号"`，否则 `""`）。
+- `"from"`: 字符串必填（只准填候选短编号如 `"T1"`/`"G1"`/`"P1"`/`"I1"`/`"A1"`，或枚举 `"routine"` / `"intent"` / `"promise"` / `"rule"` / `"training"` / `"continue:前段事"` / `"self"`；严禁留空或填栏目标题）。
+- `"mood"`: 字符串必填（非空，写明什么心情及具体由头）。
+- `"things"`（食物变动数组，没动食物填 `[]`；凡买菜买鱼、赶海收蟹、做饭、热菜、吃饭、保鲜加工必填）：
+  - 动已有食物：`{{"id": "w编号或n代号", "what": "用掉一部分|用完了|吃了一部分|吃完了|挪地方|切开了|热了一下|轻腌|重盐腌|糖渍|醋泡|酱渍|油封|灰沙埋|晒上了|炉烘|熏上了|丢了|坏了扔了", "used": "10毫升", "left": "剩余量(用完/吃完必填\"\")", "into": "n1(可选)", "place": {{"area": "船舱", "at": "矮桌", "detail": ""}}, "keep": "罩着放", "spot": "屋里", "state": "整的", "step": 1}}`
+  - 新食物入库：`{{"new": "n1", "name": "番薯焖鱼", "kind": "熟菜炒菜", "what": "做好了|买回来|收到|原来就有", "cook": "boil|fry|steam|roast|cold（what=做好了时必填！无食用油时严禁填fry；生鲜/买回填\"\"）", "from": ["w1"], "origin": "集市鱼摊(买回/收到时填)", "amount": "500克(按量记的食材调料填)", "left": "一锅", "place": {{"area": "船舱", "at": "灶上", "detail": "锅里"}}, "keep": "罩着放", "spot": "灶上温着", "step": 2}}`
+- `"items"`（非食物物品变动数组，没动物品填 `[]`；凡换物、捡柴、换闷炭/夹闷炭、筛草木灰、做手工、写纸条必填，以物易物须同时写消耗旧物 `id` 与换回新物 `new`）：
+  - 动已有物品：`{{"id": "p编号或x代号", "what": "挪地方|交给|用了|清点|做了一截|做好了|变了样|送人了|丢了|坏了扔了|用完了", "used": "1捆(可选)", "left": "剩余(可选)", "place": {{"area": "船舱", "at": "储物格", "detail": ""}}, "holder": "", "state": "做完后的状态", "step": 1}}`
+  - 新物品入库：`{{"new": "x1", "name": "闷炭", "kind": "燃料", "look": "黑亮结实的硬木炭", "owner": "共用", "origin": "煮盐棚帮工换回", "from": [], "what": "开始做|做好了|买回来|收到|捡到|原来就有", "amount": "2000克", "place": {{"area": "船舱", "at": "灶台边", "detail": "陶罐里"}}, "state": "干燥盖严", "step": 2}}`
+
+输出 JSON（end_current 只给上面说了「先定做完时刻」的人写；intent_moves 只写标着「挂了几天了」的打算，没有就留空 `{{}}`）：
 
 {{
   "end_current": {{"napcat": "{example_end}"}},
-  "ask_master": {{"who": "", "question": "", "kind": "decision 或 invite"}},
+  "ask_master": {{"who": "", "question": "", "kind": ""}},
   "stopped_results": {{}},
-  "intent_moves": {{"i3": {{"done": false, "text": "推进以后的打算", "date": "", "window": ""}}}},
+  "intent_moves": {{}},
   "segments": {{
-    "napcat": [{{"start": "{example_start}", "end": "{example_end}", "place": "", "doing": "一句话写这件事", "steps": [{{"text": "这一阵子她一直在干什么", "minutes": 5}}, {{"text": "第二步", "minutes": 15}}, {{"text": "收尾：用过的东西收好、归位", "minutes": 5}}], "result": "这件事的结果", "state": "做事", "stove": "", "send_msg": false, "msg_at": "", "msg_purpose": "", "at_home": true, "meal": false, "public": "", "with": [], "training": "", "intent": "", "from": "照上面哪一样写的", "mood": "这段她什么心情、因为什么", "things": [], "items": []}},
-               {{"start": "{example_end}", "end": "{example_end2}", "place": "", "doing": "下一件事", "steps": [{{"text": "第一步", "minutes": 10}}, {{"text": "收尾", "minutes": 5}}], "result": "这件事的结果", "state": "做事", "stove": "", "send_msg": true, "msg_at": "start", "msg_purpose": "要出门去码头看一眼，跟主人说一声", "at_home": false, "meal": false, "public": "", "with": [], "training": "", "intent": "", "from": "照上面哪一样写的", "mood": "这段她什么心情、因为什么", "things": [], "items": []}}],
+    "napcat": [{{"start": "{example_start}", "end": "{example_end}", "place": "船屋·船舱灶台边", "doing": "生起小炭炉熬一锅咸鱼粥", "steps": [{{"text": "淘米下锅添水，引燃小炭炉", "minutes": 10}}, {{"text": "切碎咸鱼干下锅慢熬", "minutes": 10}}, {{"text": "收尾：盖好锅盖温在灶上，擦净案板", "minutes": 5}}], "result": "熬好了一锅咸鱼粥温在灶上", "state": "做事", "at_home": true, "meal": false, "stove": "charcoal", "lamp": false, "kerosene": false, "water": false, "send_msg": false, "msg_at": "", "msg_purpose": "", "public": "在船舱灶台边熬粥", "with": [], "training": "", "intent": "", "from": "routine", "mood": "早起闻着热粥香气，心里踏实安稳", "things": [{{"id": "w1", "what": "用掉一部分", "used": "150克", "left": "2850克", "into": "n1", "step": 1}}, {{"new": "n1", "name": "咸鱼粥", "kind": "熟汤羹粥", "what": "做好了", "cook": "boil", "from": ["w1"], "left": "一锅", "place": {{"area": "船舱", "at": "灶上", "detail": "锅里"}}, "keep": "罩着放", "spot": "灶上温着", "step": 2}}], "items": []}},
+               {{"start": "{example_end}", "end": "{example_end2}", "place": "海边小镇·码头", "doing": "飘去码头看看打捞船靠岸卸货", "steps": [{{"text": "从船屋飘到码头边站定张望", "minutes": 10}}, {{"text": "看完卸货往回飘到船屋", "minutes": 5}}], "result": "看了一阵热闹回船屋了", "state": "做事", "at_home": false, "meal": false, "stove": "", "lamp": false, "kerosene": false, "water": false, "send_msg": true, "msg_at": "start", "msg_purpose": "要出门去码头看一眼，跟主人说一声", "public": "去码头看船", "with": [], "training": "", "intent": "", "from": "T1", "mood": "想去码头凑个热闹，兴致勃勃的", "things": [], "items": []}}],
     "napcat2": []
   }}
 }}
@@ -190,73 +222,19 @@ ORIGIN_LABELS = {
     "intent": "打算", "promise": "约定", "rule": "规矩", "training": "在练", "routine": "作息",
     "continue": "接着前面", "self": "自己想的", "unmatched": "说是抽到的、对不上", "": "没写",
 }
-ORIGIN_WORDS = {"打算": "intent", "约定": "promise", "规矩": "rule", "约束": "rule", "在练": "training",
-                "作息": "routine", "自己想的": "self"}
-_GENERIC_FROM_HEADERS = {
-    "可能碰上的小事": ("twist", "night_twist", "together"),
-    "小事": ("twist", "night_twist", "together"),
-    "插曲": ("twist", "night_twist", "together"),
-    "白天的插曲": ("twist", "together"),
-    "白天的小事": ("twist", "together"),
-    "晚上的插曲": ("night_twist",),
-    "晚上的小事": ("night_twist",),
-    "眼下这阵子可顺手安排的小事": ("twist", "together"),
-    "今晚这阵子可顺手安排的小事": ("night_twist",),
-    "两人一起": ("together",),
-    "手边的消遣": ("pastime",),
-    "消遣": ("pastime",),
-    "闲着的样子": ("idle", "night_idle"),
-    "今天闲着的样子": ("idle",),
-    "白天闲着的样子": ("idle",),
-    "今晚闲着的样子": ("night_idle",),
-    "晚上闲着的样子": ("night_idle",),
-    "意外": ("accident",),
-    "今天会碰上一件意外": ("accident",),
+ORIGIN_ENUMS = {
+    "intent": "intent", "打算": "intent",
+    "promise": "promise", "约定": "promise",
+    "rule": "rule", "规矩": "rule", "约束": "rule",
+    "training": "training", "在练": "training",
+    "routine": "routine", "作息": "routine",
+    "self": "self", "自己想的": "self",
 }
 
 
 def _squash(text) -> str:
     """比对用：去掉空白和标点。"""
     return "".join(ch for ch in str(text or "") if ch.isalnum())
-
-
-def _bigrams(s: str) -> set[str]:
-    return {s[i:i + 2] for i in range(len(s) - 1)} if len(s) >= 2 else set()
-
-
-def _match_pool_candidates(probe_raw: str, candidates: list[tuple[str, str]], prefer_kinds: tuple = ()) -> tuple[str, str] | None:
-    """在 [(kind, item_text), ...] 中按精确/子串/二元组重合率匹配最佳条目。"""
-    probe = _squash(probe_raw)
-    if len(probe) < 2:
-        return None
-    ordered = (
-        [c for c in candidates if c[0] in prefer_kinds] + [c for c in candidates if c[0] not in prefer_kinds]
-        if prefer_kinds else candidates
-    )
-    for kind, item in ordered:
-        sq = _squash(item)
-        if sq and (probe == sq or (len(probe) >= 4 and (probe in sq or sq in probe))):
-            return kind, item
-    p_bi = _bigrams(probe)
-    if len(p_bi) < 3:
-        return None
-    best_score = 0.0
-    best_hit = None
-    for kind, item in ordered:
-        sq = _squash(item)
-        i_bi = _bigrams(sq)
-        if len(i_bi) < 3:
-            continue
-        inter = len(p_bi & i_bi)
-        if inter < 3:
-            continue
-        score = inter / min(len(p_bi), len(i_bi))
-        if kind in prefer_kinds:
-            score += 0.05
-        if score >= 0.50 and score > best_score:
-            best_score = score
-            best_hit = (kind, item)
-    return best_hit
 
 
 def origin_of(
@@ -266,141 +244,60 @@ def origin_of(
     intent: str = "",
     training: str = "",
     pools_data: dict | None = None,
-    *,
-    doing: str = "",
-    steps_str: str = "",
-    state: str = "",
-    meal: bool = False,
-    night: bool = False,
+    cand_map: dict | None = None,
 ) -> dict:
-    """补写说的 from 对照本轮候选与全池核对；兼容小模型把 from 偷懒写成『手边的消遣』『可能碰上的小事』等栏目标题时按 doing 自动反查认回。"""
+    """纯结构化溯源核对：认候选短编号（T1/G1/P1/I1/A1）、精确候选原句、或固定来源枚举；绝不扫正文猜词。"""
     text = clean_text(value, 80)
     if intent:
         return {"kind": "intent", "text": intent}
     if training:
         return {"kind": "training", "text": training}
-    probe = _squash(text)
-    for word, kind in ORIGIN_WORDS.items():
-        if probe and probe.startswith(word):
-            return {"kind": kind, "text": text}
-    if text.startswith("接着"):
-        return {"kind": "continue", "text": text[2:].lstrip("：:").strip()}
+    if not text:
+        return {"kind": "", "text": ""}
 
+    # 1. 优先认本轮候选短编号（如 "T1"、"[T1]"）
+    code = text.strip().strip("[]【】()（）").upper()
+    if isinstance(cand_map, dict) and code in cand_map:
+        hit = cand_map[code]
+        return {"kind": hit["kind"], "text": hit["text"]}
+
+    # 2. 认固定来源枚举与顺承前缀
+    low = text.strip().lower()
+    if low in ORIGIN_ENUMS:
+        return {"kind": ORIGIN_ENUMS[low], "text": text}
+    probe = _squash(text)
+    for word, kind in ORIGIN_ENUMS.items():
+        if word not in ("intent", "promise", "rule", "training", "routine", "self") and probe.startswith(word):
+            return {"kind": kind, "text": text}
+    if low.startswith("continue:") or low.startswith("continue："):
+        return {"kind": "continue", "text": text.split(":", 1)[-1].split("：", 1)[-1].strip() or text}
+    if text.startswith("接着"):
+        return {"kind": "continue", "text": text[2:].lstrip("：:").strip() or text}
+
+    # 3. 认候选池精确原句（兼容老调用或直接照抄整句的情况）
     seed = seed if isinstance(seed, dict) else {}
-    seed_cands: list[tuple[str, str]] = []
+    pools = []
     for key, kind in (("twists", "twist"), ("night_twists", "night_twist"), ("pastimes", "pastime"),
                       ("idles", "idle"), ("night_idles", "night_idle")):
         val = seed.get(key)
         items = (val.get(bot) or []) if isinstance(val, dict) else (val or [])
         if isinstance(items, list):
-            seed_cands.extend((kind, str(x)) for x in items if x)
-    seed_cands.extend(("together", str(x)) for x in (seed.get("together") or []) if x)
+            pools.extend((kind, str(x)) for x in items if x)
+    pools.extend(("together", str(x)) for x in (seed.get("together") or []) if x)
     if seed.get("accident"):
-        seed_cands.append(("accident", str(seed["accident"])))
-
-    full_cands: list[tuple[str, str]] = []
-    if isinstance(pools_data, dict):
+        pools.append(("accident", str(seed["accident"])))
+    for kind, item in pools:
+        squashed = _squash(item)
+        if squashed and probe and (probe == squashed or (len(probe) >= 6 and (probe in squashed or squashed in probe))):
+            return {"kind": kind, "text": item}
+    if isinstance(pools_data, dict) and probe:
         for key, kind in (("twists", "twist"), ("night_twists", "night_twist"), ("together", "together"),
                           ("pastimes", "pastime"), ("idles", "idle"), ("night_idles", "night_idle")):
             for row in pools_data.get(key) or []:
                 item_txt = str(row.get("text") or "") if isinstance(row, dict) else str(row or "")
-                if item_txt:
-                    full_cands.append((kind, item_txt))
-
-    header_prefer = _GENERIC_FROM_HEADERS.get(probe, ())
-    if not header_prefer and probe:
-        for h_key, h_kinds in _GENERIC_FROM_HEADERS.items():
-            if h_key in probe:
-                header_prefer = h_kinds
-                break
-
-    if text and not header_prefer:
-        hit = _match_pool_candidates(text, seed_cands) or _match_pool_candidates(text, full_cands)
-        if hit is not None:
-            return {"kind": hit[0], "text": hit[1]}
-
-    for alt in (doing, f"{doing} {steps_str}".strip() if steps_str else ""):
-        if not alt:
-            continue
-        hit = (
-            _match_pool_candidates(alt, seed_cands, prefer_kinds=header_prefer)
-            or _match_pool_candidates(alt, full_cands, prefer_kinds=header_prefer)
-        )
-        if hit is not None:
-            return {"kind": hit[0], "text": hit[1]}
-
-    d_txt = str(doing or "")
-    if state == "sleep" or meal or any(w in d_txt for w in ("起床", "洗漱", "叠好铺盖", "卷好铺盖", "吃早饭", "吃午饭", "吃晚饭", "做早饭", "做午饭", "做晚饭", "洗碗", "收桌子")):
-        if not text or header_prefer:
-            return {"kind": "routine", "text": "作息"}
-    if state == "idle":
-        return {"kind": "night_idle" if night else "idle", "text": clean_text(doing or text, 80)}
-    if not text:
-        return {"kind": "self", "text": "自己想的"}
-    if header_prefer:
-        return {"kind": "self", "text": "自己想的"}
+                if item_txt and _squash(item_txt) == probe:
+                    return {"kind": kind, "text": item_txt}
     return {"kind": "unmatched", "text": text}
-
-
-_SEASIDE_OUTSIDE_WORDS = (
-    "码头", "集市", "收购站", "仓棚", "船坞", "煮盐棚", "诊所", "蓄水塔", "老井",
-    "灯塔", "悬崖", "防波堤", "浅滩", "礁石", "小礁岛", "漂流物", "海萤湾", "旧街",
-    "旧城", "旧大楼", "半沉", "半淹", "沉船", "高架", "鸟居", "摩天轮", "慰灵碑",
-    "观景台", "石阶", "老墓地", "信号塔", "海鸥岩", "薪柴地", "杂货铺", "澡堂",
-    "垃圾暂存棚", "打捞船", "水下", "海底", "海蚀洞", "海堤",
-)
-
-
-def _infer_at_home(place: str, raw_at_home, home: str) -> bool:
-    """校验并修补小模型常漏填或颠倒的 at_home（比如人在集市/收购站/路上却填了 true）。"""
-    p = str(place or "").strip()
-    val = clean_flag(raw_at_home)
-    if not p:
-        return True if val is None else bool(val)
-    if any(w in p for w in ("路上", "的路", "往船屋", "去码头", "去集市", "回船屋的路")):
-        return False
-    if home == "海边小镇":
-        if any(w in p for w in _SEASIDE_OUTSIDE_WORDS) and not p.startswith("船屋"):
-            return False
-        if p.startswith("船屋") or any(w in p for w in ("船舱", "船尾储物舱")):
-            return True
-    return True if val is None else bool(val)
-
-
-def _infer_meal(doing: str, state: str, raw_meal) -> bool:
-    """修补漏填或把做饭/洗碗误标成 meal=true 的段。"""
-    if state != "do":
-        return False
-    d = str(doing or "")
-    val = clean_flag(raw_meal)
-    if any(w in d for w in ("做早饭", "做午饭", "做晚饭", "备早饭", "备午饭", "备晚饭", "洗碗", "刷锅", "擦干净")):
-        if not any(w in d for w in ("一起吃", "吃早饭", "吃午饭", "吃晚饭", "吃夜宵")):
-            return False
-    if val is not None:
-        return bool(val)
-    return any(w in d for w in ("吃早饭", "吃午饭", "吃晚饭", "吃夜宵", "一起喝咸鱼粥", "一起喝粥"))
-
-
-def _infer_cook_method(name: str, kind: str, cook_raw: str, oil_ml: float | None = None) -> str:
-    """新做熟食漏填 cook 时按菜名补全；家里无食用油时严禁 fry。"""
-    c = str(cook_raw or "").strip().lower()
-    nm = str(name or "")
-    if c not in ("boil", "fry", "steam", "roast", "cold"):
-        c = ""
-    if not c and kind in ("熟菜炒菜", "熟汤羹粥", "熟饭熟面", "熟肉卤味", "茶汤鲜饮", "耐放糕饼点心", "鲜肉软点心"):
-        if any(w in nm for w in ("凉拌", "拌", "腌", "渍", "泡")):
-            c = "cold"
-        elif "蒸" in nm:
-            c = "steam"
-        elif any(w in nm for w in ("烤", "烘", "煨")):
-            c = "roast"
-        elif any(w in nm for w in ("炒", "煎", "炸")):
-            c = "fry"
-        else:
-            c = "boil"
-    if c == "fry" and oil_ml is not None and oil_ml <= 0:
-        c = "roast" if any(w in nm for w in ("烤", "烘", "煨")) else "boil"
-    return c
 
 
 def stale_days(item: dict, today: datetime.date) -> int:
@@ -844,9 +741,64 @@ class LifeStep:
         return "\n".join(lines)
 
     @staticmethod
-    def _seed_text(seed: dict, labels: dict, night: bool = False) -> str:
-        """当天的随机起点，按补写的口径写：一天要补十几回，小事和意外都只用一次。"""
-        lines = ["今天的情况（系统随机给的，用来让每天不一样）："]
+    def _build_candidate_catalog(seed: dict, labels: dict, night: bool = False) -> dict[str, dict]:
+        """为本轮给模型的每条插曲/消遣/闲置/意外分配唯一短编号（T1/G1/P1/I1/A1），供 from 精确引用与结构化校验。"""
+        if not isinstance(seed, dict):
+            return {}
+        catalog: dict[str, dict] = {}
+        per_bot, together = twists_of(seed, night)
+        t_idx = 0
+        t_kind = "night_twist" if night else "twist"
+        for bot, items in per_bot.items():
+            if bot and bot not in labels:
+                continue
+            for raw_txt in items or []:
+                if not raw_txt:
+                    continue
+                t_idx += 1
+                catalog[f"T{t_idx}"] = {"kind": t_kind, "text": str(raw_txt), "bot": str(bot or "")}
+        g_idx = 0
+        for raw_txt in together or []:
+            if not raw_txt:
+                continue
+            g_idx += 1
+            catalog[f"G{g_idx}"] = {"kind": "together", "text": str(raw_txt), "bot": ""}
+        pastimes = seed.get("pastimes") if isinstance(seed.get("pastimes"), dict) else {}
+        p_idx = 0
+        for bot, items in pastimes.items():
+            if bot not in labels:
+                continue
+            for raw_txt in items or []:
+                if not raw_txt:
+                    continue
+                p_idx += 1
+                catalog[f"P{p_idx}"] = {"kind": "pastime", "text": str(raw_txt), "bot": str(bot)}
+        idles = seed.get("night_idles") if night and isinstance(seed.get("night_idles"), dict) else seed.get("idles")
+        idles = idles if isinstance(idles, dict) else {}
+        i_idx = 0
+        i_kind = "night_idle" if night else "idle"
+        for bot, items in idles.items():
+            if bot not in labels:
+                continue
+            for raw_txt in items or []:
+                if not raw_txt:
+                    continue
+                i_idx += 1
+                catalog[f"I{i_idx}"] = {"kind": i_kind, "text": str(raw_txt), "bot": str(bot)}
+        if seed.get("accident") and not night:
+            catalog["A1"] = {"kind": "accident", "text": str(seed["accident"]), "bot": ""}
+        return catalog
+
+    @classmethod
+    def _seed_text(cls, seed: dict, labels: dict, night: bool = False, cand_map: dict | None = None) -> str:
+        """当天的随机起点，每条候选带唯一短编号（如 [T1]、[P1]、[I1]），供模型在 from 字段里精确填写。"""
+        if cand_map is None:
+            cand_map = cls._build_candidate_catalog(seed, labels, night)
+        code_of: dict[tuple[str, str], str] = {}
+        for code, meta in (cand_map or {}).items():
+            code_of[(str(meta.get("bot") or ""), str(meta.get("text") or ""))] = code
+
+        lines = ["今天的情况（系统随机给的，采用某条候选时段内 from 直接填它前面的短编号如 \"T1\"、\"P1\"、\"I1\"）："]
         if seed.get("weather"):
             lines.append("- 天气：%s" % seed["weather"])
         if seed.get("tone"):
@@ -866,45 +818,75 @@ class LifeStep:
                 "- %s感情很好：不写她们之间吵架、闹别扭、冷战或互相误会。" % "和".join(names)
             )
         per_bot, together = twists_of(seed, night)
-        # 只在特定时候才做得自然的插曲带上「什么时候」；老种子没存就按默认池子查
         when = seed.get("when") if isinstance(seed.get("when"), dict) else when_map(default_pools())
-        per_bot = {bot: [with_when(x, when) for x in items] for bot, items in per_bot.items()}
-        together = [with_when(x, when) for x in together]
-        rows = ["%s：%s" % (labels.get(bot) or bot, "；".join(items)) if bot else "；".join(items)
-                for bot, items in per_bot.items() if items and (not bot or bot in labels)]
+        rows = []
+        for bot, items in per_bot.items():
+            if not items or (bot and bot not in labels):
+                continue
+            tagged = [
+                f"[{code_of.get((str(bot or ''), str(x)), '')}] {with_when(x, when)}" if code_of.get((str(bot or ""), str(x))) else with_when(x, when)
+                for x in items
+            ]
+            rows.append("%s：%s" % (labels.get(bot) or bot, "；".join(tagged)) if bot else "；".join(tagged))
         if together:
-            rows.append("两人一起：%s" % "；".join(together))
+            tagged_tog = [
+                f"[{code_of.get(('', str(x)), '')}] {with_when(x, when)}" if code_of.get(("", str(x))) else with_when(x, when)
+                for x in together
+            ]
+            rows.append("两人一起：%s" % "；".join(tagged_tog))
         if rows:
             lines.append(
-                "- %s这阵子可顺手安排的小事（已按接下来几小时的天色与家里现况筛过）：\n%s\n"
+                "- %s这阵子可顺手安排的小事（已按接下来几小时的天色与家里现况筛过，采用时 from 填短编号如 \"T1\" / \"G1\"）：\n%s\n"
                 "  她们自己说过的打算和手头急事优先；有空档时每人最多挑一件自然穿插，不用硬凑。" % (
                     "今晚" if night else "眼下", "\n".join("  - " + row for row in rows))
             )
         pastimes = seed.get("pastimes") if isinstance(seed.get("pastimes"), dict) else {}
-        rows = ["%s：%s" % (labels.get(bot) or bot, "；".join(items))
-                for bot, items in pastimes.items() if items and bot in labels]
+        rows = []
+        for bot, items in pastimes.items():
+            if not items or bot not in labels:
+                continue
+            tagged = [
+                f"[{code_of.get((str(bot), str(x)), '')}] {x}" if code_of.get((str(bot), str(x))) else str(x)
+                for x in items
+            ]
+            rows.append("%s：%s" % (labels.get(bot) or bot, "；".join(tagged)))
         if rows:
-            lines.append("- 手边的消遣（今天在家闲下来时会拿起来做的）：\n%s" % "\n".join("  - " + row for row in rows))
-        # 天黑以后用晚上那份；老种子没有晚上那份就还用白天的
+            lines.append("- 手边的消遣（今天在家闲下来时会拿起来做的，采用时 from 填短编号如 \"P1\"）：\n%s" % "\n".join("  - " + row for row in rows))
         idles = seed.get("night_idles") if night and isinstance(seed.get("night_idles"), dict) else seed.get("idles")
         idles = idles if isinstance(idles, dict) else {}
-        rows = ["%s：%s" % (labels.get(bot) or bot, "；".join(items))
-                for bot, items in idles.items() if items and bot in labels]
+        rows = []
+        for bot, items in idles.items():
+            if not items or bot not in labels:
+                continue
+            tagged = [
+                f"[{code_of.get((str(bot), str(x)), '')}] {x}" if code_of.get((str(bot), str(x))) else str(x)
+                for x in items
+            ]
+            rows.append("%s：%s" % (labels.get(bot) or bot, "；".join(tagged)))
         if rows:
-            lines.append("- %s闲着的样子（歇着的时候人在哪、怎么待着）：\n%s" % (
+            lines.append("- %s闲着的样子（state=\"闲着\" 时按这里写，from 填短编号如 \"I1\"）：\n%s" % (
                 "今晚" if night else "今天", "\n".join("  - " + row for row in rows)))
         if seed.get("accident") and not night:
+            acc_tag = f"[{code_of.get(('', str(seed['accident'])), 'A1')}] "
             lines.append(
-                "- 今天会碰上一件意外：%s。上面今天的条目里还没有的话，挑个合适的时段写进去，当天能收场；"
-                "已经写过就别再写。" % seed["accident"]
+                "- 今天会碰上一件意外：%s%s。上面今天的条目里还没有的话，挑个合适的时段写进去（from 填 \"A1\"），当天能收场；"
+                "已经写过就别再写。" % (acc_tag, seed["accident"])
             )
         foiled = [x for x in (seed.get("foiled") or []) if isinstance(x, dict) and x.get("want") and x.get("why")]
         if foiled:
             f_rows = []
             for item in foiled:
-                who_lbl = labels.get(item.get("bot")) or item.get("bot") or "她们"
-                alt_part = "，只好打消念头改去做「%s」" % item["instead"] if item.get("instead") else "，只好打消念头改干别的"
-                f_rows.append("  - %s：原本起念想「%s」，结果%s%s（from 照实际改做的那件事填）。" % (
+                f_bot = str(item.get("bot") or "")
+                who_lbl = labels.get(f_bot) or f_bot or "她们"
+                inst = str(item.get("instead") or "")
+                inst_code = code_of.get((f_bot, inst), "")
+                if inst:
+                    tag_hint = f" [{inst_code}]" if inst_code else ""
+                    from_hint = f"from 填 \"{inst_code}\"" if inst_code else "from 照实际改做的那件事填"
+                    alt_part = f"，只好打消念头改去做{tag_hint}「{inst}」（{from_hint}）"
+                else:
+                    alt_part = "，只好打消念头改干别的（from 照实际改做的那件事填）"
+                f_rows.append("  - %s：原本起念想「%s」，结果%s%s。" % (
                     who_lbl, item["want"], item["why"], alt_part,
                 ))
             lines.append(
@@ -962,7 +944,7 @@ class LifeStep:
             return str(item.get("id"))
         return resolve
 
-    def _thing_steps(self, raws, keys: dict, shelf, bot: str = "", oil_ml: float | None = None) -> list:
+    def _thing_steps(self, raws, keys: dict, shelf, bot: str = "") -> list:
         """补写给一段标的吃的：临时代号换成程序发的编号（这一次里同一个代号、名字对得上的是同一件，名字对不上另发号）；
         用了、吃了的得是家里有的（此刻现算的存货）或这一次里新做 / 新买的，对不上的单步跳过，绝不整批回滚。"""
         store = getattr(self, "things", None)
@@ -1013,11 +995,9 @@ class LifeStep:
             except Exception:
                 place = ""
             keep, spot = split_keep(raw.get("keep"), raw.get("spot"), place)
-            cook = (
-                _infer_cook_method(step.get("name", ""), step.get("kind", ""), raw.get("cook"), oil_ml=oil_ml)
-                if key and what == "做好了"
-                else (str(raw.get("cook") or "").strip().lower() if str(raw.get("cook") or "").strip().lower() in ("boil", "fry", "steam", "roast", "cold") else "")
-            )
+            cook = str(raw.get("cook") or "").strip().lower()
+            if cook not in ("boil", "fry", "steam", "roast", "cold"):
+                cook = ""
             step.update({"what": what, "left": clean_text(raw.get("left"), 20), "place": place,
                          "keep": keep, "spot": spot, "state": norm_state(raw.get("state")),
                          "cook": cook,
@@ -1776,7 +1756,8 @@ class LifeStep:
         )
         labels = {bot: (self.label(bot) or bot) for bot in bots}
         win_seed, night = self._draw_window_for(tasks, now, labels)
-        seed_text = self._seed_text(win_seed, labels, night) if win_seed else ""
+        self._last_cand_map = self._build_candidate_catalog(win_seed, labels, night) if win_seed else {}
+        seed_text = self._seed_text(win_seed, labels, night, cand_map=self._last_cand_map) if win_seed else ""
         try:
             seed_text += self._weather_block(min((x["start"] for x in tasks.values() if x.get("start")), default=None) or now, now)
         except Exception:
@@ -1883,6 +1864,49 @@ class LifeStep:
         except Exception:
             logger.warning("[super_enhance/world] 补写思考存档失败", exc_info=True)
 
+    async def _validate_with_retries(
+        self,
+        prompt: str,
+        raw_text: str,
+        thought: str,
+        tasks: dict,
+        moment: datetime.datetime,
+        log_prefix: str = "补写",
+    ) -> tuple[dict | None, str, str, list[str]]:
+        """对模型返回的 JSON 执行纯结构化字段校验；不兜底瞎猜，有缺失或违规字段时把报错逐条发回模型重试（最多 MAX_VALIDATE_RETRIES 次）。"""
+        cur_text, cur_thought = raw_text, thought
+        data = llm.extract_json(cur_text)
+        errors = ["返回内容不是合法的 JSON 对象"] if not isinstance(data, dict) else self.validate_payload(data, tasks, moment)
+        for retry_idx in range(1, MAX_VALIDATE_RETRIES + 1):
+            if not errors:
+                return data, cur_text, cur_thought, []
+            err_block = "\n".join(f"- {err}" for err in errors[:16])
+            logger.warning(
+                "[super_enhance/world] %s结构化校验未通过（第 %d/%d 次打回重写）：%s",
+                log_prefix, retry_idx, MAX_VALIDATE_RETRIES, "；".join(errors[:6]),
+            )
+            fix_prompt = (
+                prompt
+                + "\n\n你上一次的输出：\n"
+                + str(cur_text or "").strip()
+                + "\n\n【结构化字段校验未通过，请严格逐条修正下面所有报错，并重新输出完整合法的 JSON（未报错的段保留并补齐必填字段，不要省略）】：\n"
+                + err_block
+            )
+            cur_text, cur_thought = await llm.text_chat(
+                self.context,
+                fix_prompt,
+                provider_id=str(self.cfg.get("llm_provider_id") or "").strip(),
+                timeout=self.timeout,
+                session_id="super_enhance_lifestep",
+                system_prompt=SYSTEM_PROMPT,
+                attempts=2,
+                log_label=f"{log_prefix}校验重试{retry_idx}",
+            )
+            self._run_cache = {}
+            data = llm.extract_json(cur_text)
+            errors = ["返回内容不是合法的 JSON 对象"] if not isinstance(data, dict) else self.validate_payload(data, tasks, moment)
+        return (data if not errors else None), cur_text, cur_thought, errors
+
     async def run(self, now: datetime.datetime | None = None, force: bool = False) -> bool:
         # 世界线里的时间都是不带时区的本地时间，这里统一成一样的口径
         moment = (now or self._now()).replace(tzinfo=None)
@@ -1910,16 +1934,17 @@ class LifeStep:
                 attempts=2,
                 log_label="补写",
             )
-            # 等模型的这几分钟里网页可能改过种子、存货：落库时重新读
+            # 等模型的这几分钟里网页可能改过种子、存货：落库前重新读并做纯结构化强校验（最多重试 3 次，放弃瞎猜兜底）
             self._run_cache = {}
-            data = llm.extract_json(text)
-            if not isinstance(data, dict):
-                self._save_thought(moment, thought, False, "返回内容不是 JSON")
-                self.world.note_error("step", "返回内容不是 JSON")
+            data, text, thought, val_errors = await self._validate_with_retries(prompt, text, thought, tasks, moment, "补写")
+            if data is None:
+                err_msg = "连续 %d 次重试仍未通过结构化校验：%s" % (MAX_VALIDATE_RETRIES, "；".join(val_errors[:3]))
+                self._save_thought(moment, thought, False, err_msg)
+                self.world.note_error("step", err_msg[:180])
                 self.world.set_last_step_attempt(fmt_time(moment))
                 return False
             self._save_thought(moment, thought, True)
-            data, text = await self._ask_master(data, prompt, text, tasks)
+            data, text = await self._ask_master(data, prompt, text, tasks, moment)
             written, missed = self.apply(data, tasks, moment)
             total_written = sum(len(x) for x in written.values())
             if missed and total_written == 0:
@@ -1948,8 +1973,9 @@ class LifeStep:
             self._run_cache = {}
             self._last_window_seed = None
             self._last_live_ctx = None
+            self._last_cand_map = None
 
-    async def _ask_master(self, data: dict, prompt: str, text: str, tasks: dict):
+    async def _ask_master(self, data: dict, prompt: str, text: str, tasks: dict, moment: datetime.datetime | None = None):
         """补写填了 ask_master：让她借主动对话问主人那一句，等主人回话；回了就把回话交给模型照着重写一遍。
         没回、没问出去、出错，都照用第一次写的（她自己拿主意）。返回 (data, 模型原文)。"""
         ask = data.get("ask_master")
@@ -2003,7 +2029,7 @@ class LifeStep:
         logger.info("[super_enhance/world] 补写问主人有回话，照着重写：%s", note[:200])
         retry = prompt + "\n\n你上一次的输出：\n" + str(text or "").strip() + "\n\n" + note
         try:
-            again, _thought = await llm.text_chat(
+            again, again_thought = await llm.text_chat(
                 self.context, retry, provider_id=str(self.cfg.get("llm_provider_id") or "").strip(),
                 timeout=self.timeout, session_id="super_enhance_lifestep", system_prompt=SYSTEM_PROMPT,
                 attempts=2, log_label="补写照主人回话重写",
@@ -2012,9 +2038,10 @@ class LifeStep:
             logger.warning("[super_enhance/world] 补写照主人回话重写失败，照用第一次的：%s", e)
             return data, text
         self._run_cache = {}
-        fixed = llm.extract_json(again)
-        if not isinstance(fixed, dict) or not isinstance(fixed.get("segments"), dict):
-            logger.warning("[super_enhance/world] 补写照主人回话重写的不是 JSON，照用第一次的")
+        val_moment = moment or self._now().replace(tzinfo=None)
+        fixed, again, _t, errs = await self._validate_with_retries(retry, again, again_thought, tasks, val_moment, "回话重写")
+        if fixed is None:
+            logger.warning("[super_enhance/world] 补写照主人回话重写未通过结构化校验（%s），照用第一次的", "；".join(errs[:3]))
             return data, text
         return fixed, again
 
@@ -2072,12 +2099,331 @@ class LifeStep:
     def _dedup_joint_proactive(self, written_by_bot: dict, now: datetime.datetime | None = None) -> None:
         _dedup_joint_proactive(written_by_bot, now=now, world=self.world)
 
+    def validate_payload(self, data: dict, tasks: dict, now: datetime.datetime) -> list[str]:
+        """纯结构化字段与库存一致性校验（不扫正文关键词、不做静默兜底修补）。返回报错列表，为空即合法。"""
+        if not isinstance(data, dict):
+            return ["顶层必须是 JSON 对象"]
+        segments = data.get("segments")
+        if not isinstance(segments, dict):
+            return ["缺少顶层 segments 对象"]
+
+        flat = now.replace(tzinfo=None)
+        date_text = flat.date().isoformat()
+        end_current = data.get("end_current") if isinstance(data.get("end_current"), dict) else {}
+        day_seed = self._seed_for(date_text) if self.seed_log is not None else None
+        win_seed = getattr(self, "_last_window_seed", None)
+        seed = self._merge_origin_seeds(win_seed, day_seed)
+        cand_map = getattr(self, "_last_cand_map", None)
+        pools_data = self._pools()
+        pool_meta: dict[str, dict] = {}
+        for p_kind in ("twists", "night_twists", "together", "pastimes", "idles", "night_idles"):
+            for p_row in pools_data.get(p_kind) or []:
+                if isinstance(p_row, dict) and p_row.get("text"):
+                    pool_meta[str(p_row["text"])] = p_row
+
+        store = getattr(self, "things", None)
+        try:
+            shelf = self._shelf_at(self._things_moment(tasks, flat)) if store is not None else None
+        except Exception:
+            shelf = None
+        inv_state = self._live_inventory_state(tasks, flat, shelf)
+        seaside = self.home == "海边小镇"
+
+        errors: list[str] = []
+        batch_food_keys: set[str] = set()
+        batch_item_keys: set[str] = set()
+        batch_added_charcoal = False
+        batch_added_wood = False
+        batch_added_oil = False
+        batch_added_kerosene = False
+
+        # 先收集保留段内跨人共享的 new 临时代号及本批次新增燃料/调料/煤油标记（全部按结构化字段判）
+        kept_by_bot: dict[str, tuple[list[tuple[int, dict, datetime.datetime, datetime.datetime, str]], datetime.datetime, datetime.datetime | None]] = {}
+        for bot, info in tasks.items():
+            who_lbl = self.label(bot) or bot
+            raw_list = segments.get(bot)
+            if not isinstance(raw_list, list) or not raw_list:
+                errors.append(f"{who_lbl}（{bot}）：segments.{bot} 不能为空数组")
+                continue
+            start = info["start"]
+            if info["mode"] == "open":
+                cur_end = parse_time(norm_time(end_current.get(bot), date_text)) if end_current.get(bot) else None
+                if cur_end is None and isinstance(raw_list[0], dict):
+                    cur_end = parse_time(norm_time(raw_list[0].get("start"), date_text))
+                if cur_end is None:
+                    errors.append(f"{who_lbl}（{bot}）：手上未定结束时刻的段必须在 end_current.{bot} 给出结束时间")
+                    start = flat + datetime.timedelta(minutes=5)
+                else:
+                    start = max(cur_end, flat + datetime.timedelta(minutes=5))
+            dict_items = [x for x in raw_list if isinstance(x, dict)]
+            dict_items.sort(key=lambda x: str(norm_time(x.get("start"), date_text) or ""))
+            cursor = start
+            horizon = max(start, flat) + datetime.timedelta(hours=HORIZON_HOURS)
+            until = info.get("until") if info["mode"] == "fill" else None
+            bot_kept = []
+            for idx, raw in enumerate(dict_items[:MAX_SEGMENTS], 1):
+                raw_state_str = str(raw.get("state") or "").strip().lower()
+                st_code = STATE_WORDS.get(raw_state_str, "")
+                sleep = st_code == "sleep"
+                idle = st_code == "idle"
+                r_start = parse_time(norm_time(raw.get("start"), date_text)) if raw.get("start") else None
+                if r_start is not None and r_start > cursor:
+                    cursor = r_start
+                if not sleep and cursor >= horizon and cursor > flat:
+                    break
+                if until is not None and cursor >= until:
+                    break
+                r_end = parse_time(norm_time(raw.get("end"), date_text)) if raw.get("end") else None
+                if r_end is not None and r_end <= cursor:
+                    later = r_end + datetime.timedelta(days=1)
+                    r_end = later if later > cursor else None
+                _texts, minutes = parse_steps(raw.get("steps"))
+                seg_end = (cursor + datetime.timedelta(minutes=sum(minutes))) if (minutes and st_code == "do") else r_end
+                seg_end = self._limit(cursor, seg_end, sleep)
+                if idle:
+                    seg_end = min(seg_end, cursor + datetime.timedelta(minutes=MAX_IDLE_MINUTES))
+                if until is not None:
+                    seg_end = min(seg_end, until)
+                bot_kept.append((idx, raw, cursor, seg_end, st_code))
+                cursor = seg_end
+                if raw.get("kerosene") is True:
+                    batch_added_kerosene = True
+                if st_code == "do":
+                    for eff in raw.get("things") or []:
+                        if isinstance(eff, dict) and eff.get("new"):
+                            batch_food_keys.add(str(eff["new"]).strip())
+                            if str(eff.get("kind") or "") == "干货调料粮食" and store is not None and store._is_edible_oil({"cat": CAT_FOOD, "name": eff.get("name"), "kind": "干货调料粮食"}):
+                                batch_added_oil = True
+                    for eff in raw.get("items") or []:
+                        if isinstance(eff, dict) and eff.get("new"):
+                            batch_item_keys.add(str(eff["new"]).strip())
+                            item_probe = {"cat": CAT_ITEM, "name": eff.get("name"), "kind": eff.get("kind")}
+                            if str(eff.get("kind") or "") == "燃料":
+                                batch_added_charcoal = True
+                            if weathering.fuel_item(item_probe) or str(eff.get("kind") or "") == "燃柴":
+                                batch_added_wood = True
+            kept_by_bot[bot] = (bot_kept, cursor, until)
+
+        # 逐人逐段做纯结构化校验
+        for bot, (bot_kept, final_cursor, until) in kept_by_bot.items():
+            who_lbl = self.label(bot) or bot
+            if not bot_kept:
+                errors.append(f"{who_lbl}（{bot}）：没有有效段落")
+                continue
+            if final_cursor <= flat or (until is not None and not bot_kept):
+                errors.append(f"{who_lbl}（{bot}）：最后一段结束时刻（{fmt_time(final_cursor)}）必须晚于当前时刻（{fmt_time(flat)}）")
+
+            bot_has_new_item = False
+            bot_has_used_item = False
+            bot_has_new_food = False
+            bot_has_food_step = False
+            bot_has_water_true = False
+            bot_resolved_origins: list[dict] = []
+
+            for idx, raw, seg_start, seg_end, st_code in bot_kept:
+                tag = f"{who_lbl}第{idx}段（{fmt_time(seg_start)[11:16]}）"
+                if not str(raw.get("start") or "").strip() or parse_time(norm_time(raw.get("start"), date_text)) is None:
+                    errors.append(f"{tag}：缺少合法的 start 时间")
+                if not str(raw.get("end") or "").strip() or parse_time(norm_time(raw.get("end"), date_text)) is None:
+                    errors.append(f"{tag}：缺少合法的 end 时间")
+                if not str(raw.get("place") or "").strip():
+                    errors.append(f"{tag}：place 不能为空")
+                if not str(raw.get("doing") or "").strip():
+                    errors.append(f"{tag}：doing 不能为空")
+                if not str(raw.get("mood") or "").strip():
+                    errors.append(f"{tag}：mood 不能为空（须写明心情及由头）")
+
+                if not st_code:
+                    errors.append(f"{tag}：state 必须填 \"做事\"、\"闲着\" 或 \"睡觉\" 三选一（当前值={raw.get('state')!r}）")
+                    continue
+                idle, sleep = st_code == "idle", st_code == "sleep"
+
+                _texts, minutes = parse_steps(raw.get("steps"))
+                if st_code == "do":
+                    if not _texts or len(minutes) != len(_texts) or any(m <= 0 for m in minutes):
+                        errors.append(f"{tag}：state=\"做事\" 时 steps 必须为 1~5 步非空数组，每步含非空 text 与正整数 minutes")
+                    if not str(raw.get("result") or "").strip():
+                        errors.append(f"{tag}：state=\"做事\" 时 result 不能为空")
+                else:
+                    if raw.get("steps"):
+                        errors.append(f"{tag}：state 为闲着或睡觉时 steps 必须填 []")
+                    if raw.get("things") or raw.get("items"):
+                        errors.append(f"{tag}：state 为闲着或睡觉时 things 和 items 必须填 []")
+
+                req_bools = ("at_home", "meal", "send_msg", "lamp", "kerosene", "water") if seaside else ("at_home", "meal", "send_msg")
+                for b_key in req_bools:
+                    if not isinstance(raw.get(b_key), bool):
+                        errors.append(f"{tag}：{b_key} 必须显式填布尔值 true 或 false（当前值={raw.get(b_key)!r}）")
+
+                if sleep and raw.get("at_home") is False:
+                    errors.append(f"{tag}：睡觉段 at_home 必须为 true")
+                if st_code != "do" and raw.get("meal") is True:
+                    errors.append(f"{tag}：非做事段 meal 必须为 false")
+                if raw.get("water") is True:
+                    bot_has_water_true = True
+                if seaside and raw.get("lamp") is True:
+                    if sleep:
+                        errors.append(f"{tag}：睡觉段 lamp 必须为 false")
+                    elif not (inv_state.get("lamp_ok") or batch_added_kerosene):
+                        errors.append(f"{tag}：家里煤油已点完且未领新煤油，lamp 不能填 true")
+
+                if raw.get("send_msg") is True:
+                    m_at = str(raw.get("msg_at") or "").strip()
+                    m_purp = str(raw.get("msg_purpose") or "").strip()
+                    if m_at not in ("start", "end"):
+                        errors.append(f"{tag}：send_msg=true 时 msg_at 必须填 \"start\" 或 \"end\"")
+                    if not m_purp:
+                        errors.append(f"{tag}：send_msg=true 时 msg_purpose 不能为空")
+                    if sleep and m_at == "end":
+                        errors.append(f"{tag}：睡觉段道晚安时 msg_at 必须填 \"start\"")
+                elif raw.get("send_msg") is False:
+                    if str(raw.get("msg_at") or "").strip() or str(raw.get("msg_purpose") or "").strip():
+                        errors.append(f"{tag}：send_msg=false 时 msg_at 与 msg_purpose 必须填 \"\"")
+
+                if "stove" not in raw or not isinstance(raw.get("stove"), str) or raw.get("stove") not in ("", "charcoal", "wood"):
+                    errors.append(f"{tag}：stove 必须显式填 \"\"、\"charcoal\" 或 \"wood\" 三选一（当前值={raw.get('stove')!r}）")
+                    stove_val = ""
+                else:
+                    stove_val = raw["stove"]
+                    if not seaside and stove_val != "":
+                        errors.append(f"{tag}：非海边住处 stove 必须填 \"\"")
+                    elif stove_val != "" and (st_code != "do" or raw.get("at_home") is False or raw.get("meal") is True):
+                        errors.append(f"{tag}：外出、吃饭、闲着或睡觉段没有生火，stove 必须填 \"\"")
+                    elif stove_val == "charcoal" and inv_state["charcoal_g"] <= 0 and not batch_added_charcoal:
+                        errors.append(f"{tag}：家里闷炭现余 0 克且未先补炭入库，stove 严禁填 \"charcoal\"")
+                    elif stove_val == "wood" and inv_state["wood_bundles"] <= 0 and not batch_added_wood:
+                        errors.append(f"{tag}：家里干柴为 0 且未先补柴入库，stove 严禁填 \"wood\"")
+
+                raw_intent = str(raw.get("intent") or "").strip()
+                raw_training = str(raw.get("training") or "").strip()
+                intent_id = "" if idle else self.intent_id(raw_intent, bot)
+                training_id = self.training_id(raw_training, bot)
+                if raw_intent and not intent_id:
+                    errors.append(f"{tag}：intent={raw_intent!r} 不是 {who_lbl} 当前有效的打算编号")
+                if raw_training and not training_id:
+                    errors.append(f"{tag}：training={raw_training!r} 不是当前有效的在练编号")
+
+                raw_from = str(raw.get("from") or "").strip()
+                orig = origin_of(raw_from, bot, seed, intent=intent_id, training=training_id, pools_data=pools_data, cand_map=cand_map)
+                if orig["kind"] in ("", "unmatched"):
+                    errors.append(
+                        f"{tag}：from={raw_from!r} 无效（严禁留空或填栏目标题；必须填上方候选编号如 \"T1\"/\"G1\"/\"P1\"/\"I1\"/\"A1\"，"
+                        f"或枚举 \"routine\" / \"intent\" / \"promise\" / \"rule\" / \"training\" / \"continue:前段事\" / \"self\"）"
+                    )
+                elif orig["kind"] == "intent" and not intent_id:
+                    errors.append(f"{tag}：from 填了 intent，但 intent 字段未填有效的打算编号")
+                elif orig["kind"] == "training" and not training_id:
+                    errors.append(f"{tag}：from 填了 training，但 training 字段未填有效的在练编号")
+                else:
+                    bot_resolved_origins.append(orig)
+
+                if st_code != "do":
+                    continue
+                if "things" not in raw or not isinstance(raw.get("things"), list):
+                    errors.append(f"{tag}：things 必须显式填数组（无变动填 []）")
+                if "items" not in raw or not isinstance(raw.get("items"), list):
+                    errors.append(f"{tag}：items 必须显式填数组（无变动填 []）")
+
+                for t_i, eff in enumerate(raw.get("things") or [], 1):
+                    if not isinstance(eff, dict):
+                        errors.append(f"{tag} things[{t_i}]：必须是对象")
+                        continue
+                    bot_has_food_step = True
+                    what = norm_step(eff.get("what"))
+                    if eff.get("new"):
+                        bot_has_new_food = True
+                        nm = clean_text(eff.get("name"), 30)
+                        rk = str(eff.get("kind") or "").strip()
+                        if not nm:
+                            errors.append(f"{tag} things[{t_i}]：new 食物缺少 name")
+                        if rk not in KINDS:
+                            errors.append(f"{tag} things[{t_i}]（{nm}）：kind={rk!r} 不在允许的食物大类列表中")
+                        if what not in START_STEPS:
+                            errors.append(f"{tag} things[{t_i}]（{nm}）：new 食物的 what 必须填 做好了/买回来/收到/原来就有（当前={eff.get('what')!r}）")
+                        try:
+                            checked_place(eff.get("place"), True, nm or "新食物")
+                        except Exception as pe:
+                            errors.append(f"{tag} things[{t_i}]（{nm}）：place 格式不合法（须填 {{\"area\": ..., \"at\": ...}}）：{pe}")
+                        if what == "做好了":
+                            ck = str(eff.get("cook") or "").strip().lower()
+                            if ck not in ("boil", "fry", "steam", "roast", "cold"):
+                                errors.append(f"{tag} things[{t_i}]（{nm}）：what=\"做好了\" 时必须填 cook（boil/fry/steam/roast/cold 五选一）")
+                            else:
+                                if ck == "fry" and inv_state["oil_ml"] is not None and inv_state["oil_ml"] <= 0 and not batch_added_oil:
+                                    errors.append(f"{tag} things[{t_i}]（{nm}）：家里食用油现余 0 毫升且未补油，cook 严禁填 \"fry\"")
+                                if seaside and raw.get("at_home") is True and ck in ("boil", "fry", "steam", "roast") and stove_val not in ("charcoal", "wood"):
+                                    errors.append(f"{tag} things[{t_i}]（{nm}）：在船屋做好热食（cook=\"{ck}\"）时，该段 stove 必须填 \"charcoal\" 或 \"wood\"，不能填 \"\"")
+                    else:
+                        tid = str(eff.get("id") or "").strip()
+                        found = tid in batch_food_keys or (shelf.find(tid) is not None if shelf is not None else bool(tid))
+                        if not tid or not found:
+                            errors.append(f"{tag} things[{t_i}]：id={tid!r} 在当前库存或本轮新建代号中不存在")
+                        if what not in MID_STEPS + END_STEPS:
+                            errors.append(f"{tag} things[{t_i}]（{tid}）：已有食物的 what={eff.get('what')!r} 不合法")
+                        if what in ("用完了", "吃完了") and str(eff.get("left") or "").strip():
+                            errors.append(f"{tag} things[{t_i}]（{tid}）：what=\"{what}\" 时 left 必须填空串 \"\"")
+                        if what == "油封" and inv_state["oil_ml"] is not None and inv_state["oil_ml"] < 60 and not batch_added_oil:
+                            errors.append(f"{tag} things[{t_i}]（{tid}）：家里食用油不足 60 毫升，不能做 \"油封\"")
+                        if what == "炉烘" and stove_val != "wood":
+                            errors.append(f"{tag} things[{t_i}]（{tid}）：做 what=\"炉烘\" 时该段 stove 必须填 \"wood\"")
+                        if what == "热了一下" and seaside and raw.get("at_home") is True and stove_val not in ("charcoal", "wood"):
+                            errors.append(f"{tag} things[{t_i}]（{tid}）：船屋回锅热食（what=\"热了一下\"）时该段 stove 必须填 \"charcoal\" 或 \"wood\"")
+
+                for i_i, eff in enumerate(raw.get("items") or [], 1):
+                    if not isinstance(eff, dict):
+                        errors.append(f"{tag} items[{i_i}]：必须是对象")
+                        continue
+                    what = norm_step(eff.get("what"), CAT_ITEM)
+                    if eff.get("new"):
+                        bot_has_new_item = True
+                        nm = clean_text(eff.get("name"), 30)
+                        kd = clean_text(eff.get("kind"), 10)
+                        if not nm or not kd:
+                            errors.append(f"{tag} items[{i_i}]：new 物品必须同时填非空 name 与 kind")
+                        if what not in ITEM_START_STEPS:
+                            errors.append(f"{tag} items[{i_i}]（{nm}）：new 物品的 what 必须填 开始做/做好了/买回来/收到/捡到/原来就有（当前={eff.get('what')!r}）")
+                        try:
+                            checked_place(eff.get("place"), True, nm or "新物品")
+                        except Exception as pe:
+                            errors.append(f"{tag} items[{i_i}]（{nm}）：place 格式不合法（须填 {{\"area\": ..., \"at\": ...}}）：{pe}")
+                    else:
+                        bot_has_used_item = True
+                        tid = str(eff.get("id") or "").strip()
+                        shelf_hit = shelf.find(tid) if (shelf is not None and tid) else None
+                        found = tid in batch_item_keys or (
+                            (shelf_hit is not None and str(shelf_hit.get("cat") or "") == CAT_ITEM) if shelf is not None else bool(tid)
+                        )
+                        if not tid or not found:
+                            errors.append(f"{tag} items[{i_i}]：id={tid!r} 在当前物品清单或本轮新建代号中不存在")
+                        if what not in ITEM_MID_STEPS + ITEM_END_STEPS:
+                            errors.append(f"{tag} items[{i_i}]（{tid}）：已有物品的 what={eff.get('what')!r} 不合法")
+
+            # 按池子条目的结构化 link / group 核对是否漏写对应的台账变动（零正文关键词猜测）
+            for orig in bot_resolved_origins:
+                if orig["kind"] not in ("twist", "night_twist", "together", "pastime"):
+                    continue
+                p_row = pool_meta.get(orig["text"]) or {}
+                p_link = str(p_row.get("link") or "")
+                p_grp = str(p_row.get("group") or "")
+                if p_link in ("charcoal", "charcoal_stove", "firewood") and not bot_has_new_item:
+                    errors.append(f"{who_lbl}采用了燃料获取插曲「{orig['text']}」，必须在完成段的 items 里写 new 将新得的燃料/燃柴入库")
+                elif p_link == "barter_item" and not (bot_has_used_item and bot_has_new_item):
+                    errors.append(f"{who_lbl}采用了以物易物插曲「{orig['text']}」，必须在 items 里同时写消耗的旧物（id）与换回的新物（new）")
+                elif p_link in ("ship_day", "restock") and not (bot_has_new_item or bot_has_new_food):
+                    errors.append(f"{who_lbl}采用了采买/补货插曲「{orig['text']}」，必须在 things 或 items 里写 new 将带回来的东西入库")
+                elif p_link in ("preserve_jam", "preserve_pickle", "fish_dry", "fish_stove", "ash") and not bot_has_food_step:
+                    errors.append(f"{who_lbl}采用了保鲜加工插曲「{orig['text']}」，必须在 things 里写出对应的食材保鲜加工步骤")
+                elif p_grp == "取淡水" and seaside and not bot_has_water_true:
+                    errors.append(f"{who_lbl}采用了取淡水插曲「{orig['text']}」，打水那段必须填 \"water\": true")
+
+        return errors
+
     def apply(self, data: dict, tasks: dict, now: datetime.datetime):
         with fact_batch(self):
             return self._apply(data, tasks, now)
 
     def _apply(self, data: dict, tasks: dict, now: datetime.datetime):
-        """校验并落库，返回（每人写进去的段，没写到此刻之后的人）。"""
+        """落库（不搞关键词兜底瞎猜，完全按模型已通过校验的结构化字段落盘），返回（每人写进去的段，没写到此刻之后的人）。"""
         flat = now.replace(tzinfo=None)
         date_text = flat.date().isoformat()
         self._apply_stop_results(data.get("stopped_results"), date_text)
@@ -2088,6 +2434,7 @@ class LifeStep:
         written, missed = {}, []
         day_seed = self._seed_for(date_text) if self.seed_log is not None else None
         win_seed = getattr(self, "_last_window_seed", None)
+        cand_map = getattr(self, "_last_cand_map", None)
         seed = self._merge_origin_seeds(win_seed, day_seed)
         pools_data = self._pools()
         store = getattr(self, "things", None)
@@ -2101,10 +2448,8 @@ class LifeStep:
         master_sleeping = (master_cur is not None and is_sleep(master_cur)) or bool(
             companion is not None and companion.safe("resting", flat, default=False)
         )
-        inv_state = self._live_inventory_state(tasks, flat, shelf)
-        auto_seq = [0]
 
-        # 第一遍：先按每人 MAX_SEGMENTS / horizon / until 截断保留段，同时执行小模型漏字段校验与自动修补
+        # 第一遍：先按每人 MAX_SEGMENTS / horizon / until 截断保留段，杜绝截断段提前预占 ID
         kept_plans: dict[str, tuple[list, datetime.datetime, datetime.datetime | None]] = {}
         for bot, info in tasks.items():
             start = info["start"]
@@ -2125,7 +2470,7 @@ class LifeStep:
                     cur.get("id"), end=fmt_time(end),
                 )
                 start = end
-            items = [copy.deepcopy(x) for x in (segments.get(bot) or []) if isinstance(x, dict)]
+            items = [x for x in (segments.get(bot) or []) if isinstance(x, dict)]
             items.sort(key=lambda x: str(norm_time(x.get("start"), date_text) or ""))
             cursor = start
             horizon = max(start, flat) + datetime.timedelta(hours=HORIZON_HOURS)
@@ -2134,7 +2479,6 @@ class LifeStep:
                 logger.warning("[super_enhance/world] 补写给%s写了 %d 段，一次只收前 %d 段，后面的下次再写",
                                self.label(bot) or bot, len(items), MAX_SEGMENTS)
             bot_plan = []
-            auto_added_kinds: set[str] = set()
             for raw in items[:MAX_SEGMENTS]:
                 state = state_of(raw)
                 idle, sleep = state == "idle", state == "sleep"
@@ -2158,11 +2502,6 @@ class LifeStep:
                     seg_end = min(seg_end, cursor + datetime.timedelta(minutes=MAX_IDLE_MINUTES))
                 if until is not None:
                     seg_end = min(seg_end, until)
-                _texts, parsed_steps = self._repair_raw_segment(
-                    raw, bot=bot, seg_start=cursor, seg_end=seg_end, state=state,
-                    texts=_texts, parsed_steps=parsed_steps, shelf=shelf,
-                    inv_state=inv_state, auto_seq=auto_seq, auto_added_kinds=auto_added_kinds,
-                )
                 bot_plan.append((raw, cursor, seg_end, state, idle, sleep, _texts, parsed_steps))
                 cursor = seg_end
             kept_plans[bot] = (bot_plan, cursor, until)
@@ -2194,8 +2533,6 @@ class LifeStep:
                                         lambda: store.reserve_id(CAT_ITEM))
 
         # 第三遍：组装条目、规整主动消息与 step_no 夹紧、落库
-        oil_ml_now = inv_state.get("oil_ml")
-        seed_moods = (seed or {}).get("moods") if isinstance(seed, dict) else {}
         for bot, (bot_plan, final_cursor, until) in kept_plans.items():
             staged_entries = []
             for raw, seg_start, seg_end, state, idle, sleep, _texts, parsed_steps in bot_plan:
@@ -2234,7 +2571,7 @@ class LifeStep:
                         msg_copy["msg_at"] = ""
                         msg_copy["msg_purpose"] = ""
                 things_list = (
-                    self._thing_steps(raw.get("things"), thing_keys, shelf, bot, oil_ml=oil_ml_now)
+                    self._thing_steps(raw.get("things"), thing_keys, shelf, bot)
                     + self._item_steps(raw.get("items"), item_keys, shelf, bot, seg_place=str(raw.get("place") or ""))
                 ) if state == "do" else []
                 for effect in things_list:
@@ -2249,10 +2586,6 @@ class LifeStep:
                             effect["step"] = max(1, min(raw_no, len(_texts)))
                 raw_stove = str(raw.get("stove") or "").strip().lower()
                 stove_val = raw_stove if raw_stove in ("charcoal", "wood") and not sleep and not idle else ""
-                mood_val = str(raw.get("mood") or "").strip()
-                if not mood_val:
-                    mood_val = str((prev or {}).get("mood") or (seed_moods or {}).get(bot) or "").strip()
-                seg_night = seg_start.hour >= NIGHT_FROM or seg_start.hour < NIGHT_UNTIL
                 entry = {
                     "who": bot,
                     "kind": "activity",
@@ -2273,15 +2606,15 @@ class LifeStep:
                     "meal": raw.get("meal"),
                     **({"lamp": True} if raw.get("lamp") in (True, "true") and not sleep else {}),
                     **({"kerosene": True} if raw.get("kerosene") in (True, "true") else {}),
-                    "mood": mood_val,
+                    **({"water": True} if raw.get("water") in (True, "true") and not sleep else {}),
+                    "mood": str(raw.get("mood") or "").strip(),
                     "public": raw.get("public"),
                     "with": with_list,
                     "training": training,
                     "intent": intent,
                     "origin": origin_of(
-                        raw.get("from"), bot, seed, intent=intent, training=training, pools_data=pools_data,
-                        doing=str(raw.get("doing") or ""), steps_str=" ".join(_texts),
-                        state=state, meal=bool(raw.get("meal")), night=seg_night,
+                        raw.get("from"), bot, seed, intent=intent, training=training,
+                        pools_data=pools_data, cand_map=cand_map,
                     ),
                     "things": things_list,
                     "seen_by": [bot] + with_list,
@@ -2316,7 +2649,7 @@ class LifeStep:
         return written, missed
 
     def _live_inventory_state(self, tasks: dict | None, flat: datetime.datetime, shelf) -> dict:
-        """提取实时燃料、油量、补给船未领与煤油灯余量，供段级校验修补器使用。"""
+        """提取实时燃料、油量、补给船未领与煤油灯余量，供纯结构化校验与环境感知使用。"""
         ctx = getattr(self, "_last_live_ctx", None)
         win_start = min((x["start"] for x in (tasks or {}).values() if isinstance(x, dict) and x.get("start")), default=None) or flat
         if not isinstance(ctx, dict) or not ctx.get("has_inventory"):
@@ -2347,24 +2680,23 @@ class LifeStep:
         }
 
     def _seaside_living_nudges(self, tasks: dict | None, flat: datetime.datetime, shelf) -> str:
-        """海边船居四大硬日常感知（柴炉暖舱清灰 / 菜篮断鲜 / 淡水见底 / 煤油见底）：写成现场撞见后的真实转折。"""
+        """海边船居四大硬日常纯结构化感知（柴炉暖舱清灰 / 菜篮断鲜 / 淡水见底 / 煤油见底）：只看结构化字段与库存，零正文关键词扫描。"""
         if self.home != "海边小镇":
             return ""
         win_start = min((x["start"] for x in (tasks or {}).values() if isinstance(x, dict) and x.get("start")), default=None) or flat
         win_end = max(win_start, flat) + datetime.timedelta(hours=HORIZON_HOURS)
         inv = self._live_inventory_state(tasks, flat, shelf)
         ctx = inv["ctx"]
+        groups = group_map(self._pools())
         nudges: list[str] = []
 
-        # 1. 柴炉取暖与炉灰清理
+        # 1. 柴炉取暖与炉灰清理（纯读 entry["stove"] == "wood" 与台账草木灰状态）
         recent_wood = False
         wood_count_30h = 0
-        cleaned_ash_30h = False
         cutoff_4h = win_start - datetime.timedelta(hours=4)
         cutoff_30h = win_start - datetime.timedelta(hours=30)
         cutoff_36h = win_start - datetime.timedelta(hours=36)
         fetched_water_36h = False
-        water_words = ("蓄水塔", "老井", "龙头接水", "接雨水", "存下的雨水", "存成凉白开", "打水", "排队接水")
 
         for back in (2, 1, 0):
             d_str = (win_start.date() - datetime.timedelta(days=back)).isoformat()
@@ -2374,16 +2706,15 @@ class LifeStep:
                 en_t = parse_time(e.get("end")) or parse_time(e.get("start"))
                 if en_t is None or en_t > win_start:
                     continue
-                d_full = f"{e.get('place') or ''} {e.get('doing') or ''} {e.get('result') or ''}"
-                if en_t >= cutoff_36h and any(w in d_full for w in water_words):
-                    fetched_water_36h = True
-                if en_t >= cutoff_30h:
-                    if str(e.get("stove") or "") == "wood":
-                        wood_count_30h += 1
-                        if en_t >= cutoff_4h:
-                            recent_wood = True
-                    if any(w in d_full for w in ("草木灰", "清炉", "清灰", "清炉膛")):
-                        cleaned_ash_30h = True
+                if en_t >= cutoff_36h:
+                    orig = e.get("origin") if isinstance(e.get("origin"), dict) else {}
+                    orig_txt = str(orig.get("text") or "")
+                    if e.get("water") is True or (orig_txt and cool_key(orig_txt, groups) in ("取淡水", "存雨水")):
+                        fetched_water_36h = True
+                if en_t >= cutoff_30h and str(e.get("stove") or "") == "wood":
+                    wood_count_30h += 1
+                    if en_t >= cutoff_4h:
+                        recent_wood = True
 
         if ctx.get("has_weather"):
             min_temp = float(ctx.get("min_temp") or 18.0)
@@ -2393,20 +2724,20 @@ class LifeStep:
             if chilly and not recent_wood:
                 if inv["wood_bundles"] > 0:
                     nudges.append(
-                        "- 天凉生炉暖舱：这阵子船舱返潮发冷（最低约 %.0f℃），别写成全知提前预判，写成坐着觉得手脚发凉时起身抱干柴把铁桶柴炉生起来暖舱（该段填 \"stove\": \"wood\"），睡前记得压火看炉。"
+                        "- 天凉生炉暖舱：这阵子船舱返潮发冷（最低约 %.0f℃），别写成全知提前预判，写成坐着觉得手脚发凉时起身抱干柴把铁桶柴炉生起来暖舱（该段必填 \"stove\": \"wood\"），睡前记得压火看炉。"
                         % min_temp
                     )
                 else:
                     nudges.append(
-                        "- 天凉缺柴转折：这阵子船舱发冷（约 %.0f℃），想生铁桶柴炉去摸干燥架却发现干柴烧空了——若在白天且无大雨就临时去坡上薪柴地或船坞捡柴回来（items 写 new 干柴入库），夜深了就多裹铺盖、记着明早先去拾柴。"
+                        "- 天凉缺柴转折：这阵子船舱发冷（约 %.0f℃），想生铁桶柴炉去摸干燥架却发现干柴烧空了——若在白天且无大雨就临时去坡上薪柴地或船坞捡柴回来（items 写 new 燃柴入库），夜深了就多裹铺盖、记着明早先去拾柴。"
                         % min_temp
                     )
-        if wood_count_30h >= 2 and not cleaned_ash_30h:
+        if wood_count_30h >= 2 and not ctx.get("has_stove_ash"):
             nudges.append(
-                "- 炉膛积灰细节：铁桶柴炉这两天烧了几回，炉膛积了冷草木灰——再次生火前或白天顺手清一清炉膛（筛出的干草木灰可在 items 里写 new 入库，留着埋存鲜蛋生姜）。"
+                "- 炉膛积灰细节：铁桶柴炉这两天烧了几回，炉膛积了冷草木灰且家里还没筛存干灰——再次生火前或白天顺手清一清炉膛（筛出的干草木灰可在 items 里写 new 入库，留着埋存鲜蛋生姜）。"
             )
 
-        # 2. 正餐前菜篮断鲜感知
+        # 2. 正餐前菜篮断鲜感知（纯读食物 kind 枚举）
         store = getattr(self, "things", None)
         if store is not None and shelf is not None:
             fresh_kinds = {
@@ -2431,19 +2762,19 @@ class LifeStep:
                     "- 菜篮断鲜转折：眼下家里除了米面干货调料，已没有半点鲜鱼鲜菜鲜蛋了——别凭空下锅或顿顿干啃咸鱼，写成备饭前掀开菜篮/水桶发现没鲜菜了，临时挎上篮子先去集市挑鱼买菜、趁退潮去礁石滩撬牡蛎海螺、或拉蟹笼收货（必须在 things 里写 new 入库），回来再开火做饭。"
                 )
 
-        # 3. 36h 淡水补给与凉白开闭环
+        # 3. 36h 淡水补给与凉白开闭环（纯读 entry["water"] 布尔值与结构化池组）
         hours_day = {(win_start + datetime.timedelta(hours=h)).hour for h in range(int(HORIZON_HOURS) + 1)}
         if not fetched_water_36h and bool(hours_day & set(range(7, 19))):
             if float(ctx.get("max_rain") or 0.0) >= 0.3:
                 nudges.append(
-                    "- 淡水见底逢雨：近两天没补过淡水、水桶快见底了，正好外头落雨，顺手把桶盆摆到甲板接雨水、滤净烧开灌进水壶存成凉白开。"
+                    "- 淡水见底逢雨：近两天没补过淡水、水桶快见底了，正好外头落雨，顺手把桶盆摆到甲板接雨水、滤净烧开灌进水壶存成凉白开（该段必填 \"water\": true）。"
                 )
             else:
                 nudges.append(
-                    "- 淡水见底转折：近两天没打过水也没接过雨水——写成洗漱或备饭舀水时发现淡水桶见底了，临时拎桶去蓄水塔、山上老井或半淹车站打水回来，顺手烧一壶凉白开备着喝。"
+                    "- 淡水见底转折：近两天没打过水也没接过雨水——写成洗漱或备饭舀水时发现淡水桶见底了，临时拎桶去蓄水塔、山上老井或半淹车站打水回来，顺手烧一壶凉白开备着喝（打水那段必填 \"water\": true）。"
                 )
 
-        # 4. 夜里掌灯发现煤油快见底
+        # 4. 夜里掌灯发现煤油快见底（纯读 lamp_left 数值）
         if win_start.hour >= 18 or win_end.hour >= 19 or win_start.hour < 5:
             try:
                 ll = supply_mod.lamp_left(win_start, self.world, self._weather_text_of(), self.home)
@@ -2457,206 +2788,6 @@ class LifeStep:
         if not nudges:
             return ""
         return "船居实况与待办转折（按眼下真实现况触发，挑合时宜的自然融进段落动作与心情里，别写成机械汇报）：\n" + "\n".join(nudges)
-
-    def _repair_raw_segment(
-        self,
-        raw: dict,
-        *,
-        bot: str,
-        seg_start: datetime.datetime,
-        seg_end: datetime.datetime,
-        state: str,
-        texts: list[str],
-        parsed_steps: list,
-        shelf,
-        inv_state: dict,
-        auto_seq: list[int],
-        auto_added_kinds: set[str],
-    ) -> tuple[list[str], list]:
-        """针对小模型漏填或错填结构化字段的落库前校验与自动兜底修补。"""
-        doing = str(raw.get("doing") or "").strip()
-        place = str(raw.get("place") or "").strip()
-
-        # 1. state="do" 漏写 steps 时自动补单步，防止进度与 step 索引失效
-        if state == "do" and not texts and doing:
-            dur = max(5, int((seg_end - seg_start).total_seconds() // 60))
-            texts = [clean_text(doing, 80)]
-            parsed_steps = [{"text": texts[0], "minutes": dur}]
-            raw["steps"] = parsed_steps
-
-        # 2. 修补 at_home 与 meal
-        raw["at_home"] = _infer_at_home(place, raw.get("at_home"), self.home)
-        raw["meal"] = _infer_meal(doing, state, raw.get("meal"))
-
-        if state != "do":
-            raw["stove"] = ""
-            return texts, parsed_steps
-
-        full_txt = f"{doing} {' '.join(texts)} {raw.get('result') or ''}".strip()
-        on_road = any(w in place for w in ("路上", "的路", "往船屋", "去码头", "去集市"))
-
-        # 3. 海边船屋修补 stove / kerosene / lamp
-        if self.home == "海边小镇":
-            raw_stove = str(raw.get("stove") or "").strip().lower()
-            if raw_stove not in ("charcoal", "wood"):
-                raw_stove = ""
-            ch_g = float(inv_state.get("charcoal_g") or 0.0)
-            wood_b = float(inv_state.get("wood_bundles") or 0.0)
-            if raw["at_home"] is False or raw["meal"]:
-                raw_stove = ""
-            elif not raw_stove:
-                if any(w in full_txt for w in ("铁桶柴炉", "点起柴炉", "烧旺柴炉", "柴炉烟管旁", "烧柴暖", "生火暖舱", "把炕点起来", "柴火点起来")):
-                    raw_stove = "wood"
-                else:
-                    has_hot_food = False
-                    for eff in raw.get("things") or []:
-                        if not isinstance(eff, dict):
-                            continue
-                        w_step = norm_step(eff.get("what"))
-                        if w_step == "热了一下":
-                            has_hot_food = True
-                            break
-                        if eff.get("new") and w_step == "做好了":
-                            kd = norm_kind(eff.get("kind"))
-                            ck = _infer_cook_method(str(eff.get("name") or ""), kd, str(eff.get("cook") or ""), inv_state.get("oil_ml"))
-                            if ck and ck != "cold":
-                                has_hot_food = True
-                                break
-                    if has_hot_food or any(w in full_txt for w in ("生起小炭炉", "小炭炉烧水", "围在小炭炉边煨", "守在小炭炉边慢慢烤")):
-                        raw_stove = "charcoal" if ch_g > 0 else ("wood" if wood_b > 0 else "")
-            elif raw_stove == "charcoal" and ch_g <= 0:
-                raw_stove = "wood" if wood_b > 0 else ""
-            raw["stove"] = raw_stove
-
-            if not raw.get("kerosene") and inv_state.get("ship_unpicked"):
-                if ("配给" in full_txt or "补给船" in full_txt) and any(w in full_txt for w in ("签领", "领回", "领了", "搬回船屋")):
-                    raw["kerosene"] = True
-                    inv_state["ship_unpicked"] = False
-
-            if not raw.get("lamp") and inv_state.get("lamp_ok") and (seg_start.hour >= 18 or seg_start.hour < 5):
-                if any(w in full_txt for w in ("点起煤油灯", "点着煤油灯", "提着煤油灯", "提上煤油灯", "煤油灯底下", "油灯底下", "就着煤油灯", "就着油灯")):
-                    raw["lamp"] = True
-
-        # 4. 小模型『空口换物 / 空口捡柴换炭 / 空口筛灰』台账漏写兜底补齐
-        if not on_road or any(w in full_txt for w in ("回到船屋", "码在", "码到", "码好")):
-            raw_items = list(raw.get("items") or []) if isinstance(raw.get("items"), list) else []
-            raw_things = list(raw.get("things") or []) if isinstance(raw.get("things"), list) else []
-            has_new_charcoal = any(isinstance(x, dict) and x.get("new") and ("炭" in str(x.get("name") or "")) for x in raw_items)
-            has_new_wood = any(isinstance(x, dict) and x.get("new") and any(w in str(x.get("name") or "") + str(x.get("kind") or "") for w in ("柴", "枯枝", "边料")) for x in raw_items)
-            has_new_ash = any(isinstance(x, dict) and x.get("new") and "灰" in str(x.get("name") or "") for x in raw_items)
-
-            if ("闷炭" in full_txt or "木炭" in full_txt) and any(w in full_txt for w in ("换回", "买回", "夹进陶罐", "闷灭攒下", "换了一罐", "换半罐")) and not has_new_charcoal and "charcoal" not in auto_added_kinds:
-                auto_seq[0] += 1
-                from_stove = "夹" in full_txt or "闷灭" in full_txt
-                raw_items.append({
-                    "new": f"ax{auto_seq[0]}",
-                    "name": "闷炭",
-                    "kind": "燃料",
-                    "what": "做好了" if from_stove else "收到",
-                    "amount": "400克" if from_stove else "2000克",
-                    "origin": "柴炉硬柴闷存" if from_stove else "煮盐棚/镇上换回",
-                    "place": {"area": "船舱", "at": "灶台边", "detail": "陶罐里"},
-                    "state": "干燥结实，盖严防潮",
-                    "step": len(texts) or 1,
-                })
-                raw["items"] = raw_items
-                auto_added_kinds.add("charcoal")
-                inv_state["charcoal_g"] = float(inv_state.get("charcoal_g") or 0.0) + (400.0 if from_stove else 2000.0)
-                logger.info("[super_enhance/step] 兜底补全漏写的闷炭入库（%s）", bot)
-
-            elif any(w in full_txt for w in ("枯落枝", "干枯枝", "实木边料", "薪柴地捡")) and any(w in full_txt for w in ("捡了", "挑拣", "捆了", "背回", "码在", "码到", "码起来")) and not ("走到坡上薪柴地" in doing and "捡" not in full_txt) and not has_new_wood and "wood" not in auto_added_kinds:
-                auto_seq[0] += 1
-                is_scrap = "边料" in full_txt
-                raw_items.append({
-                    "new": f"ax{auto_seq[0]}",
-                    "name": "引火实木边料" if is_scrap else "干枯枝（燃柴）",
-                    "kind": "燃柴",
-                    "what": "收到" if is_scrap else "捡到",
-                    "amount": "1捆",
-                    "origin": "船坞清扫边料" if is_scrap else "坡上薪柴地",
-                    "place": {"area": "船屋甲板", "at": "干燥架", "detail": ""},
-                    "state": "干爽耐烧",
-                    "step": len(texts) or 1,
-                })
-                raw["items"] = raw_items
-                auto_added_kinds.add("wood")
-                inv_state["wood_bundles"] = float(inv_state.get("wood_bundles") or 0.0) + 1.0
-                logger.info("[super_enhance/step] 兜底补全漏写的燃柴入库（%s）", bot)
-
-            elif "草木灰" in full_txt and any(w in full_txt for w in ("筛了", "清出", "扫出")) and not has_new_ash and "ash" not in auto_added_kinds:
-                auto_seq[0] += 1
-                raw_items.append({
-                    "new": f"ax{auto_seq[0]}",
-                    "name": "干草木灰",
-                    "kind": "杂物",
-                    "what": "做好了",
-                    "amount": "1盆",
-                    "origin": "柴炉炉膛筛灰",
-                    "place": {"area": "船舱", "at": "灶台边", "detail": "瓦盆里"},
-                    "state": "退火冷却筛净的干灰",
-                    "step": len(texts) or 1,
-                })
-                raw["items"] = raw_items
-                auto_added_kinds.add("ash")
-                logger.info("[super_enhance/step] 兜底补全漏写的干草木灰入库（%s）", bot)
-
-            elif not raw_items and not raw_things and shelf is not None:
-                m = re.search(
-                    r"(?:换回|换了|换|买回|买来|买了|塞了|分到|多给了)(?:了)?([一两二三四五半几小]+[卷把只个条张块罐袋篮串包瓶斤][^\s，。；,.;、（）()]{1,10})",
-                    full_txt,
-                )
-                if m:
-                    phrase = m.group(1)
-                    um = re.match(r"^([一两二三四五半几小]+[卷把只个条张块罐袋篮串包瓶斤])(.+)$", phrase)
-                    if um:
-                        qty_txt, obj_name = um.group(1), um.group(2).strip("的")
-                        if obj_name and len(obj_name) <= 10 and "钱" not in obj_name and "打捞费" not in obj_name:
-                            auto_seq[0] += 1
-                            what_act = "买回来" if "买" in full_txt else "收到"
-                            food_words = ("鱼", "虾", "蟹", "螺", "牡蛎", "菜", "萝卜", "番薯", "蛋", "肉", "糖", "果", "米", "油", "盐", "酱")
-                            if any(fw in obj_name for fw in food_words):
-                                f_kind = "腊肉腊肠咸鱼" if "干" in obj_name else ("生鱼虾水产" if any(w in obj_name for w in ("鱼", "虾", "蟹", "螺", "牡蛎")) else "耐储大叶菜")
-                                raw_things.append({
-                                    "new": f"an{auto_seq[0]}",
-                                    "name": obj_name,
-                                    "kind": f_kind,
-                                    "what": what_act,
-                                    "left": qty_txt,
-                                    "origin": place or "海边小镇",
-                                    "place": {"area": "船舱", "at": "灶台边", "detail": "菜篮里"},
-                                    "keep": "收着放",
-                                    "spot": "舱底阴凉处",
-                                    "step": len(texts) or 1,
-                                })
-                                raw["things"] = raw_things
-                            else:
-                                if any(w in full_txt for w in ("旧零件", "废铜", "废铁")) and "换" in full_txt:
-                                    for cand in shelf.values():
-                                        if cat_of(cand) == CAT_ITEM and is_ended(cand) is None:
-                                            cnm = str(cand.get("name") or "")
-                                            if ("旧零件" in full_txt and "零件" in cnm) or ("废铜" in full_txt and "废铜" in cnm) or ("废铁" in full_txt and "废铁" in cnm):
-                                                raw_items.append({
-                                                    "id": str(cand.get("id")),
-                                                    "what": "用了",
-                                                    "state": f"拿去换了{obj_name}",
-                                                    "step": 1,
-                                                })
-                                                break
-                                raw_items.append({
-                                    "new": f"ax{auto_seq[0]}",
-                                    "name": obj_name,
-                                    "kind": obj_name[-2:] if len(obj_name) >= 2 else "物件",
-                                    "what": what_act,
-                                    "amount": qty_txt,
-                                    "origin": place or "收购站/镇上",
-                                    "place": {"area": "船舱", "at": "储物格", "detail": ""},
-                                    "state": "完好可用",
-                                    "step": len(texts) or 1,
-                                })
-                                raw["items"] = raw_items
-                            logger.info("[super_enhance/step] 兜底补全漏写的换物/采买台账：%s %s（%s）", qty_txt, obj_name, bot)
-
-        return texts, parsed_steps
 
     @staticmethod
     def _merge_origin_seeds(win_seed: dict | None, day_seed: dict | None) -> dict:

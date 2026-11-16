@@ -432,6 +432,8 @@ class WorldStore:
             record["lamp"] = True  # 补写标的点着煤油灯（supply.LAMP_OIL）
         if entry.get("kerosene"):
             record["kerosene"] = True  # 补写标的这段把补给船那桶煤油领回来了（supply.LAMP_OIL）
+        if entry.get("water"):
+            record["water"] = True  # 补写标的这段打了淡水或接存了雨水
         if str(entry.get("mood") or "").strip() and kind != "event":
             record["mood"] = clean_text(entry.get("mood"), MAX_MOOD)  # 补写写的这段她什么心情（聊天取当下这句）
         if entry.get("stopped") and isinstance(entry.get("stop_at_step"), int):
@@ -626,6 +628,12 @@ class WorldStore:
             if fields.get("stove") is not None and not is_event(item):
                 stove_val = str(fields["stove"] or "").strip().lower()
                 item["stove"] = stove_val if stove_val in ("charcoal", "wood") else ""
+            for b_flag in ("lamp", "kerosene", "water"):
+                if fields.get(b_flag) is not None:
+                    if clean_flag(fields[b_flag]):
+                        item[b_flag] = True
+                    else:
+                        item.pop(b_flag, None)
             if fields.get("result") is not None:
                 item["result"] = clean_text(fields["result"], MAX_RESULT)
             if (fields.get("end") is not None or fields.get("start") is not None) and fields.get("steps") is None:
