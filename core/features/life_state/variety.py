@@ -1718,6 +1718,84 @@ def rows_for(items: list, name: str, home: str = "", work: bool = True, ctx: dic
     return out
 
 
+_FOIL_DRY_GROUPS = frozenset((
+    "晒铺盖", "洗衣裳", "做鱼干", "礁岛", "捡冲上来的", "钓鱼", "备柴", "旧大楼",
+))
+FOIL_WEIGHT_FACTOR = 0.5
+MAX_FOILED_PER_DAY = 2
+
+
+def foil_reason(item: dict, ctx: dict | None, groups: dict | None = None) -> str:
+    """判断一条因实时处境被拦住的候选，是否属于『人先起了念头、探头或掀罐才撞见实情改主意』的可转折事项。
+    天象前提本身不成立（如晴天接雨水、无雾听夜雾、刚洗完衣裳又去洗）返回空串，照旧静默拦掉。"""
+    if not ctx or not isinstance(item, dict):
+        return ""
+    text = str(item.get("text") or "")
+    wx = str(item.get("wx") or "")
+    link = str(item.get("link") or "")
+    grp = cool_key(text, groups)
+
+    if link == "use_charcoal" and ctx.get("has_inventory") and float(ctx.get("charcoal_g") or 0.0) <= 200:
+        return "掀开炭罐发现闷炭见底只够做正餐了，得省着用"
+
+    if link == "preserve_jam" and ctx.get("has_inventory") and float(ctx.get("sugar_g") or 0.0) < 50:
+        return "翻柜格发现白糖不够熬果酱了"
+    if link == "preserve_pickle" and ctx.get("has_inventory"):
+        if float(ctx.get("vinegar_ml") or 0.0) < 30 and float(ctx.get("soy_ml") or 0.0) < 40:
+            return "翻出坛罐发现醋和酱油见底、不够腌泡了"
+    if link == "fish_dry" and ctx.get("has_inventory") and float(ctx.get("salt_g") or 0.0) < 10:
+        return "备料时发现粗盐见底、不够抹鱼了"
+    if link == "fish_stove" and ctx.get("has_inventory"):
+        if float(ctx.get("salt_g") or 0.0) < 10 or float(ctx.get("wood_bundles") or 0.0) <= 0:
+            return "备料时发现粗盐不够或手头没干柴烘鱼了"
+    if link == "ash" and ctx.get("has_inventory"):
+        if not ctx.get("has_stove_ash") or not ctx.get("has_egg_or_root"):
+            return "想拿草木灰埋存鲜物，一看还没筛出干草木灰（或手头没鲜蛋生姜可埋）"
+    if link == "charcoal_stove" and ctx.get("has_inventory"):
+        if float(ctx.get("wood_bundles") or 0.0) <= 0:
+            return "想从柴炉夹红炭闷存，去摸柴架才发现没干柴烧炉了"
+
+    if ctx.get("has_weather"):
+        max_rain = float(ctx.get("max_rain") or 0.0)
+        soon_rain = float(ctx.get("soon_rain") or 0.0)
+        max_wind = int(ctx.get("max_wind") or 0)
+        max_fog = int(ctx.get("max_fog") or 0)
+        avg_cloud = float(ctx.get("avg_cloud") or 1.0)
+        if wx == "calm" and (max_rain >= 1.0 or max_wind > 4 or max_fog > 1):
+            if max_rain < 4.0:
+                return "拿好家伙到船边一看海面风浪发浑（或起了海雾），下不去水"
+        if wx in ("sunny", "dry") and max_rain < 0.8 and (grp in _FOIL_DRY_GROUPS or "晒" in text or "晾" in text):
+            if soon_rain >= 0.05:
+                return "探头看海面阴云压过来、海风潮湿眼看要落雨"
+            if wx == "sunny" and avg_cloud > 1.05:
+                return "到甲板一看天色阴沉返潮、没日头晒不透"
+            if max_wind > 5:
+                return "探头见外头风浪太大、摆出去怕被吹乱打湿"
+    return ""
+
+
+def foil_rows_for(
+    items: list,
+    name: str,
+    home: str = "",
+    work: bool = True,
+    ctx: dict | None = None,
+    groups: dict | None = None,
+) -> dict[str, tuple[float, str]]:
+    """返回当前被拦住但适合写成『起念撞墙→临时变卦』的候选：{原文: (折算权重, 受阻原因)}。"""
+    out: dict[str, tuple[float, str]] = {}
+    if not ctx:
+        return out
+    for item in items or []:
+        base, _live, blocked, _note = eval_item(item, name, home, ctx, work=work)
+        if base <= 0 or not blocked:
+            continue
+        why = foil_reason(item, ctx, groups)
+        if why:
+            out[item["text"]] = (base * FOIL_WEIGHT_FACTOR, why)
+    return out
+
+
 class PoolStore:
     """插曲 / 消遣池（``pools.json``）。没有这个文件就用代码里的默认值。"""
 
@@ -2158,6 +2236,7 @@ def init_day_seed(
         "night_idles": {bot: [] for bot in labels},
         "moods": moods,
         "accident": "",
+        "foiled": [],
         "when": {},
         "meals": draw_meals(date_text, history, meals_rng or random.Random(), home),
     }
@@ -2178,8 +2257,9 @@ def draw_window(
     rng: random.Random | None = None,
     home: str = "",
     night: bool | None = None,
+    allow_foil: bool = True,
 ) -> dict:
-    """每次补写当下窗口 [start, end] 时即时现抽：结合实时天气、库存、补给船、双人避让与真实世界线冷却。"""
+    """每次补写当下窗口 [start, end] 时即时现抽：结合实时天气、库存、补给船、双人避让、真实世界线冷却与受阻转折。"""
     from .world import real_stop as _real_stop
 
     rng = rng or random.Random()
@@ -2193,6 +2273,14 @@ def draw_window(
         night = flat_start.hour >= 18 or flat_start.hour < 6
 
     seen = {bot: last_drawn(history, date_text, bot, groups, world=world) for bot in labels}
+    ago_today = {bot: drawn_days(history, date_text, bot, groups, world=world) for bot in labels}
+
+    foiled_today = [x for x in (base_seed.get("foiled") or []) if isinstance(x, dict)]
+    foiled_groups_today: set[str] = {
+        str(x.get("group") or cool_key(x.get("want") or "", groups))
+        for x in foiled_today if x.get("want") or x.get("group")
+    }
+    window_foiled: list[dict] = []
 
     # 检查今天是否已经发生过两人一起的插曲或意外
     had_together_today = False
@@ -2222,6 +2310,57 @@ def draw_window(
             for t in together:
                 seen[bot][cool_key(t, groups)] = 0
 
+    def _draw_slot(
+        pool_items: list,
+        bot: str,
+        name: str,
+        count: int,
+        use_work: bool,
+        local_seen: dict,
+        off_bot: dict | None,
+        shared_keys: set,
+        table: dict | None = None,
+        can_foil: bool = False,
+    ) -> list[str]:
+        avail = rows_for(pool_items, name, home, work=use_work, ctx=ctx)
+        if not (can_foil and allow_foil and not window_foiled and len(foiled_today) < MAX_FOILED_PER_DAY):
+            return _pick_cooled(avail, local_seen, count, rng, groups, table, offered=off_bot, exclude_keys=shared_keys)
+        raw_foil = foil_rows_for(pool_items, name, home, work=use_work, ctx=ctx, groups=groups)
+        eligible_foil = {}
+        for t, (fw, why) in raw_foil.items():
+            ck = cool_key(t, groups)
+            if ck in foiled_groups_today or ck in shared_keys:
+                continue
+            if ago_today.get(bot, {}).get(ck) == 0:
+                continue
+            eligible_foil[t] = (fw, why)
+        if not eligible_foil:
+            return _pick_cooled(avail, local_seen, count, rng, groups, table, offered=off_bot, exclude_keys=shared_keys)
+        combined = list(avail) + [(t, fw) for t, (fw, _why) in eligible_foil.items()]
+        picked = _pick_cooled(combined, local_seen, count, rng, groups, table, offered=off_bot, exclude_keys=shared_keys)
+        clean_out: list[str] = []
+        for t in picked:
+            if t not in eligible_foil:
+                clean_out.append(t)
+                continue
+            rem_avail = [r for r in avail if r[0] not in clean_out and r[0] not in picked]
+            rep = _pick_cooled(rem_avail, local_seen, 1, rng, groups, table, offered=off_bot, exclude_keys=shared_keys)
+            instead_txt = rep[0] if rep else ""
+            if instead_txt:
+                clean_out.append(instead_txt)
+            if not window_foiled:
+                ck = cool_key(t, groups)
+                window_foiled.append({
+                    "bot": bot,
+                    "want": t,
+                    "why": eligible_foil[t][1],
+                    "instead": instead_txt,
+                    "group": ck,
+                })
+                foiled_groups_today.add(ck)
+                shared_keys.add(ck)
+        return clean_out
+
     twists, night_twists, pastimes, idles, night_idles = {}, {}, {}, {}, {}
     # 交替轮转先抽顺序，确保长期两人在共享冷却/同窗避让上完全公平
     bot_items = list(labels.items())
@@ -2236,9 +2375,8 @@ def draw_window(
         off_bot = (offered or {}).get(bot) if isinstance(offered, dict) else None
         if night:
             twists[bot] = []
-            night_twists[bot] = _pick_cooled(
-                rows_for(pools["night_twists"], name, home, work=False, ctx=ctx),
-                local_seen, NIGHT_PICK, rng, groups, offered=off_bot, exclude_keys=shared_window_keys,
+            night_twists[bot] = _draw_slot(
+                pools["night_twists"], bot, name, NIGHT_PICK, False, local_seen, off_bot, shared_window_keys, can_foil=True,
             )
             idles[bot] = []
             night_idles[bot] = _pick_cooled(
@@ -2246,9 +2384,8 @@ def draw_window(
                 local_seen, NIGHT_IDLE_PICK, rng, groups, PASTIME_COOLDOWN, offered=off_bot, exclude_keys=shared_window_keys,
             )
         else:
-            twists[bot] = _pick_cooled(
-                rows_for(pools["twists"], name, home, work=True, ctx=ctx),
-                local_seen, DAY_PICK, rng, groups, offered=off_bot, exclude_keys=shared_window_keys,
+            twists[bot] = _draw_slot(
+                pools["twists"], bot, name, DAY_PICK, True, local_seen, off_bot, shared_window_keys, can_foil=True,
             )
             night_twists[bot] = []
             idles[bot] = _pick_cooled(
@@ -2256,9 +2393,9 @@ def draw_window(
                 local_seen, IDLE_PICK, rng, groups, PASTIME_COOLDOWN, offered=off_bot, exclude_keys=shared_window_keys,
             )
             night_idles[bot] = []
-        pastimes[bot] = _pick_cooled(
-            rows_for(pools["pastimes"], name, home, work=False, ctx=ctx),
-            local_seen, PASTIME_PICK, rng, groups, PASTIME_COOLDOWN, offered=off_bot, exclude_keys=shared_window_keys,
+        pastimes[bot] = _draw_slot(
+            pools["pastimes"], bot, name, PASTIME_PICK, False, local_seen, off_bot, shared_window_keys,
+            table=PASTIME_COOLDOWN, can_foil=True,
         )
         # 同窗双人避让：前一人刚抽到的条目/同组，后一人同窗不再撞车
         for picked_list in (twists[bot], night_twists[bot], pastimes[bot], idles[bot], night_idles[bot]):
@@ -2289,6 +2426,7 @@ def draw_window(
         "idles": idles,
         "night_idles": night_idles,
         "accident": accident,
+        "foiled": window_foiled,
         "when": {
             t: w for t, w in all_when.items()
             if any(t in items for items in (*twists.values(), *night_twists.values(), together))
@@ -2344,6 +2482,7 @@ def draw_seed(
         "idles": day_win["idles"],
         "night_idles": night_win["night_idles"],
         "accident": day_win["accident"],
+        "foiled": list(day_win.get("foiled") or []) + list(night_win.get("foiled") or []),
         "when": {
             t: w for t, w in all_when.items()
             if any(t in items for items in (*twists.values(), *night_twists.values(), together))
@@ -2379,11 +2518,13 @@ def pool_outlook(
     for _ in range(max(1, int(sims))):
         w_day = draw_window(
             str(date_text), start=now_dt.replace(hour=12 if now_dt.hour >= 18 else now_dt.hour),
-            labels=labels, pools=pools, seed=seed_today, history=history, world=world, ctx=day_ctx, rng=rng, home=home, night=False,
+            labels=labels, pools=pools, seed=seed_today, history=history, world=world, ctx=day_ctx, rng=rng, home=home,
+            night=False, allow_foil=False,
         )
         w_night = draw_window(
             str(date_text), start=now_dt.replace(hour=20),
-            labels=labels, pools=pools, seed=seed_today, history=history, world=world, ctx=night_ctx, rng=rng, home=home, night=True,
+            labels=labels, pools=pools, seed=seed_today, history=history, world=world, ctx=night_ctx, rng=rng, home=home,
+            night=True, allow_foil=False,
         )
         for bot in labels:
             counts[bot]["twists"].update(w_day["twists"].get(bot) or [])
@@ -2477,8 +2618,14 @@ class SeedLog:
         jsonio.save(self.path, data, indent=1)
         self._cache = (self.path.stat().st_mtime_ns, data)
 
-    def record_used(self, date_text: str, written_by_bot: dict, pools: dict | None = None) -> bool:
-        """把本轮补写实际落盘采用的插曲/消遣/闲置/意外追加记入当天 daily_seeds.json（供面板查看与跨日冷却）。"""
+    def record_used(
+        self,
+        date_text: str,
+        written_by_bot: dict,
+        pools: dict | None = None,
+        foiled: list | None = None,
+    ) -> bool:
+        """把本轮补写实际落盘采用的插曲/消遣/闲置/意外及受阻转折追加记入当天 daily_seeds.json。"""
         data = self.load()
         cur = data.get(date_text)
         if not isinstance(cur, dict):
@@ -2492,7 +2639,9 @@ class SeedLog:
             "idle": "idles",
             "night_idle": "night_idles",
         }
-        all_when = when_map(normalize_pools(pools) if pools is not None else default_pools())
+        norm_p = normalize_pools(pools) if pools is not None else default_pools()
+        all_when = when_map(norm_p)
+        groups = group_map(norm_p)
         when_dict = dict(record.get("when") or {})
         for bot, entries in (written_by_bot or {}).items():
             for e in entries or []:
@@ -2526,6 +2675,27 @@ class SeedLog:
                         if otext in all_when:
                             when_dict[otext] = all_when[otext]
                         changed = True
+        if foiled:
+            f_list = [x for x in (record.get("foiled") or []) if isinstance(x, dict)]
+            seen_grps = {str(x.get("group") or cool_key(x.get("want") or "", groups)) for x in f_list}
+            for f_item in foiled:
+                if not isinstance(f_item, dict):
+                    continue
+                f_bot = str(f_item.get("bot") or "")
+                if f_bot and not (written_by_bot or {}).get(f_bot):
+                    continue
+                grp = str(f_item.get("group") or cool_key(f_item.get("want") or "", groups))
+                if grp and grp not in seen_grps:
+                    f_list.append({
+                        "bot": f_bot,
+                        "want": str(f_item.get("want") or ""),
+                        "why": str(f_item.get("why") or ""),
+                        "instead": str(f_item.get("instead") or ""),
+                        "group": grp,
+                    })
+                    seen_grps.add(grp)
+                    changed = True
+            record["foiled"] = f_list
         if changed:
             record["when"] = when_dict
             data[date_text] = record

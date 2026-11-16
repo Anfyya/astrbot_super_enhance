@@ -6048,6 +6048,10 @@
     WORLD_SEED_ROWS.forEach(function (r) { line(r[1], mine(seed[r[0]])); });
     line("两人一起", seed.together);
     line("意外", mine(seed.accident));
+    var myFoiled = (Array.isArray(seed.foiled) ? seed.foiled : [])
+      .filter(function (f) { return f && (!f.bot || f.bot === who) && f.want && f.why; })
+      .map(function (f) { return "想「" + f.want + "」→ " + f.why + (f.instead ? "，改「" + f.instead + "」" : ""); });
+    line("临时变卦", myFoiled);
     var menu = (seed.meals || {}).menu || {};
     Object.keys(menu).forEach(function (k) { line(k, menu[k], true); });
     card.appendChild(rows);
