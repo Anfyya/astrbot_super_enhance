@@ -1580,9 +1580,7 @@ class ProactivePlanner:
 
         companion = getattr(self, "companionship", None)
         if companion is not None:
-            near = companion.safe("render", bot, local_now, default="")
-            if near:
-                lines.append(near)
+            # 「【与主人相处的近况】」已由 service.on_llm_request 通过 world_text 统一注入上下文，此处只补睡期未发提醒。
             deferred_items = companion.safe("deferred_for", bot, local_now, default=[]) or []
             deferred_texts = [
                 clean_line(x.get("text") if isinstance(x, dict) else x, 80)

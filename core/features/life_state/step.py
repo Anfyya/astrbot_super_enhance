@@ -24,8 +24,8 @@ from ...common import jsonio, llm, timeutil
 from .models import bot_of_umo, profile_umo_for_bot
 from .recorder import norm_time
 from .facts import fact_batch
-from .companionship import LIVING_NOTE, format_decision_line, invitation_text
-from .living_rules import LIFECYCLE_RULES
+from .companionship import format_decision_line, invitation_text
+from .living_rules import STEP_LIFECYCLE_RULES
 from .things import FactConflict
 from .things import (CAT_FOOD, CAT_ITEM, END_STEPS, ITEM_END_STEPS, ITEM_MID_STEPS, ITEM_START_STEPS, KEEPS, KINDS, MEASURED_KINDS, MID_STEPS,
                      SPOTS, START_STEPS, _same_name, cat_of, checked_place, had_before, is_ended, norm_kind, norm_state, spots_for,
@@ -1561,9 +1561,20 @@ class LifeStep:
         flat = now.replace(tzinfo=None)
         companion = getattr(self, "companionship", None)
         if companion is not None:
-            parts.append(LIVING_NOTE)
+            # LIVING_NOTE 已由规则 25 完整覆盖、d 待拍板/已拍板由下方共享段集中列出，此处只输出去重后的主人即时状态与各人近况/q 邀请。
+            seen_owner_states: set[str] = set()
             for bot in bots:
-                text = companion.safe("render", bot, flat, default="")
+                owner_line = companion.safe("owner_state_text", bot, flat, default="")
+                include_owner = bool(owner_line and owner_line not in seen_owner_states)
+                if owner_line:
+                    seen_owner_states.add(owner_line)
+                text = companion.safe(
+                    "render", bot, flat,
+                    include_owner_state=include_owner,
+                    include_decisions=False,
+                    own_invitations_only=True,
+                    default="",
+                )
                 if text:
                     parts.append("%s：\n%s" % (self.label(bot) or bot, text))
         parts.extend(self._history_blocks(bots, flat))
@@ -1862,7 +1873,7 @@ class LifeStep:
             example_end=fmt_time(example_start + datetime.timedelta(minutes=25)),
             example_end2=fmt_time(example_start + datetime.timedelta(minutes=40)),
             horizon=fmt_time(max(min(x["start"] or now for x in tasks.values()), now) + datetime.timedelta(hours=HORIZON_HOURS)),
-        ) + LIFECYCLE_RULES, self.home)
+        ) + STEP_LIFECYCLE_RULES, self.home)
 
 
     # ---------- 执行 ----------

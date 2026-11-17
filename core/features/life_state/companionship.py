@@ -744,16 +744,26 @@ class Companionship:
                 self._save()
                 return
 
-    def render(self, bot, now, *, recorder=False):
-        lines = []
+    def owner_state_text(self, bot, now) -> str:
+        """渲染当前主人即时状态行，供单人聊天与多人补写去重共用。"""
         state = self.owner_state(now, bot)
         labels = {"resting": "明确准备休息", "asleep": "明确已经睡下", "awake": "已经睡醒起床",
                   "busy": "明确正在忙", "unknown": "当前能否互动不明"}
         if state.get("source"):
-            lines.append("主人即时状态：%s%s。没回复不改变状态。" %
-                         (labels[state["state"]], "，最后明确位置：" + state["place"] if state["place"] else ""))
-        elif self.resting(now):
-            lines.append("联系时机：目前普通邀约先留着，继续自己手上适合做的事情，不编主人的位置。")
+            return "主人即时状态：%s%s。没回复不改变状态。" % (
+                labels[state["state"]], "，最后明确位置：" + state["place"] if state["place"] else ""
+            )
+        if self.resting(now):
+            return "联系时机：目前普通邀约先留着，继续自己手上适合做的事情，不编主人的位置。"
+        return ""
+
+    def render(self, bot, now, *, recorder=False, include_owner_state: bool = True,
+               include_decisions: bool = True, own_invitations_only: bool = False):
+        lines = []
+        if include_owner_state:
+            owner_line = self.owner_state_text(bot, now)
+            if owner_line:
+                lines.append(owner_line)
         notes = [x for x in self._data()["notes"] if x.get("bot") == bot and x.get("scene") == self._scene()
                  and self._valid(x["source"], now)]
         replaced = {x.get("supersedes") for x in notes}
@@ -762,15 +772,19 @@ class Companionship:
                 continue
             lines.append("%s 相处近况：%s" % (item["id"], item["text"]))
         today_text = now.date().isoformat()
-        for dec in self.pending_decisions(now, bot=bot)[-4:]:
-            lines.append(format_decision_line(dec, today_text, label_fn=self.label, include_bot=False, show_status=True))
-        for dec in self.recent_resolved_decisions(now, bot=bot)[-3:]:
-            linked = ("（已接打算 %s）" % dec["intent"]) if dec.get("intent") else ""
-            lines.append("%s 已由主人拍板（%s）%s：%s → 主人已定：%s（不要再重复请示同一件事！）" % (
-                dec.get("id"), dec.get("resolved_at") or str(dec.get("created") or ""),
-                linked, clean_text(dec.get("question"), 120), clean_text(dec.get("choice"), 120),
-            ))
-        for item in self.invitations(bot, now)[-5:]:
+        if include_decisions:
+            for dec in self.pending_decisions(now, bot=bot)[-4:]:
+                lines.append(format_decision_line(dec, today_text, label_fn=self.label, include_bot=False, show_status=True))
+            for dec in self.recent_resolved_decisions(now, bot=bot)[-3:]:
+                linked = ("（已接打算 %s）" % dec["intent"]) if dec.get("intent") else ""
+                lines.append("%s 已由主人拍板（%s）%s：%s → 主人已定：%s（不要再重复请示同一件事！）" % (
+                    dec.get("id"), dec.get("resolved_at") or str(dec.get("created") or ""),
+                    linked, clean_text(dec.get("question"), 120), clean_text(dec.get("choice"), 120),
+                ))
+        invs = self.invitations(bot, now)
+        if own_invitations_only:
+            invs = [x for x in invs if x.get("bot") == bot]
+        for item in invs[-5:]:
             name = {"idea": "想提出，还没问过", "pending": "已问，等回应，不代表已答应",
                     "accepted": "已约定", "in_progress": "正在进行"}.get(item["status"], item["status"])
             lines.append("%s %s%s：%s%s" % (item["id"], (self.label(item["bot"]) + " ") if item["bot"] != bot else "", name,
