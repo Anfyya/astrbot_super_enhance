@@ -164,7 +164,13 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
                 "what": "陪主人进山看红叶", "with": "主人"}}],
   "trainings": [{{"action": "start", "bot": "napcat", "what": "收放自如", "standard": "十回连着一收一放不漏不散",
                  "need_hours": 12}}],
-  "abilities": [{{"bot": "napcat", "text": "已能真正进食"}}]
+  "abilities": [{{"bot": "napcat", "text": "已能真正进食"}}],
+  "companionship": {{
+    "owner": {{}},
+    "decisions": [],
+    "notes": [],
+    "invitations": []
+  }}
 }}
 
 关于 promises / trainings 的 action：
@@ -206,6 +212,23 @@ def norm_time(value, date_text: str, fallback: str = "") -> str:
         if len(text) >= 16:
             text = text[:16]
     return text if parse_time(text) else ""
+
+
+def _extract_companionship(data: dict) -> dict | None:
+    """读取结构化 companionship 字段，兼容模型把 owner/decisions/notes/invitations 写在 JSON 顶层。"""
+    if not isinstance(data, dict):
+        return None
+    nested = data.get("companionship")
+    out = dict(nested) if isinstance(nested, dict) else {}
+    top_owner = data.get("owner")
+    if isinstance(top_owner, dict) and not isinstance(out.get("owner"), dict):
+        out["owner"] = top_owner
+    for list_key in ("decisions", "notes", "invitations"):
+        top_list = data.get(list_key)
+        if isinstance(top_list, list) and top_list:
+            base = out.get(list_key)
+            out[list_key] = (list(base) if isinstance(base, list) else []) + list(top_list)
+    return out or None
 
 
 def _digest(text: str) -> str:
@@ -731,7 +754,7 @@ class Recorder:
             for item in batch:
                 companion.safe("observe_message", item)
             previous = companion.safe("reply_context", umo, batch, now, default=[])
-            extra_plans = companion.safe("apply_record", umo, data.get("companionship"), previous + batch, now, default=[])
+            extra_plans = companion.safe("apply_record", umo, _extract_companionship(data), previous + batch, now, default=[])
             if extra_plans:
                 data = dict(data, intentions=list(data.get("intentions") or []) + extra_plans)
         # 先定对不上的那几段怎么收场（收尾、做完、交接要几分钟），再记这次的新条目：免得新条目先把手上的事一刀截断

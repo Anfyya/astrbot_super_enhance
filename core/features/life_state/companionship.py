@@ -21,19 +21,43 @@ LIVING_NOTE = """
 
 RECORDER_NOTE = """
 【共同生活与当家拍板记录】
-主动消息里她向主人请示拿主意的问题（下面列出的待拍板 d 编号）或提出的邀请（q 编号），结合主人本批原话接续；没有相关内容可省略：
-owner: {"place":"明确地点或空", "quote":"主人本批原话"}。
-主人的睡眠与清醒状态已由快捷指令独立维护，不要根据聊天推测睡眠状态；仅在主人明确交代位置时记录 place。
-decisions: [{"id":"已有 d 编号", "choice":"主人拍板定下的具体做法/买哪样/接不接", "quote":"主人本批拍板原话",
-             "status":"resolved/deferred/cancelled", "with_master":false, "date":"明确日期或空", "window":"明确时间段或空", "now":true}]。
-只有主人明确回话拿了主意才填 resolved（程序会自动转成可执行打算；主人说陪她一起去办填 with_master=true，只发话让她去买/去办填 false）；主人说“等会再说”填 deferred；说“都别买/算了”填 cancelled；没提到该 d 编号就不要动它（继续挂起等主人回话）。
-notes: [{"text":"值得后续接上的具体内容", "kind":"preference/topic/experience",
-         "scope":"today/lasting", "quote":"本批原话", "supersedes":"被明确更正的笔记编号或空"}]。
-invitations: [{"id":"已有 q 编号；新提议留空", "text":"要一起做什么", "quote":"本批对应原话",
-               "status":"pending/accepted/deferred/declined/cancelled/completed",
-               "date":"明确日期或空", "window":"明确时间段或空", "now":false}]。
-已有 q 邀请或 d 待拍板事项的回应只写在这里，程序会自动接入普通打算，不要再给同一件事重复写 intentions，更不要因为后面聊了别的话题就把主人刚答应的打算塞进 drop_intentions。
+主动消息里她向主人请示拿主意的问题（下面列出的待拍板 d 编号）或提出的邀请（q 编号），结合主人本批原话接续；请在输出 JSON 里放入 "companionship" 对象（里面没有相关内容的字段可省略）：
+"companionship": {
+  "owner": {"place": "明确地点或空", "quote": "主人本批原话"},
+  "decisions": [{"id": "已有 d 编号", "choice": "主人拍板定下的具体做法/买哪样/接不接", "quote": "主人本批拍板原话",
+                 "status": "resolved/deferred/cancelled", "with_master": false, "date": "明确日期或空", "window": "明确时间段或空", "now": true}],
+  "notes": [{"text": "值得后续接上的具体内容", "kind": "preference/topic/experience",
+             "scope": "today/lasting", "quote": "本批原话", "supersedes": "被明确更正的笔记编号或空"}],
+  "invitations": [{"id": "已有 q 编号；新提议留空", "text": "要一起做什么", "quote": "本批对应原话",
+                   "status": "pending/accepted/deferred/declined/cancelled/completed",
+                   "date": "明确日期或空", "window": "明确时间段或空", "now": false}]
+}
+说明：
+- 主人的睡眠与清醒状态已由快捷指令独立维护，不要根据聊天推测睡眠状态；仅在主人明确交代位置时记录 owner.place。
+- decisions：只有主人明确回话拿了主意才填 resolved（哪怕主人只回了“衣服吧”“先买被子”这类简短拍板，只要是在回应请示，也必须写入 decisions 且 status="resolved"，quote 照抄主人原话；程序会自动转成可执行打算。主人说陪她一起去办填 with_master=true，只发话让她去买/去办填 false）；主人说“等会再说”填 deferred；说“都别买/算了”填 cancelled；没提到该 d 编号就不要动它。
+- 已有 q 邀请或 d 待拍板事项的回应只写在这里，程序会自动接入普通打算，不要再给同一件事重复写 intentions，更不要因为后面聊了别的话题就把主人刚答应的打算塞进 drop_intentions。
 """.strip()
+
+
+def format_decision_line(dec: dict, today_text: str, *, label_fn=str, include_bot: bool = False, show_status: bool = True) -> str:
+    """统一格式化待拍板 d 事项，明确标注提出时间并在跨日时提示勿把“明天”顺延。"""
+    dec_id = str(dec.get("id") or "").strip()
+    bot = str(dec.get("bot") or "").strip()
+    who = (str(label_fn(bot) or bot) + " ") if include_bot and bot else ""
+    question = clean_text(dec.get("question"), 260)
+    asked = str(dec.get("asked_at") or dec.get("created") or "").strip()
+    asked_day = asked[:10] if len(asked) >= 10 else ""
+    if asked and asked_day and today_text and asked_day < today_text:
+        when_note = "（提出于 %s，已跨日；文中“今天/明天”按当时 %s 计算，勿顺延为之后的明天）" % (asked, asked_day)
+    elif asked:
+        when_note = "（提出于 %s）" % asked
+    else:
+        when_note = ""
+    if show_status:
+        st_lbl = "已问主人、正等主人拍板拿主意（未回话前严禁擅自替主人做主！）" if dec.get("status") == "pending" else "待等主人醒后请示拍板"
+        return "%s %s%s：%s%s" % (dec_id, who, st_lbl, question, when_note)
+    who_tag = "（%s）" % (label_fn(bot) or bot) if include_bot and bot else ""
+    return "- %s%s：%s%s" % (dec_id, who_tag, question, when_note)
 
 
 def invitation_text(text):
@@ -720,10 +744,9 @@ class Companionship:
             if item["id"] in replaced or (item["scope"] != "lasting" and item["source"].get("date") != now.date().isoformat()):
                 continue
             lines.append("%s 相处近况：%s" % (item["id"], item["text"]))
-        for dec in self.pending_decisions(now)[-4:]:
-            who_tag = (self.label(dec["bot"]) + " ") if dec.get("bot") and dec.get("bot") != bot else ""
-            st_lbl = "已问主人、正等主人拍板拿主意（未回话前严禁擅自替主人做主！）" if dec.get("status") == "pending" else "待等主人醒后请示拍板"
-            lines.append("%s %s%s：%s" % (dec["id"], who_tag, st_lbl, clean_text(dec.get("question"), 260)))
+        today_text = now.date().isoformat()
+        for dec in self.pending_decisions(now, bot=bot)[-4:]:
+            lines.append(format_decision_line(dec, today_text, label_fn=self.label, include_bot=False, show_status=True))
         for item in self.invitations(bot, now)[-5:]:
             name = {"idea": "想提出，还没问过", "pending": "已问，等回应，不代表已答应",
                     "accepted": "已约定", "in_progress": "正在进行"}.get(item["status"], item["status"])

@@ -24,7 +24,7 @@ from ...common import jsonio, llm, timeutil
 from .models import bot_of_umo, profile_umo_for_bot
 from .recorder import norm_time
 from .facts import fact_batch
-from .companionship import LIVING_NOTE, invitation_text
+from .companionship import LIVING_NOTE, format_decision_line, invitation_text
 from .living_rules import LIFECYCLE_RULES
 from .things import FactConflict
 from .things import (CAT_FOOD, CAT_ITEM, END_STEPS, ITEM_END_STEPS, ITEM_MID_STEPS, ITEM_START_STEPS, KEEPS, KINDS, MEASURED_KINDS, MID_STEPS,
@@ -175,7 +175,7 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
    - **禁止纯日报式 `send_msg`**：严禁干完活发“废铁搬完啦跟主人汇报一声”“配给领回来啦通知一声”这种不需要主人参与的事后工作简报！联系主人优先用 `ask_master`（事前请主人拿主意 `decision` 或约主人一起做某事 `invite`），段内 `send_msg` 只在早晚问候或真有急事喊主人时用。
 {world_notes}
 {step_notes}
-要问主人的（ask_master，必填拿主意入口）：who 写谁来问（`"napcat"` 或 `"napcat2"`），question 写发给主人的那句自然口语问话，kind 写 `"decision"`（请当家主人拍板：先买厚棉衣还是换厚棉被、接不接打捞单、晚饭做哪道菜等）或 `"invite"`（喊主人一起做件事、一起拆看捞上来的旧物等）。**铁律：凡填了 `ask_master` 请主人拍板的事，本轮 `segments` 里只排「打听行情 / 备好手头杂活 / 等主人准话」，绝不许在本轮 `segments` 里提前把那件待拍板的事直接做完！** 程序会把这件待拍板事项挂起（主人哪怕过半天再回话，到时候再排进去做；主人没回话前就老老实实干日常维持杂活等准话）。只有主人正在睡觉、或者上方已经挂着待主人拍板的 `d` 事项尚未回复时，`ask_master` 才留空。
+要问主人的（ask_master，必填拿主意入口）：who 写谁来问（`"napcat"` 或 `"napcat2"`），question 写发给主人的那句自然口语问话（时间说具体，如“等会儿/下午/明早”，避免只写模糊的“明天”导致跨天后语义顺延），kind 写 `"decision"`（请当家主人拍板：先买厚棉衣还是换厚棉被、接不接打捞单、晚饭做哪道菜等）或 `"invite"`（喊主人一起做件事、一起拆看捞上来的旧物等）。**铁律：凡填了 `ask_master` 请主人拍板的事，本轮 `segments` 里只排「打听行情 / 备好手头杂活 / 等主人准话」，绝不许在本轮 `segments` 里提前把那件待拍板的事直接做完！** 程序会把这件待拍板事项挂起（主人哪怕过半天再回话，到时候再排进去做；主人没回话前就老老实实干日常维持杂活等准话）。只有主人正在睡觉、或者上方已经挂着待主人拍板的 `d` 事项尚未回复时，`ask_master` 才留空。
 
 注意：**不要输出 intentions，也不要写任何「接下来打算」**。上面「各自的打算」里如果有，是之前说好要做的，照着走就行；标着「挂了几天了」的，只在 intent_moves 里写它后来怎样（第 12 条）。
 
@@ -1643,10 +1643,11 @@ class LifeStep:
         if companion is not None:
             pend_decs = companion.safe("pending_decisions", flat, default=[]) or []
             if pend_decs:
+                today_text = flat.date().isoformat()
                 parts.append(
                     "【待当家主人拍板的事（主人尚未回话前保持挂起，严禁擅自替主人做主买定大件或私自接单！）】：\n"
                     + "\n".join(
-                        "- %s（%s）：%s" % (d.get("id"), self.label(d.get("bot")) or d.get("bot"), d.get("question"))
+                        format_decision_line(d, today_text, label_fn=self.label, include_bot=True, show_status=False)
                         for d in pend_decs
                     )
                 )
