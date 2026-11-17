@@ -25,7 +25,7 @@ RECORDER_NOTE = """
 "companionship": {
   "owner": {"place": "明确地点或空", "quote": "主人本批原话"},
   "decisions": [{"id": "已有 d 编号", "choice": "主人拍板定下的具体做法/买哪样/接不接", "quote": "主人本批拍板原话",
-                 "status": "resolved/deferred/cancelled", "with_master": false, "date": "明确日期或空", "window": "明确时间段或空", "now": true}],
+                 "status": "resolved/deferred/cancelled", "with_master": false, "date": "明确日期或空", "window": "明确时间段或空", "now": false}],
   "notes": [{"text": "值得后续接上的具体内容", "kind": "preference/topic/experience",
              "scope": "today/lasting", "quote": "本批原话", "supersedes": "被明确更正的笔记编号或空"}],
   "invitations": [{"id": "已有 q 编号；新提议留空", "text": "要一起做什么", "quote": "本批对应原话",
@@ -34,7 +34,7 @@ RECORDER_NOTE = """
 }
 说明：
 - 主人的睡眠与清醒状态已由快捷指令独立维护，不要根据聊天推测睡眠状态；仅在主人明确交代位置时记录 owner.place。
-- decisions：只有主人明确回话拿了主意才填 resolved（哪怕主人只回了“衣服吧”“先买被子”这类简短拍板，只要是在回应请示，也必须写入 decisions 且 status="resolved"，quote 照抄主人原话；程序会自动转成可执行打算。主人说陪她一起去办填 with_master=true，只发话让她去买/去办填 false）；主人说“等会再说”填 deferred；说“都别买/算了”填 cancelled；没提到该 d 编号就不要动它。
+- decisions：只有主人明确回话拿了主意才填 resolved（哪怕主人只回了“衣服吧”“先买被子”这类简短拍板，只要是在回应请示，也必须写入 decisions 且 status="resolved"，quote 照抄主人原话；程序会自动转成可执行打算。主人说陪她一起去办填 with_master=true，只发话让她去买/去办填 false；立刻马上去办才填 now=true，约定稍后或明早再去填 now=false 并填 date/window）；主人说“等会再说”填 deferred；说“都别买/算了”填 cancelled；没提到该 d 编号就不要动它。
 - 已有 q 邀请或 d 待拍板事项的回应只写在这里，程序会自动接入普通打算，不要再给同一件事重复写 intentions，更不要因为后面聊了别的话题就把主人刚答应的打算塞进 drop_intentions。
 """.strip()
 
@@ -765,9 +765,10 @@ class Companionship:
         for dec in self.pending_decisions(now, bot=bot)[-4:]:
             lines.append(format_decision_line(dec, today_text, label_fn=self.label, include_bot=False, show_status=True))
         for dec in self.recent_resolved_decisions(now, bot=bot)[-3:]:
-            lines.append("%s 已由主人拍板（%s）：%s → 主人已定：%s（不要再重复请示同一件事！）" % (
+            linked = ("（已接打算 %s）" % dec["intent"]) if dec.get("intent") else ""
+            lines.append("%s 已由主人拍板（%s）%s：%s → 主人已定：%s（不要再重复请示同一件事！）" % (
                 dec.get("id"), dec.get("resolved_at") or str(dec.get("created") or ""),
-                clean_text(dec.get("question"), 120), clean_text(dec.get("choice"), 120),
+                linked, clean_text(dec.get("question"), 120), clean_text(dec.get("choice"), 120),
             ))
         for item in self.invitations(bot, now)[-5:]:
             name = {"idea": "想提出，还没问过", "pending": "已问，等回应，不代表已答应",

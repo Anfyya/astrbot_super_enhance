@@ -127,7 +127,7 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
    - **两人同行防撞车**：两人一块做饭开饭、一块出门、一块回来（`with` 里有对方）时，这类例行节点**只由其中一个人**标 `send_msg: true`（谁掌勺、谁领头办事就谁去说，拿不准就轮流），另一个人同段填 `false`，别同一分钟两个人排队报同一件事；早安、晚安，或者两个人各自碰到不同趣事想分开聊的，各发各的不受限。
    - **主人睡觉时不吵醒**：只要「主人最近的动向」标着主人在睡觉，例行节点和日常闲聊一律填 `send_msg: false`（不叫醒他吃饭、不报进出）；若两人都要出门不在家，把早饭盖好温着，再在 `items` 里写一张留给主人的字条压在堂屋矮桌上。
 11. 段里是在练「在练的事」里的某件，training 填它的编号（例如 "#2"）；不是在练就留空，不要往里写别的。
-12. 段里做的是「各自的打算」里她的某一条，intent 填那条的编号（例如 "i2"）；不是就留空。标着「现在就去」的，是她刚答应马上去做的：这次就从给你的时刻起先排它，别排在别的事后面；她人还不在做这件事的地方、世界线上也还没在往那边去的，先写一段走过去；可以分成几段（比如先去买、再回来做），每段 intent 都填这个编号。
+12. 段里做的是「各自的打算」里她的某一条，intent 填那条的编号（例如 "i2"）；不是就留空。标着「现在就去」的，是她刚答应马上去做的：这次就从给你的时刻起先排它，别排在别的事后面；标着「就在今天」的（主人拍板定在今天办、或原定今天要做的事）：白天到合适开门/出行时辰就顺手排进 segments 办掉并填对应 intent 编号，别一直堆到明天！她人还不在做这件事的地方、世界线上也还没在往那边去的，先写一段走过去；可以分成几段（比如先去买、再回来做），每段 intent 都填这个编号。
    标着「挂了几天了」的打算，一直搁着没动：这次给她排一件事把它往前推或了结，照她的性子和眼下的实际情况挑，别每回都是同一种办法。比如：要等主人定日子的，去问主人一句什么时候方便；自己能做的，自己去做了；换个人一起、换个做法；想了想觉得算了，放下了。去问主人只写她去问了，主人怎么答不许替他编。再在 intent_moves 里用编号写这条后来怎样：做完了、放下了的写 "done": true，排它的那几段 intent 填这个编号；还没了结、往前推了一步的写 "done": false，text 写推进以后的打算（照原来的写法：做什么、跟谁、怎么说起的，再加一句这次推进了什么，例如「11-01 问过主人什么时候去，等他回话」），有了新的哪天、几点就写 date、window，排它的那几段 intent 留空。没标的打算不写。
 13. **每段必填结构化溯源 `from`**（严禁留空，也严禁偷懒填「可能碰上的小事」「手边的消遣」「闲着的样子」这类栏目标题！只允许填以下值之一）：
    - 采用了上面「今天的情况」里的某条候选：直接填它前面的**短编号**（如 `"T1"`、`"G1"`、`"P1"`、`"I1"`、`"A1"`，或一字不差照抄那条完整原句）；
@@ -1101,6 +1101,12 @@ class LifeStep:
             tags.append(when)
         if item.get("now_at"):
             tags.append("现在就去，%s 刚答应的" % timeutil.day_hm(item.get("now_at")))
+        elif today is not None and str(item.get("who") or "") != "master":
+            d_txt = str(item.get("date") or "")[:10]
+            if d_txt == today.isoformat():
+                tags.append("就在今天，还没做，到合适时辰务必排进 segments 办掉")
+            elif d_txt and d_txt < today.isoformat():
+                tags.append("原定 %s 已过期还没做，尽快补办或问主人要不要改期" % d_txt[5:])
         days = stale_days(item, today) if today is not None else 0
         if days:
             tags.append("从 %s 挂到现在 %d 天了，这次要往前推或了结（见第 12 条）" % (
@@ -1656,9 +1662,10 @@ class LifeStep:
                 parts.append(
                     "【近期已由主人拍板定准的事（照主人定下的主意办，严禁再用 ask_master 重复问同一件事！）】：\n"
                     + "\n".join(
-                        "- %s（%s，%s 定下）：%s → 已定：%s" % (
+                        "- %s（%s，%s 定下%s）：%s → 已定：%s" % (
                             d.get("id"), self.label(d.get("bot")) or d.get("bot"),
                             d.get("resolved_at") or str(d.get("created") or ""),
+                            "，对应打算 %s" % d["intent"] if d.get("intent") else "",
                             clean_text(d.get("question"), 100), clean_text(d.get("choice"), 100),
                         )
                         for d in done_decs[-4:]
@@ -1977,10 +1984,33 @@ class LifeStep:
             errors = ["返回内容不是合法的 JSON 对象"] if not isinstance(data, dict) else self.validate_payload(data, tasks, moment, master_replied=master_replied)
         return (data if not errors else None), cur_text, cur_thought, errors
 
+    async def _flush_idea_decisions(self, moment: datetime.datetime) -> None:
+        """主人醒着且白天时，把夜间暂存的 idea 状态待拍板 d 事项发出去请示（不再永远卡在 idea）。"""
+        companion = getattr(self, "companionship", None)
+        planner = getattr(self, "planner", None)
+        if companion is None or planner is None or not planner.enabled:
+            return
+        if not (8 <= moment.hour <= 22) or companion.safe("resting", moment, default=False):
+            return
+        pend = companion.safe("pending_decisions", moment, default=[]) or []
+        if any(d.get("status") == "pending" for d in pend):
+            return
+        for dec in pend:
+            if dec.get("status") != "idea":
+                continue
+            bot = str(dec.get("bot") or "")
+            q = str(dec.get("question") or "")
+            dec_id = str(dec.get("id") or "")
+            if bot and q and dec_id and await planner.ask_now(bot, q, invitation_id=dec_id):
+                companion.safe("mark_decision_asked", dec_id, moment)
+                logger.info("[super_enhance/world] 主人已醒，发出此前暂存的待拍板请示 %s：%s", dec_id, q[:40])
+            break
+
     async def run(self, now: datetime.datetime | None = None, force: bool = False) -> bool:
         # 世界线里的时间都是不带时区的本地时间，这里统一成一样的口径
         moment = (now or self._now()).replace(tzinfo=None)
         self._run_cache = {}
+        await self._flush_idea_decisions(moment)
         tasks = self.tasks_for(moment, force=force)
         if not tasks:
             self._run_cache = {}
@@ -2101,14 +2131,6 @@ class LifeStep:
                         name, dec_id, clean_text(asked.get("text"), 60))
             return data, text
         said = "；".join("%s「%s」" % (x.get("time") or "", clean_text(x.get("text"), 200)) for x in replies)
-        if companion is not None and dec_id:
-            for row in companion._data().get("decisions") or []:
-                if row.get("id") == dec_id:
-                    row["status"] = "resolved"
-                    row["choice"] = said[:200]
-                    row["resolved_at"] = fmt_time(self._now().replace(tzinfo=None))
-                    companion._save()
-                    break
         note = ("%s %s 请示了当家主人：「%s」。主人当场拍板回了：%s。现在已获主人准许，请照主人定下的话把整份 JSON 重新写出来执行，ask_master 留空。"
                 % (name, asked.get("time") or "", clean_text(asked.get("text"), 200), said))
         logger.info("[super_enhance/world] 主人当场拍板回话，照准话重写：%s", note[:200])
@@ -2120,14 +2142,22 @@ class LifeStep:
                 attempts=2, log_label="补写照主人回话重写",
             )
         except Exception as e:
-            logger.warning("[super_enhance/world] 补写照主人回话重写失败，暂保挂起前维持段：%s", e)
+            logger.warning("[super_enhance/world] 补写照主人回话重写失败，保持请示挂起交由记录员接续：%s", e)
             return data, text
         self._run_cache = {}
         val_moment = moment or self._now().replace(tzinfo=None)
         fixed, again, _t, errs = await self._validate_with_retries(retry, again, again_thought, tasks, val_moment, "回话重写", master_replied=True)
         if fixed is None:
-            logger.warning("[super_enhance/world] 补写照主人回话重写未通过结构化校验（%s），暂保维持段", "；".join(errs[:3]))
+            logger.warning("[super_enhance/world] 补写照主人回话重写未通过结构化校验（%s），保持请示挂起交由记录员接续", "；".join(errs[:3]))
             return data, text
+        if companion is not None and dec_id:
+            for row in companion._data().get("decisions") or []:
+                if row.get("id") == dec_id:
+                    row["status"] = "resolved"
+                    row["choice"] = said[:200]
+                    row["resolved_at"] = fmt_time(self._now().replace(tzinfo=None))
+                    companion._save()
+                    break
         return fixed, again
 
     def _raw_after(self, umo: str, after_ts: float, role: str) -> list:
