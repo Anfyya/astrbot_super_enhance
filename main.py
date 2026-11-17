@@ -569,26 +569,55 @@ class SuperEnhance(Star):
     # ------------------------------------------------------------------
     @filter.llm_tool(name="start_doing")
     async def start_doing(
-        self, event: AstrMessageEvent, what: str, minutes: int, place: str = "", result: str = ""
+        self,
+        event: AstrMessageEvent,
+        what: str,
+        minutes: int,
+        action_kind: str,
+        stove: str = "",
+        cook: str = "",
+        lamp: bool = False,
+        major_decision: bool = False,
+        decision_or_intent_id: str = "",
+        place: str = "",
+        result: str = "",
     ) -> str:
         """把你现在开始做的一件事写进世界线（比如主人让你这会儿去做的事）：从此刻起，到 minutes 分钟后做完。
 
         写进去以后，世界线上你此刻就在做这件事，后面原来排的撤掉、做完再接着排；到点做完时系统会叫你一次。
         你在睡觉的时候（世界线上你现在是睡觉那段），睡觉不打断：只记成睡着中间顺带的一件事，做完也不叫你。
+        工具会按你填的结构化字段校验证照真实库存（干柴/闷炭/食用油/煤油）、当家拍板与角色边界；不合规会直接拒绝写入，不要硬编已完成。
 
         和这个工具写在同一条回复里的话，会在工具跑之前先单独发给对方；工具跑完你再说的话会另发一条。
 
         Args:
-            what (string): 做什么，例如「炒午饭的菜」。
+            what (string): 做什么，例如「在柴炉边生火暖舱」或「炒午饭的菜」。
             minutes (int): 这件事实际要多少分钟。
+            action_kind (string): 必填五选一："indoor"（在当前室内干活/看图/写字/歇息）| "go_out"（外出走动/拾柴/取水/打捞，不对外交易）| "trade"（对外采买/卖物/接委托单）| "cook"（灶台做饭/烧水/热菜）| "heat"（生柴炉取暖/烘干或点灯）。
+            stove (string): 是否点炉火三选一：""（未点火）| "charcoal"（船屋小炭炉，须家里闷炭>0）| "wood"（铁桶柴炉，须家里干柴>0）。外出或室内不点火必须填 ""。
+            cook (string): 做熟食时可填五选一："" | "boil" | "fry"（家里食用油为 0 时禁填）| "steam" | "roast" | "cold"。
+            lamp (boolean): 是否点着家里那盏煤油灯（煤油见底时严禁填 true）。
+            major_decision (boolean): 是否属于动用家底买大件（厚衣/棉被/修大设施）或接打捞委托单等须主人拍板的事。
+            decision_or_intent_id (string): 若涉及已拍板或既定打算，填对应的 d 编号或 i 编号（例如 "d16" 或 "i297"）；没有填 ""。
             place (string): 在哪做；空着就是你现在待的地方。
             result (string): 可选，这件事做完的结果（做完时你才看得到）。
 
         Returns:
-            写进世界线的结果。
+            写进世界线的结果（不合规时返回具体拦截原因）。
         """
         return life_ops.start_now(
-            self.life, getattr(event, "unified_msg_origin", "") or "", what, minutes, place, result
+            self.life,
+            getattr(event, "unified_msg_origin", "") or "",
+            what,
+            minutes,
+            place,
+            result,
+            action_kind=action_kind,
+            stove=stove,
+            cook=cook,
+            lamp=lamp,
+            major_decision=major_decision,
+            decision_or_intent_id=decision_or_intent_id,
         )
 
     @filter.llm_tool(name="recall")
