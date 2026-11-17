@@ -1080,20 +1080,64 @@
   }
 
   /* 钱匣与账本 */
-  .money-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+  .mhero{border:1px solid var(--line);border-radius:12px;padding:var(--card-y) var(--card-x);background:var(--bg);margin:0 0 24px}
+  .mhero-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px 16px;flex-wrap:wrap;margin-bottom:16px}
+  .mhero-nums{display:flex;align-items:baseline;gap:14px 24px;flex-wrap:wrap}
+  .mhero-kpi{display:flex;flex-direction:column;gap:2px}
+  .mhero-kpi .k{font-size:12px;color:var(--t3)}
+  .mhero-kpi .v{font-size:26px;font-weight:700;line-height:32px;color:var(--t1);font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+  .mhero-kpi .v.sub{font-size:20px;font-weight:600;color:var(--t2)}
+  .mhero-kpi .v small{font-size:12px;font-weight:500;color:var(--t3);margin-left:3px}
+  .mhero-acts{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .mguide{margin-top:14px;padding-top:10px;border-top:1px solid var(--line)}
+  .mguide summary{list-style:none;cursor:pointer;font-size:12px;color:var(--t3);display:inline-flex;align-items:center;gap:4px;user-select:none}
+  .mguide summary::-webkit-details-marker{display:none}
+  .mguide summary:hover{color:var(--t1)}
+  .mguide[open] summary svg.i{transform:rotate(90deg)}
+  .mguide summary svg.i{width:13px;height:13px;transition:transform .15s}
+  .mguide-body{margin-top:8px;font-size:12px;line-height:1.75;color:var(--t2);display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 16px}
+  @media (max-width:720px){.mguide-body{grid-template-columns:minmax(0,1fr)}}
+
+  .money-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:start}
   @media (max-width:720px){.money-grid{grid-template-columns:minmax(0,1fr)}}
-  .money-card{border:1px solid var(--line);border-radius:12px;padding:14px 16px;background:var(--bg);display:flex;flex-direction:column;gap:8px}
-  .money-card.master{border-color:color-mix(in srgb,var(--accent) 45%,var(--line))}
-  .money-top{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
-  .money-bal{font-size:22px;font-weight:700;color:var(--t1);font-variant-numeric:tabular-nums}
-  .money-bal span{font-size:12px;font-weight:500;color:var(--t3);margin-left:3px}
-  .money-meta{font-size:12px;color:var(--t3);line-height:1.5}
-  .money-acts{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:2px}
-  .money-amt{font-weight:600;font-variant-numeric:tabular-nums}
-  .money-amt.pos{color:#1d8f52}
-  .money-amt.neg{color:#c94a38}
-  .money-amt.mid{color:var(--t2)}
-  .money-bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .mcard{border:1px solid var(--line);border-radius:12px;padding:16px 18px;background:var(--bg);display:flex;flex-direction:column;gap:10px;transition:border-color .12s,box-shadow .12s}
+  .mcard.master{border-color:var(--accent-line);background:color-mix(in srgb,var(--accent-soft) 24%,var(--bg))}
+  .mcard-h{display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .mcard-name{display:flex;align-items:center;gap:8px;min-width:0}
+  .mcard-name b{font-size:15px;font-weight:600;color:var(--t1);white-space:nowrap}
+  .mcard-bal{font-size:22px;font-weight:700;line-height:26px;color:var(--t1);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .mcard-bal small{font-size:12px;font-weight:500;color:var(--t3);margin-left:3px}
+  .mcard-loc{font-size:13px;color:var(--t2);display:flex;align-items:baseline;gap:6px}
+  .mcard-loc .k{font-size:12px;color:var(--t3);flex:none}
+  .mcard-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;padding-top:10px;border-top:1px solid var(--line)}
+  .mcard-note{font-size:12px;color:var(--t3);line-height:1.5;min-width:0;flex:1;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .mcard-acts{display:flex;gap:4px;flex:none;align-items:center}
+
+  .mfilt{display:flex;flex-wrap:wrap;gap:8px 10px;align-items:center;margin:0 0 12px}
+  .mfilt .seg{max-width:100%;overflow-x:auto}
+  .mfilt .search{flex:1 1 180px;max-width:260px}
+
+  .mrow{display:grid;grid-template-columns:86px 72px minmax(0,1fr) 98px auto;column-gap:12px;align-items:start;padding:12px 0;border-top:1px solid var(--line)}
+  .mrow:first-child{border-top:0;padding-top:0}
+  .mrow:last-child{padding-bottom:0}
+  .mrow-at{font-size:12px;line-height:22px;color:var(--t3);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .mrow-kind{padding-top:1px}
+  .mrow-kind .tag{width:100%;justify-content:center;font-weight:500}
+  .mrow-body{min-width:0}
+  .mrow-what{font-size:14px;line-height:22px;color:var(--t1);font-weight:500;word-break:break-word}
+  .mrow-meta{font-size:12px;line-height:18px;color:var(--t3);margin-top:3px;display:flex;flex-wrap:wrap;gap:2px 8px;align-items:center}
+  .mrow-meta .sep{color:var(--t4)}
+  .mrow-amt{font-size:15px;line-height:22px;font-weight:700;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .mrow-amt.pos{color:var(--ok)}.mrow-amt.neg{color:var(--danger)}.mrow-amt.mid{color:var(--accent)}.mrow-amt.neu{color:var(--t2)}
+  .mrow-acts{margin-top:-2px}
+  @media (max-width:680px){
+    .mrow{grid-template-columns:minmax(0,1fr) auto auto;row-gap:4px;column-gap:8px}
+    .mrow-at{grid-column:1;grid-row:1}
+    .mrow-kind{grid-column:1;grid-row:1;margin-left:82px;width:auto}
+    .mrow-amt{grid-column:2;grid-row:1}
+    .mrow-acts{grid-column:3;grid-row:1}
+    .mrow-body{grid-column:1 / -1;grid-row:2}
+  }
 
   /* 整屏断点（和脚本里 insOverlay / isNarrow 一致，不要改数字） */
   @media (max-width:1199px){
@@ -1560,6 +1604,7 @@
     req: { list: [], idx: 0, data: null, err: "", disabled: false, tab: store.get("reqTab", "inject"), all: false, raw: false, loading: false },
     edits: {}, auto: true,
     money: null, moneyErr: "", moneyLoading: false, moneyBalEdit: {}, moneyAccEdit: {}, moneyRecForm: null, moneyDebtForm: null, moneySettle: null,
+    moneyAccFilter: "all", moneyKindFilter: "all", moneyQ: "", moneyShowAll: false,
     ledger: null, ledgerErr: "", ledgerLoading: false, ledEdit: {}, ledShowPast: false, trEdit: {},
     pools: null, poolsErr: "", poolsLoading: false, poolEdit: {}, poolQ: "",
     poolWho: "", poolKind: "twists", poolSort: store.get("poolSort", "chance"), poolZero: false, poolFlash: "",
@@ -1687,8 +1732,9 @@
     if (S.moneyErr && !S.money) { msub = "不可用"; }
     else if (mside && mside.accounts) {
       var ac = mside.accounts;
-      msub = "盒 ¥" + (ac.tin_box || 0) + " · 主 ¥" + (ac.master || 0) + " · 亚 ¥" + (ac.napcat2 || 0)
-        + (mside.open_debts ? " · " + mside.open_debts + " 笔账" : "");
+      var homeCash = Math.round(((Number(ac.tin_box) || 0) + (Number(ac.napcat2) || 0) + (Number(ac.napcat) || 0)) * 100) / 100;
+      var totCash = Math.round((homeCash + (Number(ac.master) || 0)) * 100) / 100;
+      msub = "日常 ¥" + homeCash + " · 总 ¥" + totCash + (mside.open_debts ? " · " + mside.open_debts + " 笔账" : "");
     }
     world.appendChild(h("button", {
       class: "nav-item" + (S.view === "money" ? " on" : ""), type: "button",
@@ -4349,33 +4395,108 @@
     var d = S.money;
     if (!d) {
       if (S.moneyErr) { box.appendChild(errState("读取失败", S.moneyErr, function () { loadMoney(); })); }
-      else { box.appendChild(skeleton("people", ["height:150px", "height:150px"])); }
+      else { box.appendChild(skeleton("people", ["height:130px", "height:180px"])); }
       return;
     }
-    $("moneySub").textContent = "家里与个人口袋共 ¥" + fmtYuan(d.home_and_girls_cash) + " · 含主人总家底 ¥" + fmtYuan(d.total_cash) + " · " + (d.today || "").slice(5);
-
-    // 1. 分账户现钱
-    var secAcc = h("div", { class: "lsec" }, lsecHead("分账户现钱", "人民币分四处放：随时可点「改余额」手调，或点「记一笔」补记收支与互转"));
-    var grid = h("div", { class: "money-grid" });
     var accs = d.accounts || [];
+    var debts = d.debts || [];
+    var openDebts = debts.filter(function (x) { return x.status === "open"; });
+    $("moneySub").textContent = "日常可花 ¥" + fmtYuan(d.home_and_girls_cash) + " · 含主人共 ¥" + fmtYuan(d.total_cash) + " · " + (d.today || "").slice(5);
+
+    // 1. 顶部家底总览卡（仿请求快照条形图）
+    var colors = { master: "var(--c1)", tin_box: "var(--c2)", napcat2: "var(--c4)", napcat: "var(--c3)" };
+    var roles = { master: "船长管着", tin_box: "家用铁盒", napcat2: "随身携款", napcat: "仅可代花" };
+    var total = Math.max(0.01, Number(d.total_cash) || 0);
+    var hero = h("div", { class: "mhero" });
+
+    var topActs = h("div", { class: "mhero-acts" });
+    var addRecBtn = h("button", { class: "btn pri sm", type: "button" }, icon("plus"), "记一笔收支 / 转钱");
+    addRecBtn.addEventListener("click", function () {
+      S.moneyRecForm = S.moneyRecForm ? null : { kind: "transfer", from_account: "master", to_account: "tin_box", account: "tin_box", amount: "", counterparty: "", what: "", at: "" };
+      renderMoney();
+    });
+    var addDebtBtn = h("button", { class: "btn sm", type: "button" }, icon("plus"), "记赊欠 / 待收");
+    addDebtBtn.addEventListener("click", function () {
+      S.moneyDebtForm = S.moneyDebtForm ? null : { direction: "payable", counterparty: "", amount: "", about: "" };
+      renderMoney();
+    });
+    topActs.appendChild(addRecBtn);
+    topActs.appendChild(addDebtBtn);
+
+    hero.appendChild(h("div", { class: "mhero-top" },
+      h("div", { class: "mhero-nums" },
+        h("div", { class: "mhero-kpi" },
+          h("span", { class: "k", text: "家里与个人随时可花（铁盒 + 口袋）" }),
+          h("span", { class: "v" }, "¥" + fmtYuan(d.home_and_girls_cash), h("small", { text: "元" }))),
+        h("div", { class: "mhero-kpi" },
+          h("span", { class: "k", text: "总家底（含主人钱包）" }),
+          h("span", { class: "v sub" }, "¥" + fmtYuan(d.total_cash), h("small", { text: "元" }))),
+        openDebts.length ? h("span", { class: "tag warn", text: openDebts.length + " 笔未结挂账" }) : null),
+      topActs));
+
+    var bar = h("div", { class: "comp" });
+    var legend = h("div", { class: "legend" });
     accs.forEach(function (a) {
-      var card = h("div", { class: "money-card" + (a.id === "master" ? " master" : "") });
-      card.appendChild(h("div", { class: "money-top" },
-        h("div", { style: "font-weight:600;font-size:15px", text: a.label || a.id }),
-        h("div", { class: "money-bal" }, "¥" + (a.balance_text || fmtYuan(a.balance)), h("span", { text: "元" }))));
-      card.appendChild(h("div", { class: "money-meta", text: (a.place ? "放在：" + a.place : "") + (a.note ? " · " + a.note : "") }));
+      var val = Math.max(0, Number(a.balance) || 0);
+      var pct = total > 0 ? Math.max(val > 0 ? 2 : 0, Math.round(val / total * 1000) / 10) : 0;
+      if (val > 0) {
+        bar.appendChild(h("i", { style: "width:" + pct + "%;background:" + (colors[a.id] || "var(--c3)"), title: a.label + " ¥" + fmtYuan(val) }));
+      }
+      var item = h("button", {
+        type: "button",
+        title: "点击只看该账户流水",
+        onclick: function () { S.moneyAccFilter = S.moneyAccFilter === a.id ? "all" : a.id; renderMoney(); }
+      },
+        h("span", { class: "lg-k" }, h("span", { class: "dot", style: "background:" + (colors[a.id] || "var(--c3)") }), a.label),
+        h("span", { class: "lg-v" }, h("b", { text: "¥" + fmtYuan(val) }), Math.round(val / total * 100) + "%"));
+      legend.appendChild(item);
+    });
+    hero.appendChild(bar);
+    hero.appendChild(legend);
+
+    hero.appendChild(h("details", { class: "mguide" },
+      h("summary", null, icon("chev"), "小镇物价与用钱规矩参考"),
+      h("div", { class: "mguide-body" },
+        h("div", { text: "日常吃食：海鱼 6~15 · 蔬菜豆腐 3~8 · 五斤米面 15~25 · 食用油 20~35 · 小吃 5~15" }),
+        h("div", { text: "燃料与大件：干柴 10~20 · 闷炭 15~30 · 煤油 18~30 · 澡堂 6~10 · 棉衣 35~60 · 棉被 20~40" }),
+        h("div", { text: "赚钱门路：零工修物 10~35 · 卖废铁铜 15~120 · 打捞委单 30~150 · 福记寄卖 200~800" }),
+        h("div", { text: "携带与权责：出门摸不到铁盒（须先取现），大头 master 须主人发话，50 元以上进账习惯上交" }))));
+    box.appendChild(hero);
+
+    if (S.moneyRecForm) {
+      var rfSec = h("div", { class: "lsec" }, moneyRecordForm(accs));
+      box.appendChild(rfSec);
+    }
+
+    // 2. 分账户现钱（2 列卡片，视觉清爽留白）
+    var secAcc = h("div", { class: "lsec" }, lsecHead("四个钱袋", "卡片上直接点「改余额」手调，或点图例筛选下方流水"));
+    var grid = h("div", { class: "money-grid" });
+    accs.forEach(function (a) {
+      var card = h("div", { class: "mcard" + (a.id === "master" ? " master" : "") });
+      card.appendChild(h("div", { class: "mcard-h" },
+        h("div", { class: "mcard-name" },
+          h("span", { class: "dot", style: "width:8px;height:8px;border-radius:50%;flex:none;background:" + (colors[a.id] || "var(--c3)") }),
+          h("b", { text: a.label || a.id }),
+          h("span", { class: "tag" + (a.id === "master" ? " acc" : ""), text: roles[a.id] || a.id })),
+        h("div", { class: "mcard-bal" }, "¥" + (a.balance_text || fmtYuan(a.balance)), h("small", { text: "元" }))));
+
+      card.appendChild(h("div", { class: "mcard-loc" },
+        h("span", { class: "k", text: "放在" }),
+        h("span", { text: a.place || "未填位置" })));
 
       if (S.moneyBalEdit[a.id] !== undefined) {
         var bState = S.moneyBalEdit[a.id];
-        var bInp = h("input", { class: "inp", type: "number", step: "0.01", min: "0", style: "width:120px" });
-        bInp.value = bState.val;
-        bInp.addEventListener("input", function () { bState.val = bInp.value; });
-        var bNote = h("input", { class: "inp", type: "text", maxlength: "80", placeholder: "调账说明（可不填）", style: "flex:1;min-width:120px" });
-        bNote.value = bState.note;
-        bNote.addEventListener("input", function () { bState.note = bNote.value; });
+        var bf = h("div", { class: "wform tform", style: "margin-top:4px" },
+          h("div", { class: "wform-h" }, h("span", { class: "t", text: "调成实际数" }), h("span", { class: "m", text: "自动记一笔校准流水" })));
+        var bInp = h("input", { class: "inp", type: "number", step: "0.01", min: "0" });
+        bInp.value = bState.val; bInp.addEventListener("input", function () { bState.val = bInp.value; });
+        bf.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "新余额（元）" }), bInp));
+        var bNote = h("input", { class: "inp", type: "text", maxlength: "80", placeholder: "备注（可不填）" });
+        bNote.value = bState.note; bNote.addEventListener("input", function () { bState.note = bNote.value; });
+        bf.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "说明" }), bNote));
+        var bCan = h("button", { class: "btn sm", type: "button", text: "取消" });
+        bCan.addEventListener("click", function () { delete S.moneyBalEdit[a.id]; renderMoney(); });
         var bOk = h("button", { class: "btn pri sm", type: "button", text: "保存" });
-        var bCancel = h("button", { class: "btn quiet sm", type: "button", text: "取消" });
-        bCancel.addEventListener("click", function () { delete S.moneyBalEdit[a.id]; renderMoney(); });
         bOk.addEventListener("click", function () {
           var v = Number(bState.val);
           if (!isFinite(v) || v < 0) { toast("填个大于等于 0 的数", { err: true }); return; }
@@ -4384,59 +4505,53 @@
             delete S.moneyBalEdit[a.id];
           }).then(function () { bOk.disabled = false; });
         });
-        card.appendChild(h("div", { class: "money-bar" }, bInp, bNote, bCancel, bOk));
+        bf.appendChild(h("div", { class: "wform-f" }, bCan, bOk));
+        card.appendChild(bf);
       } else if (S.moneyAccEdit[a.id]) {
         var ae = S.moneyAccEdit[a.id];
-        var eLbl = h("input", { class: "inp", type: "text", maxlength: "20", placeholder: "账户名" });
+        var af = h("div", { class: "wform tform", style: "margin-top:4px" },
+          h("div", { class: "wform-h" }, h("span", { class: "t", text: "改位置与说明" })));
+        var eLbl = h("input", { class: "inp", type: "text", maxlength: "20" });
         eLbl.value = ae.label; eLbl.addEventListener("input", function () { ae.label = eLbl.value; });
-        var ePlc = h("input", { class: "inp", type: "text", maxlength: "60", placeholder: "放哪儿" });
+        af.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "名字" }), eLbl));
+        var ePlc = h("input", { class: "inp", type: "text", maxlength: "60" });
         ePlc.value = ae.place; ePlc.addEventListener("input", function () { ae.place = ePlc.value; });
-        var eNot = h("input", { class: "inp", type: "text", maxlength: "160", placeholder: "用途说明" });
+        af.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "在哪放着" }), ePlc));
+        var eNot = h("input", { class: "inp", type: "text", maxlength: "160" });
         eNot.value = ae.note; eNot.addEventListener("input", function () { ae.note = eNot.value; });
-        var aSave = h("button", { class: "btn pri sm", type: "button", text: "保存" });
-        var aCan = h("button", { class: "btn quiet sm", type: "button", text: "取消" });
+        af.appendChild(h("label", { class: "wfld wide" }, h("span", { class: "wfld-l", text: "用途说明" }), eNot));
+        var aCan = h("button", { class: "btn sm", type: "button", text: "取消" });
         aCan.addEventListener("click", function () { delete S.moneyAccEdit[a.id]; renderMoney(); });
+        var aSave = h("button", { class: "btn pri sm", type: "button", text: "保存" });
         aSave.addEventListener("click", function () {
           aSave.disabled = true;
           moneyPost({ action: "edit_account", account: a.id, label: ae.label.trim(), place: ae.place.trim(), note: ae.note.trim() }, "说明已保存", function () {
             delete S.moneyAccEdit[a.id];
           }).then(function () { aSave.disabled = false; });
         });
-        card.appendChild(eLbl); card.appendChild(ePlc); card.appendChild(eNot);
-        card.appendChild(h("div", { class: "money-bar" }, aCan, aSave));
+        af.appendChild(h("div", { class: "wform-f" }, aCan, aSave));
+        card.appendChild(af);
       } else {
-        var acts = h("div", { class: "money-acts" });
         var btnBal = h("button", { class: "btn sm", type: "button" }, icon("edit"), "改余额");
         btnBal.addEventListener("click", function () { S.moneyBalEdit[a.id] = { val: String(a.balance || 0), note: "" }; renderMoney(); });
-        var btnMeta = h("button", { class: "btn quiet sm", type: "button", text: "改位置/说明" });
+        var btnMeta = h("button", { class: "btn quiet sm", type: "button", title: "修改位置与说明" }, icon("tool"));
         btnMeta.addEventListener("click", function () { S.moneyAccEdit[a.id] = { label: a.label || "", place: a.place || "", note: a.note || "" }; renderMoney(); });
-        acts.appendChild(btnBal); acts.appendChild(btnMeta);
-        card.appendChild(acts);
+        card.appendChild(h("div", { class: "mcard-foot" },
+          h("div", { class: "mcard-note", title: a.note || "", text: a.note || "暂无说明" }),
+          h("div", { class: "mcard-acts" }, btnBal, btnMeta)));
       }
       grid.appendChild(card);
     });
     secAcc.appendChild(grid);
-
-    // 快捷记一笔按钮 / 表单
-    if (!S.moneyRecForm) {
-      var bar = h("div", { class: "money-bar", style: "margin-top:12px" });
-      var addRecBtn = h("button", { class: "btn sm", type: "button" }, icon("plus"), "手动记一笔收支 / 拨款互转");
-      addRecBtn.addEventListener("click", function () {
-        S.moneyRecForm = { kind: "transfer", from_account: "master", to_account: "tin_box", account: "tin_box", amount: "", counterparty: "", what: "", at: "" };
-        renderMoney();
-      });
-      bar.appendChild(addRecBtn);
-      secAcc.appendChild(bar);
-    } else {
-      secAcc.appendChild(moneyRecordForm(accs));
-    }
     box.appendChild(secAcc);
 
-    // 2. 挂账与待收
-    box.appendChild(moneyDebtSection(d, accs));
+    // 3. 赊账与待收（只在有数据或正在填写时展示完整列表，空时一句话清爽收起）
+    if (debts.length || S.moneyDebtForm) {
+      box.appendChild(moneyDebtSection(d, accs));
+    }
 
-    // 3. 收支流水
-    box.appendChild(moneyRecordSection(d));
+    // 4. 收支明细账单
+    box.appendChild(moneyRecordSection(d, accs));
   }
 
   function moneyAccSelect(accs, val, onChange) {
@@ -4448,14 +4563,18 @@
 
   function moneyRecordForm(accs) {
     var f = S.moneyRecForm;
-    var box = h("div", { class: "wform tform", style: "margin-top:12px" },
-      h("div", { class: "wform-h" }, h("span", { class: "t", text: "记一笔进出或转钱" })));
+    var box = h("div", { class: "wform tform" },
+      h("div", { class: "wform-h" }, h("span", { class: "t", text: "记一笔进出或互转" }), h("span", { class: "m", text: "直接写进钱匣账本并更新余额" })));
     var kSel = h("select", { class: "inp" });
     [["transfer", "存取 / 拨款互转"], ["earn", "进账收入 (+)"], ["spend", "花钱支出 (-)"], ["adjust", "差额调账"]].forEach(function (pair) {
       kSel.appendChild(h("option", { value: pair[0], text: pair[1], selected: pair[0] === f.kind }));
     });
     kSel.addEventListener("change", function () { f.kind = kSel.value; renderMoney(); });
     box.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "类型" }), kSel));
+
+    var amtInp = h("input", { class: "inp", type: "number", step: "0.01", placeholder: "金额（元）" });
+    amtInp.value = f.amount; amtInp.addEventListener("input", function () { f.amount = amtInp.value; });
+    box.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "金额（元）" }), amtInp));
 
     if (f.kind === "transfer") {
       box.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "从哪拿出" }),
@@ -4465,17 +4584,12 @@
     } else {
       box.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "哪个账户" }),
         moneyAccSelect(accs, f.account, function (v) { f.account = v; })));
-    }
-    var amtInp = h("input", { class: "inp", type: "number", step: "0.01", placeholder: "金额（元）" });
-    amtInp.value = f.amount; amtInp.addEventListener("input", function () { f.amount = amtInp.value; });
-    box.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "金额（元）" }), amtInp));
-
-    if (f.kind !== "transfer") {
       var cpInp = h("input", { class: "inp", type: "text", maxlength: "40", placeholder: "摊铺或对方（可选）" });
       cpInp.value = f.counterparty; cpInp.addEventListener("input", function () { f.counterparty = cpInp.value; });
       box.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "对方" }), cpInp));
     }
-    var wInp = h("input", { class: "inp", type: "text", maxlength: "120", placeholder: "例如：主人往铁盒补了两百家用 / 买两斤盐" });
+
+    var wInp = h("input", { class: "inp", type: "text", maxlength: "120", placeholder: "例如：主人往铁盒补两百块家用 / 集市买两条海鱼" });
     wInp.value = f.what; wInp.addEventListener("input", function () { f.what = wInp.value; });
     box.appendChild(h("label", { class: "wfld wide" }, h("span", { class: "wfld-l", text: "事由" }), wInp));
 
@@ -4497,36 +4611,36 @@
   }
 
   function moneyDebtSection(d, accs) {
-    var sec = h("div", { class: "lsec" }, lsecHead("赊账与待收", "熟摊赊欠（payable）会催着先还清；寄卖或外欠（receivable）随补给船或交货结款"));
+    var sec = h("div", { class: "lsec" }, lsecHead("赊账与待收", "欠熟摊的赊账（payable）会优先还清；寄卖待收（receivable）随补给船或交货结算"));
     var debts = d.debts || [];
     var card = h("div", { class: "pc" });
-    if (!debts.length) {
-      card.appendChild(h("div", { class: "muted", style: "font-size:13px", text: "现在没有挂在账上的赊欠或待收款。" }));
-    } else {
+    if (debts.length) {
       var rows = h("div", { class: "lrows" });
       debts.forEach(function (x) {
         var open = x.status === "open";
-        var dirTxt = x.direction === "payable" ? "我方欠对方" : "待收对方款";
+        var dirTxt = x.direction === "payable" ? "我方赊欠" : "待收对方";
+        var tagCls = !open ? "tag" : (x.direction === "payable" ? "tag bad" : "tag up");
         var rem = x.remaining !== undefined ? x.remaining : x.amount;
         var row = h("div", { class: "lrow" + (open ? "" : " off") });
         row.appendChild(h("div", { class: "lt" },
-          h("div", null,
-            h("span", { class: "tag" + (open && x.direction === "payable" ? " acc" : ""), style: "margin-right:8px", text: dirTxt }),
-            h("span", { class: "what", text: (x.counterparty || "") + " · " + (Number(rem || 0) > 0 ? "¥" + fmtYuan(rem) + " 元" : "待估") })),
+          h("div", { style: "display:flex;align-items:center;gap:8px;flex-wrap:wrap" },
+            h("span", { class: tagCls, text: dirTxt }),
+            h("span", { class: "what", style: "font-weight:600", text: x.counterparty || "" }),
+            h("span", { class: "mrow-amt " + (open ? (x.direction === "payable" ? "neg" : "pos") : "neu"), text: Number(rem || 0) > 0 ? "¥" + fmtYuan(rem) : "待估" })),
           h("div", { class: "lm" },
             h("span", { text: "#" + x.id }),
             x.about ? h("span", { text: x.about }) : null,
-            h("span", { text: open ? "未结" : "已结清" }))));
+            h("span", { text: open ? "未结清" : "已结清" }))));
         var acts = h("div", { class: "la" });
         if (open) {
-          var stBtn = h("button", { class: "btn quiet sm", type: "button" }, icon("check"), x.direction === "payable" ? "还款" : "收款");
+          var stBtn = h("button", { class: "btn sm", type: "button" }, icon("check"), x.direction === "payable" ? "还款" : "收款");
           stBtn.addEventListener("click", function () {
             S.moneySettle = { id: x.id, account: x.direction === "payable" ? "tin_box" : "master", amount: String(rem || ""), what: "" };
             renderMoney();
           });
           acts.appendChild(stBtn);
         }
-        var delBtn = h("button", { class: "btn quiet sm danger", type: "button" }, icon("trash"));
+        var delBtn = h("button", { class: "btn quiet sm danger", type: "button", title: "删除" }, icon("trash"));
         armed(delBtn, "确认删除", function () { moneyPost({ action: "delete_debt", id: x.id }, "已删除"); });
         acts.appendChild(delBtn);
         row.appendChild(acts);
@@ -4534,7 +4648,7 @@
         if (S.moneySettle && S.moneySettle.id === x.id) {
           var sf = S.moneySettle;
           var sbox = h("div", { class: "wform tform" }, h("div", { class: "wform-h" }, h("span", { class: "t", text: "结清 #" + x.id })));
-          sbox.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: x.direction === "payable" ? "从哪个账户出" : "收到哪个账户" }),
+          sbox.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: x.direction === "payable" ? "从哪个账户付" : "收到哪个账户" }),
             moneyAccSelect(accs, sf.account, function (v) { sf.account = v; })));
           var sa = h("input", { class: "inp", type: "number", step: "0.01", placeholder: "结算金额（元）" });
           sa.value = sf.amount; sa.addEventListener("input", function () { sf.amount = sa.value; });
@@ -4554,30 +4668,25 @@
       });
       card.appendChild(rows);
     }
-    if (!S.moneyDebtForm) {
-      var dbar = h("div", { class: "ladd", style: "margin-top:10px" });
-      var dbBtn = h("button", { class: "btn sm", type: "button" }, icon("plus"), "新记一笔欠账 / 寄卖待收");
-      dbBtn.addEventListener("click", function () { S.moneyDebtForm = { direction: "receivable", counterparty: "", amount: "", about: "" }; renderMoney(); });
-      dbar.appendChild(dbBtn);
-      card.appendChild(dbar);
-    } else {
+    if (S.moneyDebtForm) {
       var df = S.moneyDebtForm;
-      var dbox = h("div", { class: "wform tform", style: "margin-top:10px" }, h("div", { class: "wform-h" }, h("span", { class: "t", text: "新记挂账/待收" })));
+      var dbox = h("div", { class: "wform tform", style: debts.length ? "margin-top:14px" : "" },
+        h("div", { class: "wform-h" }, h("span", { class: "t", text: "新记挂账 / 待收" })));
       var dSel = h("select", { class: "inp" });
-      [["receivable", "待收对方钱（如寄卖/别人欠）"], ["payable", "我方欠别人（如摊铺赊账）"]].forEach(function (pair) {
+      [["payable", "我方赊欠别人"], ["receivable", "待收对方款（如寄卖）"]].forEach(function (pair) {
         dSel.appendChild(h("option", { value: pair[0], text: pair[1], selected: pair[0] === df.direction }));
       });
       dSel.addEventListener("change", function () { df.direction = dSel.value; });
-      dbox.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "方向" }), dSel));
-      var dcp = h("input", { class: "inp", type: "text", maxlength: "40", placeholder: "如：福记旧物行 / 杂货铺" });
+      dbox.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "类型" }), dSel));
+      var dcp = h("input", { class: "inp", type: "text", maxlength: "40", placeholder: "对方（杂货铺 / 福记旧物行）" });
       dcp.value = df.counterparty; dcp.addEventListener("input", function () { df.counterparty = dcp.value; });
       dbox.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "对方" }), dcp));
       var damt = h("input", { class: "inp", type: "number", step: "0.01", placeholder: "0 表示待估" });
       damt.value = df.amount; damt.addEventListener("input", function () { df.amount = damt.value; });
       dbox.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "金额（元）" }), damt));
-      var dab = h("input", { class: "inp", type: "text", maxlength: "120", placeholder: "如：p206旧相机随下趟补给船寄卖待估" });
+      var dab = h("input", { class: "inp", type: "text", maxlength: "120", placeholder: "说明（如：赊了一瓶酱油）" });
       dab.value = df.about; dab.addEventListener("input", function () { df.about = dab.value; });
-      dbox.appendChild(h("label", { class: "wfld wide" }, h("span", { class: "wfld-l", text: "说明" }), dab));
+      dbox.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "说明" }), dab));
       var dcan = h("button", { class: "btn sm", type: "button", text: "取消" });
       dcan.addEventListener("click", function () { S.moneyDebtForm = null; renderMoney(); });
       var dsav = h("button", { class: "btn pri sm", type: "button", text: "添加" });
@@ -4595,46 +4704,100 @@
     return sec;
   }
 
-  function moneyRecordSection(d) {
-    var recs = d.records || [];
-    var sec = h("div", { class: "lsec" }, lsecHead("收支流水", "最近共 " + recs.length + " 笔；删除可同时回退对应账户余额，或点世界线编号查看发生那一段"));
+  function moneyRecordSection(d, accs) {
+    var all = d.records || [];
+    var q = (S.moneyQ || "").trim().toLowerCase();
+    var recs = all.filter(function (r) {
+      if (S.moneyAccFilter !== "all") {
+        if (r.account !== S.moneyAccFilter && r.from_account !== S.moneyAccFilter && r.to_account !== S.moneyAccFilter) { return false; }
+      }
+      if (S.moneyKindFilter !== "all" && r.kind !== S.moneyKindFilter) { return false; }
+      if (q) {
+        var hay = [r.what, r.counterparty, r.account_label, r.from_label, r.to_label, r.who_label, r.at].join(" ").toLowerCase();
+        if (hay.indexOf(q) < 0) { return false; }
+      }
+      return true;
+    });
+
+    var sec = h("div", { class: "lsec" }, lsecHead("收支明细", "对齐显示时间、类型、事由与金额；删流水默认回退对应账户余额"));
+
+    // 筛选工具栏
+    var filt = h("div", { class: "mfilt" });
+    var accSeg = h("div", { class: "seg" });
+    [["all", "全部账户"]].concat(accs.map(function (a) { return [a.id, a.label]; })).forEach(function (pair) {
+      accSeg.appendChild(h("button", {
+        type: "button", class: S.moneyAccFilter === pair[0] ? "on" : "",
+        text: pair[1],
+        onclick: function () { S.moneyAccFilter = pair[0]; renderMoney(); }
+      }));
+    });
+    var kindSeg = h("div", { class: "seg" });
+    [["all", "全部"], ["earn", "进账"], ["spend", "花销"], ["transfer", "互转"]].forEach(function (pair) {
+      kindSeg.appendChild(h("button", {
+        type: "button", class: S.moneyKindFilter === pair[0] ? "on" : "",
+        text: pair[1],
+        onclick: function () { S.moneyKindFilter = pair[0]; renderMoney(); }
+      }));
+    });
+    var sInp = h("input", { class: "inp search", type: "search", placeholder: "搜事由、摊位或人…" });
+    sInp.value = S.moneyQ || "";
+    sInp.addEventListener("input", function () { S.moneyQ = sInp.value; renderMoney(); });
+    filt.appendChild(accSeg);
+    filt.appendChild(kindSeg);
+    filt.appendChild(sInp);
+    sec.appendChild(filt);
+
     var card = h("div", { class: "pc" });
     if (!recs.length) {
-      card.appendChild(h("div", { class: "muted", style: "font-size:13px", text: "还没有流水记录。" }));
+      card.appendChild(h("div", { class: "muted", style: "font-size:13px", text: all.length ? "当前筛选条件下没有流水。" : "还没有流水记录。" }));
     } else {
+      var showList = S.moneyShowAll ? recs : recs.slice(0, 60);
       var rows = h("div", { class: "lrows" });
-      recs.slice(0, 120).forEach(function (r) {
+      showList.forEach(function (r) {
         var k = r.kind;
-        var sign = k === "earn" ? "+" : (k === "spend" ? "-" : (k === "adjust" && Number(r.amount) >= 0 ? "+" : ""));
-        var cls = (k === "earn" || (k === "adjust" && Number(r.amount) > 0)) ? "pos" : ((k === "spend" || (k === "adjust" && Number(r.amount) < 0)) ? "neg" : "mid");
+        var sign = k === "earn" ? "+" : (k === "spend" ? "-" : (k === "adjust" && Number(r.amount) > 0 ? "+" : ""));
+        var amtCls = (k === "earn" || (k === "adjust" && Number(r.amount) > 0)) ? "pos"
+          : ((k === "spend" || (k === "adjust" && Number(r.amount) < 0)) ? "neg" : (k === "transfer" ? "mid" : "neu"));
+        var tagCls = k === "earn" ? "tag up" : (k === "spend" ? "tag bad" : (k === "transfer" ? "tag acc" : (k === "adjust" ? "tag warn" : "tag")));
         var whereAcc = k === "transfer" ? ((r.from_label || r.from_account) + " → " + (r.to_label || r.to_account)) : (r.account_label || r.account || "");
-        var srcName = r.source === "web" ? "网页" : (r.source === "recorder" ? "对话记录" : (r.source === "world" || r.source === "step" ? "世界线" : r.source || ""));
-        var row = h("div", { class: "lrow" });
-        row.appendChild(h("div", { class: "lt" },
-          h("div", { class: "prow-h" },
-            h("span", { class: "when-b", text: (r.at || "").slice(5, 16) }),
-            h("span", { class: "tag", style: "margin-right:6px", text: r.kind_label || k }),
-            h("span", { class: "money-amt " + cls, style: "margin-right:8px", text: sign + "¥" + (r.amount_text || fmtYuan(r.amount)) }),
-            h("span", { class: "what", text: r.what || r.counterparty || whereAcc })),
-          h("div", { class: "lm" },
-            whereAcc ? h("span", { text: whereAcc }) : null,
-            r.counterparty ? h("span", { text: "对方：" + r.counterparty }) : null,
-            r.who_label ? h("span", { text: "经手：" + r.who_label }) : null,
-            srcName ? h("span", { class: "tag", text: srcName }) : null,
-            r.wl ? h("button", {
-              class: "linkbtn", type: "button", text: r.wl.slice(5),
-              onclick: function () { var p = String(r.wl).split("/"); openWorldEntry(p[0], p[1], r.who); }
-            }) : null)));
-        var acts = h("div", { class: "la" });
-        var del = h("button", { class: "btn quiet sm danger", type: "button", title: r.wl_key && r.source === "world" ? "作废这条世界线流水" : "删除并回退余额" }, icon("trash"));
-        armed(del, r.wl_key && r.source === "world" ? "作废" : "删并回退", function () {
+        var srcName = r.source === "web" ? "网页" : (r.source === "recorder" ? "对话" : (r.source === "world" || r.source === "step" ? "世界线" : (r.source === "init" ? "初始" : (r.source || ""))));
+
+        var metas = [];
+        var addMeta = function (el) {
+          if (metas.length) { metas.push(h("span", { class: "sep", text: "·" })); }
+          metas.push(el);
+        };
+        if (whereAcc) { addMeta(h("span", { text: whereAcc })); }
+        if (r.counterparty) { addMeta(h("span", { text: r.counterparty })); }
+        if (r.who_label) { addMeta(h("span", { text: "经手 " + r.who_label })); }
+        if (srcName) { addMeta(h("span", { text: srcName })); }
+        if (r.wl) {
+          addMeta(h("button", {
+            class: "tlink", type: "button", text: "世界线 " + r.wl.slice(5),
+            onclick: function () { var p = String(r.wl).split("/"); openWorldEntry(p[0], p[1], r.who); }
+          }));
+        }
+
+        var row = h("div", { class: "mrow" });
+        row.appendChild(h("div", { class: "mrow-at", text: (r.at || "").slice(5, 16) }));
+        row.appendChild(h("div", { class: "mrow-kind" }, h("span", { class: tagCls, text: r.kind_label || k })));
+        row.appendChild(h("div", { class: "mrow-body" },
+          h("div", { class: "mrow-what", text: r.what || r.counterparty || whereAcc }),
+          metas.length ? h("div", { class: "mrow-meta" }, metas) : null));
+        row.appendChild(h("div", { class: "mrow-amt " + amtCls, text: sign + "¥" + (r.amount_text || fmtYuan(r.amount)) }));
+        var del = h("button", { class: "btn quiet sm danger mrow-acts", type: "button", title: r.wl_key && r.source === "world" ? "作废该世界线流水" : "删除并回退余额" }, icon("trash"));
+        armed(del, r.wl_key && r.source === "world" ? "作废" : "回退删除", function () {
           moneyPost({ action: "delete_record", id: r.id, revert: true }, "已处理");
         });
-        acts.appendChild(del);
-        row.appendChild(acts);
+        row.appendChild(del);
         rows.appendChild(row);
       });
       card.appendChild(rows);
+      if (recs.length > 60 && !S.moneyShowAll) {
+        var more = h("button", { class: "addlink", style: "margin-top:12px", type: "button", text: "展开其余 " + (recs.length - 60) + " 笔流水" });
+        more.addEventListener("click", function () { S.moneyShowAll = true; renderMoney(); });
+        card.appendChild(more);
+      }
     }
     sec.appendChild(card);
     return sec;
