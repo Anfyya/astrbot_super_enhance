@@ -117,6 +117,14 @@ RECORDER_SYSTEM_TEMPLATE = """{base_system}
    - 同一种东西有好几件的（清单里标着「长得像，认准编号」），看清是谁做的、什么样、在哪再记；对不上是哪一件就不记，别记到别的那件上，也别为它另建一件。
    - 清单里写着「按天气算，此刻：……」（淋湿了、生锈了、被风吹进海里了）的是程序照天气算的现在的样子：聊天里她说把它晾干了、擦干了、除了锈、洗了、收进来了、下水捞回来了，给那件记一步，state 写成处理后的样子（「晾干了」「锈擦掉了」），place 写现在搁在哪。
    - 聊天里主人或她说用了、交给谁了、挪了地方、用完了清单上的某件，就给那件记一步，别漏；清单里已经有的（世界线里买回来、捡到、做的也算），不管那边记的是「买回来」还是「捡到」，都记在那件上，不要另建。
+20. 钱的进出与欠账（人民币账本）：只记原文里确实**已经发生**的花钱、收钱、从铁盒拿钱放钱、上交主人、主人给钱/拨款、赊账或还账，写进 `money` 数组（没动钱留空 `[]`）；「待会去买」「要是有钱就能…」「这玩意能卖两百」这类假设或打算不记，已在 `今天到目前为止` / `此刻账面` 最近进出里有的也不重复记；也别再把现金当成新物件 `items`（`kind="钱"`）新建。
+   - account / from_account / to_account 四选一：`master`（主人钱包，大头由他管，只能主人自己花了或亲口说了给你/放进盒里才记从 `master` 出）、`tin_box`（船舱抽屉公用铁盒 p157）、`napcat2`（亚托莉口袋）、`napcat`（丛雨零花）。
+   - `kind` 五选一：
+     · `spend`（买东西/洗澡/付工费）：填 `account`（谁身上掏的，或船屋现拿的 `tin_box`；主人亲口花自己钱才写 `master`）、`amount`（正数元）、`counterparty`（摊铺或对象）、`what`、`at`、`quote`；
+     · `earn`（收打捞费/卖货/零工挣钱到手）：填 `account`（钱进经手人口袋或盒里）、`amount`、`counterparty`、`what`、`at`、`quote`；
+     · `transfer`（拿钱、放回、上交主人、主人给钱拨家用）：填 `from_account`、`to_account`、`amount`、`what`、`at`、`quote`（例如主人给 100 放铁盒写 `from_account: "master", to_account: "tin_box"`；赚的钱上交主人写 `from_account: "napcat2", to_account: "master"`）；
+     · `debt_add`（向熟摊赊账、或寄卖/帮干活待后续结款）：填 `direction`（`"payable"` 欠对方 / `"receivable"` 对方待结给我们）、`counterparty`、`amount`、`what`、`at`、`quote`；
+     · `debt_settle`（还清赊账或收到尾款）：填 `debt_id`（对照下面未结欠账编号）、`account`、`amount`、`what`、`at`、`quote`。
 {world_notes}
 输出这个 JSON（没有的字段留空数组）：
 
@@ -148,6 +156,10 @@ RECORDER_SYSTEM_TEMPLATE = """{base_system}
     {{"new": "x1", "name": "深青围巾", "kind": "围巾", "look": "深青色粗毛线，平针", "owner": "master", "origin": "丛雨给主人织的", "from": [],
       "at": "2026-10-16 13:05", "what": "开始做", "place": {{"area": "卧房", "at": "矮桌", "detail": ""}}, "state": "起了个头", "by": "napcat", "quote": "摘一句原文"}},
     {{"id": "p3", "at": "2026-10-17 20:00", "what": "交给", "holder": "master", "owner": "master", "state": "织好了", "by": "napcat", "quote": "摘一句原文"}}
+  ],
+  "money": [
+    {{"kind": "transfer", "from_account": "master", "to_account": "tin_box", "amount": 200, "what": "主人往公用铁盒放两百块备用", "at": "2026-10-18 08:10", "quote": "摘一句原文"}},
+    {{"kind": "spend", "account": "napcat2", "amount": 12, "counterparty": "集市鱼摊", "what": "买了两条鲜海鱼", "at": "2026-10-18 08:30", "quote": "摘一句原文"}}
   ],
   "promises": [{{"action": "add", "bots": ["napcat"], "date": "2026-10-12", "time": "14:00",
                 "what": "陪主人进山看红叶", "with": "主人"}}],
@@ -498,12 +510,19 @@ class Recorder:
     def _things_block(self, now: datetime.datetime) -> str:
         """家里的吃的：现有的一件一行（编号、剩多少、在哪、哪来的、新不新鲜），附最近一天没了的。"""
         store = getattr(self, "things", None)
-        if store is None:
-            return ""
+        parts = []
         flat = now.replace(tzinfo=None)
-        shelf = store.here(store.view(flat), flat)
-        return ("家里的吃的（存货，按第 18 条记；每件前面是程序发的编号）：\n" + store.food_list(flat, shelf, self.label)
-                + "\n\n家里的东西（吃的以外，按第 19 条记；每件前面是程序发的编号）：\n" + store.item_list(flat, shelf, self.label))
+        if store is not None:
+            shelf = store.here(store.view(flat), flat)
+            parts.append("家里的吃的（存货，按第 18 条记；每件前面是程序发的编号）：\n" + store.food_list(flat, shelf, self.label))
+            parts.append("家里的东西（吃的以外，按第 19 条记；每件前面是程序发的编号）：\n" + store.item_list(flat, shelf, self.label))
+        book = getattr(self, "money", None)
+        if book is not None and str(self.cfg.get("world_home") or "").strip() == "海边小镇":
+            try:
+                parts.append(book.recorder_block(flat, self.world))
+            except Exception:
+                logger.warning("[super_enhance/money] 记录员拼账面失败", exc_info=True)
+        return "\n\n".join(parts)
 
     def _since(self, items, now: datetime.datetime) -> datetime.datetime:
         """这批消息里最早那条的时刻（不带时区的本地时间）；拿不到就用现在。"""
@@ -790,6 +809,7 @@ class Recorder:
         self._apply_abilities(data.get("abilities") or [], now)
         self._apply_things(data.get("things") or [], umo, batch, now)
         self._apply_things(data.get("items") or [], umo, batch, now, cat=CAT_ITEM)
+        self._apply_money(data.get("money") or [], umo, batch, now)
         # 改到了谁的现在：她后面补写排的全撤掉，补写从头排；最后核对两人「一起」对得上
         for who, since in sorted(state.touched.items()):
             self._redo_after(who, since, now)
@@ -1849,3 +1869,39 @@ class Recorder:
                 })
                 if why and not why.startswith("重复"):
                     logger.debug("[super_enhance/things] 补记用料跳过 %s -> %s：%s", sid, dish["id"], why)
+
+    def _apply_money(self, raws, umo: str, items, now: datetime.datetime) -> None:
+        """把对话原文中已实际发生的收支、拨款/拿取与欠账写入人民币账本。"""
+        book = getattr(self, "money", None)
+        if book is None or not isinstance(raws, list) or not raws:
+            return
+        from .money import normalize_account, normalize_kind
+        flat = now.replace(tzinfo=None)
+        has_master = any(str(x.get("role") or "") == "user" for x in (items or []))
+        fallback_at = fmt_time(flat)
+        if items:
+            last = items[-1]
+            if last.get("date") and last.get("time"):
+                fallback_at = "%s %s" % (last["date"], last["time"])
+        ops = []
+        for raw in raws:
+            if not isinstance(raw, dict):
+                continue
+            kind = normalize_kind(raw.get("kind"))
+            if not kind:
+                continue
+            acc = normalize_account(raw.get("account"))
+            fa = normalize_account(raw.get("from_account"))
+            ta = normalize_account(raw.get("to_account"))
+            # 防止纯机器人消息私自扣动主人钱包
+            if not has_master:
+                if (kind == "spend" and acc == "master") or (kind == "transfer" and fa == "master") or (
+                    kind == "debt_settle" and acc == "master"
+                ):
+                    logger.info("[super_enhance/money] 本批无主人发言，拦截私自动用主人钱包：%s", raw.get("what"))
+                    continue
+            op = dict(raw)
+            op["who"] = str(raw.get("who") or bot_of_umo(umo) or "").strip()
+            ops.append(op)
+        if ops:
+            book.apply_record_ops(ops, now=now, default_at=fallback_at, source="recorder", world=self.world)

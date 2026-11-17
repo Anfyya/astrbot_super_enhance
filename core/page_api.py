@@ -64,6 +64,8 @@ _ROUTE_SPECS = (
     ("request", "get_request", ("GET",), "上下文页面：某一份真实请求快照"),
     ("ledger", "get_ledger", ("GET",), "上下文页面：能力清单 / 约定 / 事件"),
     ("ledger/edit", "edit_ledger", ("POST",), "上下文页面：编辑能力清单 / 约定"),
+    ("money", "money_view", ("GET",), "上下文页面：船屋钱匣与账本流水"),
+    ("money/edit", "money_edit", ("POST",), "上下文页面：手动调账 / 增删流水 / 管欠账"),
 )
 
 _MAX_BACKUP_FILES = 30
@@ -1679,6 +1681,13 @@ class ContextPageApi:
             pools = life.pool_store.load()
             out["pools"] = {"n": sum(len(pools.get(k) or []) for k in
                                      ("twists", "night_twists", "together", "pastimes", "idles", "night_idles"))}
+            if getattr(life, "money", None) is not None:
+                from .features.life_state.money import round_yuan
+                msnap = life.money.snapshot(life._now(), life.world)
+                out["money"] = {
+                    "accounts": {k: round_yuan(v.get("balance")) for k, v in msnap["accounts"].items()},
+                    "open_debts": sum(1 for d in msnap["debts"] if d.get("status") == "open"),
+                }
             return _ok(out)
         except Exception as exc:
             logger.error("[super_enhance/ctx] 侧栏读取失败", exc_info=True)
@@ -1704,6 +1713,7 @@ class ContextPageApi:
             "things": _mtime_ns(data_dir / "things.json"),
             "pools": _mtime_ns(data_dir / "pools.json"),
             "seeds": _mtime_ns(data_dir / "daily_seeds.json"),
+            "money": _mtime_ns(data_dir / "money.json"),
             "requests": _mtime_ns(data_dir / "request_snapshots" / "index.json"),
         }
         convs = await self.manager.get_conversations()
@@ -2587,3 +2597,109 @@ class ContextPageApi:
         if not isinstance(item, dict) or item.get("date") != life._today():
             return
         await life_loop.sync_live_jobs(life, item["date"])
+
+    async def money_view(self):
+        """钱匣与账本：分账户余额、挂账/待收、全部收支流水。"""
+        life = getattr(self.plugin, "life", None)
+        if life is None or getattr(life, "money", None) is None:
+            return _err("金钱账本未加载")
+        try:
+            from .features.life_state.money import ACCOUNT_ORDER, KIND_LABELS, fmt_yuan
+            now = life._now()
+            life.money.archive_settled(now, life.world)
+            snap = life.money.snapshot(now, life.world)
+            accs = snap["accounts"]
+            acc_labels = {k: str((accs.get(k) or {}).get("label") or k) for k in ACCOUNT_ORDER}
+            account_rows = []
+            for k in ACCOUNT_ORDER:
+                if k in accs:
+                    row = dict(accs[k])
+                    row["id"] = k
+                    row["balance_text"] = fmt_yuan(row.get("balance"))
+                    account_rows.append(row)
+            who_name = lambda w: "主人" if w == "master" else (life.bots.label_for(w) or w)
+            records = []
+            for r in reversed(snap["records"]):
+                item = dict(r)
+                item["kind_label"] = KIND_LABELS.get(r.get("kind"), r.get("kind") or "")
+                item["account_label"] = acc_labels.get(r.get("account") or "", r.get("account") or "")
+                item["from_label"] = acc_labels.get(r.get("from_account") or "", r.get("from_account") or "")
+                item["to_label"] = acc_labels.get(r.get("to_account") or "", r.get("to_account") or "")
+                item["who_label"] = who_name(r.get("who") or "") if r.get("who") else ""
+                item["amount_text"] = fmt_yuan(r.get("amount"))
+                records.append(item)
+            return _ok({
+                "today": life._today(),
+                "home": str(life.cfg.get("world_home") or ""),
+                "total_cash": snap["total_cash"],
+                "home_and_girls_cash": snap["home_and_girls_cash"],
+                "accounts": account_rows,
+                "debts": snap["debts"],
+                "records": records,
+            })
+        except Exception as exc:
+            logger.error("[super_enhance/ctx] 读取钱匣与账本失败", exc_info=True)
+            return _err(exc)
+
+    async def money_edit(self):
+        """手动调账 / 记流水 / 删流水 / 管欠账。"""
+        life = getattr(self.plugin, "life", None)
+        if life is None or getattr(life, "money", None) is None:
+            return _err("金钱账本未加载")
+        payload = await request.get_json(silent=True) or {}
+        if not isinstance(payload, dict):
+            return _err("请求体格式错误")
+        action = str(payload.get("action") or "").strip()
+        now = life._now()
+        try:
+            if action == "set_balance":
+                res = life.money.set_balance_to(
+                    payload.get("account"),
+                    float(payload.get("balance")),
+                    now=now,
+                    note=str(payload.get("note") or ""),
+                    world=life.world,
+                )
+            elif action == "edit_account":
+                res = life.money.edit_account_meta(
+                    payload.get("account"),
+                    label=payload.get("label"),
+                    place=payload.get("place"),
+                    note=payload.get("note"),
+                )
+            elif action == "add_record":
+                res = life.money.add_web_record(payload, now=now)
+            elif action == "delete_record":
+                ok = life.money.delete_record(
+                    payload.get("id"),
+                    revert_balance=bool(payload.get("revert", True)),
+                    now=now,
+                    world=life.world,
+                )
+                if not ok:
+                    raise ValueError("找不到这一笔流水")
+                res = {"deleted": payload.get("id")}
+            elif action == "add_debt":
+                res = life.money.add_debt(payload, now=now)
+            elif action == "update_debt":
+                res = life.money.update_debt(str(payload.get("id") or ""), payload, now=now)
+            elif action == "settle_debt":
+                raw_amt = payload.get("amount")
+                amt = float(raw_amt) if raw_amt not in (None, "") else None
+                res = life.money.settle_debt(
+                    str(payload.get("id") or ""),
+                    account=str(payload.get("account") or ""),
+                    amount=amt,
+                    now=now,
+                    what=str(payload.get("what") or ""),
+                )
+            elif action == "delete_debt":
+                if not life.money.delete_debt(str(payload.get("id") or "")):
+                    raise ValueError("找不到这一条欠账")
+                res = {"deleted": payload.get("id")}
+            else:
+                raise ValueError("不支持的操作：%s" % action)
+        except Exception as exc:
+            return _err(exc)
+        logger.info("[super_enhance/ctx] web 编辑钱匣账本：%s", action)
+        return _ok(res)

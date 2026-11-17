@@ -337,6 +337,8 @@ def split_world_text(service, bot: str, now: datetime.datetime) -> tuple[str, st
             static_blocks.append(service.world.arrived_text(now))
         except Exception:
             logger.warning("[super_enhance/life] 搬来几天注入失败", exc_info=True)
+        if str(service.cfg.get("world_home") or "").strip() == "海边小镇" and getattr(service, "money", None) is not None:
+            static_blocks.append(service.money.chat_static_rules())
 
     # 动态部分严格按「天级 → 段级 → 小时/分钟级 → 当前世界线 → 末尾口吻/展示规范」排列
     try:
@@ -352,6 +354,12 @@ def split_world_text(service, bot: str, now: datetime.datetime) -> tuple[str, st
             dynamic_blocks.append(supply_now_text(service, now))
         except Exception:
             logger.warning("[super_enhance/life] 电和补给注入失败", exc_info=True)
+        if str(service.cfg.get("world_home") or "").strip() == "海边小镇" and getattr(service, "money", None) is not None:
+            try:
+                service.money.archive_settled(now, service.world)
+                dynamic_blocks.append(service.money.chat_now_text(now, service.world, bot, service.bots.label_for))
+            except Exception:
+                logger.warning("[super_enhance/life] 账面余额注入失败", exc_info=True)
     if companion is not None:
         dynamic_blocks.append(companion.safe("render", bot, now, default=""))
     if head:

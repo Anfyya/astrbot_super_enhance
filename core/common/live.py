@@ -22,6 +22,7 @@ TOPICS = (
     ("daily_seeds.json", ("world", "pools")),
     ("things.json", ("things", "world")),
     ("pools.json", ("pools",)),
+    ("money.json", ("money",)),
     ("abilities.json", ("ledger",)),
     ("promises.json", ("ledger",)),
     ("trainings.json", ("ledger",)),

@@ -41,6 +41,7 @@ from .recorder import Recorder
 from .step import LifeStep
 from .things import FILE_NAME as THINGS_FILE_NAME
 from .things import ThingStore
+from .money import MONEY_FILE_NAME, MoneyBook
 
 DEFAULT_TZ = "Asia/Shanghai"
 ABILITY_FILE_NAME = "abilities.json"
@@ -119,6 +120,10 @@ class LifeStateService:
         self.things.bots_fn = self.raw_log.enabled_bots
         self.recorder.things = self.things
         self.life_step.things = self.things
+        # 分账户现金与欠账账本（人民币；大头归主人，日常放公用铁盒与各自口袋，见 money.py）
+        self.money = MoneyBook(self.data_dir / MONEY_FILE_NAME)
+        self.recorder.money = self.money
+        self.life_step.money = self.money
         # 世界线 live 时，主动消息提示词里不再出「原本打算」那一行
         self._world_task: asyncio.Task | None = None
         self._world_day = None

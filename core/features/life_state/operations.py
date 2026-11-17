@@ -195,15 +195,29 @@ def start_now(
             service.world.add_entry(str(item.get("start"))[:10], item)
         return "没写进去：这段时间世界线上是主人手动排的事，补写和对话都改不动。"
     released = _release_partners(service, bot, now, what)
+    money_hint = ""
+    if kind_val == "trade" and home == "海边小镇" and getattr(service, "money", None) is not None:
+        try:
+            from .money import fmt_yuan
+            snap = service.money.snapshot(now, service.world)
+            accs = snap["accounts"]
+            me_b = accs.get(bot, {}).get("balance", 0)
+            tin_b = accs.get("tin_box", {}).get("balance", 0)
+            money_hint = "（账面参考：你兜里现揣 %s 元，屋里公用铁盒 %s 元；外出采买注意带上现钱、回来放回铁盒并报清花了多少）" % (
+                fmt_yuan(me_b), fmt_yuan(tin_b),
+            )
+        except Exception:
+            pass
     logger.info(
         "[super_enhance/world] [%s] 现在去做：%s %s–%s%s%s",
         bot, what[:30], fmt_time(now)[11:], fmt_time(end)[11:],
         "（撤掉补写排的 %d 段）" % len(removed) if removed else "",
         "（对方和她一起的：%s）" % "、".join(released) if released else "",
     )
-    return "已写进世界线：%s–%s %s%s。做完时系统会叫你一次。" % (
+    return "已写进世界线：%s–%s %s%s。做完时系统会叫你一次。%s" % (
         fmt_time(now)[11:], fmt_time(end)[11:], what,
         "（地点：%s）" % record.get("place") if record.get("place") else "",
+        money_hint,
     )
 
 def _release_partners(service, bot: str, now: datetime.datetime, what: str = "") -> list:

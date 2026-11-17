@@ -421,6 +421,8 @@ class WorldStore:
             "sleep": None if entry.get("sleep") is None or kind == "event" else bool(entry.get("sleep")),
             "origin": clean_origin(entry.get("origin")),
             "things": [dict(x) for x in (entry.get("things") or []) if isinstance(x, dict)],
+            **({"money": [dict(x) for x in (entry.get("money") or []) if isinstance(x, dict)]}
+               if isinstance(entry.get("money"), list) and entry["money"] else {}),
             "created": str(entry.get("created") or fmt_time(self.now_local())),
         }
         if entry.get("tool") == "start_doing" and kind != "event":
@@ -644,6 +646,12 @@ class WorldStore:
                     item["outfit"] = val_out
                 else:
                     item.pop("outfit", None)
+            if isinstance(fields.get("money"), list):
+                ml = [dict(x) for x in fields["money"] if isinstance(x, dict)]
+                if ml:
+                    item["money"] = ml
+                else:
+                    item.pop("money", None)
             if (fields.get("end") is not None or fields.get("start") is not None) and fields.get("steps") is None:
                 # 起止改了（截短 / 拉长）：分步跟着按新时长对上，别把十几分钟的分步压进一两分钟里
                 fit_steps(item)

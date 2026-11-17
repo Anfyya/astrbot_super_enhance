@@ -26,6 +26,7 @@ from .recorder import norm_time
 from .facts import fact_batch
 from .companionship import format_decision_line, invitation_text
 from .living_rules import STEP_LIFECYCLE_RULES
+from .money import SEASIDE_PRICE_GUIDE, normalize_step_money_list, validate_step_segments_money
 from .things import FactConflict
 from .things import (CAT_FOOD, CAT_ITEM, END_STEPS, ITEM_END_STEPS, ITEM_MID_STEPS, ITEM_START_STEPS, KEEPS, KINDS, MEASURED_KINDS, MID_STEPS,
                      SPOTS, START_STEPS, _same_name, cat_of, checked_place, had_before, is_ended, norm_kind, norm_state, spots_for,
@@ -147,7 +148,7 @@ STEP_SYSTEM_TEMPLATE = """{base_system}
 20. **家里的东西**（吃的以外）：上面「家里的东西」是此刻家里有的（编号、样子、在哪、在谁手上）。段里做了、用了、挪了、交给别人了、接着做了一截的东西，写进这段的 items（没动到就是空数组）：
    只是拿来读、翻看、摊开看一眼，之后原样放回去，地方、样子、数量都没变的，不算动到它，不写 items；别为了让校验通过硬编一条物品变化。船屋里隔音有限，主人睡觉时严禁在船舱里或头顶甲板上敲铁、凿木头、叮当拆修铁器。
    - 已有的写 id、what（挪地方 / 交给 / 用了 / 清点 / 做了一截 / 做好了 / 变了样 / 送人了 / 丢了 / 坏了扔了 / 用完了）、place、holder（交到谁手上）、state（这段做完它什么样，比如「织到两尺长」）；消耗品可顺带写 amount（清点数量）/ used（本次用量）/ left（剩余数量）。接着做没做完的那件（比如接着织那条围巾），就是清单里那一件，写「做了一截」或「做好了」，不要另建一件。清单里标着「已做好」的已经做完了，不要再排接着做它，也别给它写「做了一截」「做好了」；想再做一样的，就另起一件新的。
-   - 新做出来的、买回来的、捡到的写 new（临时代号 x1、x2……，这一次里每件一个，两个人、几段之间也不重复：丛雨那段用了 x1，亚托莉那段的新东西就从 x2 起）、name（叫得出区别的名字，例如「兔子窗花」）、kind（它是什么，一个词：窗花、围巾、鱼漂……）、look（样子）、owner（归谁）、origin（哪来的，如「杂货铺」「废铁站」「海滩漂流物」）、from（用哪几件原料做的，没有留空）、what（开始做 / 做好了 / 买回来 / 收到 / 捡到）、amount（有明确数量的可填，如「1捆」「3张」）、place、state。严禁凭空编造旧东西或写「原来就有」。
+   - 新做出来的、买回来的、捡到的写 new（临时代号 x1、x2……，这一次里每件一个，两个人、几段之间也不重复：丛雨那段用了 x1，亚托莉那段的新东西就从 x2 起）、name（叫得出区别的名字，例如「兔子窗花」）、kind（它是什么，一个词：窗花、围巾、鱼漂……；现金收支一律记在 `money` 里，严禁把钱当成新 `items`（`kind="钱"`）新建）、look（样子）、owner（归谁）、origin（哪来的，如「杂货铺」「废铁站」「海滩漂流物」）、from（用哪几件原料做的，没有留空）、what（开始做 / 做好了 / 买回来 / 收到 / 捡到）、amount（有明确数量的可填，如「1捆」「3张」）、place、state。严禁凭空编造旧东西或写「原来就有」。
    - 上面写了字、画了东西的（给主人留的纸条、信、便笺、清单、贺卡、画）：look 里把上面写的原话一字不差地写出来，用「」括起来；画的写清楚画了什么。例如 look 写「黄纸条，铅笔写的：『主人，粥在灶上温着，亚托莉去码头了，中午前回来』」，别只写「一张写给主人的纸条」。这段的 steps 里写到她写纸条时也用这句原话。后来谁拿起来看、念给主人听，都照这句说，不能另编。
    - 封着送来的（寄来的信、没拆的包裹、捆好的箱子）：look 写外面看得到的（信封、邮戳、收信人、包裹多大多沉），里面是什么写进 inside——信写原话，用「」括起来；包裹、箱子写装了哪些东西。state 写「封着没拆」。这段的 doing、steps、result 里写到它时，照外面的样子写。拆开留到聊天里，那时候她们照 inside 说。
    - place 和第 18 条一样拆开写，例如 {{"area": "卧房", "at": "针线笸箩", "detail": ""}}、{{"area": "堂屋", "at": "书架", "detail": "第二格"}}。
@@ -163,6 +164,11 @@ STEP_SYSTEM_TEMPLATE = """{base_system}
    - **打捞接单与封口战利品归船长（主人）**：镇上人来下单捞东西，亚托莉只记下对方要捞什么、出多少报酬，填 `ask_master`（`kind: "decision"`）问主人接不接、什么时候带船去；平时捞上来的上锁小铁箱、封口药瓶或稀罕旧物，一律搁在 `船舱·矮桌`（`state` 写 `"封着没拆，留着等主人看"`），严禁她俩在后台自己撬开拆完。
    - **伙食分「凑合糊口」与「主人在家/点菜开火」**：若主人没点菜、也没约好这顿一起吃，她俩自己只熬碗白粥配咸菜、烤块番薯或热口剩菜简单对付（省柴省炭省油盐，不做一荤一素一汤的大菜）；快到晚饭点想做上方参考菜单里的正经热菜锅物时，先填 `ask_master`（`kind: "decision"`）问主人今晚想吃哪样、回不回来吃。
    - **禁止纯日报式 `send_msg`**：严禁干完活发“废铁搬完啦跟主人汇报一声”“配给领回来啦通知一声”这种不需要主人参与的事后工作简报！联系主人优先用 `ask_master`（事前请主人拿主意 `decision` 或约主人一起做某事 `invite`），段内 `send_msg` 只在早晚问候或真有急事喊主人时用。
+26. **船屋用钱、出门带钱与赚钱规矩（人民币，全写进段内 `money` 数组）**：
+   - 分四处保管：`master`（主人钱包，大头由主人自己拿着；未经主人聊天里发话或同行付现，补写里**严禁**从 `master` 扣钱或拨钱）、`tin_box`（船舱矮桌抽屉里 `p157` 公用铁盒）、`napcat2`（亚托莉口袋）、`napcat`（丛雨零花；丛雨外人看不见，不能独自在镇上花钱或收钱）。
+   - **人在外面动不了屋里的铁盒**：去集市/杂货铺/旧衣铺买东西时，若 `at_home=false` 则**严禁**填 `account="tin_box"` 隔空付钱！要么在出门前的船屋段先做一笔 `transfer(from_account="tin_box", to_account="napcat2")` 取现揣身上，要么只花 `napcat2` 口袋里本就揣着的零钱；回到船屋后再把找零/多余现金放回 `tin_box` 或上交 `master`。手头钱不够时按实际少买一点、回船屋拿钱、以物易物，或向熟摊主记赊账（`debt_add`，direction=`"payable"`）。
+   - **买物与卖物必须真对应账实**：海边买回新食物/新物件（`what="买回来"`）时，同段 `money` 必须填对应的 `spend` 或 `debt_add`（或在 `things/items` 里真消耗已有实物以物易物），**严禁白拿商家东西，也不要再把现金当成新 `items`（`kind="钱"`）新建**。在海边赚钱（`earn`）必须填 `reason`：`work`（零工/修小物件 `<=50` 元）、`salvage`（打捞单收钱；超过 50 元须先有主人确认的 `intent` 打算，且单次 `<=250` 元）、`sell`（变卖收购站/集市：`<=300` 元，必须在同段 `things/items` 里消耗真实库存编号 `id`）、`consign_payout`（寄卖回款改用 `debt_settle` 核销待收 `debt_id`）。单笔进账超过 50 元回船屋后习惯交到主人手里或放入公用铁盒；手头有 `payable` 赊欠时进账了要惦记还掉（`debt_settle`）。
+{money_guide}
 {world_notes}
 {step_notes}
 要问主人的（ask_master，必填拿主意入口）：who 写谁来问（`"napcat"` 或 `"napcat2"`），question 写发给主人的那句自然口语问话（时间说具体，如“等会儿/下午/明早”，避免只写模糊的“明天”导致跨天后语义顺延），kind 写 `"decision"`（请当家主人拍板：先买厚棉衣还是换厚棉被、接不接打捞单、晚饭做哪道菜等）或 `"invite"`（喊主人一起做件事、一起拆看捞上来的旧物等）。**铁律：凡填了 `ask_master` 请主人拍板的事，本轮 `segments` 里只排「打听行情 / 备好手头杂活 / 等主人准话」，绝不许在本轮 `segments` 里提前把那件待拍板的事直接做完！** 程序会把这件待拍板事项挂起（主人哪怕过半天再回话，到时候再排进去做；主人没回话前就老老实实干日常维持杂活等准话）。只有主人正在睡觉、或者上方已经挂着待主人拍板的 `d` 事项尚未回复时，`ask_master` 才留空。
@@ -195,6 +201,11 @@ STEP_SYSTEM_TEMPLATE = """{base_system}
 - `"items"`（非食物物品变动数组，没动物品填 `[]`；凡换物、捡柴、换闷炭/夹闷炭、筛草木灰、做手工、写纸条必填，以物易物须同时写消耗旧物 `id` 与换回新物 `new`；**同一批已有物件只是搬动、拆捆、摊晾、码架或取用一部分时，必须沿用已有编号 `id` 写 `挪地方/用了/变了样`，严禁用 `new` 再复制一份同名物件**；描述铁桶柴炉时用「柴火/炉膛红灰」，别混写成「炭火」）：
   - 动已有物品：`{{"id": "p编号或x代号", "what": "挪地方|交给|用了|清点|做了一截|做好了|变了样|送人了|丢了|坏了扔了|用完了", "used": "1捆(可选)", "left": "剩余(可选)", "place": {{"area": "船舱", "at": "储物格", "detail": ""}}, "holder": "", "state": "做完后的状态", "step": 1}}`
   - 新物品入库：`{{"new": "x1", "name": "闷炭", "kind": "燃料", "look": "小半罐零碎硬木炭", "owner": "共用", "origin": "煮盐棚帮工换回", "from": [], "what": "开始做|做好了|买回来|收到|捡到", "amount": "400克", "place": {{"area": "船舱", "at": "灶台边", "detail": "陶罐里"}}, "state": "干燥盖严", "step": 2}}`
+- `"money"`（钱财进出与赊账数组，必填；没动钱填 `[]`，`"闲着"`/`"睡觉"` 段必填 `[]`）：
+  - 花钱：`{{"kind": "spend", "account": "napcat2", "amount": 12, "counterparty": "集市鱼摊", "what": "买了两条海鱼", "step": 1}}`
+  - 进账：`{{"kind": "earn", "account": "napcat2", "reason": "work|salvage|sell", "amount": 20, "counterparty": "诊所老医生", "what": "修好坏掉的手电筒挣零工钱", "step": 2}}`
+  - 铁盒拿钱/放回/上交：`{{"kind": "transfer", "from_account": "tin_box", "to_account": "napcat2", "amount": 30, "what": "出门买菜前从铁盒取三十块揣兜里", "step": 1}}`
+  - 赊账/挂待收：`{{"kind": "debt_add", "direction": "payable|receivable", "counterparty": "杂货铺", "amount": 15, "what": "钱差几块先赊一瓶醋", "step": 2}}`；还账/结款：`{{"kind": "debt_settle", "debt_id": "d1", "account": "napcat2", "amount": 15, "what": "还清杂货铺赊账", "step": 1}}`
 
 输出 JSON（时间均以 user 提示里给出的「现在 / 这次要你写的」为准，下面示例时间只作格式示范；end_current 只给上面说了「先定做完时刻」的人写；intent_moves 只写标着「挂了几天了」的打算，没有就留空 `{{}}`）：
 
@@ -204,8 +215,8 @@ STEP_SYSTEM_TEMPLATE = """{base_system}
   "stopped_results": {{}},
   "intent_moves": {{}},
   "segments": {{
-    "napcat": [{{"start": "2026-10-12 08:00", "end": "2026-10-12 08:25", "place": "船屋·船舱灶台边", "doing": "生起小炭炉熬一锅咸鱼粥", "steps": [{{"text": "淘米下锅添水，引燃小炭炉", "minutes": 10}}, {{"text": "切碎咸鱼干下锅慢熬", "minutes": 10}}, {{"text": "收尾：盖好锅盖温在灶上，擦净案板", "minutes": 5}}], "result": "熬好了一锅咸鱼粥温在灶上", "state": "做事", "at_home": true, "meal": false, "stove": "charcoal", "lamp": false, "kerosene": false, "water": false, "send_msg": false, "msg_at": "", "msg_purpose": "", "public": "在船舱灶台边熬粥", "with": [], "training": "", "intent": "", "from": "routine", "mood": "早起闻着热粥香气，心里踏实安稳", "outfit": "黑色和服薄披肩配绀紫抹胸常服与木屐", "things": [{{"id": "w1", "what": "用掉一部分", "used": "150克", "left": "2850克", "into": "n1", "step": 1}}, {{"new": "n1", "name": "咸鱼粥", "kind": "熟汤羹粥", "what": "做好了", "cook": "boil", "from": ["w1"], "left": "一锅", "place": {{"area": "船舱", "at": "灶上", "detail": "锅里"}}, "keep": "罩着放", "spot": "灶上温着", "step": 2}}], "items": []}},
-               {{"start": "2026-10-12 08:25", "end": "2026-10-12 08:40", "place": "海边小镇·码头", "doing": "飘去码头看看打捞船靠岸卸货", "steps": [{{"text": "从船屋飘到码头边站定张望", "minutes": 10}}, {{"text": "看完卸货往回飘到船屋", "minutes": 5}}], "result": "看了一阵热闹回船屋了", "state": "做事", "at_home": false, "meal": false, "stove": "", "lamp": false, "kerosene": false, "water": false, "send_msg": true, "msg_at": "start", "msg_purpose": "要出门去码头看一眼，跟主人说一声", "public": "去码头看船", "with": [], "training": "", "intent": "", "from": "T1", "mood": "想去码头凑个热闹，兴致勃勃的", "outfit": "黑色和服薄披肩配绀紫抹胸常服与木屐", "things": [], "items": []}}],
+    "napcat": [{{"start": "2026-10-12 08:00", "end": "2026-10-12 08:25", "place": "船屋·船舱灶台边", "doing": "生起小炭炉熬一锅咸鱼粥", "steps": [{{"text": "淘米下锅添水，引燃小炭炉", "minutes": 10}}, {{"text": "切碎咸鱼干下锅慢熬", "minutes": 10}}, {{"text": "收尾：盖好锅盖温在灶上，擦净案板", "minutes": 5}}], "result": "熬好了一锅咸鱼粥温在灶上", "state": "做事", "at_home": true, "meal": false, "stove": "charcoal", "lamp": false, "kerosene": false, "water": false, "send_msg": false, "msg_at": "", "msg_purpose": "", "public": "在船舱灶台边熬粥", "with": [], "training": "", "intent": "", "from": "routine", "mood": "早起闻着热粥香气，心里踏实安稳", "outfit": "黑色和服薄披肩配绀紫抹胸常服与木屐", "things": [{{"id": "w1", "what": "用掉一部分", "used": "150克", "left": "2850克", "into": "n1", "step": 1}}, {{"new": "n1", "name": "咸鱼粥", "kind": "熟汤羹粥", "what": "做好了", "cook": "boil", "from": ["w1"], "left": "一锅", "place": {{"area": "船舱", "at": "灶上", "detail": "锅里"}}, "keep": "罩着放", "spot": "灶上温着", "step": 2}}], "items": [], "money": []}},
+               {{"start": "2026-10-12 08:25", "end": "2026-10-12 08:40", "place": "海边小镇·码头", "doing": "飘去码头看看打捞船靠岸卸货", "steps": [{{"text": "从船屋飘到码头边站定张望", "minutes": 10}}, {{"text": "看完卸货往回飘到船屋", "minutes": 5}}], "result": "看了一阵热闹回船屋了", "state": "做事", "at_home": false, "meal": false, "stove": "", "lamp": false, "kerosene": false, "water": false, "send_msg": true, "msg_at": "start", "msg_purpose": "要出门去码头看一眼，跟主人说一声", "public": "去码头看船", "with": [], "training": "", "intent": "", "from": "T1", "mood": "想去码头凑个热闹，兴致勃勃的", "outfit": "黑色和服薄披肩配绀紫抹胸常服与木屐", "things": [], "items": [], "money": []}}],
     "napcat2": []
   }}
 }}
@@ -1658,6 +1669,14 @@ class LifeStep:
                     slow_parts.append(living_nudges)
             except Exception:
                 logger.warning("[super_enhance/world] 补写算家里的吃的失败", exc_info=True)
+        money_book = getattr(self, "money", None)
+        if money_book is not None and self.home == "海边小镇":
+            try:
+                moment = self._things_moment(tasks, flat)
+                money_book.archive_settled(moment, self.world)
+                slow_parts.append(money_book.step_block(moment, self.world))
+            except Exception:
+                logger.warning("[super_enhance/money] 补写拼账面失败", exc_info=True)
 
         # 4. 今天进展与当前实时状态（放动态后半）
         live_parts.extend(self._history_blocks(bots, flat, date_offsets=(0,)))
@@ -1851,6 +1870,7 @@ class LifeStep:
             personas=await self._personas(all_bots),
             home_static=home_static,
             world_notes=self.world_notes,
+            money_guide=("   " + SEASIDE_PRICE_GUIDE.replace("\n", "\n   ") if self.home == "海边小镇" else ""),
             step_notes=self.step_notes,
             kinds=" / ".join(KINDS),
             keeps=" / ".join(KEEPS),
@@ -2619,6 +2639,25 @@ class LifeStep:
                 if p_link == "wood_stove" and seaside and not eff_wood_stove:
                     errors.append(f"{who_lbl}采用了烧柴炉插曲/消遣「{orig['text']}」，对应段必须填 \"stove\": \"wood\"")
 
+        money_book = getattr(self, "money", None)
+        if money_book is not None:
+            norm_segs = {}
+            for m_bot, (bot_kept, _, _) in kept_by_bot.items():
+                norm_segs[m_bot] = [
+                    dict(raw, start=fmt_time(seg_start), intent=self.intent_id(raw.get("intent"), m_bot))
+                    for _idx, raw, seg_start, _seg_end, _st_code in bot_kept
+                ]
+            all_intent_ids = {str(x.get("id")) for x in (self.world.intentions() or []) if x.get("id")}
+            errors.extend(validate_step_segments_money(
+                money_book,
+                self._things_moment(tasks, flat),
+                self.world,
+                norm_segs,
+                seaside=seaside,
+                label_fn=self.label,
+                valid_intents=all_intent_ids,
+            ))
+
         return errors
 
     def apply(self, data: dict, tasks: dict, now: datetime.datetime):
@@ -2777,7 +2816,8 @@ class LifeStep:
                     self._thing_steps(raw.get("things"), thing_keys, shelf, bot)
                     + self._item_steps(raw.get("items"), item_keys, shelf, bot, seg_place=str(raw.get("place") or ""))
                 ) if state == "do" else []
-                for effect in things_list:
+                money_list = normalize_step_money_list(raw.get("money")) if state == "do" else []
+                for effect in things_list + money_list:
                     if not _texts:
                         effect.pop("step", None)
                     else:
@@ -2821,6 +2861,7 @@ class LifeStep:
                         pools_data=pools_data, cand_map=cand_map,
                     ),
                     "things": things_list,
+                    **({"money": money_list} if money_list else {}),
                     "seen_by": [bot] + with_list,
                     "source": "step",
                     "created": fmt_time(flat),
