@@ -394,16 +394,14 @@ def _stove_spans_from_world(world, start_day: datetime.date, end_day: datetime.d
     """按纯结构化 stove 字段提取 [start_day, end_day] 内的船屋生火区间 [(start, end, 'wood'|'charcoal')]（同刻重叠时 wood 优先）。"""
     if world is None:
         return []
-    from .world import parse_time as _parse_time, real_stop as _real_stop
+    from .world import parse_time as _parse_time, stove_active_in_entry as _stove_active
 
     raw_spans: list[tuple[datetime.datetime, datetime.datetime, str]] = []
     has_homes = hasattr(world, "home_at") and hasattr(world, "homes") and bool(world.homes())
     cur_d = start_day
     while cur_d <= end_day:
         for entry in world.entries(cur_d.isoformat()):
-            if entry.get("kind") == "event" or _real_stop(entry) or entry.get("at_home") is False:
-                continue
-            if entry.get("meal") or entry.get("sleep"):
+            if not _stove_active(entry):
                 continue
             stove = str(entry.get("stove") or "").strip().lower()
             if stove not in ("wood", "charcoal"):

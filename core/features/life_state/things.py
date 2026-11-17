@@ -29,7 +29,7 @@ from .food import (
 )
 from . import weather as weather_mod
 from . import weathering
-from .world import clean_steps, clean_text, fmt_time, parse_time, real_stop, step_finished_at
+from .world import clean_steps, clean_text, fmt_time, parse_time, real_stop, step_finished_at, stove_active_in_entry
 
 FILE_NAME = "things.json"
 
@@ -1432,9 +1432,7 @@ class ThingStore:
 
     @staticmethod
     def _entry_wood_lit(entry: dict, until: datetime.datetime) -> bool:
-        if not isinstance(entry, dict) or entry.get("kind") == "event" or real_stop(entry):
-            return False
-        if entry.get("meal") or entry.get("sleep") or entry.get("at_home") is False:
+        if not stove_active_in_entry(entry):
             return False
         if str(entry.get("stove") or "").strip().lower() != "wood":
             return False
@@ -1444,9 +1442,7 @@ class ThingStore:
     @staticmethod
     def _entry_charcoal_grams(entry: dict, until: datetime.datetime) -> int:
         """按结构化 stove 与 things 判断海边船屋是否使用灶台小炭炉，返回自动扣炭克数（0 / 80 / 200）。"""
-        if not isinstance(entry, dict) or entry.get("kind") == "event" or real_stop(entry):
-            return 0
-        if entry.get("meal") or entry.get("sleep") or entry.get("at_home") is False:
+        if not stove_active_in_entry(entry):
             return 0
         end_dt = parse_time(entry.get("end")) if entry.get("end") else None
         if end_dt is None or end_dt > until or fmt_time(end_dt) < CHARCOAL_AUTO_SINCE:
@@ -2475,9 +2471,7 @@ class ThingStore:
         for back in range(SCAN_DAYS, -1, -1):
             day = (flat.date() - datetime.timedelta(days=back)).isoformat()
             for entry in self.world.entries(day):
-                if entry.get("kind") == "event" or real_stop(entry) or entry.get("at_home") is False:
-                    continue
-                if entry.get("meal") or entry.get("sleep"):
+                if not stove_active_in_entry(entry):
                     continue
                 st = parse_time(entry.get("start"))
                 en = parse_time(entry.get("end")) if entry.get("end") else (st + datetime.timedelta(minutes=45) if st else None)

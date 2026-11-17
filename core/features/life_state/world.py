@@ -1362,6 +1362,22 @@ def real_stop(entry: dict) -> bool:
     return True
 
 
+def stove_active_in_entry(entry: dict) -> bool:
+    """判断一条世界线段里炉火是否实际烧过（打断段若已完成 >=1 步或持续 >=5 分钟则按截断后 [start, end] 计入）。"""
+    if not isinstance(entry, dict) or entry.get("kind") == "event" or entry.get("at_home") is False:
+        return False
+    if entry.get("meal") or is_sleep(entry):
+        return False
+    if not real_stop(entry):
+        return True
+    at = entry.get("stop_at_step")
+    if isinstance(at, int):
+        return at >= 1
+    st = parse_time(entry.get("start"))
+    en = parse_time(entry.get("end"))
+    return st is not None and en is not None and (en - st).total_seconds() >= 300
+
+
 def stop_note(entry: dict) -> str:
     """「做到「某一步」先放下了，先……（收尾），因为……（结果：……）」：分步已经按停下的时刻截过（fit_steps），
     最后一步就是做到的那步；收尾 / 交给的那段记着做完了原定的第几步（stop_at_step）和收尾做了什么（wrap）。"""
