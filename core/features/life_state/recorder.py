@@ -61,18 +61,7 @@ def window_span(window, now: datetime.datetime):
     return lo, hi
 
 
-RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，整理成结构化的条目。
-
-现在：{now}
-这段对话是谁和谁：{where}
-说话人的名字对照：{labels}
-
-对话原文（**每条前面是完整日期和时间**，例如 2026-10-12 06:55；这两天都有，别把昨天的当成今天的）：
-{transcript}
-
-{today_block}
-
-{things_block}
+RECORDER_SYSTEM_TEMPLATE = """{base_system}
 
 规则（只按这些做，不要推理没说出口的东西）：
 
@@ -177,11 +166,29 @@ RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，
 - promises：add（新约定）/ done（完成了，填 id）/ cancel（取消了，填 id）；
 - trainings：start（开始练）/ update（改时长或标准）/ done（练成了）/ drop（不练了），update/done/drop 要填 id。
 - abilities 只在主人明确确认她学会了一件新本事、而这件事不是在练的事时才写，很少用。
+{lifecycle_rules}
+{recorder_note}
+"""
+
+RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，整理成结构化的条目。
+
+说话人的名字对照：{labels}
+
+{things_block}
+
+{today_block}
+
+{interaction}
+
+现在：{now}
+这段对话是谁和谁：{where}
+
+对话原文（**每条前面是完整日期和时间**，例如 2026-10-12 06:55；这两天都有，别把昨天的当成今天的）：
+{transcript}
 """
 
 
-REVIEW_TEMPLATE = """现在是 {now}。下面是还在生效的规矩（约束），以及最近两天世界线里记下的事。
-请判断哪些规矩已经不该再管着她们了。
+REVIEW_TEMPLATE = """请判断下面还在生效的规矩（约束）中，哪些已经不该再管着她们了。
 
 还在生效的规矩：
 {constraints}
@@ -194,7 +201,7 @@ REVIEW_TEMPLATE = """现在是 {now}。下面是还在生效的规矩（约束�
 规矩是因为某件事才定的（例如因为丛雨被赶走，才让亚托莉别去找她、这几天只陪主人），那件事结束了，规矩也跟着撤。
 说话方式这类一直有效的规矩（例如回话不许用某个字）不要动。拿不准就不动。
 
-只输出 JSON：{{"lift": [{{"id": "c10", "reason": "一句话说明"}}]}}
+现在是 {now}。只输出 JSON：{{"lift": [{{"id": "c10", "reason": "一句话说明"}}]}}
 """
 
 REVIEW_MAX_EVENTS = 160
@@ -519,6 +526,20 @@ class Recorder:
             return ""
         return "\n故事里的固定事实（照着记，不要写出和它冲突的事）：\n" + "\n".join("- " + x for x in lines)
 
+    def build_system_prompt(self) -> str:
+        """纯静态系统提示（规则、固定事实、JSON 示例、常识与记录规范），供跨批复用 KV 缓存。"""
+        home = str(self.cfg.get("world_home") or "")
+        return localize(RECORDER_SYSTEM_TEMPLATE.format(
+            base_system=SYSTEM_PROMPT,
+            kinds=" / ".join(KINDS),
+            steps=" / ".join(STEPS),
+            keeps=" / ".join(KEEPS),
+            spots=" / ".join(spots_for(home)),
+            world_notes=self.world_notes,
+            lifecycle_rules=LIFECYCLE_RULES.strip(),
+            recorder_note=RECORDER_NOTE,
+        ), home)
+
     def build_prompt(self, umo: str, items: list[dict], now: datetime.datetime) -> str:
         labels = "、".join(
             "%s=%s" % (bot, self.label(bot) or bot) for bot in self.raw_log.enabled_bots()
@@ -538,12 +559,8 @@ class Recorder:
             transcript=transcript,
             today_block=self._today_block(now),
             things_block=self._things_block(now),
-            kinds=" / ".join(KINDS),
-            steps=" / ".join(STEPS),
-            keeps=" / ".join(KEEPS),
-            spots=" / ".join(spots_for(str(self.cfg.get("world_home") or ""))),
-            world_notes=self.world_notes,
-        ) + LIFECYCLE_RULES + "\n" + RECORDER_NOTE + "\n" + interaction, str(self.cfg.get("world_home") or ""))
+            interaction=interaction,
+        ), str(self.cfg.get("world_home") or ""))
 
     # ---------- 执行 ----------
 
@@ -584,7 +601,7 @@ class Recorder:
                 provider_id=self.provider_id,
                 timeout=self.timeout,
                 session_id="super_enhance_recorder",
-                system_prompt=SYSTEM_PROMPT,
+                system_prompt=self.build_system_prompt(),
                 attempts=2,
                 log_label="记录员",
             )

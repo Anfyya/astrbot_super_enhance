@@ -77,7 +77,7 @@ ASK_WAIT_SECONDS = 120
 ASK_SETTLE_SECONDS = 15
 ASK_POLL_SECONDS = 3
 
-STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，由你来安排。
+STEP_SYSTEM_TEMPLATE = """{base_system}
 
 角色（key = 平台 id）：
 {roster}
@@ -85,22 +85,12 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
 角色设定：
 {personas}
 
-{seed_text}
-
-{home_block}
-
-作息骨架：
-{routine_block}
-
-{context_block}
-
-这次要你写的：
-{task_block}
+{home_static}
 
 规则：
 
-1. 只写「这次要你写的」里列出的人。每人从上面给的时刻开始，按时间顺序写几段，首尾相接、不重叠；最后一段的结束时间必须晚于现在（{now}）。一次最多写到 {horizon} 左右，不要把后面一整天都写完（睡觉那段除外，可以一直写到第二天起床）。
-   **地方也要接上**：每人这次的第一段，从她上一段结束时人在哪、在干什么接下去（「这次要你写的」里写着那时候她在哪、结果怎样）。上一段结束时她还在路上、还在外面的，先把路走完——写一段走回去，或者这一段第一步就是走回去——到了地方才做下一件；不许上一段还在外面、下一段一开头就已经在屋里。段和段之间换到远一点的地方，中间也要写路上（在宿舍里换个屋子不用单写）。出门在外的事写到她到了地方为止，不许停在半路；快到 {horizon} 时正在路上的那段可以多写一点，把路走完。
+1. 只写下方「这次要你写的」里列出的人。每人从下面给的时刻开始，按时间顺序写几段，首尾相接、不重叠；最后一段的结束时间必须晚于下方给出的「现在」时刻。一次最多写到下方给出的「本次截止时刻」左右，不要把后面一整天都写完（睡觉那段除外，可以一直写到第二天起床）。
+   **地方也要接上**：每人这次的第一段，从她上一段结束时人在哪、在干什么接下去（「这次要你写的」里写着那时候她在哪、结果怎样）。上一段结束时她还在路上、还在外面的，先把路走完——写一段走回去，或者这一段第一步就是走回去——到了地方才做下一件；不许上一段还在外面、下一段一开头就已经在屋里。段和段之间换到远一点的地方，中间也要写路上（在宿舍里换个屋子不用单写）。出门在外的事写到她到了地方为止，不许停在半路；快到本次截止时刻时正在路上的那段可以多写一点，把路走完。
 2. **一段只写一件事**：doing 只写这件事是什么（一句话），result 写这件事最后的结果（修好了没、找着没、谁赢了这类，一句；不算一步、没有分钟；state 是「闲着」「睡觉」的段不写），不要把几件事用「然后」「又」「再」串在同一段里。steps 把这件事按先后分成 1–5 步，每步写 text（一句，这一阵子她一直在干什么，写成能持续这一步那么多分钟的事）和 minutes（这一步按常理要几分钟）；最后一步是收尾，这件事用过的东西收好、归位都写在这一步里，做完就接着做下一件事。**这段做多久就是各步 minutes 加起来**，程序按它算结束时间，end 照着算好写上就行（洗碗十来分钟、吃饭二三十分钟、看书一两个小时……）；state 是「闲着」「睡觉」的段不写 steps，end 照常写。每段都是一件要花些工夫的事。上面今天已经做过的事，别再原样做一遍。
 3. **每段写 state，三选一**：「做事」「闲着」「睡觉」。
    - 没事就写闲着：她手上没有打算、约定、规矩要做的事，也没什么想做的，就写一段闲着，state 填「闲着」：doing 照上面「闲着的样子」里她的写，steps 留空。闲着一段最长一小时，歇够了就接着写下一件事（也可以再歇一段）。
@@ -206,19 +196,20 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
   - 动已有物品：`{{"id": "p编号或x代号", "what": "挪地方|交给|用了|清点|做了一截|做好了|变了样|送人了|丢了|坏了扔了|用完了", "used": "1捆(可选)", "left": "剩余(可选)", "place": {{"area": "船舱", "at": "储物格", "detail": ""}}, "holder": "", "state": "做完后的状态", "step": 1}}`
   - 新物品入库：`{{"new": "x1", "name": "闷炭", "kind": "燃料", "look": "黑亮结实的硬木炭", "owner": "共用", "origin": "煮盐棚帮工换回", "from": [], "what": "开始做|做好了|买回来|收到|捡到", "amount": "2000克", "place": {{"area": "船舱", "at": "灶台边", "detail": "陶罐里"}}, "state": "干燥盖严", "step": 2}}`
 
-输出 JSON（end_current 只给上面说了「先定做完时刻」的人写；intent_moves 只写标着「挂了几天了」的打算，没有就留空 `{{}}`）：
+输出 JSON（时间均以 user 提示里给出的「现在 / 这次要你写的」为准，下面示例时间只作格式示范；end_current 只给上面说了「先定做完时刻」的人写；intent_moves 只写标着「挂了几天了」的打算，没有就留空 `{{}}`）：
 
 {{
-  "end_current": {{"napcat": "{example_end}"}},
+  "end_current": {{"napcat": "2026-10-12 08:25"}},
   "ask_master": {{"who": "", "question": "", "kind": ""}},
   "stopped_results": {{}},
   "intent_moves": {{}},
   "segments": {{
-    "napcat": [{{"start": "{example_start}", "end": "{example_end}", "place": "船屋·船舱灶台边", "doing": "生起小炭炉熬一锅咸鱼粥", "steps": [{{"text": "淘米下锅添水，引燃小炭炉", "minutes": 10}}, {{"text": "切碎咸鱼干下锅慢熬", "minutes": 10}}, {{"text": "收尾：盖好锅盖温在灶上，擦净案板", "minutes": 5}}], "result": "熬好了一锅咸鱼粥温在灶上", "state": "做事", "at_home": true, "meal": false, "stove": "charcoal", "lamp": false, "kerosene": false, "water": false, "send_msg": false, "msg_at": "", "msg_purpose": "", "public": "在船舱灶台边熬粥", "with": [], "training": "", "intent": "", "from": "routine", "mood": "早起闻着热粥香气，心里踏实安稳", "outfit": "黑色和服薄披肩配绀紫抹胸常服与木屐", "things": [{{"id": "w1", "what": "用掉一部分", "used": "150克", "left": "2850克", "into": "n1", "step": 1}}, {{"new": "n1", "name": "咸鱼粥", "kind": "熟汤羹粥", "what": "做好了", "cook": "boil", "from": ["w1"], "left": "一锅", "place": {{"area": "船舱", "at": "灶上", "detail": "锅里"}}, "keep": "罩着放", "spot": "灶上温着", "step": 2}}], "items": []}},
-               {{"start": "{example_end}", "end": "{example_end2}", "place": "海边小镇·码头", "doing": "飘去码头看看打捞船靠岸卸货", "steps": [{{"text": "从船屋飘到码头边站定张望", "minutes": 10}}, {{"text": "看完卸货往回飘到船屋", "minutes": 5}}], "result": "看了一阵热闹回船屋了", "state": "做事", "at_home": false, "meal": false, "stove": "", "lamp": false, "kerosene": false, "water": false, "send_msg": true, "msg_at": "start", "msg_purpose": "要出门去码头看一眼，跟主人说一声", "public": "去码头看船", "with": [], "training": "", "intent": "", "from": "T1", "mood": "想去码头凑个热闹，兴致勃勃的", "outfit": "黑色和服薄披肩配绀紫抹胸常服与木屐", "things": [], "items": []}}],
+    "napcat": [{{"start": "2026-10-12 08:00", "end": "2026-10-12 08:25", "place": "船屋·船舱灶台边", "doing": "生起小炭炉熬一锅咸鱼粥", "steps": [{{"text": "淘米下锅添水，引燃小炭炉", "minutes": 10}}, {{"text": "切碎咸鱼干下锅慢熬", "minutes": 10}}, {{"text": "收尾：盖好锅盖温在灶上，擦净案板", "minutes": 5}}], "result": "熬好了一锅咸鱼粥温在灶上", "state": "做事", "at_home": true, "meal": false, "stove": "charcoal", "lamp": false, "kerosene": false, "water": false, "send_msg": false, "msg_at": "", "msg_purpose": "", "public": "在船舱灶台边熬粥", "with": [], "training": "", "intent": "", "from": "routine", "mood": "早起闻着热粥香气，心里踏实安稳", "outfit": "黑色和服薄披肩配绀紫抹胸常服与木屐", "things": [{{"id": "w1", "what": "用掉一部分", "used": "150克", "left": "2850克", "into": "n1", "step": 1}}, {{"new": "n1", "name": "咸鱼粥", "kind": "熟汤羹粥", "what": "做好了", "cook": "boil", "from": ["w1"], "left": "一锅", "place": {{"area": "船舱", "at": "灶上", "detail": "锅里"}}, "keep": "罩着放", "spot": "灶上温着", "step": 2}}], "items": []}},
+               {{"start": "2026-10-12 08:25", "end": "2026-10-12 08:40", "place": "海边小镇·码头", "doing": "飘去码头看看打捞船靠岸卸货", "steps": [{{"text": "从船屋飘到码头边站定张望", "minutes": 10}}, {{"text": "看完卸货往回飘到船屋", "minutes": 5}}], "result": "看了一阵热闹回船屋了", "state": "做事", "at_home": false, "meal": false, "stove": "", "lamp": false, "kerosene": false, "water": false, "send_msg": true, "msg_at": "start", "msg_purpose": "要出门去码头看一眼，跟主人说一声", "public": "去码头看船", "with": [], "training": "", "intent": "", "from": "T1", "mood": "想去码头凑个热闹，兴致勃勃的", "outfit": "黑色和服薄披肩配绀紫抹胸常服与木屐", "things": [], "items": []}}],
     "napcat2": []
   }}
 }}
+{lifecycle_rules}
 """
 
 
@@ -1424,11 +1415,11 @@ class LifeStep:
         starts = [x for x in starts if isinstance(x, datetime.datetime)]
         return min([flat] + [x.replace(tzinfo=None) for x in starts])
 
-    def _history_blocks(self, bots: list, flat: datetime.datetime) -> list[str]:
+    def _history_blocks(self, bots: list, flat: datetime.datetime, date_offsets: tuple[int, ...] = (1, 0)) -> list[str]:
         if getattr(self, "things", None) is not None:
             self.things.view(flat)
         blocks = []
-        for date_offset in (1, 0):
+        for date_offset in date_offsets:
             date_text = (flat.date() - datetime.timedelta(days=date_offset)).isoformat()
             lines = []
             for bot in bots:
@@ -1556,9 +1547,16 @@ class LifeStep:
         out.extend(upcoming_lines)
         return "\n".join(out)
 
-    def _context_block(self, bots: list, now: datetime.datetime, tasks: dict | None = None) -> str:
-        parts = []
+    def _context_blocks_split(self, bots: list, now: datetime.datetime, tasks: dict | None = None) -> tuple[str, str]:
+        """按动静分层返回（昨日与慢变库存, 今日实时与即时现场），方便补写前缀缓存最大化命中。"""
         flat = now.replace(tzinfo=None)
+        slow_parts: list[str] = []
+        live_parts: list[str] = []
+
+        # 1. 昨天已发生（今天一整天不变，放最前）
+        slow_parts.extend(self._history_blocks(bots, flat, date_offsets=(1,)))
+
+        # 2. 近况 / 约定 / 在练 / 约束 / 打算 / 拍板
         companion = getattr(self, "companionship", None)
         if companion is not None:
             # LIVING_NOTE 已由规则 25 完整覆盖、d 待拍板/已拍板由下方共享段集中列出，此处只输出去重后的主人即时状态与各人近况/q 邀请。
@@ -1576,12 +1574,96 @@ class LifeStep:
                     default="",
                 )
                 if text:
-                    parts.append("%s：\n%s" % (self.label(bot) or bot, text))
-        parts.extend(self._history_blocks(bots, flat))
+                    slow_parts.append("%s：\n%s" % (self.label(bot) or bot, text))
+        if companion is not None:
+            pend_decs = companion.safe("pending_decisions", flat, default=[]) or []
+            if pend_decs:
+                today_text = flat.date().isoformat()
+                slow_parts.append(
+                    "【待当家主人拍板的事（主人尚未回话前保持挂起，严禁擅自替主人做主买定大件或私自接单！）】：\n"
+                    + "\n".join(
+                        format_decision_line(d, today_text, label_fn=self.label, include_bot=True, show_status=False)
+                        for d in pend_decs
+                    )
+                )
+            done_decs = companion.safe("recent_resolved_decisions", flat, default=[]) or []
+            if done_decs:
+                slow_parts.append(
+                    "【近期已由主人拍板定准的事（照主人定下的主意办，严禁再用 ask_master 重复问同一件事！）】：\n"
+                    + "\n".join(
+                        "- %s（%s，%s 定下%s）：%s → 已定：%s" % (
+                            d.get("id"), self.label(d.get("bot")) or d.get("bot"),
+                            d.get("resolved_at") or str(d.get("created") or ""),
+                            "，对应打算 %s" % d["intent"] if d.get("intent") else "",
+                            clean_text(d.get("question"), 100), clean_text(d.get("choice"), 100),
+                        )
+                        for d in done_decs[-4:]
+                    )
+                )
+        constraints = self.world.constraints(active_only=True, scene=self.home)
+        if constraints:
+            slow_parts.append(
+                "生效中的约束：\n"
+                + "\n".join(
+                    "- %s（%s，%s 起）：%s" % (x.get("id"), x.get("who"), x.get("since"), x.get("text"))
+                    for x in constraints
+                )
+            )
+        promises = self._promise_lines(flat)
+        if promises:
+            slow_parts.append("还没做的约定：\n" + "\n".join(promises))
+        book = getattr(self, "trainings", None)
+        if book is not None:
+            try:
+                for item in book.items():
+                    if str(item.get("status")) != "open":
+                        continue
+                    slow_parts.append(
+                        "在练的事 #%s（%s）：%s；段里在练它就把 training 填成 #%s"
+                        % (item.get("id"), item.get("bot"), item.get("what"), item.get("id"))
+                    )
+            except Exception:
+                pass
+        intentions = [x for x in self.world.intentions() if str(x.get("who")) != "master"]
+        if intentions:
+            slow_parts.append("各自的打算：\n" + "\n".join(self._intention_line(x, flat.date()) for x in intentions))
+        plans = self.world.intentions("master")
+        if plans:
+            slow_parts.append(
+                "主人说过他要做的事（写着和她们一起、要她们做的，照着排进去；里头怎么做还没说定的，先填 ask_master 问主人）：\n"
+                + "\n".join("- %s %s：%s%s" % (
+                    str(x.get("date") or "")[5:] or "日子没说", x.get("window") or "", x.get("text"), why_text(x))
+                    for x in plans)
+            )
+
+        # 3. 家底与盘点
+        store = getattr(self, "things", None)
+        if store is not None:
+            try:
+                moment = self._things_moment(tasks, flat)
+                when = "此刻" if moment <= flat else "到 %s" % timeutil.day_hm(moment)
+                shelf = self._shelf_at(moment)
+                slow_parts.append("家里的吃的（%s；每件前面是编号）：\n" % when + store.food_list(moment, shelf, self.label))
+                slow_parts.append("家里的东西（吃的以外，%s；每件前面是编号）：\n" % when + store.item_list(moment, shelf, self.label))
+                if hasattr(store, "charcoal_summary"):
+                    charcoal_line = store.charcoal_summary(moment, shelf)
+                    if charcoal_line:
+                        slow_parts.append(charcoal_line)
+                if hasattr(store, "cooking_staple_alert"):
+                    staple_line = store.cooking_staple_alert(moment, shelf)
+                    if staple_line:
+                        slow_parts.append(staple_line)
+                living_nudges = self._seaside_living_nudges(tasks, flat, shelf)
+                if living_nudges:
+                    slow_parts.append(living_nudges)
+            except Exception:
+                logger.warning("[super_enhance/world] 补写算家里的吃的失败", exc_info=True)
+
+        # 4. 今天进展与当前实时状态（放动态后半）
+        live_parts.extend(self._history_blocks(bots, flat, date_offsets=(0,)))
         proactive_text = self._today_proactive_block(bots, flat)
         if proactive_text:
-            parts.append(proactive_text)
-        # 今天真被打断、还没交代后来怎么样的事：补写在 stopped_results 里写一句（见第 19 条）
+            live_parts.append(proactive_text)
         stops = []
         today_text = flat.date().isoformat()
         for bot in bots:
@@ -1593,7 +1675,7 @@ class LifeStep:
                                                  timeutil.span_text(item.get("start"), item.get("end"), date_prefix=True),
                                                  doing_text(item)))
         if stops:
-            parts.append("被打断、还没交代后来怎么样的事（最前面是编号）：\n" + "\n".join(stops))
+            live_parts.append("被打断、还没交代后来怎么样的事（最前面是编号）：\n" + "\n".join(stops))
         now_lines = []
         for bot in bots:
             cur = self.world.current(bot, flat)
@@ -1601,17 +1683,14 @@ class LifeStep:
                 now_lines.append("- %s：这会儿没有记录" % (self.label(bot) or bot))
                 continue
             pct = None if cur.get("idle") else progress_of(cur, flat)
-            now_lines.append("- %s：%s %s%s（%s 起%s%s）%s" % (
+            now_lines.append("- %s：%s %s%s（%s 起%s%s）" % (
                 self.label(bot) or bot, cur.get("place") or "", cur.get("doing") or "",
                 "（闲着）" if cur.get("idle") else "（睡着）" if is_sleep(cur) else event_text_at(cur, flat),
                 timeutil.day_hm(cur.get("start")),
                 "，预计 %s 做完" % timeutil.day_hm(cur.get("end")) if cur.get("end") else "，还没定什么时候做完",
                 "，做了 %d%%" % pct if pct is not None else "",
-                "",
             ))
-        parts.append("她们此刻手上的事：\n" + "\n".join(now_lines))
-        # 这次不写的人，她后面已经排好的段也给出来，免得把她拉进她那边没有的事里；
-        # 从后面某个时刻才开始写的人（after），那个时刻之前排好的也给出来
+        live_parts.append("她们此刻手上的事：\n" + "\n".join(now_lines))
         planned = []
         for bot in bots:
             info = (tasks or {}).get(bot)
@@ -1632,79 +1711,7 @@ class LifeStep:
                         "（和%s）" % "、".join(self.label(x) or x for x in item["with"]) if item.get("with") else "",
                     ))
         if planned:
-            parts.append("已经排好、这次不改的：\n" + "\n".join(planned))
-        constraints = self.world.constraints(active_only=True, scene=self.home)
-        if constraints:
-            parts.append(
-                "生效中的约束：\n"
-                + "\n".join(
-                    "- %s（%s，%s 起）：%s" % (x.get("id"), x.get("who"), x.get("since"), x.get("text"))
-                    for x in constraints
-                )
-            )
-        intentions = [x for x in self.world.intentions() if str(x.get("who")) != "master"]
-        if intentions:
-            parts.append("各自的打算：\n" + "\n".join(self._intention_line(x, flat.date()) for x in intentions))
-        plans = self.world.intentions("master")
-        if plans:
-            parts.append(
-                "主人说过他要做的事（写着和她们一起、要她们做的，照着排进去；里头怎么做还没说定的，先填 ask_master 问主人）：\n"
-                + "\n".join("- %s %s：%s%s" % (
-                    str(x.get("date") or "")[5:] or "日子没说", x.get("window") or "", x.get("text"), why_text(x))
-                    for x in plans)
-            )
-        promises = self._promise_lines(flat)
-        if promises:
-            parts.append("还没做的约定：\n" + "\n".join(promises))
-        companion = getattr(self, "companionship", None)
-        if companion is not None:
-            pend_decs = companion.safe("pending_decisions", flat, default=[]) or []
-            if pend_decs:
-                today_text = flat.date().isoformat()
-                parts.append(
-                    "【待当家主人拍板的事（主人尚未回话前保持挂起，严禁擅自替主人做主买定大件或私自接单！）】：\n"
-                    + "\n".join(
-                        format_decision_line(d, today_text, label_fn=self.label, include_bot=True, show_status=False)
-                        for d in pend_decs
-                    )
-                )
-            done_decs = companion.safe("recent_resolved_decisions", flat, default=[]) or []
-            if done_decs:
-                parts.append(
-                    "【近期已由主人拍板定准的事（照主人定下的主意办，严禁再用 ask_master 重复问同一件事！）】：\n"
-                    + "\n".join(
-                        "- %s（%s，%s 定下%s）：%s → 已定：%s" % (
-                            d.get("id"), self.label(d.get("bot")) or d.get("bot"),
-                            d.get("resolved_at") or str(d.get("created") or ""),
-                            "，对应打算 %s" % d["intent"] if d.get("intent") else "",
-                            clean_text(d.get("question"), 100), clean_text(d.get("choice"), 100),
-                        )
-                        for d in done_decs[-4:]
-                    )
-                )
-        store = getattr(self, "things", None)
-        if store is not None:
-            try:
-                # 按这次补写的起点现算：世界线里那时已经做完的段标的吃的算进去（提前几分钟补写时，正在收尾那段做的菜也算）
-                moment = self._things_moment(tasks, flat)
-                when = "此刻" if moment <= flat else "到 %s" % timeutil.day_hm(moment)
-                shelf = self._shelf_at(moment)
-                parts.append("家里的吃的（%s；每件前面是编号）：\n" % when + store.food_list(moment, shelf, self.label))
-                parts.append("家里的东西（吃的以外，%s；每件前面是编号）：\n" % when + store.item_list(moment, shelf, self.label))
-                if hasattr(store, "charcoal_summary"):
-                    charcoal_line = store.charcoal_summary(moment, shelf)
-                    if charcoal_line:
-                        parts.append(charcoal_line)
-                if hasattr(store, "cooking_staple_alert"):
-                    staple_line = store.cooking_staple_alert(moment, shelf)
-                    if staple_line:
-                        parts.append(staple_line)
-                living_nudges = self._seaside_living_nudges(tasks, flat, shelf)
-                if living_nudges:
-                    parts.append(living_nudges)
-            except Exception:
-                logger.warning("[super_enhance/world] 补写算家里的吃的失败", exc_info=True)
-        # 主人的动向：他自己说的，加上她们写着和主人一起的段（陪他出门时主人跟着这些段走）
+            live_parts.append("已经排好、这次不改的：\n" + "\n".join(planned))
         trail = []
         for back in (1, 0):
             day = (flat.date() - datetime.timedelta(days=back)).isoformat()
@@ -1724,10 +1731,9 @@ class LifeStep:
             if master_sleeping else ""
         )
         if master_latest:
-            # 最近一条常常没写地点（比如只记了他说的话），地点另取最近一条写了的
             where = next((x for x in reversed(trail) if str(x.get("place") or "").strip()), None)
             owner = str(master_latest.get("who") or "")
-            parts.append(
+            live_parts.append(
                 "主人最近的动向（只作参考，不许改写、不许替他编）：%s %s%s%s"
                 % (
                     str(master_latest.get("start"))[5:16],
@@ -1743,7 +1749,7 @@ class LifeStep:
                 + sleep_tail
             )
         elif sleep_tail:
-            parts.append("主人最近的动向（只作参考，不许改写、不许替他编）：" + sleep_tail.lstrip("\n"))
+            live_parts.append("主人最近的动向（只作参考，不许改写、不许替他编）：" + sleep_tail.lstrip("\n"))
         if companion is not None and not master_sleeping and 8 <= flat.hour <= 22:
             pend_decs = companion.safe("pending_decisions", flat, default=[]) or []
             pend_invs = [
@@ -1752,23 +1758,15 @@ class LifeStep:
             ]
             asked_today = int(companion.safe("today_ask_count", flat, default=0) or 0)
             if not pend_decs and not pend_invs and asked_today < 3:
-                parts.append(
+                live_parts.append(
                     "【当家人参与提示】主人此刻醒着，今天已请示/邀约 %d 次且没有挂着未回的问题——若遇到全新还没请示过的「置办过冬大件打听到了行情」「有人来打捞船找船长接单」「快到正餐点拿不准主人回不回来吃或吃哪样」「捞到了封口旧物想喊主人一起拆看」，可填写顶层 ask_master（kind 填 \"decision\" 或 \"invite\"）向主人发话；已经在上方「近期已由主人拍板定准的事」或「各自的打算」里定过主意的事，严禁再用 ask_master 重复问一遍！"
                     % asked_today
                 )
-        book = getattr(self, "trainings", None)
-        if book is not None:
-            try:
-                for item in book.items():
-                    if str(item.get("status")) != "open":
-                        continue
-                    parts.append(
-                        "在练的事 #%s（%s）：%s；段里在练它就把 training 填成 #%s"
-                        % (item.get("id"), item.get("bot"), item.get("what"), item.get("id"))
-                    )
-            except Exception:
-                pass
-        return "\n\n".join(parts)
+        return "\n\n".join(slow_parts), "\n\n".join(live_parts)
+
+    def _context_block(self, bots: list, now: datetime.datetime, tasks: dict | None = None) -> str:
+        slow, live = self._context_blocks_split(bots, now, tasks)
+        return "\n\n".join(x for x in (slow, live) if x)
 
     def _task_block(self, tasks: dict) -> str:
         lines = []
@@ -1835,45 +1833,63 @@ class LifeStep:
             return out + ("（停下时：%s）。" % stopped if stopped else "。")
         return out + result_text(entry) + "。"
 
-    async def build_prompt(self, tasks: dict, now: datetime.datetime) -> str:
-        bots = list(self.raw_log.enabled_bots())
+    async def build_system_prompt(self, bots: list[str] | None = None) -> str:
+        """构造全静态的补写 system_prompt（人设、地图、规则、规范、示例、常识），不含任何会随轮次变动的时刻。"""
+        all_bots = list(bots if bots is not None else self.raw_log.enabled_bots())
         roster = "\n".join(
-            "- key = %s（%s）" % (bot, self.label(bot) or bot) for bot in bots
+            "- key = %s（%s）" % (bot, self.label(bot) or bot) for bot in all_bots
         )
+        home_static = (
+            "她们现在住的地方：\n"
+            "- 她们住在【%s】。写出来的地点和活动都在%s这一带，具体去哪儿，从上面人设里这一带的地图里挑。\n"
+            "- 人设里写的其它地方（比如从前待过的镇子）只是背景，人现在不在那儿，不要写成此刻发生的事。"
+            % (self.home, self.home)
+        )
+        return localize(STEP_SYSTEM_TEMPLATE.format(
+            base_system=SYSTEM_PROMPT,
+            roster=roster,
+            personas=await self._personas(all_bots),
+            home_static=home_static,
+            world_notes=self.world_notes,
+            step_notes=self.step_notes,
+            kinds=" / ".join(KINDS),
+            keeps=" / ".join(KEEPS),
+            spots=" / ".join(spots_for(self.home)),
+            lifecycle_rules=STEP_LIFECYCLE_RULES.strip(),
+        ), self.home)
+
+    async def build_prompt(self, tasks: dict, now: datetime.datetime) -> str:
+        """构造补写 user prompt，严格按「天级稳定 → 慢变/库存 → 实时动态 → 当前时刻与任务」排序。"""
+        bots = list(self.raw_log.enabled_bots())
         labels = {bot: (self.label(bot) or bot) for bot in bots}
         win_seed, night = self._draw_window_for(tasks, now, labels)
         self._last_cand_map = self._build_candidate_catalog(win_seed, labels, night) if win_seed else {}
         seed_text = self._seed_text(win_seed, labels, night, cand_map=self._last_cand_map) if win_seed else ""
+        weather_text = ""
         try:
-            seed_text += self._weather_block(min((x["start"] for x in tasks.values() if x.get("start")), default=None) or now, now)
+            weather_text = self._weather_block(
+                min((x["start"] for x in tasks.values() if x.get("start")), default=None) or now, now
+            ).strip()
         except Exception:
             logger.warning("[super_enhance/step] 天气时间线没拼上", exc_info=True)
-        first = next(iter(tasks.values()))
-        example_start = first["start"] or (now + datetime.timedelta(minutes=10))
-        return localize(STEP_TEMPLATE.format(
-            now=fmt_time(now),
-            roster=roster,
-            personas=await self._personas(bots),
-            home_block=(
-                "她们现在住的地方：\n"
-                "- 她们住在【%s】。写出来的地点和活动都在%s这一带，具体去哪儿，从上面人设里这一带的地图里挑。\n"
-                "- 人设里写的其它地方（比如从前待过的镇子）只是背景，人现在不在那儿，不要写成此刻发生的事。"
-                % (self.home, self.home)
-            ) + self._arrived_line(now),
-            seed_text=seed_text,
-            world_notes=self.world_notes,
-            step_notes=self.step_notes,
-            routine_block=self._routine_block(bots, now),
-            context_block=self._context_block(bots, now, tasks),
-            task_block=self._task_block(tasks),
-            kinds=" / ".join(KINDS),
-            keeps=" / ".join(KEEPS),
-            spots=" / ".join(spots_for(self.home)),
-            example_start=fmt_time(example_start),
-            example_end=fmt_time(example_start + datetime.timedelta(minutes=25)),
-            example_end2=fmt_time(example_start + datetime.timedelta(minutes=40)),
-            horizon=fmt_time(max(min(x["start"] or now for x in tasks.values()), now) + datetime.timedelta(hours=HORIZON_HOURS)),
-        ) + STEP_LIFECYCLE_RULES, self.home)
+        arrived = self._arrived_line(now).strip().lstrip("- ").strip()
+        routine = "作息骨架：\n" + self._routine_block(bots, now)
+        slow_ctx, live_ctx = self._context_blocks_split(bots, now, tasks)
+        horizon = fmt_time(max(min(x["start"] or now for x in tasks.values()), now) + datetime.timedelta(hours=HORIZON_HOURS))
+        tail_turn = (
+            "现在是 %s。本次最多写到 %s 左右（规则 1 中的「现在」与「本次截止时刻」均以此处为准），下面这几位角色接下来做什么，由你来安排。\n\n这次要你写的：\n%s"
+            % (fmt_time(now), horizon, self._task_block(tasks))
+        )
+        blocks = [
+            arrived,
+            routine,
+            slow_ctx,
+            seed_text,
+            weather_text,
+            live_ctx,
+            tail_turn,
+        ]
+        return localize("\n\n".join(x for x in blocks if x), self.home)
 
 
     # ---------- 执行 ----------
@@ -1960,6 +1976,7 @@ class LifeStep:
         log_prefix: str = "补写",
         *,
         master_replied: bool = False,
+        system_prompt: str = SYSTEM_PROMPT,
     ) -> tuple[dict | None, str, str, list[str]]:
         """对模型返回的 JSON 执行纯结构化字段校验；不兜底瞎猜，有缺失或违规字段时把报错逐条发回模型重试（最多 MAX_VALIDATE_RETRIES 次）。"""
         cur_text, cur_thought = raw_text, thought
@@ -1986,7 +2003,7 @@ class LifeStep:
                 provider_id=str(self.cfg.get("llm_provider_id") or "").strip(),
                 timeout=self.timeout,
                 session_id="super_enhance_lifestep",
-                system_prompt=SYSTEM_PROMPT,
+                system_prompt=system_prompt,
                 attempts=2,
                 log_label=f"{log_prefix}校验重试{retry_idx}",
             )
@@ -2034,6 +2051,7 @@ class LifeStep:
             return False
         self.running = True
         try:
+            system_prompt = await self.build_system_prompt()
             prompt = await self.build_prompt(tasks, moment)
             text, thought = await llm.text_chat(
                 self.context,
@@ -2041,13 +2059,13 @@ class LifeStep:
                 provider_id=str(self.cfg.get("llm_provider_id") or "").strip(),
                 timeout=self.timeout,
                 session_id="super_enhance_lifestep",
-                system_prompt=SYSTEM_PROMPT,
+                system_prompt=system_prompt,
                 attempts=2,
                 log_label="补写",
             )
             # 等模型的这几分钟里网页可能改过种子、存货：落库前重新读并做纯结构化强校验（最多重试 3 次，放弃瞎猜兜底）
             self._run_cache = {}
-            data, text, thought, val_errors = await self._validate_with_retries(prompt, text, thought, tasks, moment, "补写")
+            data, text, thought, val_errors = await self._validate_with_retries(prompt, text, thought, tasks, moment, "补写", system_prompt=system_prompt)
             if data is None:
                 err_msg = "连续 %d 次重试仍未通过结构化校验：%s" % (MAX_VALIDATE_RETRIES, "；".join(val_errors[:3]))
                 self._save_thought(moment, thought, False, err_msg)
@@ -2055,7 +2073,7 @@ class LifeStep:
                 self.world.set_last_step_attempt(fmt_time(moment))
                 return False
             self._save_thought(moment, thought, True)
-            data, text = await self._ask_master(data, prompt, text, tasks, moment)
+            data, text = await self._ask_master(data, prompt, text, tasks, moment, system_prompt=system_prompt)
             written, missed = self.apply(data, tasks, moment)
             total_written = sum(len(x) for x in written.values())
             if missed and total_written == 0:
@@ -2086,7 +2104,7 @@ class LifeStep:
             self._last_live_ctx = None
             self._last_cand_map = None
 
-    async def _ask_master(self, data: dict, prompt: str, text: str, tasks: dict, moment: datetime.datetime | None = None):
+    async def _ask_master(self, data: dict, prompt: str, text: str, tasks: dict, moment: datetime.datetime | None = None, *, system_prompt: str = SYSTEM_PROMPT):
         """补写填了 ask_master：
         - invite：登记共同邀请并发出，不假设主人已答应；
         - decision：登记当家待拍板事项（d 编号）并发出；若主人 90 秒内秒回则当场按主人准话重排，
@@ -2149,7 +2167,7 @@ class LifeStep:
         try:
             again, again_thought = await llm.text_chat(
                 self.context, retry, provider_id=str(self.cfg.get("llm_provider_id") or "").strip(),
-                timeout=self.timeout, session_id="super_enhance_lifestep", system_prompt=SYSTEM_PROMPT,
+                timeout=self.timeout, session_id="super_enhance_lifestep", system_prompt=system_prompt,
                 attempts=2, log_label="补写照主人回话重写",
             )
         except Exception as e:
@@ -2157,7 +2175,7 @@ class LifeStep:
             return data, text
         self._run_cache = {}
         val_moment = moment or self._now().replace(tzinfo=None)
-        fixed, again, _t, errs = await self._validate_with_retries(retry, again, again_thought, tasks, val_moment, "回话重写", master_replied=True)
+        fixed, again, _t, errs = await self._validate_with_retries(retry, again, again_thought, tasks, val_moment, "回话重写", master_replied=True, system_prompt=system_prompt)
         if fixed is None:
             logger.warning("[super_enhance/world] 补写照主人回话重写未通过结构化校验（%s），保持请示挂起交由记录员接续", "；".join(errs[:3]))
             return data, text

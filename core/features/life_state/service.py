@@ -240,17 +240,29 @@ class LifeStateService:
 
     # ---------- 请求注入 ----------
 
+    def _inject_world_request(self, req, bot: str) -> None:
+        """把静态/天级世界知识稳固放进 system_prompt，把实时动态部分放进 extra_user_content_parts。"""
+        static_text, dynamic_text = view_mod.split_world_text(self, bot, self._now())
+        if static_text:
+            sys_prompt = str(getattr(req, "system_prompt", "") or "").rstrip()
+            marker = "共同生活与当家分工："
+            if marker not in sys_prompt and "【后来学会的】" not in sys_prompt and "你们住的这一带" not in sys_prompt:
+                req.system_prompt = (sys_prompt + "\n\n" + static_text) if sys_prompt else static_text
+        if dynamic_text:
+            parts = getattr(req, "extra_user_content_parts", None)
+            if not isinstance(parts, list):
+                parts = []
+                req.extra_user_content_parts = parts
+            parts.append(as_context_part(dynamic_text))
+
     async def on_llm_request(self, event, req) -> None:
         if not self.enabled:
             return
         bot = platform_of(getattr(event, "unified_msg_origin", ""))
         if not self._bot_enabled(bot):
             return
-        text = view_mod.world_text(self, bot, self._now())
         strip_fake_messages(getattr(req, "contexts", None) or [])
-        if not text:
-            return
-        req.extra_user_content_parts.append(as_context_part(text))
+        self._inject_world_request(req, bot)
     # ---------- 约定 / 能力：注入文本 ----------
 
     def _day_word(self, date_text: str, today: datetime.date) -> str:
@@ -336,6 +348,18 @@ class LifeStateService:
             kind = str(job.get("description") or "").split("｜", 1)[0].strip()
         return kind
 
+    def prepare_cron_prompt(self, event, req) -> None:
+        """cron 管线最先剥掉 AstrBot 英文定时说明，让后续时间戳声明与静态前缀顺序与私聊一致。"""
+        if not self.enabled or req is None:
+            return
+        bot = platform_of(getattr(event, "unified_msg_origin", ""))
+        if not self._bot_enabled(bot):
+            return
+        try:
+            self.planner.prepare_request(event, req)
+        except Exception:
+            logger.error("[super_enhance/life] 主动对话换提示词失败", exc_info=True)
+
     async def on_cron_request(self, event, req) -> None:
         """主动对话请求补上世界线；cron 的上下文随后会被裁成纯对话。"""
         if not self.enabled or req is None:
@@ -347,14 +371,7 @@ class LifeStateService:
             self.planner.prepare_request(event, req)
         except Exception:
             logger.error("[super_enhance/life] 主动对话换提示词失败", exc_info=True)
-        text = view_mod.world_text(self, bot, self._now())
-        if not text:
-            return
-        parts = getattr(req, "extra_user_content_parts", None)
-        if not isinstance(parts, list):
-            parts = []
-            req.extra_user_content_parts = parts
-        parts.append(as_context_part(text))
+        self._inject_world_request(req, bot)
         logger.info("[super_enhance/life] [%s] 主动对话已注入世界线", bot)
 
     # ---------- 主人睡眠入世界线闭环 ----------

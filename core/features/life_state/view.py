@@ -296,8 +296,8 @@ def build_world_text(
 
 # ---------- 服务层：世界线与主动消息状态 ----------
 
-def world_text(service, bot: str, now: datetime.datetime) -> str:
-    """live 时给模型的【世界线】块：线 + 约定 + 在练的事 + 能力清单。"""
+def split_world_text(service, bot: str, now: datetime.datetime) -> tuple[str, str]:
+    """拆分聊天注入为（静态/天级进 system_prompt，动态现场进 extra_user_content_parts），提高前缀缓存命中率。"""
     try:
         recent = int(service.cfg.get("world_inject_recent", 12) or 12)
     except Exception:
@@ -319,70 +319,82 @@ def world_text(service, bot: str, now: datetime.datetime) -> str:
     except Exception:
         logger.warning("[super_enhance/life] 世界线渲染失败", exc_info=True)
         head = ""
-    blocks = [head]
+
+    static_blocks: list[str] = []
+    dynamic_blocks: list[str] = []
     companion = getattr(service, "companionship", None)
     if companion is not None:
         from .companionship import LIVING_NOTE
-        blocks.append(companion.safe("render", bot, now, default=""))
-        blocks.append(LIVING_NOTE)
-    if head:
-        try:
-            blocks.append(weather_now_text(service, now, bot=bot))
-        except Exception:
-            logger.warning("[super_enhance/life] 天气注入失败", exc_info=True)
-        try:
-            blocks.append(supply_now_text(service, now))
-        except Exception:
-            logger.warning("[super_enhance/life] 电和补给注入失败", exc_info=True)
-        try:
-            blocks.append(outfit_now_text(service, bot, now))
-        except Exception:
-            logger.warning("[super_enhance/life] 穿搭注入失败", exc_info=True)
-        try:
-            blocks.append(mood_now_text(service, bot, now))
-        except Exception:
-            logger.warning("[super_enhance/life] 心情注入失败", exc_info=True)
+        static_blocks.append(LIVING_NOTE)
     try:
-        blocks.append(service._promise_text(bot, now))
+        static_blocks.append(service._ability_text(bot))
+    except Exception:
+        logger.warning("[super_enhance/life] 能力清单注入失败", exc_info=True)
+    if head:
+        # 她们住的这一带有哪些地方（固定事实那份地图，补写、记录员也照它写）
+        static_blocks.append(map_text(service.cfg))
+        try:
+            static_blocks.append(service.world.arrived_text(now))
+        except Exception:
+            logger.warning("[super_enhance/life] 搬来几天注入失败", exc_info=True)
+
+    # 动态部分严格按「天级 → 段级 → 小时/分钟级 → 当前世界线 → 末尾口吻/展示规范」排列
+    try:
+        dynamic_blocks.append(service._promise_text(bot, now))
     except Exception:
         logger.warning("[super_enhance/life] 约定注入失败", exc_info=True)
     try:
-        blocks.append(service._ability_text(bot))
-    except Exception:
-        logger.warning("[super_enhance/life] 能力清单注入失败", exc_info=True)
-    try:
-        blocks.append(service._training_text(bot, now))
+        dynamic_blocks.append(service._training_text(bot, now))
     except Exception:
         logger.warning("[super_enhance/life] 在练的事注入失败", exc_info=True)
     if head:
-        # 她们住的这一带有哪些地方（固定事实那份地图，补写、记录员也照它写）：聊天时也知道，
-        # 主人提到哪儿她认得，不会说「没有这个地方」（2026-11-02；之前只给了补写和记录员）
-        blocks.append(map_text(service.cfg))
         try:
-            blocks.append(service.world.arrived_text(now))
+            dynamic_blocks.append(supply_now_text(service, now))
         except Exception:
-            logger.warning("[super_enhance/life] 搬来几天注入失败", exc_info=True)
+            logger.warning("[super_enhance/life] 电和补给注入失败", exc_info=True)
+    if companion is not None:
+        dynamic_blocks.append(companion.safe("render", bot, now, default=""))
+    if head:
+        try:
+            dynamic_blocks.append(outfit_now_text(service, bot, now))
+        except Exception:
+            logger.warning("[super_enhance/life] 穿搭注入失败", exc_info=True)
+        try:
+            dynamic_blocks.append(mood_now_text(service, bot, now))
+        except Exception:
+            logger.warning("[super_enhance/life] 心情注入失败", exc_info=True)
+        try:
+            dynamic_blocks.append(weather_now_text(service, now, bot=bot))
+        except Exception:
+            logger.warning("[super_enhance/life] 天气注入失败", exc_info=True)
+    dynamic_blocks.append(head)
     if head:
         # 放在整块最后、紧挨着世界线：不然她每句都捎带「我手上正在干嘛」（2026-10-15 测过，放人设里没用）
-        blocks.append(NO_REPEAT_NOTE)
-    if head:
+        dynamic_blocks.append(NO_REPEAT_NOTE)
         # 紧挨着上一句、放在世界线块最末：压一压 AI 腔（2026-10-16）；丛雨用不带嘴硬的那份（2026-10-22）
-        blocks.append(AI_VOICE_NOTES.get(service.bots.label_for(bot) or "", AI_VOICE_NOTE))
-        # 说话新鲜点：别老同一个开头、同一个收尾，别原样复读前面说过的句子（2026-10-16；10-23 例子补上「诶？！」「等、等等」「呜……」，
-        # 起因是亚托莉被骂那一串条条「诶？！等、等等！」起头；同天再管结尾：条条拿「脑袋要冒烟了」「还不行嘛」讨饶收尾，
-        # 只点这两个词她会换成「……好不好」接着讨饶，所以点的是讨饶、撒娇的尾巴这种收法）
-        blocks.append(VARIETY_NOTE)
+        dynamic_blocks.append(AI_VOICE_NOTES.get(service.bots.label_for(bot) or "", AI_VOICE_NOTE))
+        # 说话新鲜点：别老同一个开头、同一个收尾，别原样复读前面说过的句子（2026-10-16；10-23 例子补上「诶？！」「等、等等」「呜……」
+        dynamic_blocks.append(VARIETY_NOTE)
         # 两人共同经历以世界线写下的为准（2026-10-16）
-        blocks.append(SHARED_FACT_NOTE)
+        dynamic_blocks.append(SHARED_FACT_NOTE)
         # 别催主人睡觉、别提前道晚安（2026-10-20）
-        blocks.append(SLEEP_NOTE)
+        dynamic_blocks.append(SLEEP_NOTE)
         # 不当管家厨娘，照她自己的性子说（2026-10-19）
-        blocks.append(VOICE_NOTES.get(service.bots.label_for(bot) or "", ""))
+        dynamic_blocks.append(VOICE_NOTES.get(service.bots.label_for(bot) or "", ""))
         # 被说了别找补、别怪主人、认错别勉强、挨了说别讨东西（2026-11-10，目前只有丛雨）：放整块最末才管用
-        blocks.append(AFTER_VOICE_NOTES.get(service.bots.label_for(bot) or "", ""))
+        dynamic_blocks.append(AFTER_VOICE_NOTES.get(service.bots.label_for(bot) or "", ""))
     # 画面呈现的口径（2026-11-14）：放整块最末，确保主人说「看看」时不会把画面说成画图或照片
-    blocks.append(VIEW_NOTE)
-    return "\n".join(x for x in blocks if x)
+    dynamic_blocks.append(VIEW_NOTE)
+    return (
+        "\n".join(x for x in static_blocks if x),
+        "\n".join(x for x in dynamic_blocks if x),
+    )
+
+
+def world_text(service, bot: str, now: datetime.datetime) -> str:
+    """live 时给模型的【世界线】完整文本（静态前、动态后；供脚本或非拆分场景调用）。"""
+    static_text, dynamic_text = split_world_text(service, bot, now)
+    return "\n".join(x for x in (static_text, dynamic_text) if x)
 
 def weather_now_text(service, now: datetime.datetime, bot: str = "") -> str:
     """此刻外头的天气 + 她所在位置的实时环境温度（屋外冷热 vs 屋里没点火/刚点火/烧满1小时/停火退温1小时）。"""
