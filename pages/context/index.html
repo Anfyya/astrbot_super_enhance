@@ -3415,7 +3415,8 @@
       group: it ? (it.group || "") : "",
       wx: it ? (it.wx || "") : "",
       link: it ? (it.link || "") : "",
-      work: !!(it && it.work),
+      bucket: it ? (it.bucket || "") : "",
+      min_temp: (it && it.min_temp !== null && it.min_temp !== undefined) ? String(it.min_temp) : "",
       outdoor: !!(it && it.outdoor),
       to: kind
     };
@@ -3586,8 +3587,11 @@
     if (it.where) {
       meta.appendChild(h("span", { class: "tag", title: "只在住在「" + it.where + "」时才抽得到", text: "只在" + it.where }));
     }
-    if (it.work) {
-      meta.appendChild(h("span", { class: "tag", title: "讨生活/干家务条目（白天享讨生活加权）", text: "讨生活" }));
+    if (it.bucket) {
+      meta.appendChild(h("span", { class: "tag", title: "同一大类桶同窗降权分散", text: "桶：" + it.bucket }));
+    }
+    if (it.min_temp !== null && it.min_temp !== undefined && it.min_temp !== "") {
+      meta.appendChild(h("span", { class: "tag", title: "最低气温低于此阈值时硬拦截", text: "≥" + it.min_temp + "℃" }));
     }
     if (it.wx && S.pools && S.pools.wx_labels && S.pools.wx_labels[it.wx]) {
       meta.appendChild(h("span", { class: "tag", text: S.pools.wx_labels[it.wx] }));
@@ -3696,12 +3700,15 @@
     linkSel.addEventListener("change", function () { f.link = linkSel.value; });
     condCols.appendChild(h("div", { class: "wfld" }, h("div", { class: "wfld-l" }, "库存/事件联动", h("span", { class: "n", text: "缺料提权或前置门禁" })), linkSel));
 
-    var workSel = h("select", { class: "inp" });
-    [["false", "普通日常"], ["true", "讨生活/家务（白天 ×2）"]].forEach(function (pair) {
-      workSel.appendChild(h("option", { value: pair[0], text: pair[1], selected: String(!!f.work) === pair[0] }));
-    });
-    workSel.addEventListener("change", function () { f.work = workSel.value === "true"; });
-    condCols.appendChild(h("div", { class: "wfld" }, h("div", { class: "wfld-l", text: "性质" }), workSel));
+    var bucketInp = h("input", { class: "inp", type: "text", maxlength: "12", placeholder: "可空，例如：船舶整备" });
+    bucketInp.value = f.bucket;
+    bucketInp.addEventListener("input", function () { f.bucket = bucketInp.value; });
+    condCols.appendChild(h("div", { class: "wfld" }, h("div", { class: "wfld-l" }, "大类桶", h("span", { class: "n", text: "防同一类同窗扎堆" })), bucketInp));
+
+    var minTempInp = h("input", { class: "inp", type: "number", min: "-30", max: "45", step: "0.5", placeholder: "可空，如 11" });
+    minTempInp.value = f.min_temp;
+    minTempInp.addEventListener("input", function () { f.min_temp = minTempInp.value; });
+    condCols.appendChild(h("div", { class: "wfld" }, h("div", { class: "wfld-l" }, "最低气温℃", h("span", { class: "n", text: "低于此温硬拦截" })), minTempInp));
 
     var outSel = h("select", { class: "inp" });
     [["false", "舱内/室内"], ["true", "外出/甲板露天"]].forEach(function (pair) {
@@ -3727,13 +3734,20 @@
       var t = String(f.text || "").trim();
       if (!t) { toast("内容不能空；想删掉请点删除", { err: true }); return; }
       var w = kind === "together" ? f.w[""] : f.w;
+      var mtRaw = String(f.min_temp || "").trim();
+      var mtVal = mtRaw === "" ? null : Number(mtRaw);
+      if (mtVal !== null && (!isFinite(mtVal) || mtVal < -30 || mtVal > 45)) {
+        toast("最低气温要在 -30 到 45 之间，或留空", { err: true });
+        return;
+      }
       var item = {
         text: t,
         w: w,
         group: String(f.group || "").trim(),
+        bucket: String(f.bucket || "").trim(),
+        min_temp: mtVal,
         wx: String(f.wx || ""),
         link: String(f.link || ""),
-        work: !!f.work,
         outdoor: !!f.outdoor
       };
       save.disabled = true;
@@ -3743,7 +3757,8 @@
       } else {
         var orig = poolForm(kind, it);
         var changed = t !== it.text || item.group !== orig.group || item.wx !== orig.wx ||
-          item.link !== orig.link || item.work !== orig.work || item.outdoor !== orig.outdoor ||
+          item.link !== orig.link || item.bucket !== orig.bucket ||
+          String(mtVal === null ? "" : mtVal) !== String(orig.min_temp || "") || item.outdoor !== orig.outdoor ||
           JSON.stringify(w) !== JSON.stringify(kind === "together" ? orig.w[""] : orig.w);
         var first = changed ? post("ctx/pools/edit", { action: "update", kind: kind, index: i, text: it.text, item: item }) : Promise.resolve();
         p = first.then(function () {
@@ -4567,12 +4582,12 @@
   /* ================= 世界线 ================= */
   // 溯源：补写排的这段是照什么写的（抽到的哪一条 / 打算 / 作息 / 接着前面 / 自己想的）
   var ORIGIN_LABELS = {
-    twist: "插曲", night_twist: "晚上的插曲", together: "两人一起", accident: "意外",
+    twist: "插曲", night_twist: "晚上的插曲", together: "两人一起", accident: "意外", foiled: "临时变卦",
     pastime: "消遣", idle: "闲着的样子", night_idle: "晚上闲着的样子",
     intent: "打算", promise: "约定", rule: "规矩", training: "在练", routine: "作息",
     "continue": "接着前面", self: "自己想的", unmatched: "说是抽到的、对不上"
   };
-  var ORIGIN_DRAWN = { twist: 1, night_twist: 1, together: 1, accident: 1, pastime: 1, idle: 1, night_idle: 1 };
+  var ORIGIN_DRAWN = { twist: 1, night_twist: 1, together: 1, accident: 1, foiled: 1, pastime: 1, idle: 1, night_idle: 1 };
   function worldOrigin(e) {
     var o = e.origin;
     if (e.source !== "step" || !o || !o.kind) { return null; }

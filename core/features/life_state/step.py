@@ -149,7 +149,7 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
    - 每一步都写 step：这件事发生在这段分步里的第几步（从 1 数，例如第 2 步「下锅炒」用掉鸡蛋、做好蛋炒饭就写 2，第 3 步吃完就写 3）。这段要是中途被打断，只有做到了的那几步才算数。
    - 这一次里先做好、后面又吃掉的菜，吃饭那段也要写一步：id 填它的临时代号（n1 这种），what 写吃完了或吃了一部分，left 写还剩多少（比如给主人留的那份）。
    - 端给主人的（送到主人跟前、递到他手上的那一份）：那一步的 place 写 {{"area": "主人", "at": "跟前", "detail": ""}}（at 一律写「跟前」，递到手上、搁在手边也写跟前；新做好直接端上去的，做好那步就这么写；已有的写一步「挪地方」）。程序见到放在主人跟前的，一个小时后当主人吃完了，所以只端了一部分上去、剩下的还在原处的，端上去的那份别写在原来那件上；摆在桌上大家一起吃的、留给主人温着还没端过去的，area 照常写屋子。
-   - 做饭用料先用家里有的，先用快不行了的；新鲜的料（豆腐、菜、鱼肉、蛋、水果）家里没有，就在做饭之前排一段去买回来。米面油盐、调料干货、腌菜这些按量记的（清单里写着「还剩多少克 / 毫升」），用到的也要写：写进那盘菜的 from，再各写一步「用掉一部分」，used 写这次用了多少（「250 克」「3 克」「15 毫升」，照这道菜平常的用量）；标着「快用完了」的，排一段去买（买回来的写 amount，例如「5 斤」「500 毫升」）。家里一直备着、清单里还没记的常备调料（糖、醋这类），头一回用到就写一件 new，what 写「原来就有」，amount 写估计还有多少；别的清单里没有的料要先买。两人一起做的饭、一起吃的饭，things 写在其中一个人那段里。
+   - 做饭用料先用家里有的，先用快不行了的；新鲜的料（豆腐、菜、鱼肉、蛋、水果）家里没有，就在做饭之前排一段去买回来。米面油盐、调料干货、腌菜这些按量记的（清单里写着「还剩多少克 / 毫升」），用到的也要写：写进那盘菜的 from，再各写一步「用掉一部分」，used 写这次用了多少（「250 克」「3 克」「15 毫升」，照这道菜平常的用量）；标着「快用完了」的，排一段去买（买回来的写 amount，例如「5 斤」「500 毫升」）。海边船屋的食材和常备调料已在清单里列明，严禁填「原来就有」；家里没有的调料食材须先排一段去集市或杂货铺买回来入库（非海边住处若头一回用到常备调料才可记「原来就有」）。两人一起做的饭、一起吃的饭，things 写在其中一个人那段里。
    - 清单里写了口感的（叶子蔫了、饭发硬了、凉透了、串了味、熟过头了……），排做饭、吃东西时顺手照着处理：凉了的热一热，标着中间没熟透的先回锅煎透、煮透（写一步「热了一下」）再吃，发硬的饭炒成炒饭，蔫了的菜泡会儿冷水，熟过头的香蕉做成饼，串了味的拿去做红烧、麻辣这种重口的菜；标着有毒的（土豆发芽发绿）扔掉。放东西也照常理：剩菜盖好收着；气味冲的（葱蒜、卤味、鱼）跟豆腐、米饭、点心分开放或者都盖好；生肉包好，跟熟食分开放；炸的晾凉了再盖。
    - 段内是否开火（stove，三选一）：每段填 `"stove": ""`（没点火：备菜、洗碗、吃饭、聊天、外出、睡觉填 `""`；仅站在灶边商量菜单也没点火）、`"charcoal"`（船屋灶台小炭炉真点着开火做饭、烧水、热菜、煎蛋）或 `"wood"`（船屋柴炉真点着烧柴取暖、烘烤衣物/鱼干或烟熏；穗织住处统一填 `""`）。小炭炉烧闷炭/木炭由程序按顿自动从家里闷炭库存扣减，不用在 items 里手写扣炭；若闷炭已用光为 0，在弄回新炭之前小炭炉点不着火（`stove` 不能填 `"charcoal"`）。闷炭产出不会自动增加（光烧柴炉不处理只会烧成白灰），快见底时须安排：① 趁柴炉硬柴烧成红炭尚未化灰时专门动手拿火钳夹进陶罐盖严闷灭（from 填所烧干柴编号，items 写 new 入库），或 ② 去煮盐棚帮着挑海水添柴换一罐，或 ③ 去坡上柴料场/集市花零钱买木炭、赶上澡堂烧水日搭把手换半罐。点柴炉（`stove="wood"`）时记得消耗干柴（items 记用了哪捆柴），冷柴炉烘不干鱼也熏不熟东西。给还在睡或不在家的主人留饭时，必须盖好保温（熬粥、饭团盖在锅里温着，汤面只留汤头等主人醒了现下面条，绝不把煮好的汤面敞口摆在矮桌上泡几个钟头）。
    - kind 从这几类里挑：{kinds}；keep（怎么放）从这几样里挑：{keeps}；spot（放在哪，管冷热）从这几样里挑：{spots}。
@@ -157,7 +157,7 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
 20. **家里的东西**（吃的以外）：上面「家里的东西」是此刻家里有的（编号、样子、在哪、在谁手上）。段里做了、用了、挪了、交给别人了、接着做了一截的东西，写进这段的 items（没动到就是空数组）：
    只是拿来读、翻看、摊开看一眼，之后原样放回去，地方、样子、数量都没变的，不算动到它，不写 items；别为了让校验通过硬编一条物品变化。船屋里隔音有限，主人睡觉时严禁在船舱里或头顶甲板上敲铁、凿木头、叮当拆修铁器。
    - 已有的写 id、what（挪地方 / 交给 / 用了 / 清点 / 做了一截 / 做好了 / 变了样 / 送人了 / 丢了 / 坏了扔了 / 用完了）、place、holder（交到谁手上）、state（这段做完它什么样，比如「织到两尺长」）；消耗品可顺带写 amount（清点数量）/ used（本次用量）/ left（剩余数量）。接着做没做完的那件（比如接着织那条围巾），就是清单里那一件，写「做了一截」或「做好了」，不要另建一件。清单里标着「已做好」的已经做完了，不要再排接着做它，也别给它写「做了一截」「做好了」；想再做一样的，就另起一件新的。
-   - 新做出来的、买回来的、捡到的写 new（临时代号 x1、x2……，这一次里每件一个，两个人、几段之间也不重复：丛雨那段用了 x1，亚托莉那段的新东西就从 x2 起）、name（叫得出区别的名字，例如「兔子窗花」）、kind（它是什么，一个词：窗花、围巾、鱼漂……）、look（样子）、owner（归谁）、origin（哪来的，如「杂货铺」「废铁站」「海滩漂流物」）、from（用哪几件原料做的，没有留空）、what（开始做 / 做好了 / 买回来 / 收到 / 捡到）、amount（有明确数量的可填，如「1捆」「3张」）、place、state。清单里还没有、可前面早就有了的（比如前几天起了头的围巾），也写 new，what 写「原来就有」，state 写它现在的样子。
+   - 新做出来的、买回来的、捡到的写 new（临时代号 x1、x2……，这一次里每件一个，两个人、几段之间也不重复：丛雨那段用了 x1，亚托莉那段的新东西就从 x2 起）、name（叫得出区别的名字，例如「兔子窗花」）、kind（它是什么，一个词：窗花、围巾、鱼漂……）、look（样子）、owner（归谁）、origin（哪来的，如「杂货铺」「废铁站」「海滩漂流物」）、from（用哪几件原料做的，没有留空）、what（开始做 / 做好了 / 买回来 / 收到 / 捡到）、amount（有明确数量的可填，如「1捆」「3张」）、place、state。严禁凭空编造旧东西或写「原来就有」。
    - 上面写了字、画了东西的（给主人留的纸条、信、便笺、清单、贺卡、画）：look 里把上面写的原话一字不差地写出来，用「」括起来；画的写清楚画了什么。例如 look 写「黄纸条，铅笔写的：『主人，粥在灶上温着，亚托莉去码头了，中午前回来』」，别只写「一张写给主人的纸条」。这段的 steps 里写到她写纸条时也用这句原话。后来谁拿起来看、念给主人听，都照这句说，不能另编。
    - 封着送来的（寄来的信、没拆的包裹、捆好的箱子）：look 写外面看得到的（信封、邮戳、收信人、包裹多大多沉），里面是什么写进 inside——信写原话，用「」括起来；包裹、箱子写装了哪些东西。state 写「封着没拆」。这段的 doing、steps、result 里写到它时，照外面的样子写。拆开留到聊天里，那时候她们照 inside 说。
    - place 和第 18 条一样拆开写，例如 {{"area": "卧房", "at": "针线笸箩", "detail": ""}}、{{"area": "堂屋", "at": "书架", "detail": "第二格"}}。
@@ -168,7 +168,7 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
 23. **每段写 mood：这段她是什么心情、因为什么**，一句话，由头写在里头（比如「收音机拆开擦了半天还是不响，有点不服气」「主人还没回来，心里惦记着」「早上那锅鱼馊了，还有点闷」「被主人夸了，心里美滋滋的」）。聊天时她只看得到这一句，光写「有点不服气」「有点闷」，她不知道是冲着什么，就会往主人身上撒；所以冲着哪件事、哪样东西，就写明哪件事、哪样东西。心情跟着事走：从她上一段的心情接着往下写（上面已经发生的、手上的事后面写着当时的心情；今天头一段从起床时的底色起），这段碰上的事、主人说的话、过了多久都会让它变——闹别扭的气会慢慢消，高兴的劲头也会过去，别一整天都是同一个心情。心情不好要有由头，由头得是世界线或聊天记录里真有的事（可以就是这段里写出来的一件小事）；起床就带着、说不上由头的，写明「说不上为什么」，过一阵就淡了。睡觉那段写睡前的心情。
 24. **给外人帮忙、干活不白帮**：她们给镇上的人（家里人以外）搭手干活、跑腿、修东西、搬东西、照看东西，人家总会给点什么：几个钱、一点吃的、一样用得上的东西，或者讲好的工钱、打捞费。写进那段的 steps 和 result（谁给的、给了什么）；拿回来的吃的、东西照第 18、20 条记进 things。顺手扶一把、递个东西这种小事不算。丛雨一般人看不见，人家不知道是她帮的，别排她一个人给外人干活；跟亚托莉一起干的，回报给亚托莉。
 25. **当家权限硬锁（没有主人真转不动）**：
-   - **主人是船长与当家人**，丛雨外人看不见（无法独自向镇上人买东西或谈事），亚托莉只是打下手的机器人（算不清大账、不准擅自动大笔家底、不准私自接委托深潜涉险）。
+   - **主人是船长与当家人**，丛雨一般人看不见，严禁单独去镇上公共水井/蓄水塔/半淹车站打水、去集市买东西、去公共澡堂或跑腿办事（对外取水/采买/问价必须排给外人看得见的亚托莉单独立段出门，place 写外头地点、at_home 填 false），亚托莉只是打下手的机器人（算不清大账、不准擅自动大笔家底、不准私自接委托深潜涉险）。
    - **大件置办与大钱花销锁死归主人拍板**：买过冬厚衣/棉袄、换厚棉被、修船屋大件设施、卖大宗打捞废铜定价——若上方「各自的打算 / 主人说过他要做的事」里**还没有**主人明确准话，亚托莉最多只能去旧衣铺/集市**打听回价钱行情**（不许写 `items` 入库买回来！），并在顶层 `ask_master` 填 `kind: "decision"` 发消息把行情和二选一方案报给主人拿主意；**在主人回话拍板之前，本轮及后续所有段严禁擅自替主人拍板买定大件！** 等主人已在聊天里发话拍板（上方出现对应 `i` 编号打算）后，去采买的那一段必须填 `from: "intent"` 且 `intent` 填该 `i` 编号（或与 `master` 同行 `with: ["master"]`）。
    - **打捞接单与封口战利品归船长（主人）**：镇上人来下单捞东西，亚托莉只记下对方要捞什么、出多少报酬，填 `ask_master`（`kind: "decision"`）问主人接不接、什么时候带船去；平时捞上来的上锁小铁箱、封口药瓶或稀罕旧物，一律搁在 `船舱·矮桌`（`state` 写 `"封着没拆，留着等主人看"`），严禁她俩在后台自己撬开拆完。
    - **伙食分「凑合糊口」与「主人在家/点菜开火」**：若主人没点菜、也没约好这顿一起吃，她俩自己只熬碗白粥配咸菜、烤块番薯或热口剩菜简单对付（省柴省炭省油盐，不做一荤一素一汤的大菜）；快到晚饭点想做上方参考菜单里的正经热菜锅物时，先填 `ask_master`（`kind: "decision"`）问主人今晚想吃哪样、回不回来吃。
@@ -196,15 +196,15 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
 - `"send_msg"`: 布尔值必填 `true` | `false`；为 `true` 时 `"msg_at"` 必填 `"start"` 或 `"end"`（睡觉段晚安必为 `"start"`）、`"msg_purpose"` 必填非空句；为 `false` 时 `"msg_at"` 和 `"msg_purpose"` 均填 `""`。
 - `"public"`: 字符串（同住人可见的粗粒度动向，可填 `""`）；`"with"`: 数组（如 `[]`、`["napcat2"]`、`["napcat", "master"]`）。
 - `"training"`: 字符串（练在练的事填 `"#编号"`，否则 `""`）；`"intent"`: 字符串（做各自的打算填 `"i编号"`，否则 `""`）。
-- `"from"`: 字符串必填（只准填候选短编号如 `"T1"`/`"G1"`/`"P1"`/`"I1"`/`"A1"`，或枚举 `"routine"` / `"intent"` / `"promise"` / `"rule"` / `"training"` / `"continue:前段事"` / `"self"`；严禁留空或填栏目标题）。
+- `"from"`: 字符串必填（只准填候选短编号如 `"T1"`/`"G1"`/`"P1"`/`"I1"`/`"F1"`/`"A1"`，或枚举 `"routine"` / `"intent"` / `"promise"` / `"rule"` / `"training"` / `"continue:前段事"` / `"self"`；严禁留空或填栏目标题）。同一个人同一次补写里，同一条候选短编号最多只准用一次，别重复套同一条。
 - `"mood"`: 字符串必填（非空，写明什么心情及具体由头）。
 - `"outfit"`: 字符串必填（非空，写明这段她身上实际穿什么、披裹什么、穿没穿鞋袜，如 `"奶白色水手领长袖连衣裙，冷得把旧毛毯披在肩上，光脚缩在炉边"` 或 `"黑色和服薄披肩配绀紫抹胸常服与绑腿木屐"`。**严守真实家底**：只能穿人设自带的单薄常服/睡衣，或上方「家里的东西」里真在当前住处的衣物铺盖；海边船屋开局没有厚冬衣和厚棉被，严禁凭空编出棉袄/大衣/毛衣/围巾/厚棉被，也严禁给衣物铺盖写 `what="原来就有"`——冷了只能先裹现有薄被毛毯、生铁桶柴炉烤火，或正经排一段去集市/半淹商店街旧衣铺买换回来记入 `items` 后才能穿上）。
 - `"things"`（食物变动数组，没动食物填 `[]`；凡买菜买鱼、赶海收蟹、做饭、热菜、吃饭、保鲜加工必填）：
   - 动已有食物：`{{"id": "w编号或n代号", "what": "用掉一部分|用完了|吃了一部分|吃完了|挪地方|切开了|热了一下|轻腌|重盐腌|糖渍|醋泡|酱渍|油封|灰沙埋|晒上了|炉烘|熏上了|丢了|坏了扔了", "used": "10毫升", "left": "剩余量(用完/吃完必填\"\")", "into": "n1(可选)", "place": {{"area": "船舱", "at": "矮桌", "detail": ""}}, "keep": "罩着放", "spot": "屋里", "state": "整的", "step": 1}}`
-  - 新食物入库：`{{"new": "n1", "name": "番薯焖鱼", "kind": "熟菜炒菜", "what": "做好了|买回来|收到|原来就有", "cook": "boil|fry|steam|roast|cold（what=做好了时必填！无食用油时严禁填fry；生鲜/买回填\"\"）", "from": ["w1"], "origin": "集市鱼摊(买回/收到时填)", "amount": "500克(按量记的食材调料填)", "left": "一锅", "place": {{"area": "船舱", "at": "灶上", "detail": "锅里"}}, "keep": "罩着放", "spot": "灶上温着", "step": 2}}`
+  - 新食物入库：`{{"new": "n1", "name": "番薯焖鱼", "kind": "熟菜炒菜", "what": "做好了|买回来|收到（海边禁填原来就有）", "cook": "boil|fry|steam|roast|cold（what=做好了时必填！无食用油时严禁填fry；生鲜/买回填\"\"）", "from": ["w1"], "origin": "集市鱼摊(买回/收到时填)", "amount": "500克(按量记的食材调料填)", "left": "一锅", "place": {{"area": "船舱", "at": "灶上", "detail": "锅里"}}, "keep": "罩着放", "spot": "灶上温着", "step": 2}}`
 - `"items"`（非食物物品变动数组，没动物品填 `[]`；凡换物、捡柴、换闷炭/夹闷炭、筛草木灰、做手工、写纸条必填，以物易物须同时写消耗旧物 `id` 与换回新物 `new`）：
   - 动已有物品：`{{"id": "p编号或x代号", "what": "挪地方|交给|用了|清点|做了一截|做好了|变了样|送人了|丢了|坏了扔了|用完了", "used": "1捆(可选)", "left": "剩余(可选)", "place": {{"area": "船舱", "at": "储物格", "detail": ""}}, "holder": "", "state": "做完后的状态", "step": 1}}`
-  - 新物品入库：`{{"new": "x1", "name": "闷炭", "kind": "燃料", "look": "黑亮结实的硬木炭", "owner": "共用", "origin": "煮盐棚帮工换回", "from": [], "what": "开始做|做好了|买回来|收到|捡到|原来就有", "amount": "2000克", "place": {{"area": "船舱", "at": "灶台边", "detail": "陶罐里"}}, "state": "干燥盖严", "step": 2}}`
+  - 新物品入库：`{{"new": "x1", "name": "闷炭", "kind": "燃料", "look": "黑亮结实的硬木炭", "owner": "共用", "origin": "煮盐棚帮工换回", "from": [], "what": "开始做|做好了|买回来|收到|捡到", "amount": "2000克", "place": {{"area": "船舱", "at": "灶台边", "detail": "陶罐里"}}, "state": "干燥盖严", "step": 2}}`
 
 输出 JSON（end_current 只给上面说了「先定做完时刻」的人写；intent_moves 只写标着「挂了几天了」的打算，没有就留空 `{{}}`）：
 
@@ -225,6 +225,7 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
 # 溯源的种类（网页按这个显示）
 ORIGIN_LABELS = {
     "twist": "插曲", "night_twist": "晚上的插曲", "together": "两人一起", "accident": "意外",
+    "foiled": "临时变卦",
     "pastime": "消遣", "idle": "闲着的样子", "night_idle": "晚上闲着的样子",
     "intent": "打算", "promise": "约定", "rule": "规矩", "training": "在练", "routine": "作息",
     "continue": "接着前面", "self": "自己想的", "unmatched": "说是抽到的、对不上", "": "没写",
@@ -810,6 +811,8 @@ class LifeStep:
                 catalog[f"I{i_idx}"] = {"kind": i_kind, "text": str(raw_txt), "bot": str(bot)}
         if seed.get("accident") and not night:
             catalog["A1"] = {"kind": "accident", "text": str(seed["accident"]), "bot": ""}
+        for f_idx, f_item in enumerate([x for x in (seed.get("foiled") or []) if isinstance(x, dict) and x.get("want")], 1):
+            catalog[f"F{f_idx}"] = {"kind": "foiled", "text": str(f_item["want"]), "bot": str(f_item.get("bot") or "")}
         return catalog
 
     @classmethod
@@ -860,7 +863,8 @@ class LifeStep:
         if rows:
             lines.append(
                 "- %s这阵子可顺手安排的小事（已按接下来几小时的天色与家里现况筛过，采用时 from 填短编号如 \"T1\" / \"G1\"）：\n%s\n"
-                "  她们自己说过的打算和手头急事优先；有空档时每人最多挑一件自然穿插，不用硬凑。" % (
+                "  她们自己说过的打算和手头急事优先；有空档时每人最多挑一件自然穿插，不用硬凑。\n"
+                "  注：以上候选仅供顺手穿插灵感，若某条暗示的物件、经历或出门条件与上方真实清单/近几天记录不符，直接跳过不用（改选别的或填 \"self\"），严禁为了凑候选而凭空编造「之前攒的/柜底翻出的」物件。" % (
                     "今晚" if night else "眼下", "\n".join("  - " + row for row in rows))
             )
         pastimes = seed.get("pastimes") if isinstance(seed.get("pastimes"), dict) else {}
@@ -901,20 +905,14 @@ class LifeStep:
             for item in foiled:
                 f_bot = str(item.get("bot") or "")
                 who_lbl = labels.get(f_bot) or f_bot or "她们"
-                inst = str(item.get("instead") or "")
-                inst_code = code_of.get((f_bot, inst), "")
-                if inst:
-                    tag_hint = f" [{inst_code}]" if inst_code else ""
-                    from_hint = f"from 填 \"{inst_code}\"" if inst_code else "from 照实际改做的那件事填"
-                    alt_part = f"，只好打消念头改去做{tag_hint}「{inst}」（{from_hint}）"
-                else:
-                    alt_part = "，只好打消念头改干别的（from 照实际改做的那件事填）"
-                f_rows.append("  - %s：原本起念想「%s」，结果%s%s。" % (
-                    who_lbl, item["want"], item["why"], alt_part,
+                f_code = code_of.get((f_bot, str(item["want"])), "")
+                tag_hint = f"[{f_code}] " if f_code else ""
+                f_rows.append("  - %s%s：原本起念想「%s」，结果%s便打消念头改干别的。" % (
+                    tag_hint, who_lbl, item["want"], item["why"],
                 ))
             lines.append(
-                "- 本轮生活里的小转折（请自然写进对应角色某一段的 steps 开头和 mood 里，"
-                "写出『本来想干某事→掀开罐子或探头看天撞见实情→临时改主意』的真实转折，别省略这个念头）：\n"
+                "- 本轮可顺手写的临时小转折（若与眼下紧要安排冲突可不用；采用时 from 填短编号如 \"F1\"，"
+                "改做什么按家里真实库存与上方候选自定，严禁为了顺这句去编造原本没有的物件）：\n"
                 + "\n".join(f_rows)
             )
         meals = meals_text(seed.get("meals"))
@@ -2323,8 +2321,7 @@ class LifeStep:
             bot_has_used_item = False
             bot_has_new_food = False
             bot_has_food_step = False
-            bot_has_water_true = False
-            bot_has_kerosene_true = False
+            bot_used_cands: set[str] = set()
             bot_has_wood_stove = False
             bot_has_partner = False
             bot_resolved_origins: list[dict] = []
@@ -2370,10 +2367,6 @@ class LifeStep:
                     errors.append(f"{tag}：睡觉段 at_home 必须为 true")
                 if st_code != "do" and raw.get("meal") is True:
                     errors.append(f"{tag}：非做事段 meal 必须为 false")
-                if raw.get("water") is True:
-                    bot_has_water_true = True
-                if raw.get("kerosene") is True:
-                    bot_has_kerosene_true = True
                 if raw.get("with"):
                     bot_has_partner = True
                 if seaside and raw.get("lamp") is True:
@@ -2422,16 +2415,24 @@ class LifeStep:
 
                 raw_from = str(raw.get("from") or "").strip()
                 orig = origin_of(raw_from, bot, seed, intent=intent_id, training=training_id, pools_data=pools_data, cand_map=cand_map)
+                cand_key = raw_from.strip("[]【】()（）").upper()
+                cand_entry = cand_map.get(cand_key) if cand_key in cand_map else None
                 if orig["kind"] in ("", "unmatched"):
                     errors.append(
-                        f"{tag}：from={raw_from!r} 无效（严禁留空或填栏目标题；必须填上方候选编号如 \"T1\"/\"G1\"/\"P1\"/\"I1\"/\"A1\"，"
+                        f"{tag}：from={raw_from!r} 无效（严禁留空或填栏目标题；必须填上方候选编号如 \"T1\"/\"G1\"/\"P1\"/\"I1\"/\"F1\"/\"A1\"，"
                         f"或枚举 \"routine\" / \"intent\" / \"promise\" / \"rule\" / \"training\" / \"continue:前段事\" / \"self\"）"
                     )
+                elif cand_entry is not None and cand_entry.get("bot") not in ("", bot) and cand_entry.get("bot") not in [str(x) for x in (raw.get("with") or [])]:
+                    errors.append(f"{tag}：候选编号 {raw_from!r} 属于他人候选，未同行时{who_lbl}不能冒用")
                 elif orig["kind"] == "intent" and not intent_id:
                     errors.append(f"{tag}：from 填了 intent，但 intent 字段未填有效的打算编号")
                 elif orig["kind"] == "training" and not training_id:
                     errors.append(f"{tag}：from 填了 training，但 training 字段未填有效的在练编号")
+                elif cand_entry is not None and cand_key in bot_used_cands:
+                    errors.append(f"{tag}：同一人在本轮补写里不能重复使用候选编号 {raw_from!r}（第二段请填 \"continue:前段事\"）")
                 else:
+                    if cand_entry is not None:
+                        bot_used_cands.add(cand_key)
                     bot_resolved_origins.append(orig)
 
                 if st_code != "do":
@@ -2456,7 +2457,10 @@ class LifeStep:
                         if rk not in KINDS:
                             errors.append(f"{tag} things[{t_i}]（{nm}）：kind={rk!r} 不在允许的食物大类列表中")
                         if what not in START_STEPS:
-                            errors.append(f"{tag} things[{t_i}]（{nm}）：new 食物的 what 必须填 做好了/买回来/收到/原来就有（当前={eff.get('what')!r}）")
+                            allowed_food_hint = "做好了/买回来/收到" if seaside else "做好了/买回来/收到/原来就有"
+                            errors.append(f"{tag} things[{t_i}]（{nm}）：new 食物的 what 必须填 {allowed_food_hint}（当前={eff.get('what')!r}）")
+                        elif seaside and what == "原来就有":
+                            errors.append(f"{tag} things[{t_i}]（{nm}）：海边船屋食物与调料已在清单列明，严禁填 what=\"原来就有\"（须通过做好了/买回来/收到获取）")
                         try:
                             checked_place(eff.get("place"), True, nm or "新食物")
                         except Exception as pe:
@@ -2502,12 +2506,10 @@ class LifeStep:
                         if not nm or not kd:
                             errors.append(f"{tag} items[{i_i}]：new 物品必须同时填非空 name 与 kind")
                         if what not in ITEM_START_STEPS:
-                            errors.append(f"{tag} items[{i_i}]（{nm}）：new 物品的 what 必须填 开始做/做好了/买回来/收到/捡到/原来就有（当前={eff.get('what')!r}）")
-                        elif seaside and what == "原来就有" and kd in (
-                            "衣物", "衣服", "衣裳", "冬衣", "厚衣", "棉袄", "外套", "大衣", "夹克", "毛衣", "棉衣", "棉袍",
-                            "围巾", "手套", "袜子", "靴子", "被子", "棉被", "厚被", "被褥", "铺盖", "毛毯", "毯子",
-                        ):
-                            errors.append(f"{tag} items[{i_i}]（{nm}）：海边船屋开局无自带厚衣铺盖，严禁给衣物铺盖填 what=\"原来就有\"（须通过买回来/收到/做好了获取）")
+                            allowed_item_hint = "开始做/做好了/买回来/收到/捡到" if seaside else "开始做/做好了/买回来/收到/捡到/原来就有"
+                            errors.append(f"{tag} items[{i_i}]（{nm}）：new 物品的 what 必须填 {allowed_item_hint}（当前={eff.get('what')!r}）")
+                        elif seaside and what == "原来就有":
+                            errors.append(f"{tag} items[{i_i}]（{nm}）：海边船屋物品已在清单或固定设定中列明，严禁填 what=\"原来就有\"（须通过买回来/收到/捡到/开始做/做好了获取）")
                         elif seaside and what in ("买回来", "收到") and kd in (
                             "冬衣", "厚衣", "棉袄", "外套", "大衣", "夹克", "毛衣", "棉衣", "棉袍", "棉被", "厚被", "被褥", "铺盖",
                         ) and not (master_replied or (intent_id and intent_id in chat_intent_ids) or "master" in [str(x) for x in (raw.get("with") or [])]):
@@ -2532,38 +2534,17 @@ class LifeStep:
                         if what not in ITEM_MID_STEPS + ITEM_END_STEPS:
                             errors.append(f"{tag} items[{i_i}]（{tid}）：已有物品的 what={eff.get('what')!r} 不合法")
 
-            # 按池子条目的结构化 link / group 核对是否漏写对应的台账变动（同行/双人插曲支持跨人共享核销，避免重复入库）
+            # 按池子条目的结构化 link 核对是否漏写对应的段属性
             for orig in bot_resolved_origins:
                 if orig["kind"] not in ("twist", "night_twist", "together", "pastime"):
                     continue
                 shared_ok = orig["kind"] == "together" or bot_has_partner
-                eff_new_item = bot_has_new_item or (shared_ok and batch_any["new_item"])
-                eff_used_item = bot_has_used_item or (shared_ok and batch_any["used_item"])
-                eff_new_food = bot_has_new_food or (shared_ok and batch_any["new_food"])
-                eff_food_step = bot_has_food_step or (shared_ok and batch_any["food_step"])
-                eff_water = bot_has_water_true or (shared_ok and batch_any["water"])
-                eff_kerosene = bot_has_kerosene_true or (shared_ok and batch_any["kerosene"])
                 eff_wood_stove = bot_has_wood_stove or (shared_ok and batch_any["wood_stove"])
 
                 p_row = pool_meta.get(orig["text"]) or {}
                 p_link = str(p_row.get("link") or "")
-                p_grp = str(p_row.get("group") or "")
-                if p_link in ("charcoal", "charcoal_stove", "firewood") and not eff_new_item:
-                    errors.append(f"{who_lbl}采用了燃料获取插曲「{orig['text']}」，必须在完成段的 items 里写 new 将新得的燃料/燃柴入库")
-                elif p_link == "winter_gear" and master_replied and not eff_new_item:
-                    errors.append(f"{who_lbl}在主人当场拍板后采用了置办过冬衣物插曲「{orig['text']}」，必须在 items 里写 new 将买换回的厚衣/棉被入库")
-                elif p_link == "barter_item" and not (eff_used_item and eff_new_item):
-                    errors.append(f"{who_lbl}采用了以物易物插曲「{orig['text']}」，必须在 items 里同时写消耗的旧物（id）与换回的新物（new）")
-                elif p_link in ("ship_day", "restock") and not (eff_new_item or eff_new_food):
-                    errors.append(f"{who_lbl}采用了采买/补货插曲「{orig['text']}」，必须在 things 或 items 里写 new 将带回来的东西入库")
-                elif p_link in ("preserve_jam", "preserve_pickle", "fish_dry", "fish_stove", "ash") and not eff_food_step:
-                    errors.append(f"{who_lbl}采用了保鲜加工插曲「{orig['text']}」，必须在 things 里写出对应的食材保鲜加工步骤")
-                elif p_link == "kerosene" and seaside and not (eff_kerosene and eff_new_item):
-                    errors.append(f"{who_lbl}采用了打煤油插曲「{orig['text']}」，打油那段必须填 \"kerosene\": true 并在 items 里把顺手带回的火柴入库")
-                elif p_link == "wood_stove" and seaside and not eff_wood_stove:
+                if p_link == "wood_stove" and seaside and not eff_wood_stove:
                     errors.append(f"{who_lbl}采用了烧柴炉插曲/消遣「{orig['text']}」，对应段必须填 \"stove\": \"wood\"")
-                elif p_grp == "取淡水" and seaside and not eff_water:
-                    errors.append(f"{who_lbl}采用了取淡水插曲「{orig['text']}」，打水那段必须填 \"water\": true")
 
         return errors
 
@@ -2934,7 +2915,7 @@ class LifeStep:
             near_meal_prep = bool(hours_spanned & {9, 10, 11, 15, 16, 17})
             if fresh_cnt == 0 and cooked_cnt < 2 and near_meal_prep:
                 nudges.append(
-                    "- 菜篮断鲜转折：眼下家里除了米面干货调料，已没有半点鲜鱼鲜菜鲜蛋了——别凭空下锅或顿顿干啃咸鱼，写成备饭前掀开菜篮/水桶发现没鲜菜了，临时挎上篮子先去集市挑鱼买菜、趁退潮去礁石滩撬牡蛎海螺、或拉蟹笼收货（必须在 things 里写 new 入库），回来再开火做饭。"
+                    "- 菜篮断鲜转折：眼下家里除了米面干货调料，已没有半点鲜鱼鲜菜鲜蛋了——别凭空下锅或顿顿干啃咸鱼，写成备饭前掀开菜篮/水桶发现没鲜菜了，临时挎上篮子先去集市挑鱼买菜、趁退潮去礁石滩撬牡蛎海螺、或拉蟹笼收货（必须在 things 里写 new 入库），回来再开火做饭（对外买菜必须排给外人看得见的亚托莉单独立段出门，place 写外头地点、at_home 填 false，不排丛雨独自去集市）。"
                 )
 
         # 3. 36h 淡水补给与凉白开闭环（纯读 entry["water"] 布尔值与结构化池组）
@@ -2946,7 +2927,7 @@ class LifeStep:
                 )
             else:
                 nudges.append(
-                    "- 淡水见底转折：近两天没打过水也没接过雨水——写成洗漱或备饭舀水时发现淡水桶见底了，临时拎桶去蓄水塔、山上老井或半淹车站打水回来，顺手烧一壶凉白开备着喝（打水那段必填 \"water\": true）。"
+                    "- 淡水见底转折：近两天没打过水也没接过雨水——写成洗漱或备饭舀水时发现淡水桶见底了，临时拎桶去蓄水塔、山上老井或半淹车站打水回来，顺手烧一壶凉白开备着喝（打水那段必填 \"water\": true；须排给外人看得见的亚托莉单独立段出门，place 写水塔/老井/车站、at_home 填 false，不排丛雨独自去公共取水点）。"
                 )
 
         # 4. 夜里掌灯发现煤油快见底（纯读 lamp_left 数值）
