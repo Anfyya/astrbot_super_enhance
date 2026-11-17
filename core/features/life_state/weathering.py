@@ -159,6 +159,35 @@ def fuel_properties(item: dict, stages: list) -> dict:
     return properties
 
 
+def usable_stove_wood(item: dict, now: datetime.datetime, day_text, home_at) -> bool:
+    """判断一件木料此刻能否直接放进铁桶柴炉生火（排除湿柴、未劈大木、海漂修补料及禁用木料）。"""
+    if not fuel_item(item):
+        return False
+    stages = list(item.get("stages") or [])
+    has_fuel_purpose = any(str(s.get("purpose") or "").strip() == "fuel" for s in stages if isinstance(s, dict))
+    label_text = " ".join(str(item.get(k) or "") for k in ("name", "kind"))
+    if not has_fuel_purpose and any(w in label_text for w in ("修补", "补船")):
+        return False
+    flat = now.replace(tzinfo=None)
+    declared_split = None
+    for s in sorted((x for x in stages if _parse(x.get("at")) is not None and _parse(x.get("at")) <= flat),
+                    key=lambda x: str(x.get("at"))):
+        w = clean_conditions(s.get("weather"))
+        if "split" in w:
+            declared_split = w["split"]
+    if declared_split is False:
+        return False
+    st = simulate(item, flat, day_text, home_at, food=False)
+    if not st or st.get("fuel_safe") is False:
+        return False
+    if st.get("fuel_state") != "ready":
+        return False
+    moved = st.get("moved")
+    if isinstance(moved, dict) and moved.get("sea"):
+        return False
+    return True
+
+
 def storage_conditions(stage: dict) -> dict:
     text = " ".join(str(stage.get(key) or "") for key in ("state", "note", "place", "keep"))
     out = {}

@@ -955,6 +955,8 @@ def build_live_context(
             has_wet_laundry = False
             has_winter_coat = False
             has_thick_quilt = False
+            day_text_fn = weather_of if weather_of is not None else (lambda _d: "多云")
+            home_at_fn = world.home_at if world is not None else (lambda _m: ctx["home"])
 
             for item in local_vals:
                 if things_mod.is_ended(item) is not None:
@@ -963,7 +965,7 @@ def build_live_context(
                     info = things_mod.measure(item)
                     charcoal_g += float((info or {}).get("left") or 0.0)
                     continue
-                if weathering.fuel_item(item):
+                if weathering.usable_stove_wood(item, flat_start, day_text_fn, home_at_fn):
                     st_info = things_mod.stock(item)
                     if st_info is not None:
                         wood_bundles += float(st_info.get("left") or 0.0)
