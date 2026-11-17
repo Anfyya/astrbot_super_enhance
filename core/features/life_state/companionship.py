@@ -549,6 +549,23 @@ class Companionship:
             out.append(dict(row))
         return out
 
+    def recent_resolved_decisions(self, now: datetime.datetime | None = None, *, hours: float = 36.0, bot: str = "") -> list[dict]:
+        """近期主人已拍板解决的 d 事项：保留到提示词里，防止刚解决又被补写重发同一请示。"""
+        moment = now or self.world.now_local()
+        cutoff = self._ts(moment) - hours * 3600.0
+        scene = self._scene()
+        out = []
+        for row in self._data().get("decisions") or []:
+            if row.get("scene") != scene or row.get("status") != "resolved":
+                continue
+            if bot and row.get("bot") != bot:
+                continue
+            stamp = parse_time(row.get("resolved_at"))
+            ts = self._ts(stamp) if stamp else float(row.get("created_ts") or 0)
+            if ts >= cutoff:
+                out.append(dict(row))
+        return out
+
     def today_ask_count(self, now: datetime.datetime) -> int:
         day = now.date().isoformat()
         cnt = sum(
@@ -747,6 +764,11 @@ class Companionship:
         today_text = now.date().isoformat()
         for dec in self.pending_decisions(now, bot=bot)[-4:]:
             lines.append(format_decision_line(dec, today_text, label_fn=self.label, include_bot=False, show_status=True))
+        for dec in self.recent_resolved_decisions(now, bot=bot)[-3:]:
+            lines.append("%s 已由主人拍板（%s）：%s → 主人已定：%s（不要再重复请示同一件事！）" % (
+                dec.get("id"), dec.get("resolved_at") or str(dec.get("created") or ""),
+                clean_text(dec.get("question"), 120), clean_text(dec.get("choice"), 120),
+            ))
         for item in self.invitations(bot, now)[-5:]:
             name = {"idea": "想提出，还没问过", "pending": "已问，等回应，不代表已答应",
                     "accepted": "已约定", "in_progress": "正在进行"}.get(item["status"], item["status"])

@@ -136,7 +136,7 @@ STEP_TEMPLATE = """现在是 {now}。下面这几位角色接下来做什么，�
    - 守「生效中的约束」：填 `"rule"`；
    - 练「在练的事」：填 `"training"`（且该段 `training` 字段必填对应编号如 `"#2"`）；
    - 日常作息（起床洗漱、做三餐、吃三餐、饭后洗碗收桌、入睡）：填 `"routine"`；
-   - 顺着前面某段接着往下做（如回程、收尾、继续做完）：填 `"continue:前段做的事"`（如 `"continue:在集市挑鱼"`）；
+   - 顺着前面某段接着往下做（只用于真还没收尾完的事，例如走回船屋或做了一半的活继续做；若上一段最后一步已经做完并收妥工具/归位，严禁再用 `continue` 原地另起一段重复收尾或再确认一遍！）：填 `"continue:前段做的事"`（如 `"continue:在集市挑鱼"`）；
    - 都不是、按眼下实况自己起意做的事：填 `"self"`。
 14. 接着前面已经写过的事往下写时，前面写定的东西照原样沿用：写过的内容、放在哪、做出来的是什么，都和前面写的一致。前面留下的也要有交代：吃完饭剩下的饭菜，收尾那步按常理收好（盖好、放到该放的地方，写进 things）；做了一半的东西，后面合适的时候可以接着做，不打算做了就收起来。
 15. **同一类事一天里做过一次就不要再排**（比如今天已经做过点心、炖过汤，就别再排第二次）；主人对做出来的东西提的意见（「甜度再多一点」「汤有点淡」）**不等于叫她现在去做**——当天不重做，想改的留到以后（改配方、下次做的时候再试），现在照常排别的事。
@@ -1651,6 +1651,19 @@ class LifeStep:
                         for d in pend_decs
                     )
                 )
+            done_decs = companion.safe("recent_resolved_decisions", flat, default=[]) or []
+            if done_decs:
+                parts.append(
+                    "【近期已由主人拍板定准的事（照主人定下的主意办，严禁再用 ask_master 重复问同一件事！）】：\n"
+                    + "\n".join(
+                        "- %s（%s，%s 定下）：%s → 已定：%s" % (
+                            d.get("id"), self.label(d.get("bot")) or d.get("bot"),
+                            d.get("resolved_at") or str(d.get("created") or ""),
+                            clean_text(d.get("question"), 100), clean_text(d.get("choice"), 100),
+                        )
+                        for d in done_decs[-4:]
+                    )
+                )
         store = getattr(self, "things", None)
         if store is not None:
             try:
@@ -1722,7 +1735,7 @@ class LifeStep:
             asked_today = int(companion.safe("today_ask_count", flat, default=0) or 0)
             if not pend_decs and not pend_invs and asked_today < 3:
                 parts.append(
-                    "【当家人参与提示】主人此刻醒着，今天已请示/邀约 %d 次且没有挂着未回的问题——本轮若涉及「置办过冬大件打听到了行情」「有人来打捞船找船长接单」「快到正餐点拿不准主人回不回来吃或吃哪样」「捞到了封口旧物想喊主人一起拆看」，请优先填写顶层 ask_master（kind 填 \"decision\" 或 \"invite\"）向主人发话，且本轮 segments 只排准备与日常维持杂活、等主人回话拍板！"
+                    "【当家人参与提示】主人此刻醒着，今天已请示/邀约 %d 次且没有挂着未回的问题——若遇到全新还没请示过的「置办过冬大件打听到了行情」「有人来打捞船找船长接单」「快到正餐点拿不准主人回不回来吃或吃哪样」「捞到了封口旧物想喊主人一起拆看」，可填写顶层 ask_master（kind 填 \"decision\" 或 \"invite\"）向主人发话；已经在上方「近期已由主人拍板定准的事」或「各自的打算」里定过主意的事，严禁再用 ask_master 重复问一遍！"
                     % asked_today
                 )
         book = getattr(self, "trainings", None)
