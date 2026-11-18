@@ -637,8 +637,6 @@ class ProactivePlanner:
                 if intent_id and not intent_goes_on(bot, items, index, intent_id):
                     if store.drop_intention(intent_id, bot):
                         intent_finished = True
-                        if self.companionship is not None:
-                            self.companionship.safe("finish_plan", intent_id, item, flat)
                         logger.info(
                             "[super_enhance/world] [%s] 打算 %s 做完了（%s），撤掉",
                             bot, intent_id, str(item.get("doing") or "")[:20],

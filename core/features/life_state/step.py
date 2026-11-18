@@ -24,7 +24,7 @@ from ...common import jsonio, llm, timeutil
 from .models import bot_of_umo, profile_umo_for_bot
 from .recorder import norm_time
 from .facts import fact_batch
-from .companionship import format_decision_line, invitation_text
+from .companionship import format_decision_line
 from .living_rules import STEP_LIFECYCLE_RULES
 from .money import SEASIDE_PRICE_GUIDE, normalize_step_money_list, validate_step_segments_money
 from .things import FactConflict
@@ -164,7 +164,7 @@ STEP_SYSTEM_TEMPLATE = """{base_system}
    - **大件置办与大钱花销锁死归主人拍板**：买过冬厚衣/棉袄、换厚棉被、修船屋大件设施、卖大宗打捞废铜定价——若上方「各自的打算 / 主人说过他要做的事」里**还没有**主人明确准话，亚托莉最多只能去旧衣铺/集市**打听回价钱行情**（不许写 `items` 入库买回来！），并在顶层 `ask_master` 填 `kind: "decision"` 发消息把行情和二选一方案报给主人拿主意；**在主人回话拍板之前，本轮及后续所有段严禁擅自替主人拍板买定大件！** 等主人已在聊天里发话拍板（上方出现对应 `i` 编号打算）后，去采买的那一段必须填 `from: "intent"` 且 `intent` 填该 `i` 编号（或与 `master` 同行 `with: ["master"]`）。
    - **打捞接单与封口战利品归船长（主人）**：镇上人来下单捞东西，亚托莉只记下对方要捞什么、出多少报酬，填 `ask_master`（`kind: "decision"`）问主人接不接、什么时候带船去；平时捞上来的上锁小铁箱、封口药瓶或稀罕旧物，一律搁在 `船舱·矮桌`（`state` 写 `"封着没拆，留着等主人看"`），严禁她俩在后台自己撬开拆完。
    - **伙食分「凑合糊口」与「主人在家/点菜开火」**：若主人没点菜、也没约好这顿一起吃，她俩自己只熬碗白粥配咸菜、烤块番薯或热口剩菜简单对付（省柴省炭省油盐，不做一荤一素一汤的大菜）；快到晚饭点想做上方参考菜单里的正经热菜锅物时，先填 `ask_master`（`kind: "decision"`）问主人今晚想吃哪样、回不回来吃。
-   - **禁止纯日报式 `send_msg`**：严禁干完活发“废铁搬完啦跟主人汇报一声”“配给领回来啦通知一声”这种不需要主人参与的事后工作简报！联系主人优先用 `ask_master`（事前请主人拿主意 `decision` 或约主人一起做某事 `invite`），段内 `send_msg` 只在早晚问候或真有急事喊主人时用。
+   - **禁止纯日报式 `send_msg`**：严禁干完活发“废铁搬完啦跟主人汇报一声”“配给领回来啦通知一声”这种不需要主人参与的事后工作简报！联系主人优先用 `ask_master`（事前请主人拿主意 `decision`），段内 `send_msg` 只在早晚问候或真有急事喊主人时用。
 26. **船屋用钱、出门带钱与赚钱规矩（人民币，全写进段内 `money` 数组）**：
    - 分四处保管：`master`（主人钱包，大头由主人自己拿着；未经主人聊天里发话或同行付现，补写里**严禁**从 `master` 扣钱或拨钱）、`tin_box`（船舱矮桌抽屉里 `p157` 公用铁盒）、`napcat2`（亚托莉口袋）、`napcat`（丛雨零花；丛雨外人看不见，不能独自在镇上花钱或收钱）。
    - **人在外面动不了屋里的铁盒**：去集市/杂货铺/旧衣铺买东西时，若 `at_home=false` 则**严禁**填 `account="tin_box"` 隔空付钱！要么在出门前的船屋段先做一笔 `transfer(from_account="tin_box", to_account="napcat2")` 取现揣身上，要么只花 `napcat2` 口袋里本就揣着的零钱；回到船屋后再把找零/多余现金放回 `tin_box` 或上交 `master`。手头钱不够时按实际少买一点、回船屋拿钱、以物易物，或向熟摊主记赊账（`debt_add`，direction=`"payable"`）。
@@ -172,7 +172,7 @@ STEP_SYSTEM_TEMPLATE = """{base_system}
 {money_guide}
 {world_notes}
 {step_notes}
-要问主人的（ask_master，必填拿主意入口）：who 写谁来问（`"napcat"` 或 `"napcat2"`），question 写发给主人的那句自然口语问话（时间说具体，如“等会儿/下午/明早”，避免只写模糊的“明天”导致跨天后语义顺延），kind 写 `"decision"`（请当家主人拍板：先买厚棉衣还是换厚棉被、接不接打捞单、晚饭做哪道菜等）或 `"invite"`（喊主人一起做件事、一起拆看捞上来的旧物等）。**铁律：凡填了 `ask_master` 请主人拍板的事，本轮 `segments` 里只排「打听行情 / 备好手头杂活 / 等主人准话」，绝不许在本轮 `segments` 里提前把那件待拍板的事直接做完！** 程序会把这件待拍板事项挂起（主人哪怕过半天再回话，到时候再排进去做；主人没回话前就老老实实干日常维持杂活等准话）。只有主人正在睡觉、或者上方已经挂着待主人拍板的 `d` 事项尚未回复时，`ask_master` 才留空。
+要问主人的（ask_master，必填拿主意入口）：who 写谁来问（`"napcat"` 或 `"napcat2"`），question 写发给主人的那句自然口语问话（时间说具体，如“等会儿/下午/明早”，避免只写模糊的“明天”导致跨天后语义顺延），kind 写 `"decision"`（请当家主人拍板：先买厚棉衣还是换厚棉被、接不接打捞单、晚饭做哪道菜、喊主人一起拆看旧物等）。**铁律：凡填了 `ask_master` 请主人拍板的事，本轮 `segments` 里只排「打听行情 / 备好手头杂活 / 等主人准话」，绝不许在本轮 `segments` 里提前把那件待拍板的事直接做完！** 程序会把这件待拍板事项挂起（主人哪怕过半天再回话，到时候再排进去做；主人没回话前就老老实实干日常维持杂活等准话）。只有主人正在睡觉、或者上方已经挂着待主人拍板的 `d` 事项尚未回复时，`ask_master` 才留空。
 
 注意：**不要输出 intentions，也不要写任何「接下来打算」**。上面「各自的打算」里如果有，是之前说好要做的，照着走就行；标着「挂了几天了」的，只在 intent_moves 里写它后来怎样（第 12 条）。
 
@@ -1571,7 +1571,7 @@ class LifeStep:
         # 2. 近况 / 约定 / 在练 / 约束 / 打算 / 拍板
         companion = getattr(self, "companionship", None)
         if companion is not None:
-            # LIVING_NOTE 已由规则 25 完整覆盖、d 待拍板/已拍板由下方共享段集中列出，此处只输出去重后的主人即时状态与各人近况/q 邀请。
+            # LIVING_NOTE 已由规则 25 完整覆盖、d 待拍板/已拍板由下方共享段集中列出，此处只输出去重后的主人即时状态与各人近况。
             seen_owner_states: set[str] = set()
             for bot in bots:
                 owner_line = companion.safe("owner_state_text", bot, flat, default="")
@@ -1582,7 +1582,6 @@ class LifeStep:
                     "render", bot, flat,
                     include_owner_state=include_owner,
                     include_decisions=False,
-                    own_invitations_only=True,
                     default="",
                 )
                 if text:
@@ -1772,14 +1771,10 @@ class LifeStep:
             live_parts.append("主人最近的动向（只作参考，不许改写、不许替他编）：" + sleep_tail.lstrip("\n"))
         if companion is not None and not master_sleeping and 8 <= flat.hour <= 22:
             pend_decs = companion.safe("pending_decisions", flat, default=[]) or []
-            pend_invs = [
-                q for b in bots for q in (companion.safe("invitations", b, flat, default=[]) or [])
-                if q.get("status") == "pending"
-            ]
             asked_today = int(companion.safe("today_ask_count", flat, default=0) or 0)
-            if not pend_decs and not pend_invs and asked_today < 3:
+            if not pend_decs and asked_today < 3:
                 live_parts.append(
-                    "【当家人参与提示】主人此刻醒着，今天已请示/邀约 %d 次且没有挂着未回的问题——若遇到全新还没请示过的「置办过冬大件打听到了行情」「有人来打捞船找船长接单」「快到正餐点拿不准主人回不回来吃或吃哪样」「捞到了封口旧物想喊主人一起拆看」，可填写顶层 ask_master（kind 填 \"decision\" 或 \"invite\"）向主人发话；已经在上方「近期已由主人拍板定准的事」或「各自的打算」里定过主意的事，严禁再用 ask_master 重复问一遍！"
+                    "【当家人参与提示】主人此刻醒着，今天已请示 %d 次且没有挂着未回的待拍板事项——若遇到全新还没请示过的「置办过冬大件打听到了行情」「有人来打捞船找船长接单」「快到正餐点拿不准主人回不回来吃或吃哪样」「捞到了封口旧物想喊主人一起拆看」，可填写顶层 ask_master（kind 填 \"decision\"）向主人发话；已经在上方「近期已由主人拍板定准的事」或「各自的打算」里定过主意的事，严禁再用 ask_master 重复问一遍！"
                     % asked_today
                 )
         return "\n\n".join(slow_parts), "\n\n".join(live_parts)
@@ -2126,10 +2121,8 @@ class LifeStep:
             self._last_cand_map = None
 
     async def _ask_master(self, data: dict, prompt: str, text: str, tasks: dict, moment: datetime.datetime | None = None, *, system_prompt: str = SYSTEM_PROMPT):
-        """补写填了 ask_master：
-        - invite：登记共同邀请并发出，不假设主人已答应；
-        - decision：登记当家待拍板事项（d 编号）并发出；若主人 90 秒内秒回则当场按主人准话重排，
-          若主人暂未回话则持久挂起该 d 事项（绝不“超时就替主人自作主张干掉”！等主人几小时后在聊天回话时再由记录员解锁推进）。"""
+        """补写填了 ask_master：登记当家待拍板事项（d 编号）并发出；若主人 90 秒内秒回则当场按主人准话重排，
+        若主人暂未回话则持久挂起该 d 事项（绝不“超时就替主人自作主张干掉”！等主人几小时后在聊天回话时再由记录员解锁推进）。"""
         ask = data.get("ask_master")
         question = clean_text(ask.get("question"), 160) if isinstance(ask, dict) else ""
         if not question:
@@ -2144,15 +2137,6 @@ class LifeStep:
         starts = [x.get("start") for x in tasks.values() if isinstance(x.get("start"), datetime.datetime)]
         when = max(now, min(starts)) if starts else now
         is_resting = bool(companion is not None and companion.safe("resting", now, default=False))
-        is_invite = ask.get("kind") == "invite" or (ask.get("kind") != "decision" and invitation_text(question))
-
-        if companion is not None and is_invite:
-            idea = companion.safe("wish", who, question, when)
-            if (idea and idea["bot"] == who and idea["history"][-1]["status"] == "idea" and when <= now
-                    and not is_resting and planner is not None):
-                if await planner.ask_now(who, question, invitation_id=idea["id"]):
-                    companion.safe("attempted", idea["id"], now)
-            return data, text
 
         # decision（请当家主人拍板）：主人睡着时先存为 idea 等醒后再问；醒着时立即发消息并持久挂起 d 事项
         dec = companion.safe("open_decision", who, question, when, sent=False) if companion is not None else None
