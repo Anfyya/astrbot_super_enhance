@@ -400,11 +400,13 @@ class ImageGenFeature:
 
     async def _ask_images_compat(self, bot: str, pid: str, client, model: str, prompt_text: str, refs: list,
                                  want: str, began: float, left: float, extra_body: dict) -> tuple[list, str, dict, dict]:
-        """调用 /v1/images/*：默认传 quality='low' 与锁定后的 宽x高（如 1024x640），仅在上游拒收某参数时降级重试一次。"""
+        """调用 /v1/images/*：默认传 quality='low'（2.6 另默认传 complexity='low'）与锁定后的 宽x高，仅在上游拒收时降级重试。"""
         eb = dict(extra_body)
         quality = str(eb.pop("quality", "") or "low")
+        if "2.6" in str(model or "").lower() and "complexity" not in eb:
+            eb["complexity"] = "low"
         img_size = want
-        for _ in range(3):
+        for _ in range(4):
             rem = max(10.0, min(left, self.timeout - (time.time() - began)))
             try:
                 found, text, usage = await self._call_images(client, model, prompt_text, refs, img_size, quality, rem, eb)
@@ -419,6 +421,12 @@ class ImageGenFeature:
                 if quality and self._rejects_param(ie, ("quality",)):
                     logger.warning("[super_enhance/image] [%s] %s 不认 quality=%s，去掉重试", bot, pid, quality)
                     quality = ""
+                    continue
+                rejected = [k for k in list(eb) if str(k).lower() in str(ie or "").lower()]
+                if rejected and self._rejects_param(ie, rejected):
+                    for k in rejected:
+                        eb.pop(k, None)
+                    logger.warning("[super_enhance/image] [%s] %s 的 /v1/images/* 不支持附加参数 %s，去掉重试", bot, pid, rejected)
                     continue
                 if eb and self._rejects_param(ie, eb.keys()):
                     logger.warning("[super_enhance/image] [%s] %s 的 /v1/images/* 不支持附加参数 %s，去掉重试", bot, pid, eb)
