@@ -1082,16 +1082,34 @@
   }
 
   /* 钱匣与账本 */
-  .mhero{border:1px solid var(--line);border-radius:12px;padding:var(--card-y) var(--card-x);background:var(--bg);margin:0 0 24px}
-  .mhero-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px 16px;flex-wrap:wrap;margin-bottom:16px}
-  .mhero-nums{display:flex;align-items:baseline;gap:14px 24px;flex-wrap:wrap}
+  .mhero{border:1px solid var(--line);border-radius:12px;background:var(--bg);overflow:hidden}
+  .mhero-head{padding:18px var(--card-x) 14px}
+  .mhero-top{display:flex;align-items:flex-end;justify-content:space-between;gap:12px 16px;flex-wrap:wrap;margin-bottom:12px}
   .mhero-kpi{display:flex;flex-direction:column;gap:2px}
+  .mhero-kpi.r{text-align:right;align-items:flex-end}
   .mhero-kpi .k{font-size:12px;color:var(--t3)}
   .mhero-kpi .v{font-size:26px;font-weight:700;line-height:32px;color:var(--t1);font-variant-numeric:tabular-nums;letter-spacing:-.02em}
-  .mhero-kpi .v.sub{font-size:20px;font-weight:600;color:var(--t2)}
+  .mhero-kpi .v.sub{font-size:20px;font-weight:700;color:var(--t1)}
   .mhero-kpi .v small{font-size:12px;font-weight:500;color:var(--t3);margin-left:3px}
-  .mhero-acts{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-  .mguide{margin-top:14px;padding-top:10px;border-top:1px solid var(--line)}
+  .mrows{border-top:1px solid var(--line)}
+  .mwal{padding:14px var(--card-x);border-top:1px solid var(--line);transition:background .12s;cursor:pointer}
+  .mwal:first-child{border-top:0}
+  .mwal:hover{background:color-mix(in srgb,var(--line) 24%,transparent)}
+  .mwal.filt{background:color-mix(in srgb,var(--accent-soft) 55%,var(--bg));box-shadow:inset 3px 0 0 var(--accent)}
+  .mwal-main{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+  .mwal-left{min-width:0;flex:1}
+  .mwal-t{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .mwal-t b{font-size:14px;font-weight:600;color:var(--t1)}
+  .mwal-t .role{font-size:12px;color:var(--t3)}
+  .mwal-desc{font-size:12px;line-height:1.6;color:var(--t3);margin-top:4px;word-break:break-word}
+  .mwal-right{flex:none;text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:4px}
+  .mwal-bal{font-size:16px;line-height:22px;font-weight:700;color:var(--t1);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .mwal-bal .pct{font-size:12px;font-weight:400;color:var(--t3);margin-left:6px}
+  .mwal-acts{display:flex;align-items:center;gap:10px}
+  .mwal-btn{background:none;border:0;padding:2px 4px;margin:0;cursor:pointer;display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--t3);border-radius:6px}
+  .mwal-btn:hover{color:var(--t1);background:color-mix(in srgb,var(--line) 45%,transparent)}
+  .mwal-btn svg.i{width:13px;height:13px}
+  .mguide{padding:10px var(--card-x) 12px;border-top:1px solid var(--line)}
   .mguide summary{list-style:none;cursor:pointer;font-size:12px;color:var(--t3);display:inline-flex;align-items:center;gap:4px;user-select:none}
   .mguide summary::-webkit-details-marker{display:none}
   .mguide summary:hover{color:var(--t1)}
@@ -1099,22 +1117,6 @@
   .mguide summary svg.i{width:13px;height:13px;transition:transform .15s}
   .mguide-body{margin-top:8px;font-size:12px;line-height:1.75;color:var(--t2);display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 16px}
   @media (max-width:720px){.mguide-body{grid-template-columns:minmax(0,1fr)}}
-
-  .money-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:start}
-  @media (max-width:720px){.money-grid{grid-template-columns:minmax(0,1fr)}}
-  .mcard{border:1px solid var(--line);border-radius:12px;padding:16px 18px;background:var(--bg);display:flex;flex-direction:column;gap:10px;transition:border-color .12s,box-shadow .12s}
-  .mcard.master{border-color:var(--accent-line);background:color-mix(in srgb,var(--accent-soft) 24%,var(--bg))}
-  .mcard.filt{box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 28%,transparent);border-color:var(--accent)}
-  .mcard-h{display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer}
-  .mcard-name{display:flex;align-items:center;gap:8px;min-width:0}
-  .mcard-name b{font-size:15px;font-weight:600;color:var(--t1);white-space:nowrap}
-  .mcard-bal{font-size:22px;font-weight:700;line-height:26px;color:var(--t1);font-variant-numeric:tabular-nums;white-space:nowrap}
-  .mcard-bal small{font-size:12px;font-weight:500;color:var(--t3);margin-left:3px}
-  .mcard-loc{font-size:13px;color:var(--t2);display:flex;align-items:baseline;gap:6px}
-  .mcard-loc .k{font-size:12px;color:var(--t3);flex:none}
-  .mcard-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;padding-top:10px;border-top:1px solid var(--line)}
-  .mcard-note{font-size:12px;color:var(--t3);line-height:1.5;min-width:0;flex:1;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-  .mcard-acts{display:flex;gap:4px;flex:none;align-items:center}
 
   .mfilt{display:flex;flex-wrap:wrap;gap:8px 10px;align-items:center;margin:0 0 12px}
   .mfilt .seg{max-width:100%;overflow-x:auto}
@@ -4409,66 +4411,86 @@
     var openDebts = debts.filter(function (x) { return x.status === "open"; });
     $("moneySub").textContent = "日常可花 ¥" + fmtYuan(d.home_and_girls_cash) + " · 含主人共 ¥" + fmtYuan(d.total_cash) + " · " + (d.today || "").slice(5);
 
-    // 1. 顶部家底总览卡（只留总览数字与比例条，去掉重复的四行图例与右上角按钮）
+    // 1. 家底与钱袋（单卡合一：顶部日常/储备 KPI + 比例条 + 4 条整行钱袋列表）
     var colors = { master: "var(--c1)", tin_box: "var(--c2)", napcat2: "var(--c4)", napcat: "var(--c3)" };
     var roles = { master: "船长管着", tin_box: "家用铁盒", napcat2: "随身携款", napcat: "仅可代花" };
+    var orderRank = { tin_box: 0, napcat2: 1, napcat: 2, master: 3 };
+    var orderedAccs = accs.slice().sort(function (a, b) {
+      return (orderRank[a.id] !== undefined ? orderRank[a.id] : 9) - (orderRank[b.id] !== undefined ? orderRank[b.id] : 9);
+    });
     var total = Math.max(0.01, Number(d.total_cash) || 0);
+    var dailyCash = Number(d.home_and_girls_cash) || 0;
+    var masterAcc = accs.find(function (x) { return x.id === "master"; });
+    var masterCash = masterAcc ? Number(masterAcc.balance) || 0 : 0;
+    var dailyPct = Math.round(dailyCash / total * 100);
+    var masterPct = Math.max(0, 100 - dailyPct);
+
+    var secAcc = h("div", { class: "lsec" }, lsecHead("家底与钱袋", "总家底 ¥" + fmtYuan(d.total_cash) + " 元 · 点任意钱袋筛选下方流水"));
     var hero = h("div", { class: "mhero" });
 
-    hero.appendChild(h("div", { class: "mhero-top", style: "margin-bottom:12px" },
-      h("div", { class: "mhero-nums" },
+    var head = h("div", { class: "mhero-head" },
+      h("div", { class: "mhero-top" },
         h("div", { class: "mhero-kpi" },
-          h("span", { class: "k", text: "家里与个人随时可花（铁盒 + 口袋）" }),
-          h("span", { class: "v" }, "¥" + fmtYuan(d.home_and_girls_cash), h("small", { text: "元" }))),
-        h("div", { class: "mhero-kpi" },
-          h("span", { class: "k", text: "总家底（含主人钱包）" }),
-          h("span", { class: "v sub" }, "¥" + fmtYuan(d.total_cash), h("small", { text: "元" }))),
-        openDebts.length ? h("span", { class: "tag warn", text: openDebts.length + " 笔未结挂账" }) : null)));
+          h("span", { class: "k", text: "日常随时可花（铁盒 + 口袋 · 占 " + dailyPct + "%）" }),
+          h("span", { class: "v" }, "¥" + fmtYuan(dailyCash), h("small", { text: "元" }))),
+        h("div", { class: "mhero-kpi r" },
+          h("span", { class: "k", text: "主人钱包储备（占 " + masterPct + "%）" }),
+          h("span", { class: "v sub" }, "¥" + fmtYuan(masterCash), h("small", { text: "元" })))));
 
     var bar = h("div", { class: "comp" });
-    accs.forEach(function (a) {
+    orderedAccs.forEach(function (a) {
       var val = Math.max(0, Number(a.balance) || 0);
       var pct = total > 0 ? Math.max(val > 0 ? 2 : 0, Math.round(val / total * 1000) / 10) : 0;
       if (val > 0) {
         bar.appendChild(h("i", { style: "width:" + pct + "%;background:" + (colors[a.id] || "var(--c3)"), title: a.label + " ¥" + fmtYuan(val) + " (" + Math.round(val / total * 100) + "%)" }));
       }
     });
-    hero.appendChild(bar);
+    head.appendChild(bar);
+    hero.appendChild(head);
 
-    hero.appendChild(h("details", { class: "mguide" },
-      h("summary", null, icon("chev"), "小镇物价与用钱规矩参考"),
-      h("div", { class: "mguide-body" },
-        h("div", { text: "日常吃食：海鱼 6~15 · 蔬菜豆腐 3~8 · 五斤米面 15~25 · 食用油 20~35 · 小吃 5~15" }),
-        h("div", { text: "燃料与大件：干柴 10~20 · 闷炭 15~30 · 煤油 18~30 · 澡堂 6~10 · 棉衣 35~60 · 棉被 20~40" }),
-        h("div", { text: "赚钱门路：零工修物 10~35 · 卖废铁铜 15~120 · 打捞委单 30~150 · 福记寄卖 200~800" }),
-        h("div", { text: "携带与权责：出门摸不到铁盒（须先取现），大头 master 须主人发话，50 元以上进账习惯上交" }))));
-    box.appendChild(hero);
-
-    // 2. 分账户现钱（2 列卡片，点头部可直接筛选下方流水）
-    var secAcc = h("div", { class: "lsec" }, lsecHead("四个钱袋", "点卡片标题筛选下方流水，点「改余额」直接校准"));
-    var grid = h("div", { class: "money-grid" });
-    accs.forEach(function (a) {
+    var mrows = h("div", { class: "mrows" });
+    orderedAccs.forEach(function (a) {
       var active = S.moneyAccFilter === a.id;
-      var card = h("div", { class: "mcard" + (a.id === "master" ? " master" : "") + (active ? " filt" : "") });
-      card.appendChild(h("div", {
-        class: "mcard-h",
+      var val = Math.max(0, Number(a.balance) || 0);
+      var pct = Math.round(val / total * 100);
+      var row = h("div", {
+        class: "mwal" + (active ? " filt" : ""),
         title: active ? "点击取消筛选" : "点击只看该账户流水",
         onclick: function () { S.moneyAccFilter = active ? "all" : a.id; renderMoney(); }
-      },
-        h("div", { class: "mcard-name" },
-          h("span", { class: "dot", style: "width:8px;height:8px;border-radius:50%;flex:none;background:" + (colors[a.id] || "var(--c3)") }),
-          h("b", { text: a.label || a.id }),
-          h("span", { class: "tag" + (a.id === "master" ? " acc" : ""), text: roles[a.id] || a.id }),
-          active ? h("span", { class: "tag acc", text: "筛选中" }) : null),
-        h("div", { class: "mcard-bal" }, "¥" + (a.balance_text || fmtYuan(a.balance)), h("small", { text: "元" }))));
+      });
 
-      card.appendChild(h("div", { class: "mcard-loc" },
-        h("span", { class: "k", text: "放在" }),
-        h("span", { text: a.place || "未填位置" })));
+      var descBits = [];
+      if (a.place) { descBits.push(a.place); }
+      if (a.note) { descBits.push(a.note); }
+
+      var btnBal = h("button", { class: "mwal-btn", type: "button" }, icon("edit"), "调余额");
+      btnBal.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        S.moneyBalEdit[a.id] = { val: String(a.balance || 0), note: "" };
+        renderMoney();
+      });
+      var btnMeta = h("button", { class: "mwal-btn", type: "button", title: "修改位置与说明" }, icon("tool"));
+      btnMeta.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        S.moneyAccEdit[a.id] = { label: a.label || "", place: a.place || "", note: a.note || "" };
+        renderMoney();
+      });
+
+      row.appendChild(h("div", { class: "mwal-main" },
+        h("div", { class: "mwal-left" },
+          h("div", { class: "mwal-t" },
+            h("span", { class: "dot", style: "width:8px;height:8px;border-radius:50%;flex:none;background:" + (colors[a.id] || "var(--c3)") }),
+            h("b", { text: a.label || a.id }),
+            h("span", { class: "role", text: roles[a.id] || a.id }),
+            active ? h("span", { class: "tag acc", text: "筛选中" }) : null),
+          h("div", { class: "mwal-desc", text: descBits.join(" · ") || "暂无说明" })),
+        h("div", { class: "mwal-right" },
+          h("div", { class: "mwal-bal" }, "¥" + (a.balance_text || fmtYuan(a.balance)), h("span", { class: "pct", text: pct + "%" })),
+          h("div", { class: "mwal-acts" }, btnBal, btnMeta))));
 
       if (S.moneyBalEdit[a.id] !== undefined) {
         var bState = S.moneyBalEdit[a.id];
-        var bf = h("div", { class: "wform tform", style: "margin-top:4px" },
+        var bf = h("div", { class: "wform tform", style: "margin-top:10px", onclick: function (ev) { ev.stopPropagation(); } },
           h("div", { class: "wform-h" }, h("span", { class: "t", text: "调成实际数" }), h("span", { class: "m", text: "自动记一笔校准流水" })));
         var bInp = h("input", { class: "inp", type: "number", step: "0.01", min: "0" });
         bInp.value = bState.val; bInp.addEventListener("input", function () { bState.val = bInp.value; });
@@ -4488,10 +4510,10 @@
           }).then(function () { bOk.disabled = false; });
         });
         bf.appendChild(h("div", { class: "wform-f" }, bCan, bOk));
-        card.appendChild(bf);
+        row.appendChild(bf);
       } else if (S.moneyAccEdit[a.id]) {
         var ae = S.moneyAccEdit[a.id];
-        var af = h("div", { class: "wform tform", style: "margin-top:4px" },
+        var af = h("div", { class: "wform tform", style: "margin-top:10px", onclick: function (ev) { ev.stopPropagation(); } },
           h("div", { class: "wform-h" }, h("span", { class: "t", text: "改位置与说明" })));
         var eLbl = h("input", { class: "inp", type: "text", maxlength: "20" });
         eLbl.value = ae.label; eLbl.addEventListener("input", function () { ae.label = eLbl.value; });
@@ -4512,19 +4534,21 @@
           }).then(function () { aSave.disabled = false; });
         });
         af.appendChild(h("div", { class: "wform-f" }, aCan, aSave));
-        card.appendChild(af);
-      } else {
-        var btnBal = h("button", { class: "btn sm", type: "button" }, icon("edit"), "改余额");
-        btnBal.addEventListener("click", function () { S.moneyBalEdit[a.id] = { val: String(a.balance || 0), note: "" }; renderMoney(); });
-        var btnMeta = h("button", { class: "btn quiet sm", type: "button", title: "修改位置与说明" }, icon("tool"));
-        btnMeta.addEventListener("click", function () { S.moneyAccEdit[a.id] = { label: a.label || "", place: a.place || "", note: a.note || "" }; renderMoney(); });
-        card.appendChild(h("div", { class: "mcard-foot" },
-          h("div", { class: "mcard-note", title: a.note || "", text: a.note || "暂无说明" }),
-          h("div", { class: "mcard-acts" }, btnBal, btnMeta)));
+        row.appendChild(af);
       }
-      grid.appendChild(card);
+
+      mrows.appendChild(row);
     });
-    secAcc.appendChild(grid);
+    hero.appendChild(mrows);
+
+    hero.appendChild(h("details", { class: "mguide" },
+      h("summary", null, icon("chev"), "小镇物价与用钱规矩参考"),
+      h("div", { class: "mguide-body" },
+        h("div", { text: "日常吃食：海鱼 6~15 · 蔬菜豆腐 3~8 · 五斤米面 15~25 · 食用油 20~35 · 小吃 5~15" }),
+        h("div", { text: "燃料与大件：干柴 10~20 · 闷炭 15~30 · 煤油 18~30 · 澡堂 6~10 · 棉衣 35~60 · 棉被 20~40" }),
+        h("div", { text: "赚钱门路：零工修物 10~35 · 卖废铁铜 15~120 · 打捞委单 30~150 · 福记寄卖 200~800" }),
+        h("div", { text: "携带与权责：出门摸不到铁盒（须先取现），大头 master 须主人发话，50 元以上进账习惯上交" }))));
+    secAcc.appendChild(hero);
     box.appendChild(secAcc);
 
     // 3. 赊账与待收（放到它自己的区块里，带「+ 记赊欠 / 待收」按钮）
