@@ -546,6 +546,8 @@
   .lrows > .wform{margin:12px 0}
   .lrows > .wform:first-child{margin-top:0}
   .lrows > .wform:last-child{margin-bottom:0}
+  .lsec > .wform{margin:0 0 16px}
+  .lsec > .wform:last-child{margin-bottom:0}
   @keyframes wfin{from{opacity:0}to{opacity:1}}
   .wform-h{display:flex;align-items:baseline;gap:2px 10px;flex-wrap:wrap;font-size:13px;line-height:20px}
   .wform-h .t{color:var(--accent);font-weight:600;flex:none}
@@ -4626,9 +4628,41 @@
       sec.appendChild(h("div", { class: "muted", style: "font-size:13px", text: "目前没有赊欠或待收挂账。" }));
       return sec;
     }
+    if (S.moneyDebtForm) {
+      var df = S.moneyDebtForm;
+      var dbox = h("div", { class: "wform tform" },
+        h("div", { class: "wform-h" }, h("span", { class: "t", text: "新记挂账 / 待收" })));
+      var dSel = h("select", { class: "inp" });
+      [["payable", "我方赊欠别人"], ["receivable", "待收对方款（如寄卖）"]].forEach(function (pair) {
+        dSel.appendChild(h("option", { value: pair[0], text: pair[1], selected: pair[0] === df.direction }));
+      });
+      dSel.addEventListener("change", function () { df.direction = dSel.value; });
+      dbox.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "类型" }), dSel));
+      var dcp = h("input", { class: "inp", type: "text", maxlength: "40", placeholder: "对方（杂货铺 / 福记旧物行）" });
+      dcp.value = df.counterparty; dcp.addEventListener("input", function () { df.counterparty = dcp.value; });
+      dbox.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "对方" }), dcp));
+      var damt = h("input", { class: "inp", type: "number", step: "0.01", placeholder: "0 表示待估" });
+      damt.value = df.amount; damt.addEventListener("input", function () { df.amount = damt.value; });
+      dbox.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "金额（元）" }), damt));
+      var dab = h("input", { class: "inp", type: "text", maxlength: "120", placeholder: "说明（如：赊了一瓶酱油）" });
+      dab.value = df.about; dab.addEventListener("input", function () { df.about = dab.value; });
+      dbox.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "说明" }), dab));
+      var dcan = h("button", { class: "btn sm", type: "button", text: "取消" });
+      dcan.addEventListener("click", function () { S.moneyDebtForm = null; renderMoney(); });
+      var dsav = h("button", { class: "btn pri sm", type: "button", text: "添加" });
+      dsav.addEventListener("click", function () {
+        if (!df.counterparty.trim()) { toast("填写对方名称", { err: true }); return; }
+        dsav.disabled = true;
+        moneyPost({ action: "add_debt", direction: df.direction, counterparty: df.counterparty.trim(), amount: Number(df.amount || 0), about: df.about.trim() }, "已添加", function () {
+          S.moneyDebtForm = null;
+        }).then(function () { dsav.disabled = false; });
+      });
+      dbox.appendChild(h("div", { class: "wform-f" }, dcan, dsav));
+      sec.appendChild(dbox);
+    }
+    if (!debts.length) { return sec; }
     var card = h("div", { class: "pc" });
-    if (debts.length) {
-      var rows = h("div", { class: "lrows" });
+    var rows = h("div", { class: "lrows" });
       debts.forEach(function (x) {
         var open = x.status === "open";
         var dirTxt = x.direction === "payable" ? "我方赊欠" : "待收对方";
@@ -4680,39 +4714,6 @@
         }
       });
       card.appendChild(rows);
-    }
-    if (S.moneyDebtForm) {
-      var df = S.moneyDebtForm;
-      var dbox = h("div", { class: "wform tform", style: debts.length ? "margin-top:14px" : "" },
-        h("div", { class: "wform-h" }, h("span", { class: "t", text: "新记挂账 / 待收" })));
-      var dSel = h("select", { class: "inp" });
-      [["payable", "我方赊欠别人"], ["receivable", "待收对方款（如寄卖）"]].forEach(function (pair) {
-        dSel.appendChild(h("option", { value: pair[0], text: pair[1], selected: pair[0] === df.direction }));
-      });
-      dSel.addEventListener("change", function () { df.direction = dSel.value; });
-      dbox.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "类型" }), dSel));
-      var dcp = h("input", { class: "inp", type: "text", maxlength: "40", placeholder: "对方（杂货铺 / 福记旧物行）" });
-      dcp.value = df.counterparty; dcp.addEventListener("input", function () { df.counterparty = dcp.value; });
-      dbox.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "对方" }), dcp));
-      var damt = h("input", { class: "inp", type: "number", step: "0.01", placeholder: "0 表示待估" });
-      damt.value = df.amount; damt.addEventListener("input", function () { df.amount = damt.value; });
-      dbox.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "金额（元）" }), damt));
-      var dab = h("input", { class: "inp", type: "text", maxlength: "120", placeholder: "说明（如：赊了一瓶酱油）" });
-      dab.value = df.about; dab.addEventListener("input", function () { df.about = dab.value; });
-      dbox.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "说明" }), dab));
-      var dcan = h("button", { class: "btn sm", type: "button", text: "取消" });
-      dcan.addEventListener("click", function () { S.moneyDebtForm = null; renderMoney(); });
-      var dsav = h("button", { class: "btn pri sm", type: "button", text: "添加" });
-      dsav.addEventListener("click", function () {
-        if (!df.counterparty.trim()) { toast("填写对方名称", { err: true }); return; }
-        dsav.disabled = true;
-        moneyPost({ action: "add_debt", direction: df.direction, counterparty: df.counterparty.trim(), amount: Number(df.amount || 0), about: df.about.trim() }, "已添加", function () {
-          S.moneyDebtForm = null;
-        }).then(function () { dsav.disabled = false; });
-      });
-      dbox.appendChild(h("div", { class: "wform-f" }, dcan, dsav));
-      card.appendChild(dbox);
-    }
     sec.appendChild(card);
     return sec;
   }
