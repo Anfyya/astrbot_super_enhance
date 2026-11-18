@@ -189,26 +189,52 @@ class WorldStore:
         text = fmt_time(moment) if isinstance(moment, datetime.datetime) else str(moment or "")[:16]
         return [(str(r.get("since") or ""), str(r["home"])) for r in self.homes() if str(r.get("since") or "") > text]
 
-    def arrived_text(self, moment) -> str:
-        """这一处是哪天搬来的、来了第几天、之前住在哪（没换过住处就空）。
-        起因：11-03 亚托莉说「上回在坡上澡堂泡澡是快半个月前」，可她们 11-02 才从穗织过来，她以为一直住这儿。"""
+    def _arrival_info(self, moment) -> tuple | None:
         rows = self.homes()
         if len(rows) < 2:
-            return ""
+            return None
         text = fmt_time(moment) if isinstance(moment, datetime.datetime) else str(moment or "")[:16]
         past = [r for r in rows if str(r.get("since") or "") <= text]
         if len(past) < 2:
-            return ""
+            return None
         cur, prev = past[-1], past[-2]
         since = parse_time(cur["since"])
         now = parse_time(text)
         if since is None or now is None:
-            return ""
+            return None
         day = (now.date() - since.date()).days + 1
+        return since, prev["home"], cur["home"], day
+
+    def arrived_text(self, moment) -> str:
+        """这一处是哪天搬来的、来了第几天、之前住在哪（没换过住处就空）。
+        起因：11-03 亚托莉说「上回在坡上澡堂泡澡是快半个月前」，可她们 11-02 才从穗织过来，她以为一直住这儿。"""
+        info = self._arrival_info(moment)
+        if info is None:
+            return ""
+        since, prev_home, cur_home, day = info
         return ("你们 %s 才从%s搬到%s，今天是来这儿的第 %d 天；这之前一直住在%s。"
                 "在%s这儿的事只从 %s 算起，这以前的日子都是在%s过的。"
-                % (since.strftime("%m-%d"), prev["home"], cur["home"], day,
-                   prev["home"], cur["home"], since.strftime("%m-%d"), prev["home"]))
+                % (since.strftime("%m-%d"), prev_home, cur_home, day,
+                   prev_home, cur_home, since.strftime("%m-%d"), prev_home))
+
+    def arrived_static_text(self, moment) -> str:
+        """搬家背景的纯静态部分（不含随日期变化的「第几天」，放入 system_prompt 避免跨 0 点打断长历史缓存）。"""
+        info = self._arrival_info(moment)
+        if info is None:
+            return ""
+        since, prev_home, cur_home, _day = info
+        return ("你们 %s 才从%s搬到%s；这之前一直住在%s。"
+                "在%s这儿的事只从 %s 算起，这以前的日子都是在%s过的。"
+                % (since.strftime("%m-%d"), prev_home, cur_home,
+                   prev_home, cur_home, since.strftime("%m-%d"), prev_home))
+
+    def arrived_day_tag(self, moment) -> str:
+        """动态的「来某地第 X 天」短标签，并入动态【世界线】首行。"""
+        info = self._arrival_info(moment)
+        if info is None:
+            return ""
+        _since, _prev_home, cur_home, day = info
+        return "来%s第 %d 天" % (cur_home, day)
 
     def note_home(self, home: str, since) -> bool:
         """配置里的住处和记着的最后一处不一样：从 since 起换成 home（只往后加，不改以前的）。"""

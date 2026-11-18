@@ -411,7 +411,7 @@ class Recorder:
             lines.append("%s %s %s：%s" % (item.get("date"), item.get("time"), who, text))
         return "\n".join(lines)
 
-    def _today_block(self, now: datetime.datetime) -> str:
+    def _today_block(self, now: datetime.datetime, since: datetime.datetime | None = None) -> str:
         if getattr(self, "things", None) is not None:
             self.things.view(now)
         parts = []
@@ -462,6 +462,8 @@ class Recorder:
             except Exception:
                 pass
         flat = now.replace(tzinfo=None)
+        ref_since = (since.replace(tzinfo=None) if since is not None else flat)
+        old_cutoff = ref_since - datetime.timedelta(hours=3)
         day0 = flat.replace(hour=0, minute=0, second=0, microsecond=0)
         horizon = flat + datetime.timedelta(hours=PLANNED_HOURS)
         bots = list(self.raw_log.enabled_bots())
@@ -477,9 +479,14 @@ class Recorder:
                     start = parse_time(item.get("start"))
                     if start is None or start < day0 or start > horizon:
                         continue
-                    hm = timeutil.span_text(item.get("start"), item.get("end"), date_prefix=True, ongoing="")
+                    end = parse_time(item.get("end")) if item.get("end") else None
+                    is_cur = who != "master" and str(item.get("id")) == current_ids.get(who)
+                    is_old = (not is_cur) and (start <= flat) and (end is not None and end <= old_cutoff)
+                    if is_old and item.get("idle") and not item.get("asked"):
+                        continue
+                    hm = timeutil.span_text(item.get("start"), item.get("end"), date_prefix=not is_old, ongoing="")
                     flags = []
-                    if who != "master" and str(item.get("id")) == current_ids.get(who):
+                    if is_cur:
                         flags.append("正在做")
                     if start > flat:
                         flags.append("还没到")
@@ -494,12 +501,13 @@ class Recorder:
                         partners.append("主人")
                     if partners:
                         flags.append("和%s一起" % "、".join(partners))
-                    place = clean_text(item.get("place") or "", 40)
                     head = "- %s %s %s%s" % (item.get("id"), hm, name,
                                               "（%s）" % "、".join(flags) if flags else "")
-                    if place:
-                        head += " " + place
-                    lines.append((start, head + "：" + event_text_at(item, flat)))
+                    # event_text_at 内部 detail_of 已带 place，不再在 head 重复拼 place
+                    body = event_text_at(item, flat)
+                    if is_old and len(body) > 76:
+                        body = body[:75] + "…"
+                    lines.append((start, head + "：" + body))
         lines.sort(key=lambda x: x[0])
         if lines:
             parts.append("- 今天的简略世界线（一行一条，从早到晚；标「还没到」的是还没发生的）：")
@@ -537,9 +545,10 @@ class Recorder:
 
     @property
     def world_notes(self) -> str:
-        """配置里写的故事固定事实（藏经阁在哪、门关不关这类），一行一条。"""
-        text = str(self.cfg.get("world_notes") or "").strip()
+        """配置里写的故事固定事实（优先读精简版 chat_world_notes，保留全部地点与船屋规矩并省缓存开销）。"""
+        text = str(self.cfg.get("chat_world_notes") or self.cfg.get("world_notes") or "").strip()
         lines = [x.strip().lstrip("-• ").strip() for x in text.splitlines() if x.strip()]
+        lines = [x for x in lines if "写地点从这里挑" not in x]
         if not lines:
             return ""
         return "\n故事里的固定事实（照着记，不要写出和它冲突的事）：\n" + "\n".join("- " + x for x in lines)
@@ -575,7 +584,7 @@ class Recorder:
             where=self._where_text(umo),
             labels=labels or "（未配置）",
             transcript=transcript,
-            today_block=self._today_block(now),
+            today_block=self._today_block(now, since=self._since(items, now)),
             things_block=self._things_block(now),
             interaction=interaction,
         ), str(self.cfg.get("world_home") or ""))

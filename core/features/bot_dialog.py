@@ -26,6 +26,7 @@ from .cron_context import is_cron_event
 ROUND_FLAG = "_super_enhance_bot_dialog_round"
 SEND_TOOL = "send_message_to_user"
 TELL_TOOL = "tell"
+IDLE_BUILTIN_TOOLS = ("web_search_exa", "web_fetch_exa", "future_task")
 HINT_HEAD = "【对话节奏】"
 RECORD_HEAD = "【跨会话记录】"
 DELEGATION_HEAD = "【委托回报】"
@@ -655,11 +656,7 @@ class BotDialogFeature:
             if umo == session:
                 where = "和%s的私聊" % label
         names = "、".join(label for label, _session in others) or "另一个角色"
-        proactive_hint = (
-            "- 主动找主人说话（比如到点的主动消息）：发给主人（调用发出后本轮即自动结束，不会重复外发）。"
-            if cron
-            else "- 主动找主人说话（比如到点的主动消息）：发给主人。"
-        )
+        proactive_hint = "- 主动找主人说话（比如到点的主动消息）：发给主人。"
         lines = [
             "发一条 QQ 消息出去（真的发出去，对方会收到，可能回你）。", "", "什么时候用：",
             "- 想问%s一件事、要她回话，或者想跟她当场聊几句：发给她。她回的话会自己来到你这边。" % names,
@@ -686,13 +683,23 @@ class BotDialogFeature:
         ])
 
     def apply_tool_guide(self, event, req) -> None:
-        tools = getattr(getattr(req, "func_tool", None), "tools", None) if req is not None else None
+        tool_set = getattr(req, "func_tool", None) if req is not None else None
+        tools = getattr(tool_set, "tools", None)
         if not isinstance(tools, list) or not tools:
             return
         umo = str(getattr(event, "unified_msg_origin", "") or "")
         own = self._identity(event).bot
+        enabled = set(self.tool_bots_fn() if self.tool_bots_fn else (self.bot_ids or ()))
+        if own and own in enabled:
+            setattr(req, "_se_strip_idle_tools", True)
+            if hasattr(tool_set, "remove_tool"):
+                for tname in IDLE_BUILTIN_TOOLS:
+                    tool_set.remove_tool(tname)
+                tools = getattr(tool_set, "tools", None) or []
+            else:
+                tools[:] = [t for t in tools if getattr(t, "name", "") not in IDLE_BUILTIN_TOOLS]
         texts = {
-            SEND_TOOL: self.send_text(own, umo, cron=is_cron_event(event)),
+            SEND_TOOL: self.send_text(own, umo),
             TELL_TOOL: self.tell_text(own),
         }
         for index, tool in enumerate(tools):

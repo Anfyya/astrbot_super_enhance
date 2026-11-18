@@ -157,8 +157,10 @@ def build_world_text(
     now = now.replace(tzinfo=None)
     today = now.date()
     date_text = today.isoformat()
+    day_tag = world.arrived_day_tag(now) if hasattr(world, "arrived_day_tag") else ""
+    week_part = "%s，%s" % (WEEKDAYS_CN[now.weekday()], day_tag) if day_tag else WEEKDAYS_CN[now.weekday()]
     lines = [
-        "%s现在 %s %s（%s）" % (TAG, date_text, now.strftime("%H:%M"), WEEKDAYS_CN[now.weekday()])
+        "%s现在 %s %s（%s）" % (TAG, date_text, now.strftime("%H:%M"), week_part)
     ]
 
     raw = [x for x in world.entries(date_text, viewer)
@@ -198,23 +200,30 @@ def build_world_text(
     tail = merge_close(raw)[-max(2, int(recent or 12)):]
     if tail:
         today_lines = []
-        for item in tail:
+        recent_cutoff = now - datetime.timedelta(hours=3)
+        keep_full_from = max(0, len(tail) - 3)
+        for idx, item in enumerate(tail):
             if above is not None and not is_event(item) and (
                 str(item.get("id")) == str(above.get("id")) and str(item.get("start")) == str(above.get("start"))
             ):
                 continue  # 上面已经写过，同一段写两遍会被当成要特别提的事，一遍遍挂在嘴边
             going = own_now is not None and str(item.get("id")) == str(own_now.get("id"))
-            # 做完了的才带结果；正在做的只给到当前这一步
-            ended = parse_time(item.get("end")) if item.get("end") else None
-            done = not going and ended is not None and ended <= now
-            text = _clip_tail(event_text_at(item, now))
+            eff_end_str = item.get("end") or item.get("_eff_end") or ""
+            ended = parse_time(eff_end_str) if eff_end_str else None
+            is_old_done = (not going) and (idx < keep_full_from) and (ended is not None and ended <= recent_cutoff)
+            if is_old_done and item.get("idle") and not item.get("asked"):
+                continue
+            limit = 72 if is_old_done else LINE_LIMIT
+            text = _clip_tail(event_text_at(item, now), limit)
             if text:
                 if is_event(item):
-                    today_lines.append("- %s（顺带）%s" % (str(item.get("start"))[5:16], text))
+                    hm_tag = str(item.get("start"))[11:16] if is_old_done else str(item.get("start"))[5:16]
+                    today_lines.append("- %s（顺带）%s" % (hm_tag, text))
                     continue
                 # 没写结束的那条到下一条开始为止；只有最后一条才算「起」
-                shown = dict(item, end=item.get("end") or item.get("_eff_end") or "")
-                today_lines.append("- %s %s" % (_when(shown), text))
+                shown = dict(item, end=eff_end_str)
+                span = timeutil.span_text(shown.get("start"), shown.get("end"), date_prefix=not is_old_done)
+                today_lines.append("- %s %s" % (span, text))
         if today_lines:
             lines.append("你今天：")
             lines.extend(today_lines)
@@ -344,15 +353,20 @@ def split_world_text(service, bot: str, now: datetime.datetime) -> tuple[str, st
             AFTER_VOICE_NOTES.get(bot_label, ""),
         ))
     static_blocks.append(VIEW_NOTE)
+    if head:
+        static_blocks.append(
+            OUTFIT_STATIC_SEASIDE
+            if str(service.cfg.get("world_home") or "").strip() == "海边小镇"
+            else OUTFIT_STATIC_GENERIC
+        )
+        try:
+            static_blocks.append(service.world.arrived_static_text(now))
+        except Exception:
+            logger.warning("[super_enhance/life] 搬家背景注入失败", exc_info=True)
     try:
         static_blocks.append(service._ability_text(bot))
     except Exception:
         logger.warning("[super_enhance/life] 能力清单注入失败", exc_info=True)
-    if head:
-        try:
-            static_blocks.append(service.world.arrived_text(now))
-        except Exception:
-            logger.warning("[super_enhance/life] 搬来几天注入失败", exc_info=True)
 
     # 动态部分严格按「周/天级 → 半天/小时级 → 轮级 → 分钟级实时天气与当前世界线」排列
     try:
@@ -539,19 +553,19 @@ def current_outfit_of(world, bot: str, label: str, now: datetime.datetime) -> st
     return defaults["sleep" if sleeping else "awake"]
 
 
+OUTFIT_STATIC_SEASIDE = (
+    "（关于身上穿的衣裳与体感：海边船屋里没有从穗织带过来的冬衣围巾，除非物品清单里真有后来新买/新换的厚衣棉被，"
+    "否则别凭空说自己穿着棉袄大衣；冷不冷、冻不冻脚，结合当下穿着薄厚和实时环境温度自然流露，不用刻意报衣服全名。）"
+)
+OUTFIT_STATIC_GENERIC = "（关于身上穿的衣裳与体感：结合当下穿着与实时环境温度自然感受，不用刻意报衣服全名。）"
+
+
 def outfit_now_text(service, bot: str, now: datetime.datetime) -> str:
-    """聊天实时注入她此刻身上穿的衣裳与铺盖实情。"""
+    """聊天实时注入她此刻身上穿的衣裳与铺盖实情（固定规则已放入 static_blocks 吃缓存）。"""
     world = getattr(service, "world", None)
     label = service.bots.label_for(bot) if getattr(service, "bots", None) is not None else bot
     worn = current_outfit_of(world, bot, label or bot, now)
-    home = str(service.cfg.get("world_home") or "").strip() or "穗织"
-    tail = (
-        "（海边船屋里没有从穗织带过来的冬衣围巾，除非物品清单里真有后来新买/新换的厚衣棉被，否则别凭空说自己穿着棉袄大衣；"
-        "冷不冷、冻不冻脚，结合你身上这身薄厚和上面的实时环境温度自然流露，不用刻意报衣服全名。）"
-        if home == "海边小镇"
-        else "（结合上面的实时环境温度自然感受，不用刻意报衣服全名。）"
-    )
-    return "你现在身上穿的：%s。%s" % (worn, tail)
+    return "你现在身上穿的：%s。" % worn
 
 
 def mood_now_text(service, bot: str, now: datetime.datetime) -> str:

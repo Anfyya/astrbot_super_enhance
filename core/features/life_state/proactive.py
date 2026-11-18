@@ -1610,16 +1610,16 @@ class ProactivePlanner:
 
         lines.append("")
         if kind == "question":
-            lines.append("调用 send_message_to_user 把这句问出去（必须发；发出后本轮自动结束）。")
+            lines.append("调用 send_message_to_user 把这句问出去（必须发，不要调用 stay_silent；发出后本轮自动结束，不会重复外发）。")
         elif kind in MUST_SEND:
             lines.append(
                 "顺着你眼下正在做的事和你们平时的相处语气自然说就行。"
-                "调用 send_message_to_user 把话发给主人（发出后本轮自动结束，除非主人后来定的规矩明确不许这会儿找他）。"
+                "调用 send_message_to_user 把话发给主人（不要调用 stay_silent；发出后本轮自动结束，不会重复外发，除非主人后来定的规矩明确不许这会儿找他）。"
             )
         else:
             lines.append(
                 "顺着你眼下正在做的事和你们平时的相处语气自然说就行，长短随你当时的心情。"
-                "决定发就调用 send_message_to_user 把话发给主人（发出后本轮自动结束）；"
-                "要是看上面的聊天记录觉得这事刚聊过、眼下没必要再发，就什么工具也别调，直接回一句「暂不发」结束（这句话不会发给主人）。"
+                "决定发就调用 send_message_to_user 把话发给主人（发出后本轮自动结束，不会重复外发）；"
+                "要是看上面的聊天记录觉得这事刚聊过、眼下没必要再发，就什么工具也别调（不要调 stay_silent），直接回一句「暂不发」结束（这句话不会发给主人）。"
             )
         return "\n".join(lines)

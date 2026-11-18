@@ -249,13 +249,13 @@ class CronContextFeature:
     # ---------- cron 工具清理与一步收尾 ----------
 
     def _prepare_built_cron(self, event, built, runner) -> None:
-        """build_main_agent 之后：摘除 cron 不需要的 stay_silent，并为本插件主动对话装一步收尾包装。"""
-        for tool_set in (
-            getattr(built, "func_tool", None),
-            getattr(runner, "_skill_like_raw_tool_set", None),
-        ):
-            if tool_set is not None and hasattr(tool_set, "remove_tool"):
-                tool_set.remove_tool("stay_silent")
+        """build_main_agent 之后：同步摘除闲置内置工具（保持与私聊工具表一致以命中缓存），并装一步收尾包装。"""
+        if getattr(built, "_se_strip_idle_tools", False):
+            from .bot_dialog import IDLE_BUILTIN_TOOLS
+            raw_set = getattr(runner, "_skill_like_raw_tool_set", None)
+            if raw_set is not None and hasattr(raw_set, "remove_tool"):
+                for tname in IDLE_BUILTIN_TOOLS:
+                    raw_set.remove_tool(tname)
         if runner is not None and is_plugin_cron_event(event):
             self._install_one_step_finish(event, runner)
 
@@ -388,6 +388,9 @@ class CronContextFeature:
         if not isinstance(contexts, list) or not contexts:
             return
         if not self._is_cron_event(event):
+            return
+        # 已由 history_transcript 接管的私聊会话跳过 24h 二次裁剪，使主动与私聊生成的聊天记录 100% 同前缀命中缓存
+        if getattr(req, "_super_enhance_transcript", None):
             return
         try:
             trimmed, stats = self.trim(contexts)

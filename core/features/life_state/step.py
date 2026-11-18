@@ -1303,9 +1303,13 @@ class LifeStep:
         )
 
     async def _personas(self, bots: list) -> str:
+        from .view import compact_hoori_map
         blocks = []
         for bot in bots:
-            text = self._with_abilities(bot, await self._persona_text(bot))
+            raw_persona = await self._persona_text(bot)
+            if raw_persona and self.home == "海边小镇":
+                raw_persona = compact_hoori_map(raw_persona)
+            text = self._with_abilities(bot, raw_persona)
             blocks.append("### key = %s\n%s" % (bot, text or "（未配置人格）"))
         return "\n\n".join(blocks)
 
@@ -1427,29 +1431,50 @@ class LifeStep:
         starts = [x for x in starts if isinstance(x, datetime.datetime)]
         return min([flat] + [x.replace(tzinfo=None) for x in starts])
 
-    def _history_blocks(self, bots: list, flat: datetime.datetime, date_offsets: tuple[int, ...] = (1, 0)) -> list[str]:
+    def _history_blocks(
+        self,
+        bots: list,
+        flat: datetime.datetime,
+        date_offsets: tuple[int, ...] = (1, 0),
+        detail_cutoff: datetime.datetime | None = None,
+    ) -> list[str]:
+        from .view import _clip_tail, merge_close
         if getattr(self, "things", None) is not None:
             self.things.view(flat)
+        cutoff = detail_cutoff if detail_cutoff is not None else (flat - datetime.timedelta(hours=3, minutes=30))
         blocks = []
         for date_offset in date_offsets:
             date_text = (flat.date() - datetime.timedelta(days=date_offset)).isoformat()
             lines = []
             for bot in bots:
-                for item in self.world.entries(date_text, bot):
-                    start = parse_time(item.get("start"))
-                    if start is None or start > flat:
-                        continue
+                raw_entries = [
+                    x for x in self.world.entries(date_text, bot)
+                    if parse_time(x.get("start")) and parse_time(x.get("start")) <= flat
+                ]
+                entries = merge_close(raw_entries) if date_offset >= 1 else raw_entries
+                for item in entries:
                     if is_event(item):
+                        ev_desc = item.get("doing") or item.get("place") or ""
+                        if date_offset >= 1:
+                            ev_desc = _clip_tail(ev_desc, 64)
                         lines.append("- %s %s（顺带的事）%s" % (
-                            self.label(bot) or bot, timeutil.day_hm(item.get("start")), item.get("doing") or item.get("place")))
+                            self.label(bot) or bot, timeutil.day_hm(item.get("start")), ev_desc))
                         continue
-                    lines.append("- %s %s %s %s%s%s" % (
+                    eff_end = item.get("end") or item.get("_eff_end") or ""
+                    ended = parse_time(eff_end) if eff_end else None
+                    is_old = date_offset >= 1 or (ended is not None and ended <= cutoff)
+                    if is_old and item.get("idle") and not item.get("asked"):
+                        continue
+                    # event_text_at 内部 detail_of 已包含 place，不再重复前置拼接 place
+                    body = event_text_at(item, flat)
+                    if is_old:
+                        body = _clip_tail(body, 96)
+                    keep_mood = (not is_old) and ended is not None and ended <= flat
+                    lines.append("- %s %s %s%s" % (
                         self.label(bot) or bot,
-                        timeutil.span_text(item.get("start"), item.get("end"), date_prefix=True, ongoing="~…"),
-                        item.get("place") or "",
-                        event_text_at(item, flat),
-                        "",
-                        mood_text(item) if parse_time(item.get("end")) is not None and parse_time(item["end"]) <= flat else "",
+                        timeutil.span_text(item.get("start"), eff_end, date_prefix=date_offset == 0, ongoing="~…"),
+                        body,
+                        mood_text(item) if keep_mood else "",
                     ))
             master = [
                 x for x in self.world.entries(date_text, "master")
@@ -1458,7 +1483,7 @@ class LifeStep:
             for item in master:
                 lines.append(
                     "- 主人 %s %s（%s）"
-                    % (timeutil.day_hm(item.get("start")), item.get("place"), item.get("doing") or "")
+                    % (timeutil.day_hm(item.get("start")), item.get("place") or "", item.get("doing") or "")
                 )
             if lines:
                 blocks.append("【%s 已经发生的】\n%s" % (date_text, "\n".join(lines)))
@@ -1560,57 +1585,17 @@ class LifeStep:
         return "\n".join(out)
 
     def _context_blocks_split(self, bots: list, now: datetime.datetime, tasks: dict | None = None) -> tuple[str, str]:
-        """按动静分层返回（昨日与慢变库存, 今日实时与即时现场），方便补写前缀缓存最大化命中。"""
+        """按动静分层返回（昨日与慢变库存, 今日实时与即时现场），严格把易随主人发言变动的相处近况后移，使库存与昨日历史稳定命中缓存。"""
         flat = now.replace(tzinfo=None)
         slow_parts: list[str] = []
         live_parts: list[str] = []
+        ref_moment = self._things_moment(tasks, flat)
+        detail_cutoff = ref_moment - datetime.timedelta(hours=3, minutes=30)
 
         # 1. 昨天已发生（今天一整天不变，放最前）
-        slow_parts.extend(self._history_blocks(bots, flat, date_offsets=(1,)))
+        slow_parts.extend(self._history_blocks(bots, flat, date_offsets=(1,), detail_cutoff=detail_cutoff))
 
-        # 2. 近况 / 约定 / 在练 / 约束 / 打算 / 拍板
-        companion = getattr(self, "companionship", None)
-        if companion is not None:
-            # LIVING_NOTE 已由规则 25 完整覆盖、d 待拍板/已拍板由下方共享段集中列出，此处只输出去重后的主人即时状态与各人近况。
-            seen_owner_states: set[str] = set()
-            for bot in bots:
-                owner_line = companion.safe("owner_state_text", bot, flat, default="")
-                include_owner = bool(owner_line and owner_line not in seen_owner_states)
-                if owner_line:
-                    seen_owner_states.add(owner_line)
-                text = companion.safe(
-                    "render", bot, flat,
-                    include_owner_state=include_owner,
-                    include_decisions=False,
-                    default="",
-                )
-                if text:
-                    slow_parts.append("%s：\n%s" % (self.label(bot) or bot, text))
-        if companion is not None:
-            pend_decs = companion.safe("pending_decisions", flat, default=[]) or []
-            if pend_decs:
-                today_text = flat.date().isoformat()
-                slow_parts.append(
-                    "【待当家主人拍板的事（主人尚未回话前保持挂起，严禁擅自替主人做主买定大件或私自接单！）】：\n"
-                    + "\n".join(
-                        format_decision_line(d, today_text, label_fn=self.label, include_bot=True, show_status=False)
-                        for d in pend_decs
-                    )
-                )
-            done_decs = companion.safe("recent_resolved_decisions", flat, default=[]) or []
-            if done_decs:
-                slow_parts.append(
-                    "【近期已由主人拍板定准的事（照主人定下的主意办，严禁再用 ask_master 重复问同一件事！）】：\n"
-                    + "\n".join(
-                        "- %s（%s，%s 定下%s）：%s → 已定：%s" % (
-                            d.get("id"), self.label(d.get("bot")) or d.get("bot"),
-                            d.get("resolved_at") or str(d.get("created") or ""),
-                            "，对应打算 %s" % d["intent"] if d.get("intent") else "",
-                            clean_text(d.get("question"), 100), clean_text(d.get("choice"), 100),
-                        )
-                        for d in done_decs[-4:]
-                    )
-                )
+        # 2. 极慢变项：约束 / 家底盘点 / 账面 / 约定 / 在练 / 打算 / 拍板（不随普通闲聊改变）
         constraints = self.world.constraints(active_only=True, scene=self.home)
         if constraints:
             slow_parts.append(
@@ -1620,6 +1605,37 @@ class LifeStep:
                     for x in constraints
                 )
             )
+
+        store = getattr(self, "things", None)
+        living_nudges = ""
+        if store is not None:
+            try:
+                moment = ref_moment
+                when = "此刻" if moment <= flat else "到 %s" % timeutil.day_hm(moment)
+                shelf = self._shelf_at(moment)
+                slow_parts.append("家里的吃的（%s；每件前面是编号）：\n" % when + store.food_list(moment, shelf, self.label))
+                slow_parts.append("家里的东西（吃的以外，%s；每件前面是编号）：\n" % when + store.item_list(moment, shelf, self.label))
+                if hasattr(store, "charcoal_summary"):
+                    charcoal_line = store.charcoal_summary(moment, shelf)
+                    if charcoal_line:
+                        slow_parts.append(charcoal_line)
+                if hasattr(store, "cooking_staple_alert"):
+                    staple_line = store.cooking_staple_alert(moment, shelf)
+                    if staple_line:
+                        slow_parts.append(staple_line)
+                living_nudges = self._seaside_living_nudges(tasks, flat, shelf)
+            except Exception:
+                logger.warning("[super_enhance/world] 补写算家里的吃的失败", exc_info=True)
+
+        money_book = getattr(self, "money", None)
+        if money_book is not None and self.home == "海边小镇":
+            try:
+                moment = ref_moment
+                money_book.archive_settled(moment, self.world)
+                slow_parts.append(money_book.step_block(moment, self.world))
+            except Exception:
+                logger.warning("[super_enhance/money] 补写拼账面失败", exc_info=True)
+
         promises = self._promise_lines(flat)
         if promises:
             slow_parts.append("还没做的约定：\n" + "\n".join(promises))
@@ -1647,40 +1663,53 @@ class LifeStep:
                     for x in plans)
             )
 
-        # 3. 家底与盘点
-        store = getattr(self, "things", None)
-        if store is not None:
-            try:
-                moment = self._things_moment(tasks, flat)
-                when = "此刻" if moment <= flat else "到 %s" % timeutil.day_hm(moment)
-                shelf = self._shelf_at(moment)
-                slow_parts.append("家里的吃的（%s；每件前面是编号）：\n" % when + store.food_list(moment, shelf, self.label))
-                slow_parts.append("家里的东西（吃的以外，%s；每件前面是编号）：\n" % when + store.item_list(moment, shelf, self.label))
-                if hasattr(store, "charcoal_summary"):
-                    charcoal_line = store.charcoal_summary(moment, shelf)
-                    if charcoal_line:
-                        slow_parts.append(charcoal_line)
-                if hasattr(store, "cooking_staple_alert"):
-                    staple_line = store.cooking_staple_alert(moment, shelf)
-                    if staple_line:
-                        slow_parts.append(staple_line)
-                living_nudges = self._seaside_living_nudges(tasks, flat, shelf)
-                if living_nudges:
-                    slow_parts.append(living_nudges)
-            except Exception:
-                logger.warning("[super_enhance/world] 补写算家里的吃的失败", exc_info=True)
+        companion = getattr(self, "companionship", None)
+        if companion is not None:
+            pend_decs = companion.safe("pending_decisions", flat, default=[]) or []
+            if pend_decs:
+                today_text = flat.date().isoformat()
+                slow_parts.append(
+                    "【待当家主人拍板的事（主人尚未回话前保持挂起，严禁擅自替主人做主买定大件或私自接单！）】：\n"
+                    + "\n".join(
+                        format_decision_line(d, today_text, label_fn=self.label, include_bot=True, show_status=False)
+                        for d in pend_decs
+                    )
+                )
+            done_decs = companion.safe("recent_resolved_decisions", flat, default=[]) or []
+            if done_decs:
+                slow_parts.append(
+                    "【近期已由主人拍板定准的事（照主人定下的主意办，严禁再用 ask_master 重复问同一件事！）】：\n"
+                    + "\n".join(
+                        "- %s（%s，%s 定下%s）：%s → 已定：%s" % (
+                            d.get("id"), self.label(d.get("bot")) or d.get("bot"),
+                            d.get("resolved_at") or str(d.get("created") or ""),
+                            "，对应打算 %s" % d["intent"] if d.get("intent") else "",
+                            clean_text(d.get("question"), 100), clean_text(d.get("choice"), 100),
+                        )
+                        for d in done_decs[-4:]
+                    )
+                )
 
-        money_book = getattr(self, "money", None)
-        if money_book is not None and self.home == "海边小镇":
-            try:
-                moment = self._things_moment(tasks, flat)
-                money_book.archive_settled(moment, self.world)
-                slow_parts.append(money_book.step_block(moment, self.world))
-            except Exception:
-                logger.warning("[super_enhance/money] 补写拼账面失败", exc_info=True)
+        # 3. 易变项与今日实时状态（放动态后半：相处近况含主人即时位置与新聊天笔记，放于库存与窗口抽签种子之后）
+        if living_nudges:
+            live_parts.append(living_nudges)
+        if companion is not None:
+            seen_owner_states: set[str] = set()
+            for bot in bots:
+                owner_line = companion.safe("owner_state_text", bot, flat, default="")
+                include_owner = bool(owner_line and owner_line not in seen_owner_states)
+                if owner_line:
+                    seen_owner_states.add(owner_line)
+                text = companion.safe(
+                    "render", bot, flat,
+                    include_owner_state=include_owner,
+                    include_decisions=False,
+                    default="",
+                )
+                if text:
+                    live_parts.append("%s：\n%s" % (self.label(bot) or bot, text))
 
-        # 4. 今天进展与当前实时状态（放动态后半）
-        live_parts.extend(self._history_blocks(bots, flat, date_offsets=(0,)))
+        live_parts.extend(self._history_blocks(bots, flat, date_offsets=(0,), detail_cutoff=detail_cutoff))
         proactive_text = self._today_proactive_block(bots, flat)
         if proactive_text:
             live_parts.append(proactive_text)

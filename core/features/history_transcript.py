@@ -49,8 +49,10 @@ SHOW_VIEW_TOOLS = ("show_view", "draw_image")
 IMG_ID_RE = re.compile(r"img\d+", re.IGNORECASE)
 # 画面呈现那一行里提示词最多写这么多字
 PROMPT_CLIP = 200
-# 聊天记录里的图（她发出去的、对面发来的一起算）每轮最多带最近几张给她看
-IMAGE_KEEP = 6
+# 聊天记录里的图（她发出去的、对面发来的一起算）仅在近期活跃窗口内带最近几张给她看，免得每轮重传历史老图
+IMAGE_KEEP = 2
+IMAGE_RECENT_MINUTES = 15
+IMAGE_RECENT_TURNS = 24
 # 两个机器人私聊时，带上她和主人私聊里最近这么多条
 MASTER_KEEP = 20
 # 主人会话里写的两个机器人往来记录（bot_dialog.RECORD_HEAD）：就是这次私聊本身，不重复放
@@ -157,10 +159,48 @@ def sent_images(history: list) -> list[tuple[str, str]]:
     return [(item["id"], item["stamp"]) for item in history_images(history) if item.get("id")]
 
 
-def recent_images(history: list) -> list[dict]:
-    """要带给她回看的图：聊天记录里的图按先后，她同一张发过几回只算最后一回，取最近 IMAGE_KEEP 张。"""
+def _parse_mmdd_hm(stamp: str) -> datetime.datetime | None:
+    if not stamp:
+        return None
+    try:
+        return datetime.datetime.strptime("2000-" + stamp.strip(), "%Y-%m-%d %H:%M")
+    except ValueError:
+        return None
+
+
+def _within_recent_window(stamp: str, ref_now: datetime.datetime | None) -> bool:
+    if ref_now is None:
+        return True
+    moment = _parse_mmdd_hm(stamp)
+    if moment is None:
+        return True
+    ref_2000 = _parse_mmdd_hm(ref_now.strftime("%m-%d %H:%M"))
+    if ref_2000 is None:
+        return True
+    diff_sec = (ref_2000 - moment).total_seconds()
+    if diff_sec < -300 * 86400:
+        diff_sec += 366 * 86400
+    return -300 <= diff_sec <= IMAGE_RECENT_MINUTES * 60
+
+
+def recent_images(history: list, ref_now: datetime.datetime | None = None) -> list[dict]:
+    """要带给她回看的图：仅在最近 IMAGE_RECENT_TURNS 条消息且离当下不超过 IMAGE_RECENT_MINUTES 分钟时，取最近 IMAGE_KEEP 张。"""
+    tail_msgs = [m for m in history if _dump(m).get("role") in ("user", "assistant")][-IMAGE_RECENT_TURNS:]
+    results = _tool_results(history)
+    candidates = []
+    for raw in tail_msgs:
+        message = _dump(raw)
+        role = message.get("role")
+        hit = TIME_RE.search(_text(message))
+        stamp = hit.group(1) if hit else ""
+        if not _within_recent_window(stamp, ref_now):
+            continue
+        if role == "assistant" and message.get("tool_calls"):
+            candidates += [{"mine": True, "id": image_id, "stamp": stamp} for _line, image_id in _view_lines(message, results) if image_id]
+        urls = _image_urls(message)
+        candidates += [{"mine": role == "assistant", "url": url, "stamp": stamp, "nth": n, "count": len(urls)} for n, url in enumerate(urls, 1)]
     picked, seen = [], set()
-    for item in reversed(history_images(history)):
+    for item in reversed(candidates):
         if item.get("id"):
             if item["id"] in seen:
                 continue
@@ -284,11 +324,11 @@ def _turn_start(contexts: list, index: int) -> int:
 
 
 def transform(contexts: list, turn_message, label: str, recent: int, include_memo: bool, other: str = "主人", attach=None,
-              before: str = ""):
+              before: str = "", ref_now: datetime.datetime | None = None):
     """把本轮那条用户消息之前的历史换成系统提示里的一段聊天记录。找不到本轮消息就返回 None。
 
     ``attach(本轮那条消息, recent_images 给的图, 对面是谁)`` 给出带上图的副本：聊天记录里的图放进去给她看。
-    ``before`` 放在这段聊天记录前面（两个机器人私聊时她和主人的聊天记录，master_block）。
+    ``before`` 为两个机器人私聊时她和主人的最近聊天记录（master_block），置于互聊记录之后以免主人插话打断互聊长历史前缀缓存。
     """
     index = next((i for i, m in enumerate(contexts) if m is turn_message), None)
     if index is None:
@@ -299,14 +339,14 @@ def transform(contexts: list, turn_message, label: str, recent: int, include_mem
     history = head[1:] if system is not None else head
     block, kept = build_block(history, label, recent, include_memo, other)
     if before:
-        block = before + ("\n\n" + block if block else "")
+        block = (block + "\n\n" + before) if block else before
     if system is not None:
         text = _text(_dump(system))
         new_system = _with_content(system, (text + "\n\n" + block) if block else text)
     else:
         new_system = {"role": "system", "content": block}
     out = ([new_system] if (system is not None or block) else []) + list(rest)
-    images = recent_images(history) if attach is not None else []
+    images = recent_images(history, ref_now=ref_now) if attach is not None else []
     if images:
         try:
             shown = attach(turn_message, images, other)
@@ -432,9 +472,10 @@ class HistoryTranscriptFeature:
                 if info and isinstance(contexts, list):
                     try:
                         opts = info["opts"]
+                        ref_now = self.life._now() if self.life is not None and hasattr(self.life, "_now") else datetime.datetime.now()
                         done = transform(contexts, info["turn"], opts["label"], opts["recent"], opts["memo"],
                                          opts.get("other", "主人"), attach=self.attach,
-                                         before=opts.get("master", ""))
+                                         before=opts.get("master", ""), ref_now=ref_now)
                         if done is None:
                             if not info["logged"]:
                                 logger.warning("[super_enhance/transcript] %s 找不到本轮消息（上下文被压缩过？），这次照原样发", opts["umo"])
