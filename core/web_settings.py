@@ -126,6 +126,8 @@ FIELDS = (
            "回复没有思考过程时，最多重新请求几次。", min=0, max=5),
     _field("zero_think_retry", "providers", "tuning", "list", "无思考重试的模型", ["deepseek"],
            "提供商 ID 或模型名包含这些字样时才重试，每行一个。"),
+    _field("reply_format", "max_retries", "tuning", "int", "格式违规打回次数", 3,
+           "回复或主动发消息正文出现换行、破折号时，打回重写的最多次数。", min=0, max=5),
     # 内部功能
     _field("life_state", "world_enabled", "advanced", "bool", "补写", True,
            "关掉后不再往世界线里写新的经历，记录员照常记。"),
@@ -141,6 +143,8 @@ FIELDS = (
            "把每次真正发给模型的请求存进快照库，排查和重放用。"),
     _field("zero_think_retry", "enabled", "advanced", "bool", "无思考重试", True,
            "回复没有思考过程时不发，重新请求。"),
+    _field("reply_format", "enabled", "advanced", "bool", "换行/破折号打回重说", True,
+           "回复或主动发消息正文含换行或破折号（——）时当场打回让模型重写，不写进历史。"),
     _field("reply_guard", "enabled", "advanced", "bool", "新消息优先", True,
            "回复还没发出时主人又发来消息，丢掉这一轮，两条一起重新回。"),
     _field("msg_time", "enabled", "advanced", "bool", "消息时间戳", True,

@@ -40,6 +40,7 @@ from .core.features.context import ContextToolsFeature
 from .core.features.history_merge import HistoryMergeFeature
 from .core.features.history_transcript import HistoryTranscriptFeature
 from .core.features.zero_think import ZeroThinkRetryFeature
+from .core.features.reply_format import ReplyFormatRetryFeature
 from .core.features.image_gen import ImageGenFeature
 from .core.features.feature_group import FeatureGroup, FeatureHandle
 from .core.features import error_voice
@@ -117,13 +118,15 @@ class SuperEnhance(Star):
         )
         # 一个字没想的回复（DeepSeek 偶尔跳过思考）不发，原样再要一次
         self.zero_think = ZeroThinkRetryFeature(SectionConfig(raw, "zero_think_retry"))
+        # 回复或主动消息正文带换行/破折号时，当场打回重写（最多 3 次）
+        self.reply_format = ReplyFormatRetryFeature(SectionConfig(raw, "reply_format"))
         # 画面呈现工具：调图像生成模型生成一幅画面发给对方（主人发过的图记下来当参考图）
         self.image_gen = ImageGenFeature(
             context, SectionConfig(raw, "image_gen"), data_dir,
             is_bot=lambda sender: sender in self.bot_dialog.bot_ids,
         )
         self.runner_hooks = RunnerHooks(
-            self.transcript, self.image_gen, self.zero_think, error_voice
+            self.transcript, self.image_gen, self.zero_think, error_voice, self.reply_format
         )
         # 聊天记录里的图（她发出去的、主人发来的），之后每轮放进本轮那条用户消息的副本里给她看
         self.transcript.attach = self.image_gen.attach_images
