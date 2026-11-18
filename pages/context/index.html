@@ -458,7 +458,9 @@
   button.notice:hover{border-color:var(--line2);color:var(--t1)}
   .lsec{margin:0 0 32px;min-width:0}
   .lsec:last-child{margin-bottom:0}
-  .lsec-h{display:flex;flex-direction:column;gap:2px;margin:0 0 12px}
+  .lsec-h{display:flex;align-items:flex-start;justify-content:space-between;gap:8px 14px;flex-wrap:wrap;margin:0 0 12px}
+  .lsec-ht{display:flex;flex-direction:column;gap:2px;min-width:0}
+  .lsec-ha{display:flex;gap:8px;align-items:center;flex:none}
   .lsec-t{font-size:16px;font-weight:600;line-height:22px;color:var(--t1)}
   .lsec-s{font-size:13px;line-height:1.6;color:var(--t3)}
   .people{display:flex;flex-direction:column;gap:16px}
@@ -1102,7 +1104,8 @@
   @media (max-width:720px){.money-grid{grid-template-columns:minmax(0,1fr)}}
   .mcard{border:1px solid var(--line);border-radius:12px;padding:16px 18px;background:var(--bg);display:flex;flex-direction:column;gap:10px;transition:border-color .12s,box-shadow .12s}
   .mcard.master{border-color:var(--accent-line);background:color-mix(in srgb,var(--accent-soft) 24%,var(--bg))}
-  .mcard-h{display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .mcard.filt{box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 28%,transparent);border-color:var(--accent)}
+  .mcard-h{display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer}
   .mcard-name{display:flex;align-items:center;gap:8px;min-width:0}
   .mcard-name b{font-size:15px;font-weight:600;color:var(--t1);white-space:nowrap}
   .mcard-bal{font-size:22px;font-weight:700;line-height:26px;color:var(--t1);font-variant-numeric:tabular-nums;white-space:nowrap}
@@ -1117,7 +1120,7 @@
   .mfilt .seg{max-width:100%;overflow-x:auto}
   .mfilt .search{flex:1 1 180px;max-width:260px}
 
-  .mrow{display:grid;grid-template-columns:86px 72px minmax(0,1fr) 98px auto;column-gap:12px;align-items:start;padding:12px 0;border-top:1px solid var(--line)}
+  .mrow{display:grid;grid-template-columns:86px 72px minmax(0,1fr) minmax(112px,auto) auto;column-gap:12px;align-items:start;padding:12px 0;border-top:1px solid var(--line)}
   .mrow:first-child{border-top:0;padding-top:0}
   .mrow:last-child{padding-bottom:0}
   .mrow-at{font-size:12px;line-height:22px;color:var(--t3);font-variant-numeric:tabular-nums;white-space:nowrap}
@@ -1128,6 +1131,7 @@
   .mrow-meta{font-size:12px;line-height:18px;color:var(--t3);margin-top:3px;display:flex;flex-wrap:wrap;gap:2px 8px;align-items:center}
   .mrow-meta .sep{color:var(--t4)}
   .mrow-amt{font-size:15px;line-height:22px;font-weight:700;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .mrow-bal{font-size:11px;line-height:16px;font-weight:500;color:var(--t3);margin-top:2px}
   .mrow-amt.pos{color:var(--ok)}.mrow-amt.neg{color:var(--danger)}.mrow-amt.mid{color:var(--accent)}.mrow-amt.neu{color:var(--t2)}
   .mrow-acts{margin-top:-2px}
   @media (max-width:680px){
@@ -4074,8 +4078,10 @@
     return +date.slice(5, 7) + "月" + +date.slice(8, 10) + "日";
   }
 
-  function lsecHead(title, sub) {
-    return h("div", { class: "lsec-h" }, h("span", { class: "lsec-t", text: title }), h("span", { class: "lsec-s", text: sub }));
+  function lsecHead(title, sub, right) {
+    return h("div", { class: "lsec-h" },
+      h("div", { class: "lsec-ht" }, h("span", { class: "lsec-t", text: title }), h("span", { class: "lsec-s", text: sub })),
+      right ? h("div", { class: "lsec-ha" }, right) : null);
   }
 
   function renderLedger() {
@@ -4403,27 +4409,13 @@
     var openDebts = debts.filter(function (x) { return x.status === "open"; });
     $("moneySub").textContent = "日常可花 ¥" + fmtYuan(d.home_and_girls_cash) + " · 含主人共 ¥" + fmtYuan(d.total_cash) + " · " + (d.today || "").slice(5);
 
-    // 1. 顶部家底总览卡（仿请求快照条形图）
+    // 1. 顶部家底总览卡（只留总览数字与比例条，去掉重复的四行图例与右上角按钮）
     var colors = { master: "var(--c1)", tin_box: "var(--c2)", napcat2: "var(--c4)", napcat: "var(--c3)" };
     var roles = { master: "船长管着", tin_box: "家用铁盒", napcat2: "随身携款", napcat: "仅可代花" };
     var total = Math.max(0.01, Number(d.total_cash) || 0);
     var hero = h("div", { class: "mhero" });
 
-    var topActs = h("div", { class: "mhero-acts" });
-    var addRecBtn = h("button", { class: "btn pri sm", type: "button" }, icon("plus"), "记一笔收支 / 转钱");
-    addRecBtn.addEventListener("click", function () {
-      S.moneyRecForm = S.moneyRecForm ? null : { kind: "transfer", from_account: "master", to_account: "tin_box", account: "tin_box", amount: "", counterparty: "", what: "", at: "" };
-      renderMoney();
-    });
-    var addDebtBtn = h("button", { class: "btn sm", type: "button" }, icon("plus"), "记赊欠 / 待收");
-    addDebtBtn.addEventListener("click", function () {
-      S.moneyDebtForm = S.moneyDebtForm ? null : { direction: "payable", counterparty: "", amount: "", about: "" };
-      renderMoney();
-    });
-    topActs.appendChild(addRecBtn);
-    topActs.appendChild(addDebtBtn);
-
-    hero.appendChild(h("div", { class: "mhero-top" },
+    hero.appendChild(h("div", { class: "mhero-top", style: "margin-bottom:12px" },
       h("div", { class: "mhero-nums" },
         h("div", { class: "mhero-kpi" },
           h("span", { class: "k", text: "家里与个人随时可花（铁盒 + 口袋）" }),
@@ -4431,28 +4423,17 @@
         h("div", { class: "mhero-kpi" },
           h("span", { class: "k", text: "总家底（含主人钱包）" }),
           h("span", { class: "v sub" }, "¥" + fmtYuan(d.total_cash), h("small", { text: "元" }))),
-        openDebts.length ? h("span", { class: "tag warn", text: openDebts.length + " 笔未结挂账" }) : null),
-      topActs));
+        openDebts.length ? h("span", { class: "tag warn", text: openDebts.length + " 笔未结挂账" }) : null)));
 
     var bar = h("div", { class: "comp" });
-    var legend = h("div", { class: "legend" });
     accs.forEach(function (a) {
       var val = Math.max(0, Number(a.balance) || 0);
       var pct = total > 0 ? Math.max(val > 0 ? 2 : 0, Math.round(val / total * 1000) / 10) : 0;
       if (val > 0) {
-        bar.appendChild(h("i", { style: "width:" + pct + "%;background:" + (colors[a.id] || "var(--c3)"), title: a.label + " ¥" + fmtYuan(val) }));
+        bar.appendChild(h("i", { style: "width:" + pct + "%;background:" + (colors[a.id] || "var(--c3)"), title: a.label + " ¥" + fmtYuan(val) + " (" + Math.round(val / total * 100) + "%)" }));
       }
-      var item = h("button", {
-        type: "button",
-        title: "点击只看该账户流水",
-        onclick: function () { S.moneyAccFilter = S.moneyAccFilter === a.id ? "all" : a.id; renderMoney(); }
-      },
-        h("span", { class: "lg-k" }, h("span", { class: "dot", style: "background:" + (colors[a.id] || "var(--c3)") }), a.label),
-        h("span", { class: "lg-v" }, h("b", { text: "¥" + fmtYuan(val) }), Math.round(val / total * 100) + "%"));
-      legend.appendChild(item);
     });
     hero.appendChild(bar);
-    hero.appendChild(legend);
 
     hero.appendChild(h("details", { class: "mguide" },
       h("summary", null, icon("chev"), "小镇物价与用钱规矩参考"),
@@ -4463,21 +4444,22 @@
         h("div", { text: "携带与权责：出门摸不到铁盒（须先取现），大头 master 须主人发话，50 元以上进账习惯上交" }))));
     box.appendChild(hero);
 
-    if (S.moneyRecForm) {
-      var rfSec = h("div", { class: "lsec" }, moneyRecordForm(accs));
-      box.appendChild(rfSec);
-    }
-
-    // 2. 分账户现钱（2 列卡片，视觉清爽留白）
-    var secAcc = h("div", { class: "lsec" }, lsecHead("四个钱袋", "卡片上直接点「改余额」手调，或点图例筛选下方流水"));
+    // 2. 分账户现钱（2 列卡片，点头部可直接筛选下方流水）
+    var secAcc = h("div", { class: "lsec" }, lsecHead("四个钱袋", "点卡片标题筛选下方流水，点「改余额」直接校准"));
     var grid = h("div", { class: "money-grid" });
     accs.forEach(function (a) {
-      var card = h("div", { class: "mcard" + (a.id === "master" ? " master" : "") });
-      card.appendChild(h("div", { class: "mcard-h" },
+      var active = S.moneyAccFilter === a.id;
+      var card = h("div", { class: "mcard" + (a.id === "master" ? " master" : "") + (active ? " filt" : "") });
+      card.appendChild(h("div", {
+        class: "mcard-h",
+        title: active ? "点击取消筛选" : "点击只看该账户流水",
+        onclick: function () { S.moneyAccFilter = active ? "all" : a.id; renderMoney(); }
+      },
         h("div", { class: "mcard-name" },
           h("span", { class: "dot", style: "width:8px;height:8px;border-radius:50%;flex:none;background:" + (colors[a.id] || "var(--c3)") }),
           h("b", { text: a.label || a.id }),
-          h("span", { class: "tag" + (a.id === "master" ? " acc" : ""), text: roles[a.id] || a.id })),
+          h("span", { class: "tag" + (a.id === "master" ? " acc" : ""), text: roles[a.id] || a.id }),
+          active ? h("span", { class: "tag acc", text: "筛选中" }) : null),
         h("div", { class: "mcard-bal" }, "¥" + (a.balance_text || fmtYuan(a.balance)), h("small", { text: "元" }))));
 
       card.appendChild(h("div", { class: "mcard-loc" },
@@ -4545,10 +4527,8 @@
     secAcc.appendChild(grid);
     box.appendChild(secAcc);
 
-    // 3. 赊账与待收（只在有数据或正在填写时展示完整列表，空时一句话清爽收起）
-    if (debts.length || S.moneyDebtForm) {
-      box.appendChild(moneyDebtSection(d, accs));
-    }
+    // 3. 赊账与待收（放到它自己的区块里，带「+ 记赊欠 / 待收」按钮）
+    box.appendChild(moneyDebtSection(d, accs));
 
     // 4. 收支明细账单
     box.appendChild(moneyRecordSection(d, accs));
@@ -4611,8 +4591,17 @@
   }
 
   function moneyDebtSection(d, accs) {
-    var sec = h("div", { class: "lsec" }, lsecHead("赊账与待收", "欠熟摊的赊账（payable）会优先还清；寄卖待收（receivable）随补给船或交货结算"));
+    var addDebtBtn = h("button", { class: "btn sm", type: "button" }, icon("plus"), "记赊欠 / 待收");
+    addDebtBtn.addEventListener("click", function () {
+      S.moneyDebtForm = S.moneyDebtForm ? null : { direction: "payable", counterparty: "", amount: "", about: "" };
+      renderMoney();
+    });
+    var sec = h("div", { class: "lsec" }, lsecHead("赊账与待收", "欠熟摊的赊账（payable）会优先还清；寄卖待收（receivable）随补给船或交货结算", addDebtBtn));
     var debts = d.debts || [];
+    if (!debts.length && !S.moneyDebtForm) {
+      sec.appendChild(h("div", { class: "muted", style: "font-size:13px", text: "目前没有赊欠或待收挂账。" }));
+      return sec;
+    }
     var card = h("div", { class: "pc" });
     if (debts.length) {
       var rows = h("div", { class: "lrows" });
@@ -4719,7 +4708,15 @@
       return true;
     });
 
-    var sec = h("div", { class: "lsec" }, lsecHead("收支明细", "对齐显示时间、类型、事由与金额；删流水默认回退对应账户余额"));
+    var addRecBtn = h("button", { class: "btn pri sm", type: "button" }, icon("plus"), "记一笔收支 / 转钱");
+    addRecBtn.addEventListener("click", function () {
+      S.moneyRecForm = S.moneyRecForm ? null : { kind: "transfer", from_account: "master", to_account: "tin_box", account: "tin_box", amount: "", counterparty: "", what: "", at: "" };
+      renderMoney();
+    });
+    var sec = h("div", { class: "lsec" }, lsecHead("收支明细", "显示每笔变动与变后结余；删流水默认回退对应账户余额", addRecBtn));
+    if (S.moneyRecForm) {
+      sec.appendChild(moneyRecordForm(accs));
+    }
 
     // 筛选工具栏
     var filt = h("div", { class: "mfilt" });
@@ -4784,7 +4781,17 @@
         row.appendChild(h("div", { class: "mrow-body" },
           h("div", { class: "mrow-what", text: r.what || r.counterparty || whereAcc }),
           metas.length ? h("div", { class: "mrow-meta" }, metas) : null));
-        row.appendChild(h("div", { class: "mrow-amt " + amtCls, text: sign + "¥" + (r.amount_text || fmtYuan(r.amount)) }));
+        var balText = "";
+        if (k === "transfer") {
+          var fb = r.from_after_text !== undefined ? "¥" + r.from_after_text : "";
+          var tb = r.to_after_text !== undefined ? "¥" + r.to_after_text : "";
+          if (fb && tb) { balText = "余 " + fb + " → " + tb; }
+        } else if (r.after_balance_text !== undefined) {
+          balText = "余 ¥" + r.after_balance_text;
+        }
+        row.appendChild(h("div", { class: "mrow-amt " + amtCls },
+          h("div", { text: sign + "¥" + (r.amount_text || fmtYuan(r.amount)) }),
+          balText ? h("div", { class: "mrow-bal", text: balText }) : null));
         var del = h("button", { class: "btn quiet sm danger mrow-acts", type: "button", title: r.wl_key && r.source === "world" ? "作废该世界线流水" : "删除并回退余额" }, icon("trash"));
         armed(del, r.wl_key && r.source === "world" ? "作废" : "回退删除", function () {
           moneyPost({ action: "delete_record", id: r.id, revert: true }, "已处理");

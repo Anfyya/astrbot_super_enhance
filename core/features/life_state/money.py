@@ -452,6 +452,32 @@ class MoneyBook(_JsonBook):
                 recs.append(rec)
 
         recs.sort(key=lambda r: (str(r.get("at") or ""), str(r.get("id") or "")))
+        # 从当前真实结尾余额逆推每笔流水发生后的账户结余
+        cur_bal = {k: float(v.get("balance") or 0.0) for k, v in accs.items()}
+        for rec in reversed(recs):
+            kind = rec.get("kind")
+            amt = float(rec.get("amount") or 0.0)
+            if kind == "transfer":
+                fa, ta = rec.get("from_account") or "", rec.get("to_account") or ""
+                if fa in cur_bal:
+                    rec["from_after"] = round_yuan(cur_bal[fa])
+                    cur_bal[fa] = round_yuan(cur_bal[fa] + amt)
+                if ta in cur_bal:
+                    rec["to_after"] = round_yuan(cur_bal[ta])
+                    cur_bal[ta] = round_yuan(cur_bal[ta] - amt)
+            else:
+                acc = rec.get("account") or ""
+                if acc in cur_bal and kind in ("earn", "spend", "adjust", "debt_settle"):
+                    rec["after_balance"] = round_yuan(cur_bal[acc])
+                    if kind == "earn" or kind == "adjust":
+                        cur_bal[acc] = round_yuan(cur_bal[acc] - amt)
+                    elif kind == "spend":
+                        cur_bal[acc] = round_yuan(cur_bal[acc] + amt)
+                    elif kind == "debt_settle" and amt > 0:
+                        debt = debts_map.get(str(rec.get("debt_id") or ""))
+                        direction = rec.get("direction") or (debt or {}).get("direction") or "payable"
+                        cur_bal[acc] = round_yuan(cur_bal[acc] + amt if direction == "payable" else cur_bal[acc] - amt)
+
         debts_list = sorted(
             debts_map.values(),
             key=lambda d: (d.get("status") != "open", str(d.get("created") or ""), str(d.get("id") or "")),

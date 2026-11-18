@@ -2627,6 +2627,12 @@ class ContextPageApi:
                 item["to_label"] = acc_labels.get(r.get("to_account") or "", r.get("to_account") or "")
                 item["who_label"] = who_name(r.get("who") or "") if r.get("who") else ""
                 item["amount_text"] = fmt_yuan(r.get("amount"))
+                if r.get("after_balance") is not None:
+                    item["after_balance_text"] = fmt_yuan(r.get("after_balance"))
+                if r.get("from_after") is not None:
+                    item["from_after_text"] = fmt_yuan(r.get("from_after"))
+                if r.get("to_after") is not None:
+                    item["to_after_text"] = fmt_yuan(r.get("to_after"))
                 records.append(item)
             return _ok({
                 "today": life._today(),
