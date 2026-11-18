@@ -1193,6 +1193,9 @@ class Recorder:
             end = parse_time(item.get("end")) if item.get("end") else None
             if owner == who:
                 if start >= since:
+                    for partner in (item.get("with") or []):
+                        if partner in bots and partner != who:
+                            cutoff[partner] = min(cutoff.get(partner, start), start)
                     self.world.delete_entry(day, iid)
                     removed.append("%s %s" % (iid, clean_text(item.get("doing"), 16)))
                 continue

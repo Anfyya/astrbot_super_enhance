@@ -1669,6 +1669,7 @@ class LifeStep:
                     slow_parts.append(living_nudges)
             except Exception:
                 logger.warning("[super_enhance/world] 补写算家里的吃的失败", exc_info=True)
+
         money_book = getattr(self, "money", None)
         if money_book is not None and self.home == "海边小镇":
             try:
@@ -1955,12 +1956,26 @@ class LifeStep:
             if bot in tasks:
                 continue
             front = self._frontier(bot, flat)
-            if front is None:
+            if front is not None:
+                edge, last = front
+                # 手动补写（force）：不看有没有缺口，也不推翻已排好的，直接从她排到的最后一段往后接
+                if force or flat < edge <= reach - datetime.timedelta(minutes=JOIN_ROOM_MINUTES):
+                    tasks[bot] = {"mode": "after", "start": edge, "cur": last}
                 continue
-            edge, last = front
-            # 手动补写（force）：不看有没有缺口，也不推翻已排好的，直接从她排到的最后一段往后接
-            if force or flat < edge <= reach - datetime.timedelta(minutes=JOIN_ROOM_MINUTES):
-                tasks[bot] = {"mode": "after", "start": edge, "cur": last}
+            # 中间有被撤出的空洞会阻断 _frontier；手动补写或另一人排程已跨越洞口时，把洞纳入本次补写避免死锁
+            cur = self.world.current(bot, flat)
+            after = parse_time(cur.get("end")) if cur is not None and cur.get("end") else flat
+            hole = self.hole_at(bot, after, flat)
+            if hole is not None:
+                h_start, later = hole
+                if force or h_start <= reach - datetime.timedelta(minutes=JOIN_ROOM_MINUTES):
+                    tasks[bot] = {
+                        "mode": "fill",
+                        "start": h_start,
+                        "until": parse_time(later.get("start")),
+                        "cur": None,
+                        "next": later,
+                    }
         return tasks
 
     def _save_thought(self, moment: datetime.datetime, thought: str, ok: bool, note: str = "") -> None:
@@ -2244,6 +2259,49 @@ class LifeStep:
     @staticmethod
     def _sanitize_proactive_nodes(entries: list) -> list:
         return _sanitize_proactive_nodes(entries)
+
+    def _validate_with_symmetry(self, kept_by_bot: dict) -> list[str]:
+        """校验两人合做（with 填了另一位 bot）时，对方在对应时段也必须有互写 with 的对应段。"""
+        bots = set(self.raw_log.enabled_bots())
+        errors = []
+        batch_windows = {
+            p_bot: (p_kept[0][2], p_kept[-1][3])
+            for p_bot, (p_kept, _, _) in kept_by_bot.items()
+            if p_kept
+        }
+        for bot, (bot_kept, _, _) in kept_by_bot.items():
+            who_lbl = self.label(bot) or bot
+            for idx, raw, seg_start, seg_end, _st_code in bot_kept:
+                partners = [str(x) for x in (raw.get("with") or []) if str(x) in bots and str(x) != bot]
+                for partner in partners:
+                    p_lbl = self.label(partner) or partner
+                    matched = False
+                    if partner in kept_by_bot:
+                        for _p_idx, p_raw, p_start, p_end, _ in kept_by_bot[partner][0]:
+                            if p_start == seg_start and p_end == seg_end and bot in [str(x) for x in (p_raw.get("with") or [])]:
+                                matched = True
+                                break
+                    if not matched:
+                        win = batch_windows.get(partner)
+                        if win is None or seg_end <= win[0] or seg_start >= win[1]:
+                            for day in sorted({seg_start.date().isoformat(), seg_end.date().isoformat()}):
+                                for item in self.world.entries(day, partner):
+                                    if is_event(item) or bot not in [str(x) for x in (item.get("with") or [])]:
+                                        continue
+                                    es = parse_time(item.get("start"))
+                                    ee = parse_time(item.get("end")) if item.get("end") else None
+                                    if es is not None and es <= seg_start and (ee is None or ee >= seg_end):
+                                        matched = True
+                                        break
+                                if matched:
+                                    break
+                    if not matched:
+                        errors.append(
+                            f"{who_lbl}第{idx}段（{fmt_time(seg_start)[11:16]}–{fmt_time(seg_end)[11:16]}）"
+                            f"with 写了 {p_lbl}，但 {p_lbl} 名下该时段没有互写 with 的对应段；"
+                            f"两人一起做的事须两边各写一段且起止一致，否则 with 勿填 {p_lbl}"
+                        )
+        return errors
 
     def _dedup_joint_proactive(self, written_by_bot: dict, now: datetime.datetime | None = None) -> None:
         _dedup_joint_proactive(written_by_bot, now=now, world=self.world)
@@ -2700,6 +2758,8 @@ class LifeStep:
                 p_link = str(p_row.get("link") or "")
                 if p_link == "wood_stove" and seaside and not eff_wood_stove:
                     errors.append(f"{who_lbl}采用了烧柴炉插曲/消遣「{orig['text']}」，对应段必须填 \"stove\": \"wood\"")
+
+        errors.extend(self._validate_with_symmetry(kept_by_bot))
 
         money_book = getattr(self, "money", None)
         if money_book is not None:
