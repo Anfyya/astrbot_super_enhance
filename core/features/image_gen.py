@@ -113,6 +113,7 @@ class ImageGenFeature:
         self._sent: dict[str, tuple[float, list]] = {}  # 会话 → (什么时候发的, 主人发的图)
         self._views: dict[str, tuple[str, str]] = {}  # 编号 → 回看用的小图 (mime, base64)
         self._recalled: tuple = ()  # 上次回看带了哪几张（变了才记日志）
+        self._images_api_pids: set[str] = set()  # 记住只认 /v1/images/* 的源，下次不先走 chat
         self.patches = PatchSet()
 
     @property
@@ -278,7 +279,86 @@ class ImageGenFeature:
 
     # ---------- 工具 ----------
 
-    async def _ask(self, bot: str, content: list, want: str, began: float) -> tuple[list, str, list]:
+    @staticmethod
+    def _images_size(want: str) -> str:
+        """把 宽x高 映射到 OpenAI Images API（/v1/images/*）支持的尺寸枚举。"""
+        if not want:
+            return ""
+        if want in ("1024x1024", "1536x1024", "1024x1536", "auto"):
+            return want
+        m = SIZE_RE.match(want)
+        if not m:
+            return ""
+        w, h = int(m.group(1)), int(m.group(2))
+        if w > h:
+            return "1536x1024"
+        if h > w:
+            return "1024x1536"
+        return "1024x1024"
+
+    @staticmethod
+    def _needs_images_api(err: Exception) -> bool:
+        """接口明确报错「只支持 /v1/images/generations 或 /v1/images/edits」时自动切换。"""
+        msg = str(err or "").lower()
+        return "/v1/images/generations" in msg or "/v1/images/edits" in msg
+
+    async def _extract_images_response(self, resp, client, left: float) -> list:
+        out = []
+        fmt = str(getattr(resp, "output_format", "") or "").lower()
+        fmt_mime = {"png": "image/png", "jpeg": "image/jpeg", "jpg": "image/jpeg", "webp": "image/webp"}.get(fmt, "")
+        for item in getattr(resp, "data", None) or []:
+            b64 = re.sub(r"\s+", "", str(getattr(item, "b64_json", "") or ""))
+            if b64:
+                try:
+                    raw = base64.b64decode(b64[:64] + "====")
+                except Exception:
+                    raw = b""
+                mime = mime_of(raw) or fmt_mime or "image/png"
+                out.append((mime, b64))
+                continue
+            url = str(getattr(item, "url", "") or "").strip()
+            m = re.match(r"data:(image/[\w.+-]+);base64,([A-Za-z0-9+/=\s]+)$", url)
+            if m:
+                out.append((m.group(1).lower(), re.sub(r"\s+", "", m.group(2))))
+                continue
+            if url.startswith("http") and hasattr(client, "_client"):
+                r = await asyncio.wait_for(client._client.get(url, timeout=min(30.0, max(5.0, left))), timeout=min(30.0, max(5.0, left)))
+                if r.status_code == 200 and r.content:
+                    mime = mime_of(r.content) or fmt_mime or "image/png"
+                    out.append((mime, base64.b64encode(r.content).decode()))
+        return out
+
+    async def _ask_chat(self, client, model: str, prompt_text: str, refs: list, want: str, left: float) -> tuple[list, str]:
+        content = [{"type": "text", "text": prompt_text}] + [
+            {"type": "image_url", "image_url": {"url": "data:%s;base64,%s" % (mime, b64)}} for mime, b64 in refs
+        ]
+        kwargs = {"model": model, "messages": [{"role": "user", "content": content}],
+                  "stream": False, "timeout": left}
+        if want:
+            kwargs["extra_body"] = {"size": want}
+        resp = await asyncio.wait_for(client.chat.completions.create(**kwargs), timeout=left)
+        message = resp.choices[0].message
+        return self.images_in(message), str(message.content or "")
+
+    async def _ask_images(self, client, model: str, prompt_text: str, refs: list, want: str, left: float) -> tuple[list, str]:
+        img_size = self._images_size(want)
+        if refs:
+            files = [
+                ("ref_%d.%s" % (i + 1, EXT.get(mime, "png")), base64.b64decode(b64), mime)
+                for i, (mime, b64) in enumerate(refs)
+            ]
+            kwargs = {"model": model, "prompt": prompt_text, "image": files if len(files) > 1 else files[0], "timeout": left}
+            if img_size:
+                kwargs["size"] = img_size
+            resp = await asyncio.wait_for(client.images.edit(**kwargs), timeout=left)
+        else:
+            kwargs = {"model": model, "prompt": prompt_text, "timeout": left}
+            if img_size:
+                kwargs["size"] = img_size
+            resp = await asyncio.wait_for(client.images.generate(**kwargs), timeout=left)
+        return await self._extract_images_response(resp, client, left), ""
+
+    async def _ask(self, bot: str, prompt_text: str, refs: list, want: str, began: float) -> tuple[list, str, list]:
         """按主模型、备用模型的顺序要图，要到就停。返回 (图, 哪个模型呈现的, 每个没呈现出来的原因)。"""
         why = []
         ids = self.provider_ids
@@ -294,16 +374,22 @@ class ImageGenFeature:
             if client is None:
                 why.append("找不到图像模型 %s（或者它不是 OpenAI 格式的源）" % pid)
                 continue
-            kwargs = {"model": provider.get_model(), "messages": [{"role": "user", "content": content}],
-                      "stream": False, "timeout": left}
-            if want:
-                kwargs["extra_body"] = {"size": want}
+            model = provider.get_model()
             t0 = time.time()
             try:
-                resp = await asyncio.wait_for(client.chat.completions.create(**kwargs), timeout=left)
-                message = resp.choices[0].message
-                text = str(message.content or "")
-                found = self.images_in(message)
+                if pid in self._images_api_pids:
+                    found, text = await self._ask_images(client, model, prompt_text, refs, want, left)
+                else:
+                    try:
+                        found, text = await self._ask_chat(client, model, prompt_text, refs, want, left)
+                    except Exception as e:
+                        if self._needs_images_api(e) and hasattr(client, "images"):
+                            self._images_api_pids.add(pid)
+                            rem = max(10.0, self.timeout - (time.time() - began))
+                            logger.info("[super_enhance/image] [%s] %s 只支持 /v1/images/*，改用 Images API 重试", bot, pid)
+                            found, text = await self._ask_images(client, model, prompt_text, refs, want, rem)
+                        else:
+                            raise
             except Exception as e:
                 logger.warning("[super_enhance/image] [%s] %s 画面呈现失败（%.0f 秒）：%s", bot, pid, time.time() - t0, e)
                 timed_out = isinstance(e, asyncio.TimeoutError) or "timeout" in type(e).__name__.lower()
@@ -338,11 +424,9 @@ class ImageGenFeature:
         chars, _ = self._character_refs(characters, notes)
         refs = (await self._refs(event, umo, bot, use_sent, use_last, notes))[:max(0, REF_MAX - len(chars))]
         refs = [(mime, b64) for _, mime, b64 in chars] + refs
-        content = [{"type": "text", "text": self._lead(chars, len(refs) - len(chars)) + prompt}] + [
-            {"type": "image_url", "image_url": {"url": "data:%s;base64,%s" % (mime, b64)}} for mime, b64 in refs
-        ]
+        prompt_text = self._lead(chars, len(refs) - len(chars)) + prompt
         began = time.time()
-        found, used, why = await self._ask(bot, content, want, began)
+        found, used, why = await self._ask(bot, prompt_text, refs, want, began)
         if not found:
             return "没呈现出来：%s。" % "；".join(why)
         index = self._load_index()
