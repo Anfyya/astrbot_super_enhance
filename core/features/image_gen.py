@@ -428,7 +428,7 @@ class ImageGenFeature:
         began = time.time()
         found, used, why = await self._ask(bot, prompt_text, refs, want, began)
         if not found:
-            return "没呈现出来：%s。" % "；".join(why)
+            return "没呈现出来：%s。请直接简短说一声这会儿呈不出来就行，严禁自己用文字口述画面或「现场播报」代替图片，也别报错误码。" % "；".join(why)
         index = self._load_index()
         drawn = list(event.get_extra(EXTRA_KEY) or []) if hasattr(event, "get_extra") else []
         stamp = datetime.datetime.now()
