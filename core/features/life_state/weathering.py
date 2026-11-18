@@ -66,6 +66,8 @@ RESET_RUST = ("除锈", "擦亮", "磨亮", "去锈", "打磨", "擦干净", "�
 RESET_WASH = ("洗", "冲干净", "冲了", "雨水冲刷", "淡水冲")
 RESET_ALL = ("买回来", "收到", "做好了", "开始做", "原来就有")
 CONDITION_FLAGS = ("rain_cover", "ventilated", "off_ground", "split", "fuel_safe", "saltwater", "treated", "rotten")
+STOVE_WOOD_KINDS = ("燃柴", "薪柴", "引火料")
+STRUCTURED_FUEL_CUTOFF = "2026-11-18 12:00"
 FUEL_WORDS = ("柴火", "干柴", "湿柴", "薪柴", "木柴", "主柴", "细柴", "碎柴", "柴料", "漂流木", "海漂木", "浮木", "引火料", "引火柴", "引火细料", "枯枝", "修枝木", "实木边料")
 CONDITION_VALUES = {
     "fuel_state": ("wet", "drying", "ready"),
@@ -111,13 +113,27 @@ def dry_asserted(text: str) -> bool:
     return asserted(text, RESET_DRY + ("已干燥", "干燥", "干柴", "干枯枝", "高潮线以上")) and not asserted(text, WET_WORDS + GREEN_WORDS)
 
 
+def _is_legacy_item(item: dict) -> bool:
+    created = str(item.get("created") or "").strip()
+    return bool(created and created < STRUCTURED_FUEL_CUTOFF)
+
+
 def fuel_item(item: dict) -> bool:
+    """炉柴识别：2026-11-18 12:00 起新物品只认精确枚举 kind（燃柴/薪柴/引火料）或显式 purpose='fuel'，零关键词猜测。"""
+    kind = re.sub(r"\s+", "", str(item.get("kind") or ""))
+    if kind in STOVE_WOOD_KINDS:
+        return True
+    stages = item.get("stages") or []
+    if any(isinstance(stage, dict) and str(stage.get("purpose") or "").strip() == "fuel" for stage in stages):
+        return True
+    if not _is_legacy_item(item):
+        return False
     labels = [str(item.get(key) or "") for key in ("name", "kind")]
     if any(re.search(r"(?<!引)火柴", label) for label in labels):
         return False
     return (any(word in label for label in labels for word in FUEL_WORDS)
-            or any((stage.get("purpose") == "fuel" and wood_candidate(item)) or any(key in (stage.get("weather") or {})
-                       for key in ("fuel_source", "fuel_state", "fuel_wet")) for stage in item.get("stages") or []))
+            or any(any(key in (stage.get("weather") or {}) for key in ("fuel_source", "fuel_state", "fuel_wet"))
+                   for stage in stages if isinstance(stage, dict)))
 
 
 def wood_candidate(item: dict) -> bool:
@@ -159,14 +175,14 @@ def fuel_properties(item: dict, stages: list) -> dict:
     return properties
 
 
-def usable_stove_wood(item: dict, now: datetime.datetime, day_text, home_at) -> bool:
-    """判断一件木料此刻能否直接放进铁桶柴炉生火（排除湿柴、未劈大木、海漂修补料及禁用木料）。"""
+def usable_stove_wood(item: dict, now: datetime.datetime, day_text, home_at, fire_lit_fn=None) -> bool:
+    """判断一件木料此刻能否直接放进铁桶柴炉生火（新物品纯按结构化 kind/purpose 与 weather 判定；旧物品兼容历史排除）。"""
     if not fuel_item(item):
         return False
     stages = list(item.get("stages") or [])
     has_fuel_purpose = any(str(s.get("purpose") or "").strip() == "fuel" for s in stages if isinstance(s, dict))
     label_text = " ".join(str(item.get(k) or "") for k in ("name", "kind"))
-    if not has_fuel_purpose and any(w in label_text for w in ("修补", "补船")):
+    if _is_legacy_item(item) and not has_fuel_purpose and any(w in label_text for w in ("修补", "补船")):
         return False
     flat = now.replace(tzinfo=None)
     declared_split = None
@@ -177,7 +193,7 @@ def usable_stove_wood(item: dict, now: datetime.datetime, day_text, home_at) -> 
             declared_split = w["split"]
     if declared_split is False:
         return False
-    st = simulate(item, flat, day_text, home_at, food=False)
+    st = simulate(item, flat, day_text, home_at, food=False, fire_lit_fn=fire_lit_fn)
     if not st or st.get("fuel_safe") is False:
         return False
     if st.get("fuel_state") != "ready":
@@ -241,6 +257,10 @@ def exposure_of(place: str = "", spot: str = "", keep: str = "", holder: str = "
         result = "semi"
     elif any(w in text for w in SEALED_WORDS):
         return "sealed"
+    elif any(w in text for w in INSIDE_WORDS) and not any(
+        w in text for w in ("甲板", "船头", "船尾", "露天", "屋外", "院子", "院里", "码头", "防波堤", "海堤", "沙滩", "礁", "晒", "晾")
+    ):
+        return "inside"
     elif any(w in text for w in OPEN_WORDS):
         result = "open"
     else:
@@ -307,7 +327,7 @@ def _has(text: str, words) -> bool:
     return any(w in text for w in words)
 
 
-def simulate(item: dict, now: datetime.datetime, day_text, home_at, food: bool = False) -> dict | None:
+def simulate(item: dict, now: datetime.datetime, day_text, home_at, food: bool = False, fire_lit_fn=None) -> dict | None:
     """这件此刻的样子；没什么可说的返回 None。day_text(date) 给那天的天气原文（可带「住处::」），home_at(moment) 给那时住在哪。"""
     flat = now.replace(tzinfo=None)
     stages = sorted((s for s in item.get("stages") or [] if _parse(s.get("at")) is not None and _parse(s.get("at")) <= flat),
@@ -455,6 +475,8 @@ def simulate(item: dict, now: datetime.datetime, day_text, home_at, food: bool =
         daytime = 8 <= cur.hour < 17
         sunny = hour["cloud"] == 0 and hour["fog"] == 0 and rain <= 0 and daytime
         temp = _month_temp(home, cur)
+        mid_t = cur + (nxt - cur) / 2
+        stove_active = near_stove and (fire_lit_fn is None or bool(fire_lit_fn(mid_t)))
         if exposure == "sea":
             st["wet"] = 1.0
             if fuel:
@@ -483,8 +505,8 @@ def simulate(item: dict, now: datetime.datetime, day_text, home_at, food: bool =
             if exposure == "open" and rain >= 1:
                 st["salt"] = max(0.0, st["salt"] - 0.3 * dt)
         elif st["wet"] > 0:
-            if near_stove:
-                # 炭炉边、柴炉旁、灶旁烘烤：潮柴、湿鞋袜、湿衣 2～3 小时快速烘干
+            if stove_active:
+                # 炭炉边、柴炉旁、灶旁真生着火烘烤：潮柴、湿鞋袜、湿衣 2～3 小时快速烘干
                 speed = 0.45
             else:
                 # 木柴表皮淋雨受潮吹风 2～4 小时即干，不再卡在 0.07/h
@@ -498,9 +520,9 @@ def simulate(item: dict, now: datetime.datetime, day_text, home_at, food: bool =
             st["wet"] = max(0.0, st["wet"] - speed * dt)
             if st["wet"] < 0.25:
                 st["wet_from"] = None
-        # 木芯内部水分：去掉未写 ventilated 则干燥率为 0 的陷阱，炉边可几小时快速烘透
+        # 木芯内部水分：只有真点着火的炉边才按 0.25/h 快速烘透，冷炉边按自然风干算
         if fuel and st.get("fuel_wet") is not None:
-            if near_stove:
+            if stove_active:
                 st["fuel_wet"] = max(0.08, st["fuel_wet"] - 0.25 * dt)
                 if st["fuel_wet"] <= 0.2:
                     st["seasoning"] = "seasoned"

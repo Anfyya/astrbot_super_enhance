@@ -216,6 +216,15 @@ _COUNT_RE = re.compile(
     r"(\d+(?:\.\d+)?|[零〇一二两俩三四五六七八九十百]+|半)\s*"
     r"(个|只|颗|粒|根|块|片|条|把|捆|棵|袋|盒|瓶|罐|碗|盘|份|张|串|枚|尾|锅|盆|杯|壶|段|截|头|瓣|包|坛|桶|板|斤|两)(半)?"
 )
+STRICT_QTY_RE = re.compile(
+    r"^\d+(?:\.\d+)?\s*(?:千克|公斤|kg|克|g|斤|两|毫升|ml|升|l|捆|袋|份|块|根|张|颗|粒|个|只|条|把|盒|瓶|罐|包|桶|箱|件|床|双)$",
+    re.IGNORECASE,
+)
+
+
+def is_strict_qty(value) -> bool:
+    """严格结构化数量格式校验：必须为阿拉伯数字 + 固定单位（如 0.25捆、1.1捆、400克、15毫升）。"""
+    return bool(STRICT_QTY_RE.fullmatch(str(value or "").strip()))
 SHARE_WORDS = (("一点", 0.1),)
 PIECE_UNITS = ("个", "只", "颗", "粒", "根", "块", "片", "条", "枚", "尾", "头", "瓣", "段", "截", "张")
 LOW_LEFT_SHARE = 0.25
@@ -533,7 +542,7 @@ def stock(item: dict):
     measured = measure(item)
     if measured is not None:
         return measured
-    left, unit, zero = None, "", None
+    left, unit, zero, peak_left = None, "", None, 0.0
     starts, _, ends = steps_of(cat_of(item))
     kind = re.sub(r"\s+", "", str(item.get("kind") or ""))
     is_consumable = weathering.fuel_item(item) or kind in ("燃料", "燃柴", "火柴", "蜡烛")
@@ -545,21 +554,27 @@ def stock(item: dict):
                 amount = quantity(stage.get("state")) or quantity(item.get("look"))
             if amount:
                 left, unit = max(0.0, amount[0]), amount[1]
+                peak_left = max(peak_left, left)
                 if left > 0:
                     zero = None
         elif what in ends:
             if left is not None:
                 left, zero = 0.0, stage
         elif left is not None and what in ("用了", "用掉一部分", "吃了一部分"):
+            explicit_left = quantity(stage.get("left"))
             used = quantity(stage.get("used"))
-            if used and used[1] in ("", unit):
+            if explicit_left and explicit_left[1] in ("", unit) and explicit_left[0] <= max(left, peak_left):
+                left = max(0.0, explicit_left[0])
+            elif used and used[1] in ("", unit):
                 left = max(0.0, left - max(0.0, used[0]))
             elif amount and amount[1] in ("", unit) and amount[0] < left:
                 left = max(0.0, amount[0])
             elif what in ("用了", "用掉一部分") and is_consumable:
                 step_used = {"捆": 0.25, "袋": 0.25, "箱": 0.1, "盒": 0.02, "瓶": 0.05, "罐": 0.05}.get(unit, 1.0)
                 left = max(0.0, left - step_used)
-            if left <= 0:
+            if left > 0:
+                zero = None
+            else:
                 zero = stage
     return {"left": left, "unit": unit, "zero": zero, "per_use": 0.0} if left is not None else None
 
@@ -1978,11 +1993,16 @@ class ThingStore:
                     )
 
     def _auto_use_wood(self, items: dict, at: str, by: str, ref: str) -> None:
-        """柴炉点火取暖/烘烤/烟熏若 50 分钟窗内未手写消耗燃料，自动扣减 0.25 捆干柴。"""
+        """柴炉点火取暖/烘烤/烟熏若 50 分钟窗内未手写消耗燃料，仅从可用炉柴自动扣减 0.25 捆干柴。"""
         moment = parse_time(at)
         if moment is None:
             return
-        pool = [x for x in self._local_items(items.values(), moment) if weathering.fuel_item(x)]
+        day_text, home_at = self._weather_helpers(moment)
+        fire_lit_fn = self._fire_lit_fn(moment)
+        pool = [
+            x for x in self._local_items(items.values(), moment)
+            if weathering.usable_stove_wood(x, moment, day_text, home_at, fire_lit_fn=fire_lit_fn)
+        ]
         if not pool:
             return
         for wood in pool:
@@ -2002,21 +2022,33 @@ class ThingStore:
                 unit = info.get("unit") or "捆"
                 step_amt = WOOD_BUNDLE_PER_BURN if unit in ("捆", "袋") else 1.0
                 take = min(float(info["left"]), step_amt)
-                stage = clean_stage(
-                    {
-                        "at": at,
-                        "what": "用了",
-                        "used": "%s%s" % (_num_text(take), unit),
-                        "by": by,
-                        "wl": ref,
-                        "effect": "#auto_wood",
-                        "note": "柴炉开火烧柴自动扣减",
-                        "src": {"entry": ref, "auto_wood": "1"},
-                    },
-                    CAT_ITEM,
+                what = "用了"
+                used_text = "%s%s" % (_num_text(take), unit)
+            elif info is None:
+                # 无明确数量的可用柴在 variety.py 中折算为 0.5 捆，自动烧完 2 次即结束，防无限幽灵柴火
+                prior_burns = sum(
+                    1 for st in wood.get("stages") or []
+                    if st.get("what") in ("用了", "用掉一部分")
                 )
-                insert_stage(wood, stage)
-                return
+                what = "用完了" if prior_burns >= 1 else "用了"
+                used_text = "%s捆" % _num_text(WOOD_BUNDLE_PER_BURN)
+            else:
+                continue
+            stage = clean_stage(
+                {
+                    "at": at,
+                    "what": what,
+                    "used": used_text,
+                    "by": by,
+                    "wl": ref,
+                    "effect": "#auto_wood",
+                    "note": "柴炉开火烧柴自动扣减",
+                    "src": {"entry": ref, "auto_wood": "1"},
+                },
+                CAT_ITEM,
+            )
+            insert_stage(wood, stage)
+            return
 
     def _auto_use_charcoal(self, items: dict, at: str, grams: int, by: str, ref: str) -> None:
         """小炭炉开火做饭自动从现有闷炭/木炭批次扣减克数；绝不凭空生炭，同餐 50 分钟窗内不重复双扣。"""
@@ -2140,11 +2172,10 @@ class ThingStore:
 
     # ---------- 风吹日晒雨淋（weathering.py）：现算，不存 ----------
 
-    def _weathering(self, items: dict, flat: datetime.datetime) -> None:
+    def _weather_helpers(self, flat: datetime.datetime):
         weathers = self._weathers(flat)
         known = sorted(weathers)
         homes = self.world.homes() if self.world is not None and hasattr(self.world, "homes") else []
-        here = self.world.home_at(flat) if homes else ""
 
         def day_text(day):
             key = day.isoformat()
@@ -2163,13 +2194,21 @@ class ThingStore:
                     found = row["home"]
             return str(found)
 
+        return day_text, home_at
+
+    def _weathering(self, items: dict, flat: datetime.datetime) -> None:
+        homes = self.world.homes() if self.world is not None and hasattr(self.world, "homes") else []
+        here = self.world.home_at(flat) if homes else ""
+        day_text, home_at = self._weather_helpers(flat)
+        fire_lit_fn = self._fire_lit_fn(flat)
+
         for item in items.values():
             if is_ended(item) is not None:
                 continue
             if here and self.where_of(item, flat) not in ("", here):
                 continue
             food = cat_of(item) == CAT_FOOD
-            state = weathering.simulate(item, flat, day_text, home_at, food=food)
+            state = weathering.simulate(item, flat, day_text, home_at, food=food, fire_lit_fn=fire_lit_fn)
             text = weathering.describe(state, food=food)
             if not text:
                 continue
@@ -2889,7 +2928,7 @@ class ThingStore:
         if oil_ml <= 0:
             notes.append(
                 '【家里食用油已用光：现余 0 毫升！】cook 严禁填 "fry"（只能选 boil 水煮/熬煮、steam 清蒸、roast 烘烤或 cold 凉拌），'
-                "也做不了「油封」保鲜！须先买回或领到食用油并在 items 写 new 入库。"
+                "也做不了「油封」保鲜！须先买回或领到食用油并在 things 写 new 入库。"
             )
         elif oil_ml <= 60:
             notes.append("【食用油快见底了：现余 %s】省着用，不够 60 毫升时做不成「油封」保鲜。" % fmt_amount(oil_ml, "毫升"))

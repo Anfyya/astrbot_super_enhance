@@ -220,8 +220,19 @@ def _has_supply_things(item: dict) -> bool:
 
 
 def _is_store_kerosene(item: dict) -> bool:
+    if not item.get("kerosene"):
+        return False
     orig = item.get("origin") if isinstance(item.get("origin"), dict) else {}
-    return bool(item.get("kerosene")) and str(orig.get("text") or "") == STORE_KEROSENE_TWIST
+    if str(orig.get("text") or "") == STORE_KEROSENE_TWIST:
+        return True
+    if str(item.get("kerosene_source") or "").strip().lower() == "store":
+        return True
+    money_ops = item.get("money") if isinstance(item.get("money"), list) else []
+    has_store_pay = any(
+        isinstance(op, dict) and str(op.get("kind") or "").strip().lower() in ("spend", "debt_add")
+        for op in money_ops
+    )
+    return bool(has_store_pay and not _has_supply_things(item))
 
 
 def _store_refills(world, start: datetime.datetime, end: datetime.datetime) -> list[datetime.datetime]:
@@ -323,7 +334,7 @@ def _oil_amount(left: float) -> str:
 def _lamp_line(left: float, for_step: bool) -> str:
     """煤油还剩多少的那句：说桶里还剩几成；补写再给一句大概能点多久（一桶够点二十来个钟头）。"""
     if left <= 0.05:
-        return "家里的煤油点完了，天黑以后只剩一截蜡烛头，比油灯还暗、点不了多久，省着点、早点睡；等补给船来了去领"
+        return "家里的煤油点完了，天黑以后只剩一截蜡烛头，比油灯还暗、点不了多久，省着点、早点睡；等补给船来了去领，或去坡上杂货铺打一壶煤油"
     line = "家里的煤油" + _oil_amount(left)
     if not for_step:
         return line + ("，省着点" if left < 2 else "")

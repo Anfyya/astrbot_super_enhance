@@ -29,8 +29,8 @@ from .living_rules import STEP_LIFECYCLE_RULES
 from .money import SEASIDE_PRICE_GUIDE, normalize_step_money_list, validate_step_segments_money
 from .things import FactConflict
 from .things import (CAT_FOOD, CAT_ITEM, END_STEPS, ITEM_END_STEPS, ITEM_MID_STEPS, ITEM_START_STEPS, KEEPS, KINDS, MEASURED_KINDS, MID_STEPS,
-                     SPOTS, START_STEPS, _same_name, cat_of, checked_place, had_before, is_ended, norm_kind, norm_state, spots_for,
-                     norm_step, split_keep, step_no, MAX_INSIDE)
+                     SPOTS, START_STEPS, _same_name, cat_of, checked_place, had_before, is_charcoal, is_ended, is_strict_qty,
+                     norm_kind, norm_state, spots_for, staple_of, norm_step, split_keep, step_no, MAX_INSIDE)
 from . import weather as weather_mod
 from . import weathering
 from . import supply as supply_mod
@@ -140,15 +140,16 @@ STEP_SYSTEM_TEMPLATE = """{base_system}
    - 每一步都写 step：这件事发生在这段分步里的第几步（从 1 数，例如第 2 步「下锅炒」用掉鸡蛋、做好蛋炒饭就写 2，第 3 步吃完就写 3）。这段要是中途被打断，只有做到了的那几步才算数。
    - 这一次里先做好、后面又吃掉的菜，吃饭那段也要写一步：id 填它的临时代号（n1 这种），what 写吃完了或吃了一部分，left 写还剩多少（比如给主人留的那份）。
    - 端给主人的（送到主人跟前、递到他手上的那一份）：那一步的 place 写 {{"area": "主人", "at": "跟前", "detail": ""}}（at 一律写「跟前」，递到手上、搁在手边也写跟前；新做好直接端上去的，做好那步就这么写；已有的写一步「挪地方」）。程序见到放在主人跟前的，一个小时后当主人吃完了，所以只端了一部分上去、剩下的还在原处的，端上去的那份别写在原来那件上；摆在桌上大家一起吃的、留给主人温着还没端过去的，area 照常写屋子。
-   - 做饭用料先用家里有的，先用快不行了的；新鲜的料（豆腐、菜、鱼肉、蛋、水果）家里没有，就在做饭之前排一段去买回来。米面油盐、调料干货、腌菜这些按量记的（清单里写着「还剩多少克 / 毫升」），用到的也要写：写进那盘菜的 from，再各写一步「用掉一部分」，used 写这次用了多少（「250 克」「3 克」「15 毫升」，照这道菜平常的用量）；标着「快用完了」的，排一段去买（买回来的写 amount，例如「5 斤」「500 毫升」）。海边船屋的食材和常备调料已在清单里列明，严禁填「原来就有」；家里没有的调料食材须先排一段去集市或杂货铺买回来入库（非海边住处若头一回用到常备调料才可记「原来就有」）。两人一起做的饭、一起吃的饭，things 写在其中一个人那段里。
+   - 做饭用料先用家里有的，先用快不行了的；新鲜的料（豆腐、菜、鱼肉、蛋、水果）家里没有，就在做饭之前排一段去买回来。米面油盐、调料干货、腌菜这些按量记的（清单里写着「还剩多少克 / 毫升」），用到的也要写：写进那盘菜的 from，再各写一步「用掉一部分」，used 必须填阿拉伯数字+单位（如 `"250克"`、`"3克"`、`"15毫升"`，严禁写 `"少许"`、`"约五分之一"`、`"小半"` 等模糊词）；标着「快用完了」的，排一段去买（买回来的 amount 与 left 也必须填数字+单位，如 `"5斤"`、`"500毫升"`）。海边船屋的食材和常备调料已在清单里列明，严禁填「原来就有」；家里没有的调料食材须先排一段去集市或杂货铺买回来入库（非海边住处若头一回用到常备调料才可记「原来就有」）。两人一起做的饭、一起吃的饭，things 写在其中一个人那段里。
    - 清单里写了口感和保鲜的：凡落在「按时间算已经坏了、还没说扔的」里的（馊掉/长毛/发臭），以及已经反复回锅两三回、标着「熬咸了/又咸又浓/没什么味了/菜都黄烂了」的剩菜，**不要再回锅热去给人吃，更绝不可端到主人跟前，发现坏了或难吃到没法吃就该写「坏了扔了」扔掉，给主人吃就现做一碗新的**；还没坏、只是凉了的剩菜才热一热（写一步「热了一下」），发硬的饭炒成炒饭，蔫了的菜泡会儿冷水，熟过头的香蕉做成饼，串了味的拿去做红烧、麻辣这种重口的菜；标着有毒的（土豆发芽发绿）扔掉。放东西也照常理：剩菜盖好收着，挪到矮桌/跟前就别再挂着「灶上温着」；气味冲的（葱蒜、卤味、鱼）跟豆腐、米饭、点心分开放或者都盖好；生肉包好，跟熟食分开放；炸的晾凉了再盖。
    - 段内是否开火（stove，三选一）：每段填 `"stove": ""`（没点火：备菜、洗碗、吃饭、聊天、外出、睡觉填 `""`；仅站在灶边商量菜单也没点火）、`"charcoal"`（船屋灶台小炭炉真点着开火做饭、烧水、热菜、煎蛋）或 `"wood"`（船屋柴炉真点着烧柴取暖、烘烤衣物/鱼干或烟熏；穗织住处统一填 `""`）。小炭炉烧闷炭/木炭由程序按顿自动从家里闷炭库存扣减，不用在 items 里手写扣炭；若闷炭已用光为 0，在弄回新炭之前小炭炉点不着火（`stove` 不能填 `"charcoal"`）。**闷炭金贵稀缺，取得全看运气与时机、不可把炭当成随手就有**：光烧普通枯枝只会化成白灰；煮盐棚并非天天生火开锅，就算开锅那点锅底余炭也多半自留或早被镇上别人家挑水换光，跑一趟可能吃闭门羹/扑空，真碰巧赶上缺人手挑海水添柴累半天也至多换回一小捧到半小罐（约 `300~500 克`）；澡堂隔几天才烧一回且多杂枝，去搭把手未必有余炭、偶有剩也只换一小把（约 `150~250 克`）；柴料场买炭也可能遇上紧俏卖空；自家柴炉得专烧实木硬木头、未化灰时拿火钳夹进陶罐闷灭才能攒出零星一两小块（约 `100~200 克`，须在 from 填所烧硬柴编号，items 写 new 入库）。因炭来之不易，留给灶台做饭烧水用，非万不得已不拿小炭炉干烧取暖。点柴炉（`stove="wood"`）时记得消耗干柴（items 记用了哪捆柴），冷柴炉烘不干鱼也熏不熟东西。给还在睡或不在家的主人留饭时，必须盖好保温（熬粥、饭团盖在锅里温着，汤面只留汤头等主人醒了现下面条，绝不把煮好的汤面敞口摆在矮桌上泡几个钟头）。
    - kind 从这几类里挑：{kinds}；keep（怎么放）从这几样里挑：{keeps}；spot（放在哪，管冷热）从这几样里挑：{spots}。
 19. **被打断的事后来怎么样了**：上面「被打断、还没交代后来怎么样的事」里每一件，在 stopped_results 里用编号写一句后来怎么样了：撂下不做了、交给谁接着做完了、等手上的事忙完回头接着做完了、或者赶紧几下做完了，挑合情理的写。只写这个人自己怎么处理这件事，不替别人定事实：别人那件做没做完、做出了什么，以世界线上别人那段写的为准（标着「做到……先放下了」的就是没做完），拿不准就写撂下了或者等回头再说。要和你这次排的段对得上：写了回头接着做，就把接着做的那段排上；写了交给对方，对方那段就是接着做这件事。没列出来的不写。
 20. **家里的东西**（吃的以外）：上面「家里的东西」是此刻家里有的（编号、样子、在哪、在谁手上）。段里做了、用了、挪了、交给别人了、接着做了一截的东西，写进这段的 items（没动到就是空数组）：
    只是拿来读、翻看、摊开看一眼，之后原样放回去，地方、样子、数量都没变的，不算动到它，不写 items；别为了让校验通过硬编一条物品变化。船屋里隔音有限，主人睡觉时严禁在船舱里或头顶甲板上敲铁、凿木头、叮当拆修铁器。
-   - 已有的写 id、what（挪地方 / 交给 / 用了 / 清点 / 做了一截 / 做好了 / 变了样 / 送人了 / 丢了 / 坏了扔了 / 用完了）、place、holder（交到谁手上）、state（这段做完它什么样，比如「织到两尺长」）；消耗品可顺带写 amount（清点数量）/ used（本次用量）/ left（剩余数量）。接着做没做完的那件（比如接着织那条围巾），就是清单里那一件，写「做了一截」或「做好了」，不要另建一件。清单里标着「已做好」的已经做完了，不要再排接着做它，也别给它写「做了一截」「做好了」；想再做一样的，就另起一件新的。
-   - 新做出来的、买回来的、捡到的写 new（临时代号 x1、x2……，这一次里每件一个，两个人、几段之间也不重复：丛雨那段用了 x1，亚托莉那段的新东西就从 x2 起）、name（叫得出区别的名字，例如「兔子窗花」）、kind（它是什么，一个词：窗花、围巾、鱼漂……；现金收支一律记在 `money` 里，严禁把钱当成新 `items`（`kind="钱"`）新建）、look（样子）、owner（归谁）、origin（哪来的，如「杂货铺」「废铁站」「海滩漂流物」）、from（用哪几件原料做的，没有留空）、what（开始做 / 做好了 / 买回来 / 收到 / 捡到）、amount（有明确数量的可填，如「1捆」「3张」）、place、state。严禁凭空编造旧东西或写「原来就有」。
+   - 已有的写 id、what（挪地方 / 交给 / 用了 / 清点 / 做了一截 / 做好了 / 变了样 / 送人了 / 丢了 / 坏了扔了 / 用完了）、place、holder（交到谁手上）、owner（仅在交给别人或改变归属时填新拥有者，如 "master" / "napcat" / "napcat2" / "共用"）、state（这段做完它什么样，比如「织到两尺长」）；消耗品可顺带写 amount（清点数量）/ used（本次用量）/ left（剩余数量）。接着做没做完的那件（比如接着织那条围巾），就是清单里那一件，写「做了一截」或「做好了」，不要另建一件。清单里标着「已做好」的已经做完了，不要再排接着做它，也别给它写「做了一截」「做好了」；想再做一样的，就另起一件新的。
+   - 新做出来的、买回来的、捡到的写 new（临时代号 x1、x2……，这一次里每件一个，两个人、几段之间也不重复：丛雨那段用了 x1，亚托莉那段的新东西就从 x2 起）、name（叫得出区别的名字，例如「兔子窗花」）、kind（它是什么，一个词：窗花、围巾、鱼漂……；捡/劈来烧柴炉的木柴 kind 必须填 `"燃柴"` / `"薪柴"` / `"引火料"`，修船/手工木料填 `"漂流木料"` / `"木料"`，仅闷炭/木炭填 `"燃料"`，严禁把木柴写成模糊的 `"燃料"`；现金收支一律记在 `money` 里，严禁把钱当成新 `items`（`kind="钱"`）新建）、look（样子）、owner（最终归谁所有/谁穿谁用：填 "master" / "napcat" / "napcat2" / "共用"；替主人或别人买回来、做给谁穿用的衣物或物品，owner 一律填实际拥有者或受赠人如 "master"，严禁只因是谁跑腿买回或暂时拿着就误填成跑腿人）、origin（哪来的，如「杂货铺」「废铁站」「海滩漂流物」）、from（用哪几件原料做的，没有留空）、what（开始做 / 做好了 / 买回来 / 收到 / 捡到）、amount（凡燃柴/闷炭等燃料必填数字+单位如 `"1捆"`、`"400克"`，严禁写 `"两捆"`、`"一抱"`、`"约五分之一捆"` 等中文数字或模糊词）、place、state。严禁凭空编造旧东西或写「原来就有」。
+   - 已有燃柴/闷炭消耗或清点时，填的 `used` / `left` / `amount` 同样必须为阿拉伯数字+单位（如 `"0.25捆"`、`"1.1捆"`、`"200克"`；`"用完了"` 时 `left` 填 `""`），严禁写 `"小半捆"`、`"约五分之一捆"`、`"1捆半"` 等中文分数或模糊说法。
    - 上面写了字、画了东西的（给主人留的纸条、信、便笺、清单、贺卡、画）：look 里把上面写的原话一字不差地写出来，用「」括起来；画的写清楚画了什么。例如 look 写「黄纸条，铅笔写的：『主人，粥在灶上温着，亚托莉去码头了，中午前回来』」，别只写「一张写给主人的纸条」。这段的 steps 里写到她写纸条时也用这句原话。后来谁拿起来看、念给主人听，都照这句说，不能另编。
    - 封着送来的（寄来的信、没拆的包裹、捆好的箱子）：look 写外面看得到的（信封、邮戳、收信人、包裹多大多沉），里面是什么写进 inside——信写原话，用「」括起来；包裹、箱子写装了哪些东西。state 写「封着没拆」。这段的 doing、steps、result 里写到它时，照外面的样子写。拆开留到聊天里，那时候她们照 inside 说。
    - place 和第 18 条一样拆开写，例如 {{"area": "卧房", "at": "针线笸箩", "detail": ""}}、{{"area": "堂屋", "at": "书架", "detail": "第二格"}}。
@@ -194,12 +195,12 @@ STEP_SYSTEM_TEMPLATE = """{base_system}
 - `"training"`: 字符串（练在练的事填 `"#编号"`，否则 `""`）；`"intent"`: 字符串（做各自的打算填 `"i编号"`，否则 `""`）。
 - `"from"`: 字符串必填（只准填候选短编号如 `"T1"`/`"G1"`/`"P1"`/`"I1"`/`"F1"`/`"A1"`，或枚举 `"routine"` / `"intent"` / `"promise"` / `"rule"` / `"training"` / `"continue:前段事"` / `"self"`；严禁留空或填栏目标题）。同一个人同一次补写里，同一条候选短编号最多只准用一次，别重复套同一条。
 - `"mood"`: 字符串必填（非空，写明什么心情及具体由头）。
-- `"outfit"`: 字符串必填（非空，写明这段她身上实际穿什么、披裹什么、穿没穿鞋袜，如 `"奶白色水手领长袖连衣裙，冷得把旧毛毯披在肩上，光脚缩在炉边"` 或 `"黑色和服薄披肩配绀紫抹胸常服与绑腿木屐"`。**严守真实家底与穿搭连贯**：只能穿人设自带的日常常服/睡衣，或上方「家里的东西」里真在当前住处的衣物铺盖；同日连贯时段未换衣时须延续上一段穿搭，严禁平白无故突然跳换成人设里的「校服」「女仆装/复活后常服」等备用服装（只有起床穿常服、临睡换睡衣或买回新衣真换上时才变动）；海边船屋开局没有厚冬衣和厚棉被，严禁凭空编出棉袄/大衣/毛衣/围巾/厚棉被，也严禁给衣物铺盖写 `what="原来就有"`——冷了只能先裹现有薄被毛毯、生铁桶柴炉烤火，或正经排一段去集市/半淹商店街旧衣铺买换回来记入 `items` 后才能穿上）。
+- `"outfit"`: 字符串必填（非空，写明这段她身上实际穿什么、披裹什么、穿没穿鞋袜，如 `"奶白色水手领长袖连衣裙，冷得把旧毛毯披在肩上，光脚缩在炉边"` 或 `"黑色和服薄披肩配绀紫抹胸常服与绑腿木屐"`。**严守真实家底与穿搭连贯**：只能穿人设自带的日常常服/睡衣，或上方「家里的东西」里真在当前住处且归本人或「共用」的衣物铺盖（标着「归主人」等明确归属他人的衣物严禁自己穿走）；同日连贯时段未换衣时须延续上一段穿搭，严禁平白无故突然跳换成人设里的「校服」「女仆装/复活后常服」等备用服装（只有起床穿常服、临睡换睡衣或买回新衣真换上时才变动）；海边船屋开局没有厚冬衣和厚棉被，严禁凭空编出棉袄/大衣/毛衣/围巾/厚棉被，也严禁给衣物铺盖写 `what="原来就有"`——冷了只能先裹现有薄被毛毯、生铁桶柴炉烤火，或正经排一段去集市/半淹商店街旧衣铺买换回来记入 `items` 后才能穿上）。
 - `"things"`（食物变动数组，没动食物填 `[]`；凡买菜买鱼、赶海收蟹、做饭、热菜、吃饭、保鲜加工必填）：
   - 动已有食物：`{{"id": "w编号或n代号", "what": "用掉一部分|用完了|吃了一部分|吃完了|挪地方|切开了|热了一下|轻腌|重盐腌|糖渍|醋泡|酱渍|油封|灰沙埋|晒上了|炉烘|熏上了|丢了|坏了扔了", "used": "10毫升", "left": "剩余量(仅用完/吃完/扔了必填\"\"；挪地方或热菜未吃须保留余量如\"一小碗\")", "into": "n1(可选)", "place": {{"area": "船舱", "at": "矮桌", "detail": ""}}, "keep": "罩着放", "spot": "屋里", "state": "整的", "step": 1}}`
   - 新食物入库：`{{"new": "n1", "name": "番薯焖鱼", "kind": "熟菜炒菜", "what": "做好了|买回来|收到（海边禁填原来就有）", "cook": "boil|fry|steam|roast|cold（what=做好了时必填！无食用油时严禁填fry；生鲜/买回填\"\"）", "from": ["w1"], "origin": "集市鱼摊(买回/收到时填)", "amount": "500克(按量记的食材调料填)", "left": "一锅", "place": {{"area": "船舱", "at": "灶上", "detail": "锅里"}}, "keep": "罩着放", "spot": "灶上温着", "step": 2}}`
 - `"items"`（非食物物品变动数组，没动物品填 `[]`；凡换物、捡柴、换闷炭/夹闷炭、筛草木灰、做手工、写纸条必填，以物易物须同时写消耗旧物 `id` 与换回新物 `new`；**同一批已有物件只是搬动、拆捆、摊晾、码架或取用一部分时，必须沿用已有编号 `id` 写 `挪地方/用了/变了样`，严禁用 `new` 再复制一份同名物件**；描述铁桶柴炉时用「柴火/炉膛红灰」，别混写成「炭火」）：
-  - 动已有物品：`{{"id": "p编号或x代号", "what": "挪地方|交给|用了|清点|做了一截|做好了|变了样|送人了|丢了|坏了扔了|用完了", "used": "1捆(可选)", "left": "剩余(可选)", "place": {{"area": "船舱", "at": "储物格", "detail": ""}}, "holder": "", "state": "做完后的状态", "step": 1}}`
+  - 动已有物品：`{{"id": "p编号或x代号", "what": "挪地方|交给|用了|清点|做了一截|做好了|变了样|送人了|丢了|坏了扔了|用完了", "used": "1捆(可选)", "left": "剩余(可选)", "place": {{"area": "船舱", "at": "储物格", "detail": ""}}, "holder": "", "owner": "改归属时才填(如master)", "state": "做完后的状态", "step": 1}}`
   - 新物品入库：`{{"new": "x1", "name": "闷炭", "kind": "燃料", "look": "小半罐零碎硬木炭", "owner": "共用", "origin": "煮盐棚帮工换回", "from": [], "what": "开始做|做好了|买回来|收到|捡到", "amount": "400克", "place": {{"area": "船舱", "at": "灶台边", "detail": "陶罐里"}}, "state": "干燥盖严", "step": 2}}`
 - `"money"`（钱财进出与赊账数组，必填；没动钱填 `[]`，`"闲着"`/`"睡觉"` 段必填 `[]`）：
   - 花钱：`{{"kind": "spend", "account": "napcat2", "amount": 12, "counterparty": "集市鱼摊", "what": "买了两条海鱼", "step": 1}}`
@@ -1083,7 +1084,7 @@ class LifeStep:
                 place = ""
             step.update({"what": what, "place": place, "holder": clean_text(raw.get("holder"), 12),
                          "state": clean_text(raw.get("state"), 40), "step": step_no(raw.get("step")) or ""})
-            for field in ("amount", "used", "left", "keep", "spot"):
+            for field in ("amount", "used", "left", "keep", "spot", "purpose"):
                 if raw.get(field) not in (None, ""):
                     step[field] = clean_text(raw[field], 30)
             conditions = weathering.clean_conditions(raw.get("weather"))
@@ -2301,11 +2302,33 @@ class LifeStep:
             or (comp_ref is not None and comp_ref.safe("is_protected_intent", str(x.get("id") or ""), default=False))
         }
 
-        from .things import is_charcoal
+        def _valid_place_struct(val) -> bool:
+            if isinstance(val, dict):
+                return bool(clean_text(val.get("area"), 20) and clean_text(val.get("at"), 20))
+            if isinstance(val, str):
+                parts = [p.strip() for p in val.split("·") if p.strip()]
+                return len(parts) >= 2
+            return False
+
+        def _wood_ready_weather(eff: dict, is_new: bool) -> bool:
+            w_cond = weathering.clean_conditions(eff.get("weather"))
+            if w_cond.get("split") is False:
+                return False
+            if is_new:
+                return (
+                    w_cond.get("fuel_state") not in ("wet", "drying")
+                    and w_cond.get("wet", 0.0) < 0.25
+                    and w_cond.get("fuel_wet", 0.0) <= 0.25
+                )
+            return w_cond.get("fuel_state") == "ready" or (
+                w_cond.get("wet") is not None and w_cond["wet"] < 0.25 and w_cond.get("fuel_wet", 0.0) <= 0.25
+            )
 
         errors: list[str] = []
         batch_food_keys: set[str] = set()
+        batch_measured_food_keys: set[str] = set()
         batch_item_keys: set[str] = set()
+        batch_fuel_keys: set[str] = set()
         first_charcoal_at: datetime.datetime | None = None
         first_wood_at: datetime.datetime | None = None
         first_oil_at: datetime.datetime | None = None
@@ -2377,7 +2400,14 @@ class LifeStep:
                             batch_any["food_step"] = True
                             if eff.get("new"):
                                 batch_any["new_food"] = True
-                                batch_food_keys.add(str(eff["new"]).strip())
+                                food_key = str(eff["new"]).strip()
+                                batch_food_keys.add(food_key)
+                                food_probe = {
+                                    "cat": CAT_FOOD, "name": eff.get("name"), "kind": eff.get("kind"),
+                                    "stages": [{"amount": eff.get("amount"), "left": eff.get("left")}],
+                                }
+                                if staple_of(food_probe) is not None:
+                                    batch_measured_food_keys.add(food_key)
                                 if str(eff.get("kind") or "") == "干货调料粮食" and store is not None and store._is_edible_oil({"cat": CAT_FOOD, "name": eff.get("name"), "kind": "干货调料粮食"}):
                                     if first_oil_at is None or cursor < first_oil_at:
                                         first_oil_at = cursor
@@ -2385,16 +2415,27 @@ class LifeStep:
                         if isinstance(eff, dict):
                             if eff.get("new"):
                                 batch_any["new_item"] = True
-                                batch_item_keys.add(str(eff["new"]).strip())
-                                item_probe = {"cat": CAT_ITEM, "name": eff.get("name"), "kind": eff.get("kind")}
+                                item_key = str(eff["new"]).strip()
+                                batch_item_keys.add(item_key)
+                                kd_str = clean_text(eff.get("kind"), 10)
+                                purp_str = str(eff.get("purpose") or "").strip()
+                                item_probe = {"cat": CAT_ITEM, "name": eff.get("name"), "kind": kd_str}
                                 if is_charcoal(item_probe):
+                                    batch_fuel_keys.add(item_key)
                                     if first_charcoal_at is None or cursor < first_charcoal_at:
                                         first_charcoal_at = cursor
-                                if weathering.fuel_item(item_probe) or str(eff.get("kind") or "") == "燃柴":
-                                    if first_wood_at is None or cursor < first_wood_at:
-                                        first_wood_at = cursor
+                                if kd_str in weathering.STOVE_WOOD_KINDS or purp_str == "fuel":
+                                    batch_fuel_keys.add(item_key)
+                                    if _wood_ready_weather(eff, True) and (first_wood_at is None or seg_end < first_wood_at):
+                                        first_wood_at = seg_end
                             else:
                                 batch_any["used_item"] = True
+                                tid_str = str(eff.get("id") or "").strip()
+                                hit_item = shelf.find(tid_str) if (shelf is not None and tid_str) else None
+                                is_wood_ref = tid_str in batch_fuel_keys or (hit_item is not None and weathering.fuel_item(hit_item) and not is_charcoal(hit_item))
+                                if is_wood_ref and _wood_ready_weather(eff, False):
+                                    if first_wood_at is None or seg_end < first_wood_at:
+                                        first_wood_at = seg_end
                 cursor = seg_end
             kept_by_bot[bot] = (bot_kept, cursor, until)
 
@@ -2554,10 +2595,8 @@ class LifeStep:
                             errors.append(f"{tag} things[{t_i}]（{nm}）：new 食物的 what 必须填 {allowed_food_hint}（当前={eff.get('what')!r}）")
                         elif seaside and what == "原来就有":
                             errors.append(f"{tag} things[{t_i}]（{nm}）：海边船屋食物与调料已在清单列明，严禁填 what=\"原来就有\"（须通过做好了/买回来/收到获取）")
-                        try:
-                            checked_place(eff.get("place"), True, nm or "新食物")
-                        except Exception as pe:
-                            errors.append(f"{tag} things[{t_i}]（{nm}）：place 格式不合法（须填 {{\"area\": ..., \"at\": ...}}）：{pe}")
+                        if not _valid_place_struct(eff.get("place")):
+                            errors.append(f"{tag} things[{t_i}]（{nm}）：place 格式不合法（须填 {{\"area\": ..., \"at\": ...}} 且均非空）")
                         if what == "做好了":
                             ck = str(eff.get("cook") or "").strip().lower()
                             if ck not in ("boil", "fry", "steam", "roast", "cold"):
@@ -2586,18 +2625,48 @@ class LifeStep:
                             errors.append(f"{tag} things[{t_i}]（{tid}）：做 what=\"炉烘\" 时该段 stove 必须填 \"wood\"")
                         if what == "热了一下" and seaside and raw.get("at_home") is True and stove_val not in ("charcoal", "wood"):
                             errors.append(f"{tag} things[{t_i}]（{tid}）：船屋回锅热食（what=\"热了一下\"）时该段 stove 必须填 \"charcoal\" 或 \"wood\"")
+                    used_txt = str(eff.get("used") or "").strip()
+                    if used_txt and not is_strict_qty(used_txt):
+                        errors.append(f"{tag} things[{t_i}]：used={used_txt!r} 必须为纯数字+单位（如 \"15毫升\"、\"200克\"），严禁模糊中文或分数")
+                    is_measured_food = (
+                        (eff.get("new") and str(eff["new"]).strip() in batch_measured_food_keys)
+                        or (not eff.get("new") and (
+                            str(eff.get("id") or "").strip() in batch_measured_food_keys
+                            or (shelf_food is not None and staple_of(shelf_food) is not None)
+                        ))
+                    )
+                    if is_measured_food and what not in ("用完了", "吃完了", "丢了", "坏了扔了"):
+                        for qk in ("amount", "left"):
+                            qv = str(eff.get(qk) or "").strip()
+                            if qv and not is_strict_qty(qv):
+                                errors.append(f"{tag} things[{t_i}]：按量记食材 {qk}={qv!r} 必须为纯数字+单位（如 \"500克\"、\"15毫升\"），严禁模糊中文或分数")
 
                 for i_i, eff in enumerate(raw.get("items") or [], 1):
                     if not isinstance(eff, dict):
                         errors.append(f"{tag} items[{i_i}]：必须是对象")
                         continue
                     what = norm_step(eff.get("what"), CAT_ITEM)
+                    used_txt = str(eff.get("used") or "").strip()
+                    if used_txt and not is_strict_qty(used_txt):
+                        errors.append(f"{tag} items[{i_i}]：used={used_txt!r} 必须为纯数字+单位（如 \"0.25捆\"、\"200克\"），严禁模糊中文或分数")
                     if eff.get("new"):
                         bot_has_new_item = True
                         nm = clean_text(eff.get("name"), 30)
                         kd = clean_text(eff.get("kind"), 10)
+                        purp = str(eff.get("purpose") or "").strip()
                         if not nm or not kd:
                             errors.append(f"{tag} items[{i_i}]：new 物品必须同时填非空 name 与 kind")
+                        is_new_charcoal = is_charcoal({"cat": CAT_ITEM, "name": nm, "kind": kd})
+                        is_new_wood = kd in weathering.STOVE_WOOD_KINDS or purp == "fuel"
+                        if kd == "燃料" and not is_new_charcoal:
+                            errors.append(f"{tag} items[{i_i}]（{nm}）：炉柴 kind 必须明确填 \"燃柴\" / \"薪柴\" / \"引火料\"（仅闷炭/木炭填 \"燃料\"），严禁用模糊的 \"燃料\" 建木柴")
+                        if is_new_charcoal or is_new_wood:
+                            amt_txt = str(eff.get("amount") or "").strip()
+                            if not amt_txt or not is_strict_qty(amt_txt):
+                                errors.append(f"{tag} items[{i_i}]（{nm}）：新入库燃料/燃柴必须填精确数字+单位的 amount（如 \"1捆\"、\"400克\"），严禁留空或写中文模糊量词")
+                            left_txt = str(eff.get("left") or "").strip()
+                            if left_txt and not is_strict_qty(left_txt):
+                                errors.append(f"{tag} items[{i_i}]（{nm}）：新入库燃料 left={left_txt!r} 必须为纯数字+单位")
                         if what not in ITEM_START_STEPS:
                             allowed_item_hint = "开始做/做好了/买回来/收到/捡到" if seaside else "开始做/做好了/买回来/收到/捡到/原来就有"
                             errors.append(f"{tag} items[{i_i}]（{nm}）：new 物品的 what 必须填 {allowed_item_hint}（当前={eff.get('what')!r}）")
@@ -2610,10 +2679,8 @@ class LifeStep:
                                 f"{tag} items[{i_i}]（{nm}）：置办过冬厚衣/棉被属于家里大额开销，未经当家主人发话拍板（该段未绑定主人确认的 intent 且未与 master 同行）"
                                 f"严禁擅自买回入库！本段请只写去打听价钱行情，并在顶层 ask_master 填 kind=\"decision\" 发消息请主人拿主意"
                             )
-                        try:
-                            checked_place(eff.get("place"), True, nm or "新物品")
-                        except Exception as pe:
-                            errors.append(f"{tag} items[{i_i}]（{nm}）：place 格式不合法（须填 {{\"area\": ..., \"at\": ...}}）：{pe}")
+                        if not _valid_place_struct(eff.get("place")):
+                            errors.append(f"{tag} items[{i_i}]（{nm}）：place 格式不合法（须填 {{\"area\": ..., \"at\": ...}} 且均非空）")
                     else:
                         bot_has_used_item = True
                         tid = str(eff.get("id") or "").strip()
@@ -2626,6 +2693,17 @@ class LifeStep:
                             errors.append(f"{tag} items[{i_i}]：id={tid!r} 在当前可用物品清单或本轮新建代号中不存在（或早已用完丢弃）")
                         if what not in ITEM_MID_STEPS + ITEM_END_STEPS:
                             errors.append(f"{tag} items[{i_i}]（{tid}）：已有物品的 what={eff.get('what')!r} 不合法")
+                        is_fuel = tid in batch_fuel_keys or (
+                            shelf_hit is not None and (is_charcoal(shelf_hit) or weathering.fuel_item(shelf_hit))
+                        )
+                        if is_fuel:
+                            if what in ITEM_END_STEPS and str(eff.get("left") or "").strip():
+                                errors.append(f"{tag} items[{i_i}]（{tid}）：what=\"{what}\" 时 left 必须填空串 \"\"")
+                            elif what not in ITEM_END_STEPS:
+                                for qk in ("amount", "left"):
+                                    qv = str(eff.get(qk) or "").strip()
+                                    if qv and not is_strict_qty(qv):
+                                        errors.append(f"{tag} items[{i_i}]（{tid}）：燃料 {qk}={qv!r} 必须为纯数字+单位（如 \"0.75捆\"、\"200克\"），严禁模糊中文或分数")
 
             # 按池子条目的结构化 link 核对是否漏写对应的段属性
             for orig in bot_resolved_origins:
@@ -2969,6 +3047,10 @@ class LifeStep:
             chilly = freezing_cold or (min_temp <= 13.5) or (evening_or_night and min_temp <= 15.5) or (max_rain >= 0.3 and min_temp <= 16.0)
             th_win = weather_mod.cabin_temp_info(win_start, self.world, self._weather_text_of(), self.home)
             cabin_cool = th_win["mode"] != "burning" and th_win["delta"] < 2.5
+            wood_ways = (
+                "别老只跑坡上薪柴地，按海边地图换着路子弄柴：去坡上薪柴地拾枯枝或帮镇民修枝清道分柴、"
+                "去船坞帮老船匠收场换干净实木边料与刨花，或去坡上柴料场与干燥棚买柴、以物换柴、帮工换柴"
+            )
             if freezing_cold:
                 if cabin_cool and not recent_wood:
                     if inv["wood_bundles"] > 0:
@@ -2979,13 +3061,13 @@ class LifeStep:
                     else:
                         bed_word = "被褥" if ctx.get("has_thick_quilt") else "薄被和旧毛毯"
                         nudges.append(
-                            "- 严寒断柴转折：屋外低至约 %.0f℃、船舱仅约 %.0f℃，冻得想点铁桶柴炉，去摸柴架却发现干柴烧空了——白天无大雨大雪就赶紧去坡上薪柴地或船坞背干柴回来（items 写 new 燃柴入库）再生炉；夜深了就紧塞门缝裹紧%s，记着明早头一件事去拾柴。"
-                            % (min_temp, th_win["cabin"], bed_word)
+                            "- 严寒断柴转折：屋外低至约 %.0f℃、船舱仅约 %.0f℃，冻得想点铁桶柴炉，去摸柴架却发现干柴烧空了——白天无大雨大雪就%s（items 写 new 燃柴入库）再生炉；夜深了就紧塞门缝裹紧%s，记着明早头一件事去弄柴。"
+                            % (min_temp, th_win["cabin"], wood_ways, bed_word)
                         )
                 elif 0 < inv["wood_bundles"] < 1.5 and 7 <= win_start.hour <= 16 and max_rain < 0.5:
                     nudges.append(
-                        "- 入冬囤柴提醒：天冷早晚都要烧铁桶柴炉，家里干柴只剩 %.2g 捆不够烧两天了——趁白天没雨雪，顺手排一段去坡上薪柴地或船坞多背点干柴囤进仓棚（items 写 new 燃柴入库）。"
-                        % inv["wood_bundles"]
+                        "- 入冬囤柴提醒：天冷早晚都要烧铁桶柴炉，家里干柴只剩 %.2g 捆不够烧两天了——趁白天没雨雪，顺手排一段%s（items 写 new 燃柴入库，别总去同一个地方）。"
+                        % (inv["wood_bundles"], wood_ways)
                     )
                 if not ctx.get("has_winter_gear") and 8 <= win_start.hour <= 16 and max_rain < 1.0:
                     nudges.append(
@@ -2999,8 +3081,8 @@ class LifeStep:
                     )
                 else:
                     nudges.append(
-                        "- 天凉缺柴转折：这阵子船舱发冷（约 %.0f℃），想生铁桶柴炉去摸干燥架却发现干柴烧空了——若在白天且无大雨就临时去坡上薪柴地或船坞捡柴回来（items 写 new 燃柴入库），夜深了就多裹铺盖、记着明早先去拾柴。"
-                        % min_temp
+                        "- 天凉缺柴转折：这阵子船舱发冷（约 %.0f℃），想生铁桶柴炉去摸干燥架却发现干柴烧空了——若在白天且无大雨就临时%s（items 写 new 燃柴入库），夜深了就多裹铺盖、记着明早先去弄柴。"
+                        % (min_temp, wood_ways)
                     )
         if wood_count_30h >= 2 and not ctx.get("has_stove_ash"):
             nudges.append(

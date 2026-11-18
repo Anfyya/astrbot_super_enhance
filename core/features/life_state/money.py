@@ -19,6 +19,7 @@ from astrbot.api import logger
 
 from ...common import jsonio
 from .ledger import _JsonBook
+from .things import CAT_FOOD, CAT_ITEM, norm_step
 from .world import clean_text, fmt_time, is_event, parse_time, step_finished_at
 
 MONEY_FILE_NAME = "money.json"
@@ -1039,16 +1040,18 @@ def validate_step_segments_money(
         for eff in (raw.get("things") or []):
             if not isinstance(eff, dict):
                 continue
-            if eff.get("new") and str(eff.get("what") or "").strip() == "买回来":
+            what_norm = norm_step(eff.get("what"), CAT_FOOD)
+            if eff.get("new") and what_norm == "买回来":
                 bought_items.append(str(eff.get("name") or eff.get("new")))
-            elif eff.get("id") and str(eff.get("what") or "").strip() in ("用完了", "用掉一部分", "送人了"):
+            elif eff.get("id") and what_norm in ("用完了", "用掉一部分", "送人了"):
                 used_existing_ids.add(str(eff.get("id")).strip())
         for eff in (raw.get("items") or []):
             if not isinstance(eff, dict):
                 continue
-            if eff.get("new") and str(eff.get("what") or "").strip() == "买回来":
+            what_norm = norm_step(eff.get("what"), CAT_ITEM)
+            if eff.get("new") and what_norm == "买回来":
                 bought_items.append(str(eff.get("name") or eff.get("new")))
-            elif eff.get("id") and str(eff.get("what") or "").strip() in ("用完了", "用了", "送人了"):
+            elif eff.get("id") and what_norm in ("用完了", "用了", "送人了"):
                 used_existing_ids.add(str(eff.get("id")).strip())
 
         has_payment_or_barter = bool(used_existing_ids)

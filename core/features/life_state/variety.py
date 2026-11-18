@@ -236,6 +236,7 @@ _DEFAULT_POOLS_RAW: dict[str, tuple[dict, ...]] = {
         _e("外头刮起冷海风，拿旧布条把舷窗与舱门漏风的缝隙一道道塞紧", 0.5, 0.7, group="船屋防风", bucket="天候应对", where="海边小镇"),
         _e("天冷返潮，把铁桶柴炉烧旺，在炉旁拉根细绳把微潮的毛巾衣角烘得干爽暖和", 0.6, 0.7, group="烘潮气", bucket="天候应对", where="海边小镇", link="wood_stove"),
         _e("发现煤油灯的灯芯烧出了黑结，拿小剪刀修平，又用旧布把熏黑的玻璃灯罩擦得透亮", 0.5, 0.7, group="伺候油灯", bucket="船舶整备", where="海边小镇"),
+        _e("拎着空油壶去坡上杂货铺打回一壶煤油，顺手带了一小盒火柴", 0, 0.45, group="伺候油灯", bucket="镇上谋生", where="海边小镇", wx="dry", outdoor=True),
         _e("把船舱墙角和矮柜抽屉重新理了一遍，顺手把积灰的角角落落擦干净", 0.4, 0.7, group="盘家当", bucket="船舶整备", where="海边小镇"),
         _e("攒了几天的换洗衣裳拿淡水和海水省着用洗净，晾在背风有日头的地方", 0.25, 0.4, group="洗衣裳", bucket="船舶整备", where="海边小镇", wx="sunny", link="laundry", outdoor=True, min_temp=3.0),
         _e("赶上大晴天，把船舱里的被褥铺盖抱到甲板上晒得蓬松暖和", 0.6, 0.7, group="晒铺盖", bucket="船舶整备", where="海边小镇", wx="sunny", outdoor=True, min_temp=4.0),
