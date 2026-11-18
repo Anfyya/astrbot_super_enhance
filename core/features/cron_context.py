@@ -110,11 +110,12 @@ class CronContextFeature:
         self.config = config
         self.patches = PatchSet()
         self._notify_at: dict[str, float] = {}
-        # cron 请求的补注入回调（async (event, req)）：cron 路径不触发 on_llm_request，
-        # 生活状态等功能要在这里把平时的注入补上；与裁剪开关无关，始终执行。
+        # cron 请求前处理回调（async (event, req)）：跑在 build_main_agent 之前，负责 prompt/contexts 准备
         self.cron_request_hooks: list = []
-        # AstrBot 把 cron 请求组好以后的回调（async (event, req)）：人格、工具都装上了，就是真发出去的那份
-        # （请求快照存主动消息用）。
+        # build_main_agent 装完人格与 system_reminder 后、agent_runner.reset() 冻结消息前的回调：
+        # 确保 system_prompt（人格 → 声明 → 静态知识）与 extra_user_content_parts 顺序和私聊 100% 一致
+        self.cron_post_build_hooks: list = []
+        # AstrBot 把 cron 请求与 runner 都组好以后的回调（async (event, req)）：存请求快照等。
         self.cron_built_hooks: list = []
 
     # ---------- 配置 ----------
@@ -169,35 +170,50 @@ class CronContextFeature:
         async def patched(*args, **kwargs):
             event = kwargs.get("event")
             req = kwargs.get("req")
+            is_cron = req is not None and is_cron_event(event)
             try:
                 # 登记本次 cron 用的会话对象：cross_session 要把主动消息并入历史
                 # （这一步与下面的裁剪开关无关，始终执行）。
-                if req is not None and is_cron_event(event):
+                if is_cron:
                     conv = getattr(req, "conversation", None)
                     if conv is not None:
                         remember(
                             getattr(event, "unified_msg_origin", "") or "", conv
                         )
-                if req is not None and is_cron_event(event):
                     for hook in list(feature.cron_request_hooks):
                         try:
                             await hook(event, req)
                         except Exception:
                             logger.error(
-                                "[super_enhance/cron_ctx] cron 补注入失败", exc_info=True
+                                "[super_enhance/cron_ctx] cron 预处理失败", exc_info=True
                             )
                 if feature.enabled:
                     await feature._maybe_trim(event, req)
             except Exception:
                 logger.error("[super_enhance/cron_ctx] cron 钩子异常", exc_info=True)
-            result = await orig(*args, **kwargs)
+            want_defer = is_cron and bool(kwargs.get("apply_reset", True)) and bool(feature.cron_post_build_hooks)
+            call_kwargs = {**kwargs, "apply_reset": False} if want_defer else kwargs
+            result = await orig(*args, **call_kwargs)
             if result is not None and is_cron_event(event):
                 built = getattr(result, "provider_request", None) or req
                 runner = getattr(result, "agent_runner", None)
+                if want_defer:
+                    for hook in list(feature.cron_post_build_hooks):
+                        try:
+                            await hook(event, built)
+                        except Exception:
+                            logger.error(
+                                "[super_enhance/cron_ctx] cron 装完人格后补注入失败", exc_info=True
+                            )
                 try:
                     feature._prepare_built_cron(event, built, runner)
                 except Exception:
                     logger.error("[super_enhance/cron_ctx] cron 后置工具与一步收尾装配失败", exc_info=True)
+                if want_defer:
+                    reset_coro = getattr(result, "reset_coro", None)
+                    if reset_coro is not None:
+                        await reset_coro
+                        result.reset_coro = None
                 for hook in list(feature.cron_built_hooks):
                     try:
                         await hook(event, built)

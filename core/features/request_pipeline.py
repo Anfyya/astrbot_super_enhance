@@ -47,12 +47,18 @@ class RequestPipeline:
         ), "请求钩子")
 
     async def cron(self, event, req) -> None:
-        # 让主动对话的 system_prompt 装配顺序与普通私聊对齐（先剥 cron 英文尾注 → 时间戳声明 → 静态世界知识），最大化复用 KV 前缀缓存
+        # build_main_agent 前：先剥 cron 英文尾注（设好 prompt），并做好上下文/静默前处理
         await run_steps(event, (
             ("剥离cron尾注", lambda: self.life.prepare_cron_prompt(event, req)),
+            ("聊天记录", lambda: self.transcript.on_cron_request(event, req)),
+            ("静默", lambda: self.silence.on_cron_request(event, req)),
+        ), "cron 预处理", stop_aware=False)
+
+    async def cron_post_build(self, event, req) -> None:
+        # build_main_agent 装完人格与 <system_reminder> 后、runner.reset() 冻结消息前：
+        # 按与私聊完全相同的顺序追加时间戳声明 → 静态世界知识（进 system_prompt）→ 动态世界线（进 extra_parts）
+        await run_steps(event, (
             ("时间戳声明", lambda: self.msg_time.declare(req)),
             ("世界线注入", lambda: self.life.on_cron_request(event, req)),
             ("工具说明", lambda: self.tool_guide.on_cron_request(event, req)),
-            ("聊天记录", lambda: self.transcript.on_cron_request(event, req)),
-            ("静默", lambda: self.silence.on_cron_request(event, req)),
-        ), "cron 补注入", stop_aware=False)
+        ), "cron 后置注入", stop_aware=False)

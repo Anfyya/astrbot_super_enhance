@@ -156,6 +156,7 @@ class SuperEnhance(Star):
         """插件加载后初始化（动态生活状态需要起调度器）。"""
         await self.life.initialize()
         self.cron_context.cron_request_hooks.append(self.request_pipeline.cron)
+        self.cron_context.cron_post_build_hooks.append(self.request_pipeline.cron_post_build)
         # build_main_agent 装配完所有工具后，先把发消息 / tell 替换成中文版，再存真实请求快照
         self.cron_context.cron_built_hooks.append(self.tool_guide.on_cron_built)
         self.cron_context.cron_built_hooks.append(self.snapshot.capture_cron)

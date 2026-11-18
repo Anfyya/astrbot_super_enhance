@@ -322,51 +322,64 @@ def split_world_text(service, bot: str, now: datetime.datetime) -> tuple[str, st
 
     static_blocks: list[str] = []
     dynamic_blocks: list[str] = []
+    bot_label = service.bots.label_for(bot) or ""
+    # 静态块严格按「100% 永久静态 → 配置级静态 → 极少变更 → 每日 0 点变」排列，最大化 KV 前缀缓存（且私聊/主动共享前缀）
     companion = getattr(service, "companionship", None)
     if companion is not None:
         from .companionship import LIVING_NOTE
         static_blocks.append(LIVING_NOTE)
+    if head:
+        # 她们住的这一带有哪些地方（固定事实那份地图，补写、记录员也照它写）
+        static_blocks.append(map_text(service.cfg))
+        if str(service.cfg.get("world_home") or "").strip() == "海边小镇" and getattr(service, "money", None) is not None:
+            static_blocks.append(service.money.chat_static_rules())
+        static_blocks.extend((
+            NO_REPEAT_NOTE,
+            AI_VOICE_NOTES.get(bot_label, AI_VOICE_NOTE),
+            VARIETY_NOTE,
+            SHARED_FACT_NOTE,
+            SLEEP_NOTE,
+            VOICE_NOTES.get(bot_label, ""),
+            AFTER_VOICE_NOTES.get(bot_label, ""),
+        ))
+    static_blocks.append(VIEW_NOTE)
     try:
         static_blocks.append(service._ability_text(bot))
     except Exception:
         logger.warning("[super_enhance/life] 能力清单注入失败", exc_info=True)
     if head:
-        # 她们住的这一带有哪些地方（固定事实那份地图，补写、记录员也照它写）
-        static_blocks.append(map_text(service.cfg))
         try:
             static_blocks.append(service.world.arrived_text(now))
         except Exception:
             logger.warning("[super_enhance/life] 搬来几天注入失败", exc_info=True)
-        if str(service.cfg.get("world_home") or "").strip() == "海边小镇" and getattr(service, "money", None) is not None:
-            static_blocks.append(service.money.chat_static_rules())
 
-    # 动态部分严格按「天级 → 段级 → 小时/分钟级 → 当前世界线 → 末尾口吻/展示规范」排列
-    try:
-        dynamic_blocks.append(service._promise_text(bot, now))
-    except Exception:
-        logger.warning("[super_enhance/life] 约定注入失败", exc_info=True)
+    # 动态部分严格按「周/天级 → 半天/小时级 → 轮级 → 分钟级实时天气与当前世界线」排列
     try:
         dynamic_blocks.append(service._training_text(bot, now))
     except Exception:
         logger.warning("[super_enhance/life] 在练的事注入失败", exc_info=True)
+    try:
+        dynamic_blocks.append(service._promise_text(bot, now))
+    except Exception:
+        logger.warning("[super_enhance/life] 约定注入失败", exc_info=True)
     if head:
+        try:
+            dynamic_blocks.append(outfit_now_text(service, bot, now))
+        except Exception:
+            logger.warning("[super_enhance/life] 穿搭注入失败", exc_info=True)
         try:
             dynamic_blocks.append(supply_now_text(service, now))
         except Exception:
             logger.warning("[super_enhance/life] 电和补给注入失败", exc_info=True)
+    if companion is not None:
+        dynamic_blocks.append(companion.safe("render", bot, now, default=""))
+    if head:
         if str(service.cfg.get("world_home") or "").strip() == "海边小镇" and getattr(service, "money", None) is not None:
             try:
                 service.money.archive_settled(now, service.world)
                 dynamic_blocks.append(service.money.chat_now_text(now, service.world, bot, service.bots.label_for))
             except Exception:
                 logger.warning("[super_enhance/life] 账面余额注入失败", exc_info=True)
-    if companion is not None:
-        dynamic_blocks.append(companion.safe("render", bot, now, default=""))
-    if head:
-        try:
-            dynamic_blocks.append(outfit_now_text(service, bot, now))
-        except Exception:
-            logger.warning("[super_enhance/life] 穿搭注入失败", exc_info=True)
         try:
             dynamic_blocks.append(mood_now_text(service, bot, now))
         except Exception:
@@ -376,23 +389,6 @@ def split_world_text(service, bot: str, now: datetime.datetime) -> tuple[str, st
         except Exception:
             logger.warning("[super_enhance/life] 天气注入失败", exc_info=True)
     dynamic_blocks.append(head)
-    if head:
-        # 放在整块最后、紧挨着世界线：不然她每句都捎带「我手上正在干嘛」（2026-10-15 测过，放人设里没用）
-        dynamic_blocks.append(NO_REPEAT_NOTE)
-        # 紧挨着上一句、放在世界线块最末：压一压 AI 腔（2026-10-16）；丛雨用不带嘴硬的那份（2026-10-22）
-        dynamic_blocks.append(AI_VOICE_NOTES.get(service.bots.label_for(bot) or "", AI_VOICE_NOTE))
-        # 说话新鲜点：别老同一个开头、同一个收尾，别原样复读前面说过的句子（2026-10-16；10-23 例子补上「诶？！」「等、等等」「呜……」
-        dynamic_blocks.append(VARIETY_NOTE)
-        # 两人共同经历以世界线写下的为准（2026-10-16）
-        dynamic_blocks.append(SHARED_FACT_NOTE)
-        # 别催主人睡觉、别提前道晚安（2026-10-20）
-        dynamic_blocks.append(SLEEP_NOTE)
-        # 不当管家厨娘，照她自己的性子说（2026-10-19）
-        dynamic_blocks.append(VOICE_NOTES.get(service.bots.label_for(bot) or "", ""))
-        # 被说了别找补、别怪主人、认错别勉强、挨了说别讨东西（2026-11-10，目前只有丛雨）：放整块最末才管用
-        dynamic_blocks.append(AFTER_VOICE_NOTES.get(service.bots.label_for(bot) or "", ""))
-    # 画面呈现的口径（2026-11-14）：放整块最末，确保主人说「看看」时不会把画面说成画图或照片
-    dynamic_blocks.append(VIEW_NOTE)
     return (
         "\n".join(x for x in static_blocks if x),
         "\n".join(x for x in dynamic_blocks if x),

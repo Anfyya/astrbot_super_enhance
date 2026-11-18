@@ -366,16 +366,12 @@ class LifeStateService:
             logger.error("[super_enhance/life] 主动对话换提示词失败", exc_info=True)
 
     async def on_cron_request(self, event, req) -> None:
-        """主动对话请求补上世界线；cron 的上下文随后会被裁成纯对话。"""
+        """主动对话请求补上世界线（在 build_main_agent 装完人格之后执行，保证与私聊 KV 前缀完全一致）。"""
         if not self.enabled or req is None:
             return
         bot = platform_of(getattr(event, "unified_msg_origin", ""))
         if not self._bot_enabled(bot):
             return
-        try:
-            self.planner.prepare_request(event, req)
-        except Exception:
-            logger.error("[super_enhance/life] 主动对话换提示词失败", exc_info=True)
         self._inject_world_request(req, bot)
         logger.info("[super_enhance/life] [%s] 主动对话已注入世界线", bot)
 
