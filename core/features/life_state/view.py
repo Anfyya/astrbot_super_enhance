@@ -440,7 +440,7 @@ def weather_now_text(service, now: datetime.datetime, bot: str = "") -> str:
             loc = "（%s）" % place if place else ""
             env_line = (
                 "实时环境温度：你现在在家%s——船舱内%s；舱外/甲板此刻%s"
-                "（凑在炉边烤火、坐在矮桌铺上、去舱门角落拿东西或推门上甲板，按你此刻待的具体位置感受冷热）。"
+                "（凑在炉边烤火、坐在矮桌旁、靠到砖炕上、去舱门角落拿东西或推门上甲板，按你此刻待的具体位置感受冷热）。"
                 % (loc, th["zones_desc"], out_str)
             )
     else:

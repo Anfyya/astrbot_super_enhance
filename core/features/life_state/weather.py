@@ -378,13 +378,14 @@ def now_text(moment: datetime.datetime, text_of, home: str, ahead_hours: int = 6
     return text
 
 
-# ---------- 船舱连续热力学模型（分炉边 / 矮桌铺位中段 / 舱门角落三档远近温差 + 随时间升温退温） ----------
+# ---------- 船舱连续热力学模型（分炉边 / 矮桌中段 / 舱门角落空气温差 + 砖炕慢热蓄热曲线） ----------
 
 # 各温区参数：(升温常数min, 降温常数min, 铁桶柴炉目标上限℃, 铁桶柴炉最大温升℃, 小炭炉最大温升℃)
 ZONE_PARAMS = {
-    "near": (14.0, 95.0, 22.5, 17.5, 11.0),  # 炉边一两步烤火圈：升温快、辐射热足，火旺时20~22℃
-    "mid":  (42.0, 80.0, 16.0, 11.0, 2.5),   # 矮桌/铺位中段：慢烘，烧满1小时13~15℃（有温度但不算热）
-    "far":  (55.0, 45.0, 10.5, 4.5,  0.5),   # 舱门边/舷窗下/储物角落：烧透也仅8~9℃，停火最先凉回去
+    "near": (14.0, 95.0, 22.5, 17.5, 11.0),   # 炉边一两步烤火圈：升温快、辐射热足，火旺时20~22℃
+    "mid":  (42.0, 80.0, 16.0, 11.0, 2.5),    # 矮桌中段空气：慢烘，烧满1小时13~15℃（有温度但不算热）
+    "far":  (55.0, 45.0, 10.5, 4.5,  0.5),    # 舱门边/舷窗下/储物角落：烧透也仅8~9℃，停火最先凉回去
+    "kang": (75.0, 240.0, 25.0, 17.5, 0.0),   # 砖炕炕面：仅铁桶柴炉烟道供热，慢热透火、停火留温6~10小时
 }
 WOOD_TAU_UP, WOOD_TAU_DOWN = ZONE_PARAMS["mid"][0], ZONE_PARAMS["mid"][1]
 CHAR_TAU_UP, CHAR_TAU_DOWN = 25.0, 40.0
@@ -446,6 +447,9 @@ def _build_zone_curve(spans: list, text_of, home: str, zone: str):
     from .food import room_temp
 
     tau_up_w, tau_down_w, cap_w, max_add_w, max_add_c = ZONE_PARAMS[zone]
+    if max_add_c <= 0.0:
+        # 砖炕只走铁桶柴炉横向烟道，小炭炉做饭不影响炕温与散热惯性
+        spans = [row for row in spans if row[2] == "wood"]
     tau_up_c = 10.0 if zone == "near" else CHAR_TAU_UP
     tau_down_c = 35.0 if zone == "near" else CHAR_TAU_DOWN
 
@@ -504,7 +508,7 @@ def _build_zone_curve(spans: list, text_of, home: str, zone: str):
 
 
 def build_cabin_curve(world, start_day: datetime.date, end_day: datetime.date, text_of, home: str = "海边小镇", clip_until: datetime.datetime | None = None, zone: str = "mid"):
-    """构建船舱连续升温/降温解析曲线（默认 mid 矮桌铺位中段），返回 (segments_table, eval_delta_fn)。"""
+    """构建船舱连续升温/降温解析曲线（支持 near/mid/far/kang，默认 mid 矮桌中段），返回 (segments_table, eval_delta_fn)。"""
     spans = _stove_spans_from_world(world, start_day, end_day, clip_until=clip_until)
     return _build_zone_curve(spans, text_of, home, zone)
 
@@ -524,8 +528,29 @@ def _fmt_dur(minutes: int) -> str:
     return "约 %d 个半小时" % int(hrs)
 
 
+def _kang_clause(mode: str, kind: str, d_kang: float) -> str:
+    """按砖炕蓄热余温与当前灶火生成客观状态描述。"""
+    if mode == "burning":
+        if kind == "wood":
+            if d_kang >= 10.0:
+                return "，砖炕已烧透暖烘烘的"
+            if d_kang >= 4.5:
+                return "，砖炕已渐渐烘暖"
+            if d_kang >= 2.0:
+                return "，砖炕刚透出一点温热"
+            return "，砖炕热气还没透上来（炕面仍偏凉）"
+        if d_kang >= 2.0:
+            return "（小炭炉不通炕道，但先前柴炉留下的砖炕余温还在）"
+        return "（小炭炉不通炕道，砖炕还是凉的）"
+    if d_kang >= 6.0:
+        return "，但砖炕底下还暖烘烘地留着厚实余温"
+    if d_kang >= 2.0:
+        return "，砖炕里还留着明显余温"
+    return "，砖炕也快凉透了"
+
+
 def cabin_temp_info(moment: datetime.datetime, world, text_of, home: str) -> dict:
-    """计算此刻屋外与船舱内远近三档实时温度（near 炉边 / mid 矮桌铺位中段 / far 舱门角落）及炉火状态。"""
+    """计算此刻屋外与船舱内远近三档空气温差（near/mid/far）及砖炕炕面温度（kang）。"""
     from .food import room_temp
 
     flat = moment.replace(tzinfo=None)
@@ -543,8 +568,10 @@ def cabin_temp_info(moment: datetime.datetime, world, text_of, home: str) -> dic
             "near": round(base_cabin, 1),
             "mid": round(base_cabin, 1),
             "far": round(base_cabin, 1),
+            "kang": round(base_cabin, 1),
             "base_cabin": round(base_cabin, 1),
             "delta": 0.0,
+            "kang_delta": 0.0,
             "mode": "none",
             "stove": "",
             "minutes": 0,
@@ -556,14 +583,17 @@ def cabin_temp_info(moment: datetime.datetime, world, text_of, home: str) -> dic
     _, eval_near = _build_zone_curve(spans, text_of, home, "near")
     _, eval_mid = _build_zone_curve(spans, text_of, home, "mid")
     _, eval_far = _build_zone_curve(spans, text_of, home, "far")
+    _, eval_kang = _build_zone_curve(spans, text_of, home, "kang")
 
     d_near, st_near = eval_near(flat)
     d_mid, st_mid = eval_mid(flat)
     d_far, _ = eval_far(flat)
+    d_kang, _ = eval_kang(flat)
 
     near_t = min(23.0, base_cabin + d_near)
     mid_t = min(18.5, base_cabin + d_mid)
     far_t = min(15.0, base_cabin + d_far) if out_t <= 14.0 else base_cabin + d_far
+    kang_t = min(26.5, base_cabin + d_kang)
 
     # 用 near 的状态识别刚点火/刚停火（因为炉边最先热、最后彻底凉）
     mode = st_near["mode"] if d_near >= 0.8 else st_mid["mode"]
@@ -573,30 +603,37 @@ def cabin_temp_info(moment: datetime.datetime, world, text_of, home: str) -> dic
     if mode == "burning":
         if kind == "wood":
             if mins < 22:
-                desc = "铁桶柴炉刚点着%s，只有炉边烤热了，铺位和角落还没缓过来" % _fmt_dur(mins)
+                base_desc = "铁桶柴炉刚点着%s，只有炉边烤热了，矮桌和角落还没缓过来" % _fmt_dur(mins)
             elif mins < 50:
-                desc = "铁桶柴炉烧了%s，炉边很热，矮桌铺位刚开始回暖" % _fmt_dur(mins)
+                base_desc = "铁桶柴炉烧了%s，炉边很热，矮桌中段刚开始回暖" % _fmt_dur(mins)
             else:
-                desc = "铁桶柴炉已连烧%s，炉边烤得热烘烘，矮桌铺位温乎不冻人，但舱门角落仍微凉" % _fmt_dur(mins)
+                base_desc = "铁桶柴炉已连烧%s，炉边烤得热烘烘，矮桌一带温乎不冻人、舱门角落仍微凉" % _fmt_dur(mins)
         else:
-            desc = "小炭炉正点着（已烧%s），只有凑在炭炉跟前手脸是热的，退开两步舱里仍凉" % _fmt_dur(mins)
-        zones_desc = "炉边约 %s 度、矮桌铺位约 %s 度、舱门角落约 %s 度（%s）" % (
-            _deg(near_t), _deg(mid_t), _deg(far_t), desc
+            base_desc = "小炭炉正点着（已烧%s），只有凑在炭炉跟前手脸是热的，退开两步舱里仍凉" % _fmt_dur(mins)
+        desc = base_desc + _kang_clause(mode, kind, d_kang)
+        zones_desc = "炉边约 %s 度、矮桌中段约 %s 度、舱门角落约 %s 度、砖炕炕面约 %s 度（%s）" % (
+            _deg(near_t), _deg(mid_t), _deg(far_t), _deg(kang_t), desc
         )
     elif mode == "cooling":
         stove_name = "铁桶柴炉" if kind == "wood" else "小炭炉"
         if mins < 40:
-            desc = "%s刚停手%s，炉膛旁红炭余温还热，远处已先转凉" % (stove_name, _fmt_dur(mins))
+            base_desc = "%s刚停手%s，炉膛旁红炭余温还热，远处已先转凉" % (stove_name, _fmt_dur(mins))
         elif mins < 95:
-            desc = "%s停火%s，炉边还留着点温热余温，铺位已降下来、角落凉了" % (stove_name, _fmt_dur(mins))
+            base_desc = "%s停火%s，炉边还留着点温热余温，矮桌与角落已降下来" % (stove_name, _fmt_dur(mins))
         else:
-            desc = "%s停火%s，只剩炉壁贴近处微温，船舱大半已凉回去了" % (stove_name, _fmt_dur(mins))
-        zones_desc = "炉边余温约 %s 度、矮桌铺位约 %s 度、舱门角落约 %s 度（%s）" % (
-            _deg(near_t), _deg(mid_t), _deg(far_t), desc
+            base_desc = "%s停火%s，只剩炉壁贴近处微温，船舱空气大半已凉回去了" % (stove_name, _fmt_dur(mins))
+        desc = base_desc + _kang_clause(mode, kind, d_kang)
+        zones_desc = "炉边余温约 %s 度、矮桌中段约 %s 度、舱门角落约 %s 度、砖炕炕面约 %s 度（%s）" % (
+            _deg(near_t), _deg(mid_t), _deg(far_t), _deg(kang_t), desc
+        )
+    elif d_kang >= 2.0:
+        desc = "炉火早已灭透、舱内空气也凉了，但砖炕底下还憋着余温，摸着仍比屋里暖和"
+        zones_desc = "舱内空气约 %s 度、砖炕炕面余温约 %s 度（%s）" % (
+            _deg(base_cabin), _deg(kang_t), desc
         )
     else:
-        desc = "炉子没点、早已凉透，船舱里到处都冷飕飕的" if out_t <= 12.0 else "没点炉火，自然室温"
-        zones_desc = "船舱里约 %s 度（%s）" % (_deg(base_cabin), desc)
+        desc = "炉子没点、早已凉透，砖炕也凉成室温了，船舱里到处都冷飕飕的" if out_t <= 12.0 else "没点炉火，自然室温"
+        zones_desc = "船舱与砖炕都约 %s 度（%s）" % (_deg(base_cabin), desc)
 
     return {
         "outdoor": round(out_t, 1),
@@ -605,8 +642,10 @@ def cabin_temp_info(moment: datetime.datetime, world, text_of, home: str) -> dic
         "near": round(near_t, 1),
         "mid": round(mid_t, 1),
         "far": round(far_t, 1),
+        "kang": round(kang_t, 1),
         "base_cabin": round(base_cabin, 1),
         "delta": round(d_mid, 1),
+        "kang_delta": round(d_kang, 1),
         "mode": mode,
         "stove": kind,
         "minutes": mins,

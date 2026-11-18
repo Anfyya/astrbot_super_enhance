@@ -744,7 +744,7 @@ class LifeStep:
             th_start = weather_mod.cabin_temp_info(start, self.world, text_of, home)
             if home == "海边小镇":
                 lines.append(
-                    "- 起步时刻（%s）船屋内外实时温度：屋外/甲板约 %.1f℃（体感 %.1f℃）；船舱内——%s（铁桶柴炉刚点只有炉边热，烧满1小时炉边20℃+、铺位13～15℃温乎、角落仍微凉，停火后远角先凉、炉边余温按小时渐退至无火室温 %.1f℃）。"
+                    "- 起步时刻（%s）船屋内外实时温度：屋外/甲板约 %.1f℃（体感 %.1f℃）；船舱内——%s（铁桶柴炉刚点时炉边先热，约半小时后砖炕烟道渐暖、连烧一两小时炕面暖透而角落仍微凉；停火后舱内空气与远角先凉，砖炕蓄热能留温数小时再缓降至无火室温 %.1f℃；小炭炉只做饭不通炕道）。"
                     % (start.strftime("%H:%M"), th_start["outdoor"], th_start["feels"], th_start["zones_desc"], th_start["base_cabin"])
                 )
             else:
