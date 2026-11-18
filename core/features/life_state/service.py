@@ -248,8 +248,13 @@ class LifeStateService:
     def _inject_world_request(self, req, bot: str) -> None:
         """把静态/天级世界知识稳固放进 system_prompt，把实时动态部分放进 extra_user_content_parts。"""
         static_text, dynamic_text = view_mod.split_world_text(self, bot, self._now())
+        sys_prompt = str(getattr(req, "system_prompt", "") or "").rstrip()
+        if sys_prompt and str(self.cfg.get("world_home") or "").strip() == "海边小镇":
+            compacted = view_mod.compact_hoori_map(sys_prompt)
+            if compacted != sys_prompt:
+                sys_prompt = compacted
+                req.system_prompt = sys_prompt
         if static_text:
-            sys_prompt = str(getattr(req, "system_prompt", "") or "").rstrip()
             marker = "共同生活与当家分工："
             if marker not in sys_prompt and "【后来学会的】" not in sys_prompt and "你们住的这一带" not in sys_prompt:
                 req.system_prompt = (sys_prompt + "\n\n" + static_text) if sys_prompt else static_text

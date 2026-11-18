@@ -4,6 +4,7 @@
 """
 
 import datetime
+import re
 
 from astrbot.api import logger
 
@@ -558,9 +559,31 @@ def supply_now_text(service, now: datetime.datetime) -> str:
     return supply_mod.chat_text(now, _weather_text_of(service), home, world=getattr(service, "world", None))
 
 
+_HOORI_ATRI_RE = re.compile(r"- \*\*穗织（另一处地方）\*\*：.*?(?=\n\s*\n\s*---)", re.S)
+_HOORI_MURA_RE = re.compile(r"([ \t]*)这是你住的地方穗织：.*?(?=\n\s*\n?\s*你的其他昵称)", re.S)
+
+
+def compact_hoori_map(system_prompt: str) -> str:
+    """住海边小镇时，把人设里那段整镇《穗织》旅游手册压成两句话老家记忆，省 token 且避免住处冲突。"""
+    if not system_prompt:
+        return system_prompt
+    out = _HOORI_ATRI_RE.sub(
+        "- **穗织（老家与从前的住处）**：\n"
+        "  群山深处的温泉古镇（建实神社供奉神刀丛雨丸、朝武家老宅、温泉街甜品店田心屋、镇上商店街、鹈茅学院与驹川诊所、后山与河溪）；11 月初已随主人搬到海边小镇，现住码头船屋。",
+        system_prompt,
+        count=1,
+    )
+    out = _HOORI_MURA_RE.sub(
+        r"\1你的老家是穗织：群山深处的温泉古镇（建实神社供奉着神刀丛雨丸，旁有朝武家老宅；镇上有温泉街、甜品店田心屋、商店街、鹈茅学院、驹川诊所与山林河溪）。11月初你已随主人、亚托莉搬来海边小镇码头边的船屋一同生活。",
+        out,
+        count=1,
+    )
+    return out
+
+
 def map_text(cfg) -> str:
-    """配置里的固定事实（住的这一带的地图、哪扇门关着这类），给聊天时的她看；没写就空。"""
-    text = str(cfg.get("world_notes") or "").strip()
+    """配置里的固定事实（优先读聊天精简版 chat_world_notes，留空则读完整版 world_notes）。"""
+    text = str(cfg.get("chat_world_notes") or cfg.get("world_notes") or "").strip()
     lines = [x.strip().lstrip("-• ").strip() for x in text.splitlines() if x.strip()]
     # 「某某的地图（她们现在住在这一带，写地点从这里挑）：」这种标题是写给补写看的，聊天这份不要
     lines = [x for x in lines if "写地点从这里挑" not in x]

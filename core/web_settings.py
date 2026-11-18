@@ -78,7 +78,9 @@ FIELDS = (
     _field("life_state", "world_home", "world", "choice", "住处", "穗织",
            "补写使用哪一处的地名和场景说法。", options=["穗织", "海边小镇"]),
     _field("life_state", "world_notes", "world", "text", "地图与固定设定", _NOTES_DEFAULT,
-           "补写和聊天都会读到。每行一条：地点和布局、常关着的门、不能写错的事实。", max=8000),
+           "补写和记录员会读这整份完整设定（也是聊天兜底）。每行一条：地点和布局、常关着的门、不能写错的事实。", max=8000),
+    _field("life_state", "chat_world_notes", "world", "text", "聊天用精简地图（可选）", "",
+           "填了以后，聊天只注这份「地点+干什么的」精简版来省字数；留空时聊天沿用上面完整版。", max=8000),
     # 主动消息
     _field("life_state", "proactive_extra_requirements", "proactive", "text", "附加要求", "",
            "附在每次主动消息提示的末尾，留空不加。", max=2000),
