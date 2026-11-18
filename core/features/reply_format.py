@@ -180,7 +180,14 @@ class ReplyFormatRetryFeature:
 
                 msgs = getattr(getattr(runner, "run_context", None), "messages", None)
                 can_feedback = isinstance(msgs, list)
-                saved_len = len(msgs) if can_feedback else 0
+                injected_ids: set[int] = set()
+
+                def cleanup_feedback() -> None:
+                    if not can_feedback or not injected_ids:
+                        return
+                    msgs[:] = [m for m in msgs if id(m) not in injected_ids]
+                    injected_ids.clear()
+
                 tries = 0
                 try:
                     while True:
@@ -193,6 +200,10 @@ class ReplyFormatRetryFeature:
 
                         reasons, draft_text, from_send_tool = inspect_response(final)
                         if not reasons or not can_feedback or tries >= feature.max_retries or feature._stop_requested(runner):
+                            # 必须在 yield 之前清理临时打回消息：ToolLoopAgentRunner.step() 收到 final 会立刻 break，
+                            # async generator 的 finally 要等 step() 末尾追加完 assistant 回复销毁迭代器时才跑，
+                            # 若在 finally 里按旧长度切片会误删本轮刚落库的回复。
+                            cleanup_feedback()
                             if tries:
                                 if reasons:
                                     logger.warning(
@@ -219,10 +230,11 @@ class ReplyFormatRetryFeature:
                             feature.max_retries,
                             draft_text.replace("\n", "\\n")[:50],
                         )
-                        msgs.extend(feature._make_feedback_messages(draft_text, reject_text))
+                        feedback = feature._make_feedback_messages(draft_text, reject_text)
+                        injected_ids.update(id(m) for m in feedback)
+                        msgs.extend(feedback)
                 finally:
-                    if can_feedback and len(msgs) > saved_len:
-                        del msgs[saved_len:]
+                    cleanup_feedback()
 
             return wrapped
 
