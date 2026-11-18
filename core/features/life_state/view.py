@@ -401,8 +401,60 @@ def world_text(service, bot: str, now: datetime.datetime) -> str:
     static_text, dynamic_text = split_world_text(service, bot, now)
     return "\n".join(x for x in (static_text, dynamic_text) if x)
 
+def _cabin_zone_of(place: str, *, sleeping: bool = False) -> str:
+    """根据当前地点判定船舱内四个热区之一：kang / near / far / mid。"""
+    p = str(place or "")
+    if (sleeping and not any(k in p for k in ("地铺", "地板", "吊床"))) or any(k in p for k in ("炕", "床", "被窝", "褥子", "铺位")):
+        return "kang"
+    if any(k in p for k in ("柴炉", "炭炉", "灶", "炉")):
+        return "near"
+    if any(k in p for k in ("舱门", "门边", "角落", "墙角", "储物", "舷窗")):
+        return "far"
+    return "mid"
+
+
+def _local_cabin_temp_line(place: str, th: dict, *, sleeping: bool = False, _deg=str) -> str:
+    """只生成她此刻所处那一个船舱位置的单点温度与简要状态，不列其他区域温度。"""
+    zone = _cabin_zone_of(place, sleeping=sleeping)
+    loc = place or "船屋·船舱"
+    mode = th.get("mode", "cold")
+    stove = th.get("stove", "")
+    d_kang = float(th.get("kang_delta") or 0.0)
+
+    if zone == "kang":
+        if mode == "burning" and stove == "wood":
+            hint = "（铁桶柴炉正烧着，砖炕%s）" % ("已烧透暖和" if d_kang >= 10.0 else ("渐渐烘暖" if d_kang >= 4.0 else "热气还没全透上来"))
+        elif d_kang >= 2.0:
+            hint = "（砖炕里还留着柴炉余温）"
+        else:
+            hint = "（砖炕已凉）" if float(th.get("kang") or 0.0) <= 13.0 else ""
+        return "你此刻在%s，砖炕炕面温度约 %s 度%s。" % (loc, _deg(th["kang"]), hint)
+
+    if zone == "near":
+        if mode == "burning":
+            hint = "（%s正烧着）" % ("铁桶柴炉" if stove == "wood" else "小炭炉")
+        elif mode == "cooling":
+            hint = "（刚停火，炉边还留着余温）"
+        else:
+            hint = "（炉子没点，已凉透）" if float(th["near"]) <= 12.0 else ""
+        return "你此刻在%s，炉边温度约 %s 度%s。" % (loc, _deg(th["near"]), hint)
+
+    if zone == "far":
+        return "你此刻在%s，身边温度约 %s 度。" % (loc, _deg(th["far"]))
+
+    if mode == "burning" and stove == "wood":
+        hint = "（铁桶柴炉正烧着）"
+    elif mode == "cooling":
+        hint = "（炉火刚停正在转凉）"
+    elif float(th["mid"]) <= 12.0:
+        hint = "（未生柴炉，屋里偏凉）"
+    else:
+        hint = ""
+    return "你此刻在%s，舱内温度约 %s 度%s。" % (loc, _deg(th["mid"]), hint)
+
+
 def weather_now_text(service, now: datetime.datetime, bot: str = "") -> str:
-    """此刻外头的天气 + 她所在位置的实时环境温度（屋外冷热 vs 屋里没点火/刚点火/烧满1小时/停火退温1小时）。"""
+    """此刻外头的天气现象，以及她当前所在那一个位置的唯一实时温度（不给多余温度）。"""
     from . import weather as weather_mod
     seeds = service.seed_log.load() or {}
     known = sorted(k for k, v in seeds.items() if isinstance(v, dict) and v.get("weather"))
@@ -418,36 +470,32 @@ def weather_now_text(service, now: datetime.datetime, bot: str = "") -> str:
     flat = now.replace(tzinfo=None)
     world = getattr(service, "world", None)
     th = weather_mod.cabin_temp_info(flat, world, text_of, home)
-    cur = world.current(bot, flat) if (world is not None and bot) else None
+    cur = (world.current(bot, flat) or world.last_activity(bot, flat)) if (world is not None and bot) else None
     place = str((cur or {}).get("place") or "").strip()
     at_home = None if cur is None else cur.get("at_home")
+    sleeping = bool(cur is not None and is_sleep(cur))
 
+    # 在外头或船屋室外（甲板/船头/船顶/船篷/船舷且不含「舱」）只给当前屋外温度
+    is_deck_out = bool(place) and "舱" not in place and any(k in place for k in ("甲板", "船头", "船顶", "船篷", "船舷"))
+    outdoors = (at_home is False) or is_deck_out
+
+    sky_wind = weather_mod.sky_wind_text(flat, text_of, home)
     out_deg = weather_mod._deg(th["outdoor"])
     feels_deg = weather_mod._deg(th["feels"])
     out_str = "约 %s 度" % out_deg + ("（体感 %s 度）" % feels_deg if th["outdoor"] - th["feels"] >= 1.5 else "")
-    in_deg = weather_mod._deg(th["cabin"])
 
-    if home == "海边小镇":
-        if at_home is False:
-            loc = "（%s）" % place if place else ""
-            env_line = "实时环境温度：你现在在外头%s，你身边是屋外温度%s；家里船屋此刻——%s。" % (
-                loc, out_str, th["zones_desc"]
-            )
-        else:
-            loc = "（%s）" % place if place else ""
-            env_line = (
-                "实时环境温度：你现在在家%s——船舱内%s；舱外/甲板此刻%s"
-                "（凑在炉边烤火、坐在矮桌旁、靠到砖炕上、去舱门角落拿东西或推门上甲板，按你此刻待的具体位置感受冷热）。"
-                % (loc, th["zones_desc"], out_str)
-            )
+    if outdoors:
+        loc = place or ("甲板/船外" if home == "海边小镇" else "外头")
+        line = "此刻（%s）外头天气：%s；你此刻在%s，身边温度%s。" % (flat.strftime("%H:%M"), sky_wind, loc, out_str)
+    elif home == "海边小镇":
+        local_line = _local_cabin_temp_line(place, th, sleeping=sleeping, _deg=weather_mod._deg)
+        line = "此刻（%s）外头天气：%s。%s" % (flat.strftime("%H:%M"), sky_wind, local_line)
     else:
-        if at_home is False:
-            env_line = "实时环境温度：你现在在外头，身边温度%s（屋里此刻约 %s 度）。" % (out_str, in_deg)
-        else:
-            env_line = "实时环境温度：屋里此刻约 %s 度，屋外%s。" % (in_deg, out_str)
+        line = "此刻（%s）外头天气：%s。你此刻在屋里，室内温度约 %s 度。" % (
+            flat.strftime("%H:%M"), sky_wind, weather_mod._deg(th["cabin"])
+        )
 
-    return "外头的天气（%s）%s。\n%s说到天气、冷暖、穿衣、要不要生炉添柴或出门时照这个实际温度说。" % (
-        flat.strftime("%H:%M"), weather_mod.now_text(flat, text_of, home), env_line)
+    return line + "说到冷暖、穿衣或添柴时照你此刻身边这个实际温度说。"
 
 
 DEFAULT_OUTFITS = {

@@ -313,7 +313,7 @@ def temp_text(pairs: list) -> str:
     return text
 
 
-def describe(hour: dict, home: str, temps: list | None = None) -> str:
+def describe(hour: dict, home: str, temps: list | None = None, *, include_temp: bool = True) -> str:
     """temps：这句管着好几个钟头时，把各个钟头的 (气温, 体感) 交进来，气温写成一段范围。"""
     bits = [sky_word(hour)]
     word = rain_word(hour["rain"], hour.get("snow", False))
@@ -322,9 +322,15 @@ def describe(hour: dict, home: str, temps: list | None = None) -> str:
     bits.append("%s %d 级" % (hour["dir"], hour["wind"]))
     if home in SEA_HOMES:
         bits.append(wave_text(hour["wind"]))
-    if "temp" in hour:
+    if include_temp and "temp" in hour:
         bits.append(temp_text(temps or [(hour["temp"], hour.get("feels", hour["temp"]))]))
     return "，".join(bits)
+
+
+def sky_wind_text(moment: datetime.datetime, text_of, home: str) -> str:
+    """只返回此刻外头的天色、雨雪、风级和海浪（不带任何气温数字）。"""
+    hour = day_hours(moment.date().isoformat(), text_of(moment.date()), home)[moment.hour]
+    return describe(hour, home, include_temp=False)
 
 
 def _band(wind: int) -> int:
