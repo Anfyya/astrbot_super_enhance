@@ -862,24 +862,17 @@ class MoneyBook(_JsonBook):
         )
 
     def chat_now_text(self, now: datetime.datetime, world, bot: str, label_fn=str) -> str:
-        """聊天/主动消息动态区注入：此刻真实各账户余额、近期收支、待结账目。"""
+        """聊天/主动消息动态区注入：仅显示她自己口袋与家里公用铁盒余额，及与这两处相关的账目。"""
         snap = self.snapshot(now, world)
         accs = snap["accounts"]
         today = now.replace(tzinfo=None).date().isoformat()
         me_acc = accs.get(bot)
-        other = "napcat2" if bot == "napcat" else "napcat"
-        other_acc = accs.get(other)
         lines = ["此刻手头账面与船屋钱匣（人民币，真实金额）："]
         if me_acc is not None:
             lines.append("- 你自己身上（%s）：%s 元（%s）" % (me_acc["label"], fmt_yuan(me_acc["balance"]), me_acc.get("place") or ""))
         tin = accs.get("tin_box")
         if tin is not None:
             lines.append("- 家里公用钱盒（%s）：%s 元（%s）" % (tin["label"], fmt_yuan(tin["balance"]), tin.get("place") or ""))
-        mast = accs.get("master")
-        if mast is not None:
-            lines.append("- 主人钱包：%s 元（大头由主人管着，没经他发话你动不了）" % fmt_yuan(mast["balance"]))
-        if other_acc is not None:
-            lines.append("- %s：%s 元" % (other_acc["label"], fmt_yuan(other_acc["balance"])))
         open_debts = [d for d in snap["debts"] if d.get("status") == "open"]
         if open_debts:
             d_bits = []
@@ -890,8 +883,14 @@ class MoneyBook(_JsonBook):
                 d_bits.append("%s %s（%s，%s%s）" % (d.get("id"), d.get("counterparty"), tag, amt_txt,
                                                      "，" + d.get("about") if d.get("about") else ""))
             lines.append("- 账本未结：%s" % "；".join(d_bits))
-        today_recs = [r for r in snap["records"] if str(r.get("at") or "")[:10] == today and r.get("kind") != "adjust"]
-        recent = today_recs[-3:] if today_recs else [r for r in snap["records"][-2:] if r.get("kind") != "adjust"]
+        visible_accs = {bot, "tin_box"}
+        recs = [
+            r for r in snap["records"]
+            if r.get("kind") != "adjust"
+            and ({r.get("account"), r.get("from_account"), r.get("to_account")} & visible_accs or r.get("who") == bot)
+        ]
+        today_recs = [r for r in recs if str(r.get("at") or "")[:10] == today]
+        recent = today_recs[-3:] if today_recs else recs[-2:]
         if recent:
             r_bits = []
             for r in recent:
