@@ -59,20 +59,29 @@ EXT = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
 EXTRA_KEY = "super_enhance_drawn"  # 这一轮画好、还没给她看的图（挂在事件上，不会串到别的轮次）
 TARGET = "_iter_llm_responses_with_fallback"
 VIEW_SUFFIX = ".view.jpg"  # 回看用的小图：<原图名去掉扩展名>.view.jpg
+MAX_IMAGE_SIDE = 1024  # 锁定 1K：最长边超过 1024 时按比例缩到 1024 以下
+DEFAULT_IMAGE_SIZE = "1024x640"  # 未填尺寸时默认 16:10 1K
 
 
 def clean_size(text) -> str:
-    """分辨率写成 宽x高；写成 16:9 这种比例的按 1K 档换算。看不懂返回空（让模型自己定）。"""
+    """分辨率写成 宽x高；1K（1024）以下原样保留，超过 1024 按原比例缩到最长边 1024；比例写成 16:10 按 1K 换算。"""
     raw = str(text or "").strip()
     m = SIZE_RE.match(raw)
     if m:
         w, h = int(m.group(1)), int(m.group(2))
-        return "%dx%d" % (w, h) if 64 <= w <= 8192 and 64 <= h <= 8192 else ""
+        if not (64 <= w <= 8192 and 64 <= h <= 8192):
+            return ""
+        top = max(w, h)
+        if top > MAX_IMAGE_SIDE:
+            scale = MAX_IMAGE_SIDE / top
+            w = max(64, round(w * scale))
+            h = max(64, round(h * scale))
+        return "%dx%d" % (w, h)
     m = RATIO_RE.match(raw)
     if m and int(m.group(1)) and int(m.group(2)):
         a, b = int(m.group(1)), int(m.group(2))
-        scale = 1024 / max(a, b)
-        return "%dx%d" % (round(a * scale), round(b * scale))
+        scale = MAX_IMAGE_SIDE / max(a, b)
+        return "%dx%d" % (max(64, round(a * scale)), max(64, round(b * scale)))
     return ""
 
 
@@ -280,11 +289,11 @@ class ImageGenFeature:
     # ---------- 工具 ----------
 
     @staticmethod
-    def _images_size(want: str) -> str:
-        """把 宽x高 映射到 OpenAI Images API（/v1/images/*）支持的尺寸枚举。"""
+    def _images_size_enum(want: str) -> str:
+        """只有上游拒绝自定义 宽x高 时才退回 OpenAI 固定枚举（保持横/竖/方，优先不超 1K）。"""
         if not want:
             return ""
-        if want in ("1024x1024", "1536x1024", "1024x1536", "auto"):
+        if want in ("512x512", "1024x1024", "1536x1024", "1024x1536", "auto"):
             return want
         m = SIZE_RE.match(want)
         if not m:
@@ -347,12 +356,10 @@ class ImageGenFeature:
         return {"raw": str(u)}
 
     @staticmethod
-    def _rejects_extra(err: Exception, extra_body: dict) -> bool:
-        if not extra_body:
-            return False
+    def _rejects_param(err: Exception, names) -> bool:
         msg = str(err or "").lower()
-        return ("unknown parameter" in msg or "extra inputs" in msg or "unrecognized" in msg) and any(
-            str(k).lower() in msg for k in extra_body
+        return ("unknown" in msg or "extra inputs" in msg or "unrecognized" in msg or "invalid" in msg or "supported" in msg) and any(
+            str(k).lower() in msg for k in names if k
         )
 
     async def _ask_chat(self, client, model: str, prompt_text: str, refs: list, want: str, left: float,
@@ -371,28 +378,54 @@ class ImageGenFeature:
         message = resp.choices[0].message
         return self.images_in(message), str(message.content or ""), self._usage_dict(resp)
 
-    async def _ask_images(self, client, model: str, prompt_text: str, refs: list, want: str, left: float,
-                          extra_body: dict) -> tuple[list, str, dict]:
-        img_size = self._images_size(want)
+    async def _call_images(self, client, model: str, prompt_text: str, refs: list, img_size: str,
+                           quality: str, left: float, extra_body: dict) -> tuple[list, str, dict]:
+        kwargs = {"model": model, "prompt": prompt_text, "timeout": left}
+        if img_size:
+            kwargs["size"] = img_size
+        if quality:
+            kwargs["quality"] = quality
+        if extra_body:
+            kwargs["extra_body"] = dict(extra_body)
         if refs:
             files = [
                 ("ref_%d.%s" % (i + 1, EXT.get(mime, "png")), base64.b64decode(b64), mime)
                 for i, (mime, b64) in enumerate(refs)
             ]
-            kwargs = {"model": model, "prompt": prompt_text, "image": files if len(files) > 1 else files[0], "timeout": left}
-            if img_size:
-                kwargs["size"] = img_size
-            if extra_body:
-                kwargs["extra_body"] = dict(extra_body)
+            kwargs["image"] = files if len(files) > 1 else files[0]
             resp = await asyncio.wait_for(client.images.edit(**kwargs), timeout=left)
         else:
-            kwargs = {"model": model, "prompt": prompt_text, "timeout": left}
-            if img_size:
-                kwargs["size"] = img_size
-            if extra_body:
-                kwargs["extra_body"] = dict(extra_body)
             resp = await asyncio.wait_for(client.images.generate(**kwargs), timeout=left)
         return await self._extract_images_response(resp, client, left), "", self._usage_dict(resp)
+
+    async def _ask_images_compat(self, bot: str, pid: str, client, model: str, prompt_text: str, refs: list,
+                                 want: str, began: float, left: float, extra_body: dict) -> tuple[list, str, dict, dict]:
+        """调用 /v1/images/*：默认传 quality='low' 与锁定后的 宽x高（如 1024x640），仅在上游拒收某参数时降级重试一次。"""
+        eb = dict(extra_body)
+        quality = str(eb.pop("quality", "") or "low")
+        img_size = want
+        for _ in range(3):
+            rem = max(10.0, min(left, self.timeout - (time.time() - began)))
+            try:
+                found, text, usage = await self._call_images(client, model, prompt_text, refs, img_size, quality, rem, eb)
+                sent = {**eb, **({"quality": quality} if quality else {})}
+                return found, text, usage, sent
+            except Exception as ie:
+                enum_size = self._images_size_enum(img_size)
+                if img_size and enum_size and img_size != enum_size and self._rejects_param(ie, ("size",)):
+                    logger.warning("[super_enhance/image] [%s] %s 不认自定义 size=%s，退回标准枚举 %s 重试", bot, pid, img_size, enum_size)
+                    img_size = enum_size
+                    continue
+                if quality and self._rejects_param(ie, ("quality",)):
+                    logger.warning("[super_enhance/image] [%s] %s 不认 quality=%s，去掉重试", bot, pid, quality)
+                    quality = ""
+                    continue
+                if eb and self._rejects_param(ie, eb.keys()):
+                    logger.warning("[super_enhance/image] [%s] %s 的 /v1/images/* 不支持附加参数 %s，去掉重试", bot, pid, eb)
+                    eb = {}
+                    continue
+                raise
+        raise RuntimeError("Images API 重试次数耗尽")
 
     async def _ask(self, bot: str, prompt_text: str, refs: list, want: str, began: float) -> tuple[list, str, list, dict, dict]:
         """按主模型、备用模型的顺序要图，要到就停。返回 (图, 哪个模型呈现的, 失败原因, usage, extra_body)。"""
@@ -416,15 +449,9 @@ class ImageGenFeature:
             t0 = time.time()
             try:
                 if pid in self._images_api_pids:
-                    try:
-                        found, text, usage = await self._ask_images(client, model, prompt_text, refs, want, left, extra_body)
-                    except Exception as ie:
-                        if self._rejects_extra(ie, extra_body):
-                            logger.warning("[super_enhance/image] [%s] %s 的 /v1/images/* 不支持附加参数 %s，去掉重试", bot, pid, extra_body)
-                            sent_extra = {}
-                            found, text, usage = await self._ask_images(client, model, prompt_text, refs, want, left, {})
-                        else:
-                            raise
+                    found, text, usage, sent_extra = await self._ask_images_compat(
+                        bot, pid, client, model, prompt_text, refs, want, began, left, extra_body
+                    )
                 else:
                     try:
                         found, text, usage = await self._ask_chat(client, model, prompt_text, refs, want, left, extra_body)
@@ -433,15 +460,9 @@ class ImageGenFeature:
                             self._images_api_pids.add(pid)
                             rem = max(10.0, self.timeout - (time.time() - began))
                             logger.info("[super_enhance/image] [%s] %s 只支持 /v1/images/*，改用 Images API 重试", bot, pid)
-                            try:
-                                found, text, usage = await self._ask_images(client, model, prompt_text, refs, want, rem, extra_body)
-                            except Exception as ie:
-                                if self._rejects_extra(ie, extra_body):
-                                    logger.warning("[super_enhance/image] [%s] %s 的 /v1/images/* 不支持附加参数 %s，去掉重试", bot, pid, extra_body)
-                                    sent_extra = {}
-                                    found, text, usage = await self._ask_images(client, model, prompt_text, refs, want, rem, {})
-                                else:
-                                    raise
+                            found, text, usage, sent_extra = await self._ask_images_compat(
+                                bot, pid, client, model, prompt_text, refs, want, began, rem, extra_body
+                            )
                         else:
                             raise
             except Exception as e:
@@ -474,7 +495,9 @@ class ImageGenFeature:
         notes = []
         want = clean_size(size)
         if str(size or "").strip() and not want:
-            notes.append("分辨率「%s」没看懂，按模型默认的" % str(size).strip())
+            notes.append("分辨率「%s」没看懂，按默认 1K（%s）" % (str(size).strip(), DEFAULT_IMAGE_SIZE))
+        if not want:
+            want = DEFAULT_IMAGE_SIZE
         chars, _ = self._character_refs(characters, notes)
         refs = (await self._refs(event, umo, bot, use_sent, use_last, notes))[:max(0, REF_MAX - len(chars))]
         refs = [(mime, b64) for _, mime, b64 in chars] + refs
