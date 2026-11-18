@@ -328,19 +328,51 @@ class ImageGenFeature:
                     out.append((mime, base64.b64encode(r.content).decode()))
         return out
 
-    async def _ask_chat(self, client, model: str, prompt_text: str, refs: list, want: str, left: float) -> tuple[list, str]:
+    @staticmethod
+    def _extra_body_of(provider) -> dict:
+        """读取 AstrBot 提供商配置的 custom_extra_body（例如 reasoning_effort），原样透传给上游。"""
+        cfg = getattr(provider, "provider_config", None) or {}
+        raw = cfg.get("custom_extra_body") if isinstance(cfg, dict) else None
+        return dict(raw) if isinstance(raw, dict) and raw else {}
+
+    @staticmethod
+    def _usage_dict(resp) -> dict:
+        u = getattr(resp, "usage", None)
+        if not u:
+            return {}
+        if hasattr(u, "model_dump"):
+            return u.model_dump(exclude_none=True)
+        if isinstance(u, dict):
+            return {k: v for k, v in u.items() if v is not None}
+        return {"raw": str(u)}
+
+    @staticmethod
+    def _rejects_extra(err: Exception, extra_body: dict) -> bool:
+        if not extra_body:
+            return False
+        msg = str(err or "").lower()
+        return ("unknown parameter" in msg or "extra inputs" in msg or "unrecognized" in msg) and any(
+            str(k).lower() in msg for k in extra_body
+        )
+
+    async def _ask_chat(self, client, model: str, prompt_text: str, refs: list, want: str, left: float,
+                        extra_body: dict) -> tuple[list, str, dict]:
         content = [{"type": "text", "text": prompt_text}] + [
             {"type": "image_url", "image_url": {"url": "data:%s;base64,%s" % (mime, b64)}} for mime, b64 in refs
         ]
         kwargs = {"model": model, "messages": [{"role": "user", "content": content}],
                   "stream": False, "timeout": left}
+        eb = dict(extra_body)
         if want:
-            kwargs["extra_body"] = {"size": want}
+            eb["size"] = want
+        if eb:
+            kwargs["extra_body"] = eb
         resp = await asyncio.wait_for(client.chat.completions.create(**kwargs), timeout=left)
         message = resp.choices[0].message
-        return self.images_in(message), str(message.content or "")
+        return self.images_in(message), str(message.content or ""), self._usage_dict(resp)
 
-    async def _ask_images(self, client, model: str, prompt_text: str, refs: list, want: str, left: float) -> tuple[list, str]:
+    async def _ask_images(self, client, model: str, prompt_text: str, refs: list, want: str, left: float,
+                          extra_body: dict) -> tuple[list, str, dict]:
         img_size = self._images_size(want)
         if refs:
             files = [
@@ -350,16 +382,20 @@ class ImageGenFeature:
             kwargs = {"model": model, "prompt": prompt_text, "image": files if len(files) > 1 else files[0], "timeout": left}
             if img_size:
                 kwargs["size"] = img_size
+            if extra_body:
+                kwargs["extra_body"] = dict(extra_body)
             resp = await asyncio.wait_for(client.images.edit(**kwargs), timeout=left)
         else:
             kwargs = {"model": model, "prompt": prompt_text, "timeout": left}
             if img_size:
                 kwargs["size"] = img_size
+            if extra_body:
+                kwargs["extra_body"] = dict(extra_body)
             resp = await asyncio.wait_for(client.images.generate(**kwargs), timeout=left)
-        return await self._extract_images_response(resp, client, left), ""
+        return await self._extract_images_response(resp, client, left), "", self._usage_dict(resp)
 
-    async def _ask(self, bot: str, prompt_text: str, refs: list, want: str, began: float) -> tuple[list, str, list]:
-        """按主模型、备用模型的顺序要图，要到就停。返回 (图, 哪个模型呈现的, 每个没呈现出来的原因)。"""
+    async def _ask(self, bot: str, prompt_text: str, refs: list, want: str, began: float) -> tuple[list, str, list, dict, dict]:
+        """按主模型、备用模型的顺序要图，要到就停。返回 (图, 哪个模型呈现的, 失败原因, usage, extra_body)。"""
         why = []
         ids = self.provider_ids
         for n, pid in enumerate(ids):
@@ -375,19 +411,37 @@ class ImageGenFeature:
                 why.append("找不到图像模型 %s（或者它不是 OpenAI 格式的源）" % pid)
                 continue
             model = provider.get_model()
+            extra_body = self._extra_body_of(provider)
+            sent_extra = dict(extra_body)
             t0 = time.time()
             try:
                 if pid in self._images_api_pids:
-                    found, text = await self._ask_images(client, model, prompt_text, refs, want, left)
+                    try:
+                        found, text, usage = await self._ask_images(client, model, prompt_text, refs, want, left, extra_body)
+                    except Exception as ie:
+                        if self._rejects_extra(ie, extra_body):
+                            logger.warning("[super_enhance/image] [%s] %s 的 /v1/images/* 不支持附加参数 %s，去掉重试", bot, pid, extra_body)
+                            sent_extra = {}
+                            found, text, usage = await self._ask_images(client, model, prompt_text, refs, want, left, {})
+                        else:
+                            raise
                 else:
                     try:
-                        found, text = await self._ask_chat(client, model, prompt_text, refs, want, left)
+                        found, text, usage = await self._ask_chat(client, model, prompt_text, refs, want, left, extra_body)
                     except Exception as e:
                         if self._needs_images_api(e) and hasattr(client, "images"):
                             self._images_api_pids.add(pid)
                             rem = max(10.0, self.timeout - (time.time() - began))
                             logger.info("[super_enhance/image] [%s] %s 只支持 /v1/images/*，改用 Images API 重试", bot, pid)
-                            found, text = await self._ask_images(client, model, prompt_text, refs, want, rem)
+                            try:
+                                found, text, usage = await self._ask_images(client, model, prompt_text, refs, want, rem, extra_body)
+                            except Exception as ie:
+                                if self._rejects_extra(ie, extra_body):
+                                    logger.warning("[super_enhance/image] [%s] %s 的 /v1/images/* 不支持附加参数 %s，去掉重试", bot, pid, extra_body)
+                                    sent_extra = {}
+                                    found, text, usage = await self._ask_images(client, model, prompt_text, refs, want, rem, {})
+                                else:
+                                    raise
                         else:
                             raise
             except Exception as e:
@@ -398,14 +452,14 @@ class ImageGenFeature:
             if found:
                 if n:
                     logger.info("[super_enhance/image] [%s] 主模型没呈现出来，用备用的 %s 呈现好了", bot, pid)
-                return found, pid, why
+                return found, pid, why, usage, sent_extra
             said = " ".join(ANY_IMAGE.sub("", text).split())[:120]
-            logger.info("[super_enhance/image] [%s] %s 没给图：%s", bot, pid, said or "（空）")
+            logger.info("[super_enhance/image] [%s] %s 没给图（usage=%s）：%s", bot, pid, usage or "none", said or "（空）")
             if URL_IMAGE.search(text):
                 why.append("%s 给的是图片链接，这个工具只认直接给出的图" % pid)
             else:
                 why.append("%s 没给图%s" % (pid, "，它说：%s" % said if said else "（多半是提示词被拦了）"))
-        return [], "", why
+        return [], "", why, {}, {}
 
     async def draw(self, event, prompt: str, size: str = "", use_sent: bool = False, use_last: bool = False,
                    characters="") -> str:
@@ -426,7 +480,7 @@ class ImageGenFeature:
         refs = [(mime, b64) for _, mime, b64 in chars] + refs
         prompt_text = self._lead(chars, len(refs) - len(chars)) + prompt
         began = time.time()
-        found, used, why = await self._ask(bot, prompt_text, refs, want, began)
+        found, used, why, usage, sent_extra = await self._ask(bot, prompt_text, refs, want, began)
         if not found:
             return "没呈现出来：%s。请直接简短说一声这会儿呈不出来就行，严禁自己用文字口述画面或「现场播报」代替图片，也别报错误码。" % "；".join(why)
         index = self._load_index()
@@ -442,17 +496,24 @@ class ImageGenFeature:
             (self.dir / name).write_bytes(data)
             view_mime, view_b64, dims = await asyncio.to_thread(preview_of, data)
             self._keep_view(image_id, name, view_mime, view_b64)
-            index["items"][image_id] = {"bot": bot, "file": name, "prompt": prompt[:300], "size": dims,
-                                        "characters": [n for n, _, _ in chars], "model": used,
-                                        "at": stamp.strftime("%Y-%m-%d %H:%M"), "sent": []}
+            item_meta = {"bot": bot, "file": name, "prompt": prompt[:300], "size": dims,
+                         "characters": [n for n, _, _ in chars], "model": used,
+                         "at": stamp.strftime("%Y-%m-%d %H:%M"), "sent": []}
+            if usage:
+                item_meta["usage"] = usage
+            if sent_extra:
+                item_meta["extra_body"] = sent_extra
+            index["items"][image_id] = item_meta
             drawn.append({"id": image_id, "mime": view_mime, "b64": view_b64})
             ids.append(image_id)
             sizes.append(dims or "?")
         self._save_index(index)
         if hasattr(event, "set_extra"):
             event.set_extra(EXTRA_KEY, drawn)
-        logger.info("[super_enhance/image] [%s] 呈现了 %s（%s，%s，参考图 %d 张，%.0f 秒）：%s", bot, "、".join(ids),
-                    "、".join(sizes), used, len(refs), time.time() - began, prompt[:40])
+        extra_note = ("，透传=%s" % sent_extra) if sent_extra else ""
+        usage_note = ("，usage=%s" % usage) if usage else "，usage=未返回"
+        logger.info("[super_enhance/image] [%s] 呈现了 %s（%s，%s，参考图 %d 张，%.0f 秒%s%s）：%s", bot, "、".join(ids),
+                    "、".join(sizes), used, len(refs), time.time() - began, extra_note, usage_note, prompt[:40])
         return ("画面已就绪：%s（%s）。图在下一条消息里给你看，主人还没看到。满意就用 send_view 发给他（id 填编号）；"
                 "不满意就改 prompt 重新呈现，或者 use_last_image=true 在这张上接着改，满意了再发%s。") % (
             "、".join(ids), "、".join(sizes), "；" + "；".join(notes) if notes else "")
