@@ -36,11 +36,43 @@ RECORDER_NOTE = """
 """.strip()
 
 
+DECISION_TOPICS = ("meal", "winter_gear", "salvage_order", "sealed_loot", "dive_outing", "other")
+DECISION_TOPIC_LABELS = {
+    "meal": "伙食",
+    "winter_gear": "过冬置办",
+    "salvage_order": "打捞接单",
+    "sealed_loot": "封口旧物",
+    "dive_outing": "出海深潜",
+    "other": "其他",
+}
+DECISION_LAPSE_HOURS = 24.0
+GLOBAL_DAILY_ASK_LIMIT = 4
+TOPIC_DAILY_ASK_LIMITS = {
+    "meal": 2,
+    "winter_gear": 1,
+    "salvage_order": 1,
+    "sealed_loot": 1,
+    "dive_outing": 1,
+    "other": 1,
+}
+
+
+def topic_ask_limit(topic) -> int:
+    return int(TOPIC_DAILY_ASK_LIMITS.get(normalize_decision_topic(topic), 1))
+
+
+def normalize_decision_topic(value) -> str:
+    topic = str(value or "").strip().lower()
+    return topic if topic in DECISION_TOPICS else "other"
+
+
 def format_decision_line(dec: dict, today_text: str, *, label_fn=str, include_bot: bool = False, show_status: bool = True) -> str:
-    """统一格式化待拍板 d 事项，明确标注提出时间并在跨日时提示勿把“明天”顺延。"""
+    """统一格式化待拍板 d 事项，明确标注提出时间、topic 并在跨日时提示勿把“明天”顺延。"""
     dec_id = str(dec.get("id") or "").strip()
     bot = str(dec.get("bot") or "").strip()
     who = (str(label_fn(bot) or bot) + " ") if include_bot and bot else ""
+    topic = normalize_decision_topic(dec.get("topic"))
+    topic_tag = "[%s] " % topic if dec.get("topic") else ""
     question = clean_text(dec.get("question"), 260)
     asked = str(dec.get("asked_at") or dec.get("created") or "").strip()
     asked_day = asked[:10] if len(asked) >= 10 else ""
@@ -52,9 +84,9 @@ def format_decision_line(dec: dict, today_text: str, *, label_fn=str, include_bo
         when_note = ""
     if show_status:
         st_lbl = "已问主人、正等主人拍板拿主意（未回话前严禁擅自替主人做主！）" if dec.get("status") == "pending" else "待等主人醒后请示拍板"
-        return "%s %s%s：%s%s" % (dec_id, who, st_lbl, question, when_note)
+        return "%s %s%s%s：%s%s" % (dec_id, topic_tag, who, st_lbl, question, when_note)
     who_tag = "（%s）" % (label_fn(bot) or bot) if include_bot and bot else ""
-    return "- %s%s：%s%s" % (dec_id, who_tag, question, when_note)
+    return "- %s %s%s：%s%s" % (dec_id, topic_tag.strip(), who_tag, question, when_note)
 
 
 def _key(text):
@@ -341,16 +373,52 @@ class Companionship:
                 return True
         return False
 
-    def open_decision(self, bot: str, question: str, now: datetime.datetime, *, sent: bool = False) -> dict | None:
-        """登记一条挂起等主人拍板的家里事（d 编号）；主人未回话前绝不自动超时替主人做主。"""
+    def _expire_decisions(self, now: datetime.datetime | None = None) -> bool:
+        """超过 24 小时未获回复的 pending / idea 自动转为 lapsed，解除同 topic 阻塞但不视作同意。"""
+        moment = now or self.world.now_local()
+        now_ts = self._ts(moment)
+        cutoff = DECISION_LAPSE_HOURS * 3600.0
+        changed = False
+        for row in self._data().get("decisions") or []:
+            st = row.get("status")
+            if st not in ("pending", "idea"):
+                continue
+            ref_str = row.get("asked_at") if st == "pending" else row.get("created")
+            ref_dt = parse_time(ref_str) or parse_time(row.get("created"))
+            ref_ts = self._ts(ref_dt) if ref_dt is not None else float(row.get("created_ts") or 0.0)
+            if ref_ts > 0 and (now_ts - ref_ts) >= cutoff:
+                row["status"] = "lapsed"
+                row["lapsed_at"] = fmt_time(moment.replace(tzinfo=None))
+                changed = True
+        if changed:
+            self._save()
+        return changed
+
+    def open_decision(
+        self,
+        bot: str,
+        question: str,
+        now: datetime.datetime,
+        *,
+        sent: bool = False,
+        topic: str = "other",
+    ) -> dict | None:
+        """登记一条挂起等主人拍板的家里事（d 编号，按 topic 分栏去重）；超过 24h 转 lapsed 解除阻塞。"""
         body = clean_text(question, 320)
         if not bot or not body:
             return None
+        self._expire_decisions(now)
+        norm_topic = normalize_decision_topic(topic)
         data = self._data()
         decs = data.setdefault("decisions", [])
         scene = self._scene()
         for existing in decs:
-            if existing.get("scene") == scene and existing.get("status") in ("idea", "pending") and _key(existing.get("question")) == _key(body):
+            if (
+                existing.get("scene") == scene
+                and existing.get("status") in ("idea", "pending")
+                and normalize_decision_topic(existing.get("topic")) == norm_topic
+                and _key(existing.get("question")) == _key(body)
+            ):
                 if sent and existing.get("status") == "idea":
                     existing["status"] = "pending"
                     existing["asked_at"] = fmt_time(now)
@@ -360,6 +428,7 @@ class Companionship:
             "id": self._id("d"),
             "bot": bot,
             "scene": scene,
+            "topic": norm_topic,
             "question": body,
             "status": "pending" if sent else "idea",
             "created": fmt_time(now),
@@ -382,15 +451,48 @@ class Companionship:
                 self._save()
                 return
 
-    def pending_decisions(self, now: datetime.datetime | None = None, bot: str = "") -> list[dict]:
+    def pending_decisions(
+        self,
+        now: datetime.datetime | None = None,
+        bot: str = "",
+        topic: str = "",
+    ) -> list[dict]:
+        self._expire_decisions(now)
         scene = self._scene()
+        norm_topic = normalize_decision_topic(topic) if topic else ""
         out = []
         for row in self._data().get("decisions") or []:
             if row.get("scene") != scene or row.get("status") not in ("idea", "pending"):
                 continue
             if bot and row.get("bot") != bot:
                 continue
-            out.append(dict(row))
+            if norm_topic and normalize_decision_topic(row.get("topic")) != norm_topic:
+                continue
+            out.append({**row, "topic": normalize_decision_topic(row.get("topic"))})
+        return out
+
+    def recent_lapsed_decisions(
+        self,
+        now: datetime.datetime | None = None,
+        *,
+        hours: float = 48.0,
+        bot: str = "",
+    ) -> list[dict]:
+        """近期超过 24h 未获回复而转为 lapsed 的请示：保留到提示词防止无脑重问，但不阻塞同/异 topic。"""
+        moment = now or self.world.now_local()
+        self._expire_decisions(moment)
+        cutoff = self._ts(moment) - hours * 3600.0
+        scene = self._scene()
+        out = []
+        for row in self._data().get("decisions") or []:
+            if row.get("scene") != scene or row.get("status") != "lapsed":
+                continue
+            if bot and row.get("bot") != bot:
+                continue
+            stamp = parse_time(row.get("lapsed_at")) or parse_time(row.get("asked_at")) or parse_time(row.get("created"))
+            ts = self._ts(stamp) if stamp else float(row.get("created_ts") or 0)
+            if ts >= cutoff:
+                out.append({**row, "topic": normalize_decision_topic(row.get("topic"))})
         return out
 
     def recent_resolved_decisions(self, now: datetime.datetime | None = None, *, hours: float = 36.0, bot: str = "") -> list[dict]:
@@ -410,12 +512,26 @@ class Companionship:
                 out.append(dict(row))
         return out
 
-    def today_ask_count(self, now: datetime.datetime) -> int:
+    def today_ask_count(self, now: datetime.datetime, topic: str = "") -> int:
+        self._expire_decisions(now)
         day = now.date().isoformat()
-        return sum(
-            1 for r in (self._data().get("decisions") or [])
-            if r.get("scene") == self._scene() and str(r.get("created") or "")[:10] == day
-        )
+        scene = self._scene()
+        norm_topic = normalize_decision_topic(topic) if topic else ""
+        count = 0
+        for r in self._data().get("decisions") or []:
+            if r.get("scene") != scene:
+                continue
+            if norm_topic and normalize_decision_topic(r.get("topic")) != norm_topic:
+                continue
+            st = r.get("status")
+            asked_at = str(r.get("asked_at") or "").strip()
+            # 未曾发出的 idea 及未发出就过期的 lapsed idea 不占用每日请示额度
+            if st == "idea" or (st == "lapsed" and not asked_at):
+                continue
+            stamp = asked_at or str(r.get("created") or "")
+            if stamp[:10] == day:
+                count += 1
+        return count
 
     def reconcile(self, now):
         """普通打算被网页或原有清理逻辑撤下后，同步更新已拍板待办的收尾状态。"""
@@ -476,7 +592,8 @@ class Companionship:
                     open_all = [x for x in decs if x.get("scene") == self._scene() and x.get("status") in ("pending", "idea")]
                     if len(open_all) == 1:
                         target_dec = open_all[0]
-            if target_dec is None or target_dec.get("status") not in ("pending", "idea"):
+            allowed_st = ("pending", "idea", "lapsed") if d_id else ("pending", "idea")
+            if target_dec is None or target_dec.get("status") not in allowed_st:
                 continue
             if d_status == "deferred":
                 target_dec["deferred_at"] = fmt_time(now)

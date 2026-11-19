@@ -24,12 +24,13 @@ from ...common import jsonio, llm, timeutil
 from .models import bot_of_umo, profile_umo_for_bot
 from .recorder import norm_time
 from .facts import fact_batch
-from .companionship import format_decision_line
+from .companionship import (DECISION_TOPICS, DECISION_TOPIC_LABELS, GLOBAL_DAILY_ASK_LIMIT,
+                            format_decision_line, normalize_decision_topic, topic_ask_limit)
 from .living_rules import STEP_LIFECYCLE_RULES
-from .money import SEASIDE_PRICE_GUIDE, normalize_step_money_list, validate_step_segments_money
+from .money import AUTONOMOUS_SELL_LIMIT, SEASIDE_PRICE_GUIDE, fmt_yuan, normalize_step_money_list, validate_step_segments_money
 from .things import FactConflict
 from .things import (CAT_FOOD, CAT_ITEM, END_STEPS, ITEM_END_STEPS, ITEM_MID_STEPS, ITEM_START_STEPS, KEEPS, KINDS, MEASURED_KINDS, MID_STEPS,
-                     SPOTS, START_STEPS, _same_name, cat_of, checked_place, had_before, is_charcoal, is_ended, is_strict_qty,
+                     SPOTS, START_STEPS, _same_name, cat_of, checked_place, had_before, is_charcoal, is_ended, is_sealed, is_strict_qty,
                      norm_kind, norm_state, parse_amount, spots_for, staple_of, norm_step, split_keep, step_no, MAX_INSIDE)
 from . import weather as weather_mod
 from . import weathering
@@ -148,10 +149,10 @@ STEP_SYSTEM_TEMPLATE = """{base_system}
 20. **家里的东西**（吃的以外）：上面「家里的东西」是此刻家里有的（编号、样子、在哪、在谁手上）。段里做了、用了、挪了、交给别人了、接着做了一截的东西，写进这段的 items（没动到就是空数组）：
    只是拿来读、翻看、摊开看一眼，之后原样放回去，地方、样子、数量都没变的，不算动到它，不写 items；别为了让校验通过硬编一条物品变化。船屋里隔音有限，主人睡觉时严禁在船舱里或头顶甲板上敲铁、凿木头、叮当拆修铁器。
    - 已有的写 id、what（挪地方 / 交给 / 用了 / 清点 / 做了一截 / 做好了 / 变了样 / 送人了 / 丢了 / 坏了扔了 / 用完了）、place、holder（交到谁手上）、owner（仅在交给别人或改变归属时填新拥有者，如 "master" / "napcat" / "napcat2" / "共用"）、state（这段做完它什么样，比如「织到两尺长」）；消耗品可顺带写 amount（清点数量）/ used（本次用量）/ left（剩余数量）。接着做没做完的那件（比如接着织那条围巾），就是清单里那一件，写「做了一截」或「做好了」，不要另建一件。清单里标着「已做好」的已经做完了，不要再排接着做它，也别给它写「做了一截」「做好了」；想再做一样的，就另起一件新的。
-   - 新做出来的、买回来的、捡到的写 new（临时代号 x1、x2……，这一次里每件一个，两个人、几段之间也不重复：丛雨那段用了 x1，亚托莉那段的新东西就从 x2 起）、name（叫得出区别的名字，例如「兔子窗花」）、kind（它是什么，一个词：窗花、围巾、鱼漂……；捡/劈来烧柴炉的木柴 kind 必须填 `"燃柴"` / `"薪柴"` / `"引火料"`，修船/手工木料填 `"漂流木料"` / `"木料"`，仅闷炭/木炭填 `"燃料"`，严禁把木柴写成模糊的 `"燃料"`；现金收支一律记在 `money` 里，严禁把钱当成新 `items`（`kind="钱"`）新建）、look（样子）、owner（最终归谁所有/谁穿谁用：填 "master" / "napcat" / "napcat2" / "共用"；替主人或别人买回来、做给谁穿用的衣物或物品，owner 一律填实际拥有者或受赠人如 "master"，严禁只因是谁跑腿买回或暂时拿着就误填成跑腿人）、origin（哪来的，如「杂货铺」「废铁站」「海滩漂流物」）、from（用哪几件原料做的，没有留空）、what（开始做 / 做好了 / 买回来 / 收到 / 捡到）、amount（凡燃柴/闷炭等燃料必填数字+单位如 `"1捆"`、`"400克"`，严禁写 `"两捆"`、`"一抱"`、`"约五分之一捆"` 等中文数字或模糊词）、place、state。严禁凭空编造旧东西或写「原来就有」。
+   - 新做出来的、买回来的、捡到的写 new（临时代号 x1、x2……，这一次里每件一个，两个人、几段之间也不重复：丛雨那段用了 x1，亚托莉那段的新东西就从 x2 起）、name（叫得出区别的名字，例如「兔子窗花」）、kind（它是什么，一个词：窗花、围巾、鱼漂……；捡/劈来烧柴炉的木柴 kind 必须填 `"燃柴"` / `"薪柴"` / `"引火料"`，修船/手工木料填 `"漂流木料"` / `"木料"`，仅闷炭/木炭填 `"燃料"`，严禁把木柴写成模糊的 `"燃料"`；打捞或捡来准备过秤卖钱的废金属 kind 填 `"废铜"` / `"废铁"` / `"废金属"` 并可附 `"purpose": "scrap"`，铜顶针/怀表等旧物纪念品勿写废金属；现金收支一律记在 `money` 里，严禁把钱当成新 `items`（`kind="钱"`）新建）、look（样子）、owner（最终归谁所有/谁穿谁用：填 "master" / "napcat" / "napcat2" / "共用"；替主人或别人买回来、做给谁穿用的衣物或物品，owner 一律填实际拥有者或受赠人如 "master"，严禁只因是谁跑腿买回或暂时拿着就误填成跑腿人）、origin（哪来的，如「杂货铺」「废铁站」「海滩漂流物」）、from（用哪几件原料做的，没有留空）、what（开始做 / 做好了 / 买回来 / 收到 / 捡到）、amount（凡燃柴/闷炭等燃料必填数字+单位如 `"1捆"`、`"400克"`，严禁写 `"两捆"`、`"一抱"`、`"约五分之一捆"` 等中文数字或模糊词）、place、state。严禁凭空编造旧东西或写「原来就有」。
    - 已有燃柴/闷炭消耗或清点时，填的 `used` / `left` / `amount` 同样必须为阿拉伯数字+单位（如 `"0.25捆"`、`"1.1捆"`、`"200克"`；`"用完了"` 时 `left` 填 `""`），严禁写 `"小半捆"`、`"约五分之一捆"`、`"1捆半"` 等中文分数或模糊说法。
    - 上面写了字、画了东西的（给主人留的纸条、信、便笺、清单、贺卡、画）：look 里把上面写的原话一字不差地写出来，用「」括起来；画的写清楚画了什么。例如 look 写「黄纸条，铅笔写的：『主人，粥在灶上温着，亚托莉去码头了，中午前回来』」，别只写「一张写给主人的纸条」。这段的 steps 里写到她写纸条时也用这句原话。后来谁拿起来看、念给主人听，都照这句说，不能另编。
-   - 封着送来的（寄来的信、没拆的包裹、捆好的箱子）：look 写外面看得到的（信封、邮戳、收信人、包裹多大多沉），里面是什么写进 inside——信写原话，用「」括起来；包裹、箱子写装了哪些东西。state 写「封着没拆」。这段的 doing、steps、result 里写到它时，照外面的样子写。拆开留到聊天里，那时候她们照 inside 说。
+   - 封着送来的或捞上来的封口战利品（寄来的信、没拆的包裹、捆好的箱子、上锁小铁箱、封口药瓶）：look 写外面看得到的（信封、邮戳、外观大小），新建时必须在 `weather` 写 `{{"sealed": true}}`（信/已知包裹还可把内容写进 inside；未知战利品 inside 可留空）；state 写「封着没拆」。这段的 doing、steps、result 里写到它时，照外面的样子写。等主人拍板同意拆看后，才把该 `id` 的 `weather` 改为 `{{"sealed": false}}`（或在聊天里当面拆开）。
    - place 和第 18 条一样拆开写，例如 {{"area": "卧房", "at": "针线笸箩", "detail": ""}}、{{"area": "堂屋", "at": "书架", "detail": "第二格"}}。
    - 每一步也写 step（第几步，同第 18 条）。
    - 同一种东西有好几件的（清单里标着「长得像，认准编号」），照清单认准是哪一件。
@@ -160,19 +161,20 @@ STEP_SYSTEM_TEMPLATE = """{base_system}
 23. **每段写 mood：这段她是什么心情、因为什么**，一句话，由头写在里头（比如「收音机拆开擦了半天还是不响，有点不服气」「主人还没回来，心里惦记着」「早上那锅鱼馊了，还有点闷」「被主人夸了，心里美滋滋的」）。聊天时她只看得到这一句，光写「有点不服气」「有点闷」，她不知道是冲着什么，就会往主人身上撒；所以冲着哪件事、哪样东西，就写明哪件事、哪样东西。心情跟着事走：从她上一段的心情接着往下写（上面已经发生的、手上的事后面写着当时的心情；今天头一段从起床时的底色起），这段碰上的事、主人说的话、过了多久都会让它变——闹别扭的气会慢慢消，高兴的劲头也会过去，别一整天都是同一个心情。心情不好要有由头，由头得是世界线或聊天记录里真有的事（可以就是这段里写出来的一件小事）；起床就带着、说不上由头的，写明「说不上为什么」，过一阵就淡了。睡觉那段写睡前的心情。
 24. **给外人帮忙、干活不白帮**：她们给镇上的人（家里人以外）搭手干活、跑腿、修东西、搬东西、照看东西，人家总会给点什么：几个钱、一点吃的、一样用得上的东西，或者讲好的工钱、打捞费。写进那段的 steps 和 result（谁给的、给了什么）；拿回来的吃的、东西照第 18、20 条记进 things。顺手扶一把、递个东西这种小事不算。丛雨一般人看不见，人家不知道是她帮的，别排她一个人给外人干活；跟亚托莉一起干的，回报给亚托莉。
 25. **当家权限硬锁（没有主人真转不动）**：
-   - **主人是船长与当家人**，丛雨一般人看不见，严禁单独去镇上公共水井/蓄水塔/半淹车站打水、去集市买东西、去公共澡堂或跑腿办事（对外取水/采买/问价必须排给外人看得见的亚托莉单独立段出门，place 写外头地点、at_home 填 false），亚托莉只是打下手的机器人（算不清大账、不准擅自动大笔家底、不准私自接委托深潜涉险）。
-   - **大件置办与大钱花销锁死归主人拍板**：买过冬厚衣/棉袄、换厚棉被、修船屋大件设施、卖大宗打捞废铜定价——若上方「各自的打算 / 主人说过他要做的事」里**还没有**主人明确准话，亚托莉最多只能去旧衣铺/集市**打听回价钱行情**（不许写 `items` 入库买回来！），并在顶层 `ask_master` 填 `kind: "decision"` 发消息把行情和二选一方案报给主人拿主意；**在主人回话拍板之前，本轮及后续所有段严禁擅自替主人拍板买定大件！** 等主人已在聊天里发话拍板（上方出现对应 `i` 编号打算）后，去采买的那一段必须填 `from: "intent"` 且 `intent` 填该 `i` 编号（或与 `master` 同行 `with: ["master"]`）。
-   - **打捞接单与封口战利品归船长（主人）**：镇上人来下单捞东西，亚托莉只记下对方要捞什么、出多少报酬，填 `ask_master`（`kind: "decision"`）问主人接不接、什么时候带船去；平时捞上来的上锁小铁箱、封口药瓶或稀罕旧物，一律搁在 `船舱·矮桌`（`state` 写 `"封着没拆，留着等主人看"`），严禁她俩在后台自己撬开拆完。
-   - **伙食分「凑合糊口」与「主人在家/点菜开火」**：若主人没点菜、也没约好这顿一起吃，她俩自己只熬碗白粥配咸菜、烤块番薯或热口剩菜简单对付（省柴省炭省油盐，不做一荤一素一汤的大菜）；快到晚饭点想做上方参考菜单里的正经热菜锅物时，先填 `ask_master`（`kind: "decision"`）问主人今晚想吃哪样、回不回来吃。
+   - **主人是船长与当家人**，丛雨一般人看不见，严禁单独去镇上公共水井/蓄水塔/半淹车站打水、去集市买东西、去公共澡堂或跑腿办事（对外取水/采买/问价必须排给外人看得见的亚托莉单独立段出门，place 写外头地点、at_home 填 false），亚托莉只是打下手的机器人（算不清大账、不准擅自动大笔家底、不准私自接委托或擅进封闭险地）。
+   - **A 类（亚托莉自主执行，不必请示）与 B 类（必须填 `ask_master` 等船长拍板）明确划分**：
+     · **A 类自主**：港内熟悉的浅水开放点（旧街露门脸的铺子、半沉超市外廊、水下车站站台外沿、沉没图书馆窗外等，**不进封闭沉船或旧公寓内舱**）下水打捞废铜旧铁/小零碎、观赏潜水、退潮浅滩捡废；把家里**真有库存**的废铜旧铁（`items` 同步消耗真实 `id`）扛去收购站过秤卖钱，单笔 `<= {sell_limit}` 元直接自主结现（`reason="sell"`）。
+     · **B 类必须 `ask_master`（`kind="decision"`）请船长拍板**：① 买过冬厚衣/棉袄、换厚棉被、修船屋大件设施；② 镇上外人来下打捞委托单；③ 进封闭沉船或旧公寓内舱深潜摸货；④ 出动港边小潜艇下海；⑤ 拆看捞上来的上锁铁盒或封口旧物（`weather.sealed=true`）；⑥ 寄卖 200~800 元完好遗物或单笔卖货超过 `{sell_limit}` 元。若上方「各自的打算 / 主人说过他要做的事」里**还没有**主人明确准话，最多只写打听行情、记下来客口信或把封口旧物搁在 `船舱·矮桌`（`weather: {{"sealed": true}}`），**在主人回话拍板之前，本轮及后续所有段严禁擅自买定大件、接单、进封闭沉船、开小潜艇或撬开封口旧物！** 主人批准生成 `intent` 后可按打算分步执行（`from: "intent"` 且 `intent` 填 `i` 编号，或与 `master` 同行 `with: ["master"]`），不必反复请示。
+   - **伙食分「凑合糊口」与「主人在家/点菜开火」**：若主人没点菜、也没约好这顿一起吃，她俩自己只熬碗白粥配咸菜、烤块番薯或热口剩菜简单对付（省柴省炭省油盐，不做一荤一素一汤的大菜）；快到晚饭点想做上方参考菜单里的正经热菜锅物时，先填 `ask_master`（`kind: "decision"`, `topic: "meal"`）问主人今晚想吃哪样、回不回来吃。
    - **禁止纯日报式 `send_msg`**：严禁干完活发“废铁搬完啦跟主人汇报一声”“配给领回来啦通知一声”这种不需要主人参与的事后工作简报！联系主人优先用 `ask_master`（事前请主人拿主意 `decision`），段内 `send_msg` 只在早晚问候或真有急事喊主人时用。
 26. **船屋用钱、出门带钱与赚钱规矩（人民币，全写进段内 `money` 数组）**：
    - 分四处保管：`master`（主人钱包，大头由主人自己拿着；未经主人聊天里发话或同行付现，补写里**严禁**从 `master` 扣钱或拨钱）、`tin_box`（船舱矮桌抽屉里 `p157` 公用铁盒）、`napcat2`（亚托莉口袋）、`napcat`（丛雨零花；丛雨外人看不见，不能独自在镇上花钱或收钱）。
    - **人在外面动不了屋里的铁盒**：去集市/杂货铺/旧衣铺买东西时，若 `at_home=false` 则**严禁**填 `account="tin_box"` 隔空付钱！要么在出门前的船屋段先做一笔 `transfer(from_account="tin_box", to_account="napcat2")` 取现揣身上，要么只花 `napcat2` 口袋里本就揣着的零钱；回到船屋后再把找零/多余现金放回 `tin_box` 或上交 `master`。手头钱不够时按实际少买一点、回船屋拿钱、以物易物，或向熟摊主记赊账（`debt_add`，direction=`"payable"`）。
-   - **买物与卖物必须真对应账实**：海边买回新食物/新物件（`what="买回来"`）时，同段 `money` 必须填对应的 `spend` 或 `debt_add`（或在 `things/items` 里真消耗已有实物以物易物），**严禁白拿商家东西，也不要再把现金当成新 `items`（`kind="钱"`）新建**。在海边赚钱（`earn`）必须填 `reason`：`work`（零工/修小物件 `<=50` 元）、`salvage`（打捞单收钱；超过 50 元须先有主人确认的 `intent` 打算，且单次 `<=250` 元）、`sell`（变卖收购站/集市：`<=300` 元，必须在同段 `things/items` 里消耗真实库存编号 `id`）、`consign_payout`（寄卖回款改用 `debt_settle` 核销待收 `debt_id`）。单笔进账超过 50 元回船屋后习惯交到主人手里或放入公用铁盒；手头有 `payable` 赊欠时进账了要惦记还掉（`debt_settle`）。
+   - **买物与卖物必须真对应账实**：海边买回新食物/新物件（`what="买回来"`）时，同段 `money` 必须填对应的 `spend` 或 `debt_add`（或在 `things/items` 里真消耗已有实物以物易物），**严禁白拿商家东西，也不要再把现金当成新 `items`（`kind="钱"`）新建**。在海边赚钱（`earn`）必须填 `reason`：`work`（零工/修小物件 `<=50` 元）、`salvage`（打捞单收钱；超过 50 元须先有主人确认的 `intent` 打算，且单次 `<=250` 元）、`sell`（变卖收购站/集市：单笔自主 `<= {sell_limit}` 元，超过须有主人 `intent` 且上限 `300` 元，必须在同段 `things/items` 里消耗真实库存编号 `id`）、`consign_payout`（寄卖回款改用 `debt_settle` 核销待收 `debt_id`）。单笔进账超过 50 元回船屋后习惯交到主人手里或放入公用铁盒；手头有 `payable` 赊欠时进账了要惦记还掉（`debt_settle`）。
 {money_guide}
 {world_notes}
 {step_notes}
-要问主人的（ask_master，必填拿主意入口）：who 写谁来问（`"napcat"` 或 `"napcat2"`），question 写发给主人的那句自然口语问话（时间说具体，如“等会儿/下午/明早”，避免只写模糊的“明天”导致跨天后语义顺延），kind 写 `"decision"`（请当家主人拍板：先买厚棉衣还是换厚棉被、接不接打捞单、晚饭做哪道菜、喊主人一起拆看旧物等）。**铁律：凡填了 `ask_master` 请主人拍板的事，本轮 `segments` 里只排「打听行情 / 备好手头杂活 / 等主人准话」，绝不许在本轮 `segments` 里提前把那件待拍板的事直接做完！** 程序会把这件待拍板事项挂起（主人哪怕过半天再回话，到时候再排进去做；主人没回话前就老老实实干日常维持杂活等准话）。只有主人正在睡觉、或者上方已经挂着待主人拍板的 `d` 事项尚未回复时，`ask_master` 才留空。
+要问主人的（ask_master，必填拿主意入口）：who 写谁来问（`"napcat"` 或 `"napcat2"`），question 写发给主人的那句自然口语问话（时间说具体，如“等会儿/下午/明早”，避免只写模糊的“明天”导致跨天后语义顺延），kind 写 `"decision"`，**`topic` 必填六选一枚举**：`"meal"`（晚饭吃什么/回不回来吃）、`"winter_gear"`（冬衣/棉被行情与先买哪样）、`"salvage_order"`（外人打捞委托/大宗超 {sell_limit} 元变卖或寄卖遗物）、`"sealed_loot"`（拆看封口旧物/上锁铁盒）、`"dive_outing"`（出动小潜艇/约船长出船深潜）、`"other"`（其他待拍板事项）。**铁律：凡填了 `ask_master` 请主人拍板的事，本轮 `segments` 里只排「打听行情 / 备好手头杂活 / 等主人准话」，绝不许在本轮 `segments` 里提前把那件待拍板的事直接做完！** 程序会按 `topic` 挂起该事项（超 24 小时未回会自动解除阻塞，但未获准许前仍不可擅自替主人做主）。只有主人正在睡觉、或者**该 `topic` 下**已经挂着待主人拍板的 `d` 事项尚未回复时，该 `topic` 的 `ask_master` 才留空（不同 `topic` 互不阻塞）。
 
 注意：**不要输出 intentions，也不要写任何「接下来打算」**。上面「各自的打算」里如果有，是之前说好要做的，照着走就行；标着「挂了几天了」的，只在 intent_moves 里写它后来怎样（第 12 条）。
 
@@ -215,7 +217,7 @@ STEP_SYSTEM_TEMPLATE = """{base_system}
 
 {{
   "end_current": {{"napcat": "2026-10-12 08:25"}},
-  "ask_master": {{"who": "", "question": "", "kind": ""}},
+  "ask_master": {{"who": "", "question": "", "kind": "", "topic": ""}},
   "stopped_results": {{}},
   "intent_moves": {{}},
   "segments": {{
@@ -606,6 +608,8 @@ class LifeStep:
             world=self.world,
             store=store,
             shelf=shelf,
+            money=getattr(self, "money", None),
+            companion=getattr(self, "companionship", None),
         )
         win_seed = draw_window(
             date_text,
@@ -1610,6 +1614,7 @@ class LifeStep:
             )
 
         store = getattr(self, "things", None)
+        shelf = None
         living_nudges = ""
         if store is not None:
             try:
@@ -1672,7 +1677,7 @@ class LifeStep:
             if pend_decs:
                 today_text = flat.date().isoformat()
                 slow_parts.append(
-                    "【待当家主人拍板的事（主人尚未回话前保持挂起，严禁擅自替主人做主买定大件或私自接单！）】：\n"
+                    "【待当家主人拍板的事（同 topic 主人尚未回话前保持挂起，严禁擅自替主人做主；不同 topic 互不阻塞！）】：\n"
                     + "\n".join(
                         format_decision_line(d, today_text, label_fn=self.label, include_bot=True, show_status=False)
                         for d in pend_decs
@@ -1690,6 +1695,18 @@ class LifeStep:
                             clean_text(d.get("question"), 100), clean_text(d.get("choice"), 100),
                         )
                         for d in done_decs[-4:]
+                    )
+                )
+            lapsed_decs = companion.safe("recent_lapsed_decisions", flat, default=[]) or []
+            if lapsed_decs:
+                slow_parts.append(
+                    "【已超 24 小时主人未回的旧请示（已自动解除阻塞，不再卡住其他请示；但未获主人准许前仍严禁擅自替主人做主）】：\n"
+                    + "\n".join(
+                        "- %s [%s]：%s（提出于 %s）" % (
+                            d.get("id"), normalize_decision_topic(d.get("topic")),
+                            clean_text(d.get("question"), 100), d.get("asked_at") or d.get("created") or "",
+                        )
+                        for d in lapsed_decs[-3:]
                     )
                 )
 
@@ -1804,12 +1821,69 @@ class LifeStep:
             live_parts.append("主人最近的动向（只作参考，不许改写、不许替他编）：" + sleep_tail.lstrip("\n"))
         if companion is not None and not master_sleeping and 8 <= flat.hour <= 22:
             pend_decs = companion.safe("pending_decisions", flat, default=[]) or []
-            asked_today = int(companion.safe("today_ask_count", flat, default=0) or 0)
-            if not pend_decs and asked_today < 3:
-                live_parts.append(
-                    "【当家人参与提示】主人此刻醒着，今天已请示 %d 次且没有挂着未回的待拍板事项——若遇到全新还没请示过的「置办过冬大件打听到了行情」「有人来打捞船找船长接单」「快到正餐点拿不准主人回不回来吃或吃哪样」「捞到了封口旧物想喊主人一起拆看」，可填写顶层 ask_master（kind 填 \"decision\"）向主人发话；已经在上方「近期已由主人拍板定准的事」或「各自的打算」里定过主意的事，严禁再用 ask_master 重复问一遍！"
-                    % asked_today
+            pend_topics = {normalize_decision_topic(d.get("topic")) for d in pend_decs}
+            asked_by_topic = {
+                t: int(companion.safe("today_ask_count", flat, topic=t, default=0) or 0)
+                for t in DECISION_TOPICS
+            }
+            total_asked = sum(asked_by_topic.values())
+            if total_asked < GLOBAL_DAILY_ASK_LIMIT:
+                live_ctx = getattr(self, "_last_live_ctx", None) or {}
+                if "sealed_loot_count" in live_ctx:
+                    sealed_cnt = int(live_ctx.get("sealed_loot_count") or 0)
+                elif store is not None and shelf is not None:
+                    sealed_cnt = sum(
+                        1 for it in store._local_items(shelf.values(), ref_moment)
+                        if is_ended(it) is None and cat_of(it) == CAT_ITEM and is_sealed(it)
+                    )
+                else:
+                    sealed_cnt = 0
+
+                cand_groups = set()
+                cur_cands = getattr(self, "_last_cand_map", None)
+                if isinstance(cur_cands, dict):
+                    gmap = group_map(self._pools())
+                    for c_meta in cur_cands.values():
+                        c_txt = str((c_meta or {}).get("text") or "")
+                        if c_txt:
+                            cand_groups.add(cool_key(c_txt, gmap))
+
+                days_salv = live_ctx.get("days_since_salvage")
+                dive_wx_ok = bool(
+                    live_ctx.get("has_weather")
+                    and int(live_ctx.get("max_wind") or 0) <= 4
+                    and int(live_ctx.get("max_fog") or 0) < 2
+                    and float(live_ctx.get("max_rain") or 0.0) < 8.0
+                    and (live_ctx.get("sea_temp") is None or float(live_ctx["sea_temp"]) >= 4.0)
+                    and 6 <= flat.hour < 18
                 )
+
+                topic_hints: list[str] = []
+                if not live_ctx.get("has_winter_gear") and "winter_gear" not in pend_topics and asked_by_topic["winter_gear"] < topic_ask_limit("winter_gear"):
+                    topic_hints.append("`winter_gear`「置办过冬大件打听到了行情」")
+                if "打捞所" in cand_groups and "salvage_order" not in pend_topics and asked_by_topic["salvage_order"] < topic_ask_limit("salvage_order"):
+                    topic_hints.append("`salvage_order`「有人来打捞船找船长接单/大宗超限卖货或寄卖」")
+                if (
+                    ("小潜艇" in cand_groups or (days_salv is not None and float(days_salv) >= 3 and dive_wx_ok))
+                    and "dive_outing" not in pend_topics
+                    and asked_by_topic["dive_outing"] < topic_ask_limit("dive_outing")
+                ):
+                    topic_hints.append("`dive_outing`「提议开小潜艇或约船长一起深潜出海」")
+                if sealed_cnt > 0 and "sealed_loot" not in pend_topics and asked_by_topic["sealed_loot"] < topic_ask_limit("sealed_loot"):
+                    topic_hints.append("`sealed_loot`「船屋现存 %d 件封口旧物待拆，想喊主人一起拆看」" % sealed_cnt)
+                if flat.hour in (10, 11, 16, 17) and "meal" not in pend_topics and asked_by_topic["meal"] < topic_ask_limit("meal"):
+                    topic_hints.append("`meal`「快到正餐点拿不准主人回不回来吃或吃哪样」")
+
+                if topic_hints:
+                    blocked_note = (
+                        "（目前挂起未回的 topic：%s，同 topic 勿重复请示；其他 topic 仍可请示）"
+                        % "、".join(sorted(pend_topics))
+                        if pend_topics else ""
+                    )
+                    live_parts.append(
+                        "【当家人参与提示】主人此刻醒着，今天已请示 %d/%d 次%s——若遇到全新还没请示过的：%s，可填写顶层 ask_master（kind 填 \"decision\" 且必填对应 topic）向主人发话；已经在上方「近期已由主人拍板定准的事」或「各自的打算」里定过主意的事，严禁再用 ask_master 重复问一遍！"
+                        % (total_asked, GLOBAL_DAILY_ASK_LIMIT, blocked_note, "、".join(topic_hints))
+                    )
         return "\n\n".join(slow_parts), "\n\n".join(live_parts)
 
     def _context_block(self, bots: list, now: datetime.datetime, tasks: dict | None = None) -> str:
@@ -1900,6 +1974,7 @@ class LifeStep:
             home_static=home_static,
             world_notes=self.world_notes,
             money_guide=("   " + SEASIDE_PRICE_GUIDE.replace("\n", "\n   ") if self.home == "海边小镇" else ""),
+            sell_limit=int(AUTONOMOUS_SELL_LIMIT),
             step_notes=self.step_notes,
             kinds=" / ".join(KINDS),
             keeps=" / ".join(KEEPS),
@@ -2076,26 +2151,36 @@ class LifeStep:
         return (data if not errors else None), cur_text, cur_thought, errors
 
     async def _flush_idea_decisions(self, moment: datetime.datetime) -> None:
-        """主人醒着且白天时，把夜间暂存的 idea 状态待拍板 d 事项发出去请示（不再永远卡在 idea）。"""
+        """主人醒着且白天时，按 topic 互不阻塞地把夜间暂存的 idea 状态待拍板 d 事项发出去请示。"""
         companion = getattr(self, "companionship", None)
         planner = getattr(self, "planner", None)
         if companion is None or planner is None or not planner.enabled:
             return
         if not (8 <= moment.hour <= 22) or companion.safe("resting", moment, default=False):
             return
-        pend = companion.safe("pending_decisions", moment, default=[]) or []
-        if any(d.get("status") == "pending" for d in pend):
+        if int(companion.safe("today_ask_count", moment, default=0) or 0) >= GLOBAL_DAILY_ASK_LIMIT:
             return
+        pend = companion.safe("pending_decisions", moment, default=[]) or []
+        pending_topics = {
+            normalize_decision_topic(d.get("topic"))
+            for d in pend
+            if d.get("status") == "pending"
+        }
         for dec in pend:
             if dec.get("status") != "idea":
+                continue
+            topic = normalize_decision_topic(dec.get("topic"))
+            if topic in pending_topics:
+                continue
+            if int(companion.safe("today_ask_count", moment, topic=topic, default=0) or 0) >= topic_ask_limit(topic):
                 continue
             bot = str(dec.get("bot") or "")
             q = str(dec.get("question") or "")
             dec_id = str(dec.get("id") or "")
             if bot and q and dec_id and await planner.ask_now(bot, q, invitation_id=dec_id):
                 companion.safe("mark_decision_asked", dec_id, moment)
-                logger.info("[super_enhance/world] 主人已醒，发出此前暂存的待拍板请示 %s：%s", dec_id, q[:40])
-            break
+                logger.info("[super_enhance/world] 主人已醒，发出此前暂存的待拍板请示 %s [%s]：%s", dec_id, topic, q[:40])
+                break
 
     async def run(self, now: datetime.datetime | None = None, force: bool = False) -> bool:
         # 世界线里的时间都是不带时区的本地时间，这里统一成一样的口径
@@ -2185,8 +2270,9 @@ class LifeStep:
         when = max(now, min(starts)) if starts else now
         is_resting = bool(companion is not None and companion.safe("resting", now, default=False))
 
-        # decision（请当家主人拍板）：主人睡着时先存为 idea 等醒后再问；醒着时立即发消息并持久挂起 d 事项
-        dec = companion.safe("open_decision", who, question, when, sent=False) if companion is not None else None
+        # decision（请当家主人拍板）：按 topic 分栏登记，主人睡着时先存为 idea 等醒后再问；醒着时立即发消息并挂起 d 事项
+        topic = normalize_decision_topic(ask.get("topic") if isinstance(ask, dict) else "")
+        dec = companion.safe("open_decision", who, question, when, sent=False, topic=topic) if companion is not None else None
         dec_id = str((dec or {}).get("id") or "")
         if is_resting:
             logger.info("[super_enhance/world] 主人正在休息，待拍板事项 %s（%s）先挂起等醒后再问", dec_id, question[:50])
@@ -2399,6 +2485,30 @@ class LifeStep:
             )
 
         errors: list[str] = []
+        ask_obj = data.get("ask_master")
+        if isinstance(ask_obj, dict) and clean_text(ask_obj.get("question"), 160):
+            raw_topic = str(ask_obj.get("topic") or "").strip().lower()
+            if raw_topic not in DECISION_TOPICS:
+                errors.append(
+                    f"ask_master.topic={ask_obj.get('topic')!r} 非法（必须填 {' / '.join(DECISION_TOPICS)} 六选一）"
+                )
+            elif comp_ref is not None:
+                topic_pend = comp_ref.safe("pending_decisions", flat, topic=raw_topic, default=[]) or []
+                total_asked = int(comp_ref.safe("today_ask_count", flat, default=0) or 0)
+                topic_asked = int(comp_ref.safe("today_ask_count", flat, topic=raw_topic, default=0) or 0)
+                if topic_pend:
+                    errors.append(
+                        f"ask_master.topic={raw_topic!r} 下已有未回话的待拍板事项（{topic_pend[0].get('id')}），"
+                        f"同一话题勿重复请示（ask_master 留空或改问其他无挂起的 topic）"
+                    )
+                elif total_asked >= GLOBAL_DAILY_ASK_LIMIT:
+                    errors.append(
+                        f"今日全话题累计请示已达上限 {GLOBAL_DAILY_ASK_LIMIT} 次，本次请勿再填 ask_master（留空即可）"
+                    )
+                elif topic_asked >= topic_ask_limit(raw_topic):
+                    errors.append(
+                        f"ask_master.topic={raw_topic!r} 今日请示已达上限 {topic_ask_limit(raw_topic)} 次，请把 ask_master 留空"
+                    )
         batch_food_keys: set[str] = set()
         batch_measured_food_keys: set[str] = set()
         batch_item_keys: set[str] = set()
@@ -2633,7 +2743,7 @@ class LifeStep:
                 raw_from = str(raw.get("from") or "").strip()
                 orig = origin_of(raw_from, bot, seed, intent=intent_id, training=training_id, pools_data=pools_data, cand_map=cand_map)
                 cand_key = raw_from.strip("[]【】()（）").upper()
-                cand_entry = cand_map.get(cand_key) if cand_key in cand_map else None
+                cand_entry = cand_map.get(cand_key) if isinstance(cand_map, dict) else None
                 if orig["kind"] in ("", "unmatched"):
                     errors.append(
                         f"{tag}：from={raw_from!r} 无效（严禁留空或填栏目标题；必须填上方候选编号如 \"T1\"/\"G1\"/\"P1\"/\"I1\"/\"F1\"/\"A1\"，"
@@ -2824,6 +2934,15 @@ class LifeStep:
                         is_fuel = tid in batch_fuel_keys or (
                             shelf_hit is not None and (is_charcoal(shelf_hit) or weathering.fuel_item(shelf_hit))
                         )
+                        if seaside and shelf_hit is not None and is_sealed(shelf_hit):
+                            w_unseal = weathering.clean_conditions(eff.get("weather"))
+                            if w_unseal.get("sealed") is False and not (
+                                master_replied or (intent_id and intent_id in chat_intent_ids) or "master" in [str(x) for x in (raw.get("with") or [])]
+                            ):
+                                errors.append(
+                                    f"{tag} items[{i_i}]（{tid}）：该件仍封口未拆（sealed=true），未经当家主人发话拍板或同行拆看，"
+                                    f"严禁擅自拆开（请先填 ask_master topic=\"sealed_loot\" 请主人一起看）"
+                                )
                         if is_fuel:
                             if what in ITEM_END_STEPS and str(eff.get("left") or "").strip():
                                 errors.append(f"{tag} items[{i_i}]（{tid}）：what=\"{what}\" 时 left 必须填空串 \"\"")
@@ -3114,6 +3233,8 @@ class LifeStep:
                 world=self.world,
                 store=getattr(self, "things", None),
                 shelf=shelf,
+                money=getattr(self, "money", None),
+                companion=getattr(self, "companionship", None),
             )
         lamp_ok = True
         if self.home == "海边小镇":
@@ -3194,7 +3315,8 @@ class LifeStep:
                         recent_wood = True
 
         if ctx.get("has_weather"):
-            min_temp = float(ctx.get("min_temp") or 18.0)
+            min_temp_val = ctx.get("min_temp")
+            min_temp = float(min_temp_val) if min_temp_val is not None else 18.0
             max_rain = float(ctx.get("max_rain") or 0.0)
             evening_or_night = win_start.hour >= 17 or win_end.hour >= 18 or win_start.hour < 6
             freezing_cold = min_temp <= 6.0
@@ -3304,6 +3426,37 @@ class LifeStep:
                     )
             except Exception:
                 pass
+
+        # 5. 白天公用铁盒余钱 <30 元且 48h 内无进账时，补一条精简提示
+        if bool(hours_day & set(range(7, 19))):
+            tin_yuan = ctx.get("tin_box_yuan")
+            money_book = getattr(self, "money", None)
+            snap_48h = None
+            if money_book is not None:
+                try:
+                    snap_48h = money_book.snapshot(win_start, self.world)
+                    bal = ((snap_48h.get("accounts") or {}).get("tin_box") or {}).get("balance")
+                    if bal is not None:
+                        tin_yuan = float(bal)
+                except Exception:
+                    snap_48h = None
+            if tin_yuan is not None and float(tin_yuan) < 30.0:
+                cutoff_48h = win_start - datetime.timedelta(hours=48)
+                has_earn_48h = False
+                for rec in (snap_48h or {}).get("records") or []:
+                    if not isinstance(rec, dict) or rec.get("kind") != "earn":
+                        continue
+                    if str(rec.get("reason") or "").lower() not in ("work", "salvage", "sell"):
+                        continue
+                    r_t = parse_time(rec.get("at"))
+                    if r_t is not None and cutoff_48h <= r_t <= win_start:
+                        has_earn_48h = True
+                        break
+                if not has_earn_48h:
+                    nudges.append(
+                        "- 铁盒余钱偏紧（仅余约 %s 元且近两天暂无进账）：白天可顺手浅水打捞废铜、扛现有废金属去收购站过秤卖钱（≤%d元自主）或接零活。"
+                        % (fmt_yuan(tin_yuan), int(AUTONOMOUS_SELL_LIMIT))
+                    )
 
         if not nudges:
             return ""

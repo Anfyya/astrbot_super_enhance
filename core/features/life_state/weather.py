@@ -18,6 +18,32 @@ import re
 
 MAX_WIND = 11
 SEA_HOMES = ("海边小镇",)
+# 海边小镇（偏北不冻湾）各月海中旬平均水温（℃）：11 月约 14℃，冬季最低 ≥ 4℃
+SEA_WATER_MONTH_TEMP = (5.0, 4.5, 6.0, 9.0, 13.0, 17.0, 21.0, 23.5, 22.0, 18.0, 14.0, 8.5)
+
+
+def sea_temp(moment, home: str) -> float | None:
+    """海边住处按日确定的海湾水温（℃）；非海边住处返回 None。"""
+    if str(home or "").strip() not in SEA_HOMES:
+        return None
+    if isinstance(moment, datetime.datetime):
+        day = moment.date()
+    elif isinstance(moment, datetime.date):
+        day = moment
+    else:
+        day = datetime.date.fromisoformat(str(moment)[:10])
+    mid = datetime.date(day.year, day.month, 15)
+    if day >= mid:
+        m2 = day.month % 12 + 1
+        other = datetime.date(day.year + (day.month == 12), m2, 15)
+        lo, hi = SEA_WATER_MONTH_TEMP[day.month - 1], SEA_WATER_MONTH_TEMP[m2 - 1]
+        frac = (day - mid).days / max(1, (other - mid).days)
+    else:
+        m0 = (day.month - 2) % 12 + 1
+        other = datetime.date(day.year - (day.month == 1), m0, 15)
+        lo, hi = SEA_WATER_MONTH_TEMP[m0 - 1], SEA_WATER_MONTH_TEMP[day.month - 1]
+        frac = (day - other).days / max(1, (mid - other).days)
+    return max(4.0, round(lo + (hi - lo) * frac, 1))
 
 # 雨多大（毫米/小时）→ 叫法；先认大的
 RAIN_WORDS = ((16.0, "暴雨"), (8.0, "大雨"), (2.5, "中雨"), (1.0, "小雨"), (0.05, "毛毛雨"))

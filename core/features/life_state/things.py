@@ -422,6 +422,48 @@ COOK_WAYS = ("boil", "fry", "steam", "roast", "cold")
 HOT_MEAL_KINDS = ("熟汤羹粥", "熟菜炒菜", "熟饭熟面", "熟肉卤味", "鲜肉软点心", "馒头面包主食")
 COLD_FOOD_WORDS = ("凉拌", "冷盘", "生腌", "冰镇", "沙拉")
 LIGHT_COOK_WORDS = ("煎蛋", "煎鸡蛋", "荷包蛋", "煮蛋", "水煮蛋", "热茶", "姜汤", "开水", "凉白开")
+SCRAP_ITEM_KINDS = ("废铜", "废铁", "废金属", "废铜铁", "废旧金属", "废零件", "旧零件")
+
+
+def is_scrap(item: dict) -> bool:
+    """纯结构化识别待卖废金属库存：只认精确 kind 枚举或显式 purpose='scrap'，绝不扫物品名字或状态文本。"""
+    if not isinstance(item, dict) or cat_of(item) != CAT_ITEM:
+        return False
+    kind = re.sub(r"\s+", "", str(item.get("kind") or ""))
+    if kind in SCRAP_ITEM_KINDS:
+        return True
+    purpose = str(item.get("purpose") or "").strip().lower()
+    for stage in item.get("stages") or []:
+        if isinstance(stage, dict) and str(stage.get("purpose") or "").strip():
+            purpose = str(stage.get("purpose") or "").strip().lower()
+    return purpose == "scrap"
+
+
+def _explicit_sealed(item: dict) -> bool | None:
+    """读取物品各阶段结构化 weather.sealed 最新声明；未声明返回 None。"""
+    if not isinstance(item, dict):
+        return None
+    val: bool | None = None
+    top_w = weathering.clean_conditions(item.get("weather"))
+    if "sealed" in top_w:
+        val = top_w["sealed"]
+    for stage in item.get("stages") or []:
+        if not isinstance(stage, dict):
+            continue
+        w = weathering.clean_conditions(stage.get("weather"))
+        if "sealed" in w:
+            val = w["sealed"]
+    return val
+
+
+def is_sealed(item: dict) -> bool:
+    """物品当前是否处于封口/未拆状态（优先认结构化 weather.sealed，兼容老 inside）。"""
+    if not isinstance(item, dict) or item.get("_opened"):
+        return False
+    explicit = _explicit_sealed(item)
+    if explicit is not None:
+        return bool(explicit)
+    return bool(item.get("inside"))
 
 
 def is_charcoal(item: dict) -> bool:
@@ -1165,8 +1207,10 @@ class ThingStore:
         return item, ""
 
     @staticmethod
-    def is_sealed(item: dict) -> bool:
-        return bool((item or {}).get("inside")) and not (item or {}).get("_opened")
+    def _explicit_sealed(item: dict) -> bool | None:
+        return _explicit_sealed(item)
+
+    is_sealed = staticmethod(is_sealed)
 
     def open_item(self, item: dict, by: str, at: str) -> None:
         tid = str((item or {}).get("id") or "")
@@ -1187,13 +1231,17 @@ class ThingStore:
         self._save()
 
     def seal_text(self, item: dict, label_fn=None) -> str:
-        if not (item or {}).get("inside"):
-            return ""
-        info = item.get("_opened")
-        if not info:
-            return "封着没拆（里面写着什么，按编号看这一件才知道，一看就算拆开了）"
-        who = self._who(info.get("by"), label_fn)
-        return "%s %s拆开了" % (str(info.get("at"))[5:16], who)
+        if self.is_sealed(item):
+            if (item or {}).get("inside"):
+                return "封着没拆（里面写着什么，按编号看这一件才知道，一看就算拆开了）"
+            return "封着没拆（留着等主人一起看）"
+        info = (item or {}).get("_opened")
+        if info:
+            who = self._who(info.get("by"), label_fn)
+            return "%s %s拆开了" % (str(info.get("at"))[5:16], who)
+        if self._explicit_sealed(item) is False:
+            return "已拆开"
+        return ""
 
     def add_stage(self, thing_id, stage: dict) -> str:
         """给存下来的一件加一步；返回不收的原因，收了返回空串。"""

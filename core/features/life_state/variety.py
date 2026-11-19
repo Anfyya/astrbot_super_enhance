@@ -35,7 +35,7 @@ SEA_WEATHER_BY_SEASON = {
 WEATHER_BY_HOME = {"海边小镇": SEA_WEATHER_BY_SEASON}
 
 # 插曲池：一份池子，每条直接附带结构化权重、桶、组、地域、天气、联动与温度下限（1 是一般；0 = 不给她）。
-# 严禁编造无库存支撑的以物易物/废铁换钱/失主付打捞费/机器人机械刻板梗（如关节保养油、夜视、航海日志等）。
+# 严禁编造无库存支撑的以物易物/凭空变废铁换钱/私接委托收打捞费（卖废金属须真消耗库存、接外人打捞单须先 ask_master 等船长拍板）/机器人机械刻板梗（如关节保养油、夜视、航海日志等）。
 TWIST_PEOPLE = ("丛雨", "亚托莉")
 
 
@@ -51,6 +51,7 @@ def _e(
     link: str = "",
     outdoor: bool = False,
     min_temp: float | None = None,
+    min_water: float | None = None,
     when: str = "",
 ) -> dict:
     return {
@@ -63,6 +64,7 @@ def _e(
         "link": link,
         "outdoor": bool(outdoor),
         "min_temp": min_temp,
+        "min_water": min_water,
         "when": when,
     }
 
@@ -78,6 +80,7 @@ def _t(
     link: str = "",
     outdoor: bool = False,
     min_temp: float | None = None,
+    min_water: float | None = None,
     when: str = "",
 ) -> dict:
     return {
@@ -90,6 +93,7 @@ def _t(
         "link": link,
         "outdoor": bool(outdoor),
         "min_temp": min_temp,
+        "min_water": min_water,
         "when": when,
     }
 
@@ -212,13 +216,14 @@ _DEFAULT_POOLS_RAW: dict[str, tuple[dict, ...]] = {
         _e("一只空的旧舢板被潮水推到港湾浅处，跟着波浪一下下轻磕着礁石", 0.6, 0.6, bucket="观察闲逛", where="海边小镇", wx="dry", outdoor=True),
         _e("站在高堤上远望旧城区，看见远处又有一截风化的小塌檐落进水里", 0.5, 0.6, bucket="观察闲逛", where="海边小镇", wx="dry", outdoor=True),
         _e("赶上公共澡堂烧水的日子，去泡了个热乎乎的澡", 0, 0.4, bucket="出门走走", where="海边小镇", wx="dry", outdoor=True),
-        _e("有人到码头船屋打听下水打捞的事，她把来人的姓名和要找的地方记在纸上等主人回来定", 0, 0.3, group="打捞所", bucket="观察闲逛", where="海边小镇", wx="dry"),
+        _e("有人到码头船屋打听下水打捞的事，她把来人的姓名和要找的地方记在纸上等主人回来定", 0, 0.5, group="打捞所", bucket="观察闲逛", where="海边小镇", wx="dry"),
         _e("帮码头补网的渔民理渔网、挑碎海草，歇脚时人家顺手塞了一点零散工钱", 0, 0.45, group="帮工", bucket="镇上谋生", where="海边小镇", wx="dry", outdoor=True),
         _e("帮坡上诊所或杂货铺修理坏掉的旧手电或老收音机开关，挣了点手艺小工钱", 0, 0.45, group="修手艺", bucket="镇上谋生", where="海边小镇", wx="dry", outdoor=True),
         _e("去集市摊头看鲜鱼和菜价，掰着手指掂量公用铁盒和兜里的零钱该怎么花", 0, 0.45, group="逛集市", bucket="镇上谋生", where="海边小镇", wx="dry", outdoor=True),
         _e("把船舱矮桌抽屉里那只旧饼干铁盒和账本拿出来，数清剩下多少零钱、核一核最近几笔账", 0.45, 0.5, group="对账攒钱", bucket="船舶整备", where="海边小镇"),
         _e("把兜里攒着的一小卷零钞和硬币捋平收好，想着再多攒一点将来添买合心意的小东西", 0.35, 0.45, group="对账攒钱", bucket="心绪人情", where="海边小镇"),
-        _e("退潮后拎着铁桶在浅滩旧街边沿翻找回几截还算厚实的废铜铁件，放回仓棚攒着过秤换钱", 0, 0.4, group="下水打捞", bucket="水域探索", where="海边小镇", wx="dry", outdoor=True, min_temp=8.0),
+        _e("退潮后拎着铁桶在浅滩旧街边沿翻找回几截还算厚实的废铜铁件，放回仓棚攒着过秤换钱", 0, 0.6, group="浅滩捡废", bucket="水域探索", where="海边小镇", wx="dry", outdoor=True, link="salvage"),
+        _e("扛废铜去收购站过秤卖钱", 0, 0.7, group="卖废铜", bucket="镇上谋生", where="海边小镇", wx="dry", outdoor=True, link="scrap_sell"),
         _e("有人路过船屋门口和她寒暄了两句，顺便问起最近海上的潮水", 0, 0.6, bucket="观察闲逛", where="海边小镇", wx="dry"),
         _e("没人看得见她，蹲在码头鱼摊边听了一肚子镇上的闲话，暗自记了一肚子趣事", 1.0, 0, group="码头见闻", bucket="观察闲逛", where="海边小镇", wx="dry", outdoor=True),
         _e("飘到船桅顶上四下张望，看远处海面和礁石退潮露出多少", 0.9, 0, bucket="观察闲逛", where="海边小镇", wx="dry", outdoor=True),
@@ -247,21 +252,26 @@ _DEFAULT_POOLS_RAW: dict[str, tuple[dict, ...]] = {
         _e("攒了几天的换洗衣裳拿淡水和海水省着用洗净，晾在背风有日头的地方", 0.25, 0.4, group="洗衣裳", bucket="船舶整备", where="海边小镇", wx="sunny", link="laundry", outdoor=True, min_temp=3.0),
         _e("赶上大晴天，把船舱里的被褥铺盖抱到甲板上晒得蓬松暖和", 0.6, 0.7, group="晒铺盖", bucket="船舶整备", where="海边小镇", wx="sunny", outdoor=True, min_temp=4.0),
 
-        # ---------- 海边小镇：水下探索（仅亚托莉配装备下水，低温 <11°C 硬拦截，纯观赏无强迫捡货） ----------
-        _e("潜下去路过泡在海里的游泳池，在出发台上站了一会儿，看小鱼从泳道间游过", 0, 0.6, group="水下溜达", bucket="水域探索", where="海边小镇", wx="calm", outdoor=True, min_temp=11.0),
-        _e("在水下溜达时碰见一座淹掉的小公园，秋千链子上缠着摇曳的海草", 0, 0.7, group="水下溜达", bucket="水域探索", where="海边小镇", wx="calm", outdoor=True, min_temp=11.0),
-        _e("潜到海草林里，看银色的小鱼成群在海草间钻来钻去", 0, 0.7, group="水下溜达", bucket="水域探索", where="海边小镇", wx="calm", outdoor=True, min_temp=11.0),
-        _e("潜到沉了的邮局门口，看一排铁皮信箱里头钻出几只寄居蟹", 0, 0.6, group="水下溜达", bucket="水域探索", where="海边小镇", wx="calm", outdoor=True, min_temp=11.0),
-        _e("潜到海里的鸟居底下，顺着参道两边的石灯笼一路慢慢游过去", 0, 0.6, group="水下溜达", bucket="水域探索", where="海边小镇", wx="calm", outdoor=True, min_temp=11.0),
-        _e("潜进半沉学校泡在水里的体育馆，看见篮球架底下有一群小鱼在转圈", 0, 0.5, group="水下溜达", bucket="水域探索", where="海边小镇", wx="calm", outdoor=True, min_temp=11.0),
-        _e("潜到沉了的水族馆，钻进当年的海底隧道，隔着玻璃看外头游来游去的鱼", 0, 0.7, group="水下玩", bucket="水域探索", where="海边小镇", wx="calm", outdoor=True, min_temp=11.0),
-        _e("潜到水下的游乐园，看长满藤壶的旋转木马在蓝绿的水光里静静立着", 0, 0.6, group="水下玩", bucket="水域探索", where="海边小镇", wx="calm", outdoor=True, min_temp=11.0),
-        _e("潜到沉了的电影院，看旧银幕碎成的布条在水流里慢慢飘", 0, 0.5, group="水下玩", bucket="水域探索", where="海边小镇", wx="calm", outdoor=True, min_temp=11.0),
-        _e("潜到水下的钟楼边，轻轻碰了一下铜钟外沿，听沉闷的声响在水里荡开", 0, 0.5, group="水下玩", bucket="水域探索", where="海边小镇", wx="calm", outdoor=True, min_temp=11.0),
-        _e("在礁石海葵区轻轻碰了碰海葵看它缩成一团，又数了数旁边的海星", 0, 0.7, group="水下玩", bucket="水域探索", where="海边小镇", wx="calm", outdoor=True, min_temp=11.0),
-        _e("潜到海底沙地，找埋在沙里只露两只眼睛的比目鱼", 0, 0.6, group="水下玩", bucket="水域探索", where="海边小镇", wx="calm", outdoor=True, min_temp=11.0),
-        _e("系着安全绳、开着头灯钻进浅海蚀洞，看顶上漏下来的光束在水底晃动", 0, 0.6, group="水下玩", bucket="水域探索", where="海边小镇", wx="calm", outdoor=True, min_temp=11.0),
-        _e("潜到沉了的图书馆窗外，透过破碎窗框看里头长满青苔的旧书架", 0, 0.6, group="下水打捞", bucket="水域探索", where="海边小镇", wx="calm", outdoor=True, min_temp=11.0),
+        # ---------- 海边小镇：水下探索与浅水打捞（仅亚托莉下水；sea_temp 冬季下限 4.0°C，min_water=4.0 允许全年潜，同时保留更冷水域/覆盖时的结构化拦截） ----------
+        _e("潜下去路过泡在海里的游泳池，在出发台上站了一会儿，看小鱼从泳道间游过", 0, 0.6, group="水下溜达", bucket="水域探索", where="海边小镇", wx="dive", outdoor=True, min_water=4.0),
+        _e("在水下溜达时碰见一座淹掉的小公园，秋千链子上缠着摇曳的海草", 0, 0.7, group="水下溜达", bucket="水域探索", where="海边小镇", wx="dive", outdoor=True, min_water=4.0),
+        _e("潜到海草林里，看银色的小鱼成群在海草间钻来钻去", 0, 0.7, group="水下溜达", bucket="水域探索", where="海边小镇", wx="dive", outdoor=True, min_water=4.0),
+        _e("潜到沉了的邮局门口，看一排铁皮信箱里头钻出几只寄居蟹", 0, 0.6, group="水下溜达", bucket="水域探索", where="海边小镇", wx="dive", outdoor=True, min_water=4.0),
+        _e("潜到海里的鸟居底下，顺着参道两边的石灯笼一路慢慢游过去", 0, 0.6, group="水下溜达", bucket="水域探索", where="海边小镇", wx="dive", outdoor=True, min_water=4.0),
+        _e("潜进半沉学校泡在水里的体育馆，看见篮球架底下有一群小鱼在转圈", 0, 0.5, group="水下溜达", bucket="水域探索", where="海边小镇", wx="dive", outdoor=True, min_water=4.0),
+        _e("潜到沉了的水族馆，钻进当年的海底隧道，隔着玻璃看外头游来游去的鱼", 0, 0.7, group="水下玩", bucket="水域探索", where="海边小镇", wx="dive", outdoor=True, min_water=4.0),
+        _e("潜到水下的游乐园，看长满藤壶的旋转木马在蓝绿的水光里静静立着", 0, 0.6, group="水下玩", bucket="水域探索", where="海边小镇", wx="dive", outdoor=True, min_water=4.0),
+        _e("潜到沉了的电影院，看旧银幕碎成的布条在水流里慢慢飘", 0, 0.5, group="水下玩", bucket="水域探索", where="海边小镇", wx="dive", outdoor=True, min_water=4.0),
+        _e("潜到水下的钟楼边，轻轻碰了一下铜钟外沿，听沉闷的声响在水里荡开", 0, 0.5, group="水下玩", bucket="水域探索", where="海边小镇", wx="dive", outdoor=True, min_water=4.0),
+        _e("在礁石海葵区轻轻碰了碰海葵看它缩成一团，又数了数旁边的海星", 0, 0.7, group="水下玩", bucket="水域探索", where="海边小镇", wx="dive", outdoor=True, min_water=4.0),
+        _e("潜到海底沙地，找埋在沙里只露两只眼睛的比目鱼", 0, 0.6, group="水下玩", bucket="水域探索", where="海边小镇", wx="dive", outdoor=True, min_water=4.0),
+        _e("系着安全绳、开着头灯钻进浅海蚀洞，看顶上漏下来的光束在水底晃动", 0, 0.6, group="水下玩", bucket="水域探索", where="海边小镇", wx="dive", outdoor=True, min_water=4.0),
+        _e("潜到沉了的图书馆窗外，透过破碎窗框看里头长满青苔的旧书架", 0, 0.7, group="下水打捞", bucket="水域探索", where="海边小镇", wx="dive", outdoor=True, min_water=4.0, link="salvage"),
+        _e("潜到水下旧街露着门脸的铺子外沿，摸回几段厚实铜管与旧金属件放回仓棚攒着", 0, 0.8, group="下水打捞", bucket="水域探索", where="海边小镇", wx="dive", outdoor=True, min_water=4.0, link="salvage"),
+        _e("潜到沉了的旧超市外廊倒下的货架边，捡回几件可用旧金属零碎或未破损旧物", 0, 0.7, group="下水打捞", bucket="水域探索", where="海边小镇", wx="dive", outdoor=True, min_water=4.0, link="salvage"),
+        _e("潜进水下车站站台外沿的浅水处，卸回几截结实废铜缆线与铜扣件留着过秤换钱", 0, 0.7, group="下水打捞", bucket="水域探索", where="海边小镇", wx="dive", outdoor=True, min_water=4.0, link="salvage"),
+        _e("潜到沉没渔具仓库破窗外头，捞回一捆旧铅坠与废铁扣件带回仓棚", 0, 0.65, group="下水打捞", bucket="水域探索", where="海边小镇", wx="dive", outdoor=True, min_water=4.0, link="salvage"),
+        _e("去港边检查系留的小潜艇舱盖与电量，若是水冷或想去深处先记下海况等船长点头再出艇", 0, 0.55, group="小潜艇", bucket="水域探索", where="海边小镇", wx="sub", outdoor=True, link="salvage"),
     ),
     "together": (
         # ---------- 通用 ----------
@@ -293,6 +303,7 @@ _DEFAULT_POOLS_RAW: dict[str, tuple[dict, ...]] = {
         _t("两人一起把煤油灯罩擦亮、把火柴盒归置在干燥趁手的地方", 0.5, group="伺候油灯", bucket="船舶整备", where="海边小镇"),
         _t("两人一起把舱角柜子和抽屉里的常备物什理顺归位", 0.5, group="盘家当", bucket="船舶整备", where="海边小镇"),
         _t("两人趁天好把仓棚里攒的废铁片、旧铜丝按类分拣绑好，算算拿去收购站能换回多少钱", 0.45, group="捡废铁分拣", bucket="船舶整备", where="海边小镇", wx="dry", outdoor=True),
+        _t("跟船长出船深潜打捞", 0.75, group="深潜打捞", bucket="水域探索", where="海边小镇", wx="dive", link="captain_salvage", outdoor=True, min_water=4.0),
     ),
     "night_twists": (
         # ---------- 通用（均改为单人视角起念） ----------
@@ -561,18 +572,15 @@ LEGACY_GROUPS = {
         "潜到沉了的图书馆，在一排排书架之间找还能看的书",
         "潜到水下的旧街，在沉没的房子之间转，摸回来一样旧时代的小东西",
         "潜到沉了的超市，在倒了的货架之间翻埋在泥里的罐头",
-        "接了一单：替人去沉了的旧公寓捞一只上了锁的小铁箱，下潜了好几趟才摸到",
-        "接了一单：替人去沉了的旧公寓捞一只上了锁的小铁箱，下潜了好几趟才摸到，交给人家，拿到了讲好的打捞费",
-        "有人到打捞船上来下单，托她去沉了的老房子里捞一样旧东西，讲好了打捞费",
-        "有人到打捞船上来问行情，想托船长去沉了的老房子里捞一样旧东西，她记下口信等主人定接不接",
+        "有人到打捞船上来问行情，想托船长去沉了的旧公寓捞一只上了锁的小铁箱，她记下口信等主人定接不接",
         "有人来打捞船找船长接单：想去沉了的旧公寓捞一只上了锁的小铁箱，她先记下位置和报酬等主人拍板",
+        "经船长拍板接下委托后，下潜去沉了的旧公寓捞上那只上了锁的小铁箱交与船长核验",
     ),
     "打捞所": (
         "有人到打捞船上来问价，讲了半天打捞费",
-        "把捞上来的东西交到失主手上，对方当场付了打捞费",
-        "点着油灯，把这几天打捞所接的活和收的钱记一记",
+        "经船长拍板接单并把捞上来的东西交到失主手上后，收下讲好的打捞费",
+        "点着油灯，把这几天打捞所记下的来客问询和已获主人准许的进出账记一记",
         "夜里有人提着灯找到船屋，想托船长明早下水捞一样掉进海里的东西，她记下原委等主人拿主意",
-        "夜里有人提着灯找到船屋，托她明早下水捞一样掉进海里的东西，讲好了打捞费",
     ),
     "海上鸟居": (
         "划船去海里的鸟居那边，在半截立在水里的鸟居底下待了一会儿",
@@ -660,7 +668,9 @@ WX_LABELS = {
     "": "不限天气",
     "sunny": "需晴好/晴夜",
     "dry": "需无雨且风浪小",
-    "calm": "需风平浪静（可下潜）",
+    "calm": "需风平浪静（划船/水面）",
+    "dive": "需水下作业海况（风≤4级、无浓雾）",
+    "sub": "需潜艇出港海况（风≤5级，雾不拦）",
     "rain": "需正在下雨",
     "fog": "需起雾",
     "wind": "需起风浪",
@@ -669,7 +679,21 @@ LINK_LABELS = {
     "": "无特殊联动",
     "wood_stove": "烧柴炉时（有干柴且天凉/阴雨）",
     "laundry": "近36h未洗衣且无湿衣时",
+    "salvage": "缺零钱或距上次打捞≥3天时提高权重",
+    "scrap_sell": "家里有废铜/废铁待卖库存时",
+    "captain_salvage": "有船长同意的出海打捞打算、主人醒着且白天时",
 }
+_SALVAGE_GROUPS = frozenset(("下水打捞", "浅滩捡废", "深潜打捞"))
+# 此次重构新增默认条目白名单：合并自定义 pools.json 时只补入白名单新条，不复活用户主动删掉的旧默认条
+_NEW_DEFAULT_TEXTS = frozenset((
+    "扛废铜去收购站过秤卖钱",
+    "潜到水下旧街露着门脸的铺子外沿，摸回几段厚实铜管与旧金属件放回仓棚攒着",
+    "潜到沉了的旧超市外廊倒下的货架边，捡回几件可用旧金属零碎或未破损旧物",
+    "潜进水下车站站台外沿的浅水处，卸回几截结实废铜缆线与铜扣件留着过秤换钱",
+    "潜到沉没渔具仓库破窗外头，捞回一捆旧铅坠与废铁扣件带回仓棚",
+    "去港边检查系留的小潜艇舱盖与电量，若是水冷或想去深处先记下海况等船长点头再出艇",
+    "跟船长出船深潜打捞",
+))
 _OBSOLETE_LINKS = frozenset((
     "ship_day", "charcoal", "charcoal_stove", "kerosene", "winter_gear",
     "firewood", "use_charcoal", "rainwater", "restock", "barter_item",
@@ -695,6 +719,7 @@ for _pool_kind, _rows in _DEFAULT_POOLS_RAW.items():
             "work": False,
             "outdoor": bool(_row.get("outdoor")),
             "min_temp": _row.get("min_temp"),
+            "min_water": _row.get("min_water"),
         }
 
 
@@ -712,6 +737,7 @@ def _default_meta(text: str) -> dict:
         "work": False,
         "outdoor": False,
         "min_temp": None,
+        "min_water": None,
     }
 
 
@@ -730,6 +756,7 @@ def default_pools() -> dict:
                 "work": False,
                 "outdoor": bool(row.get("outdoor")),
                 "min_temp": row.get("min_temp"),
+                "min_water": row.get("min_water"),
             }
             for row in _DEFAULT_POOLS_RAW[kind]
         ]
@@ -747,15 +774,15 @@ def _weight(value) -> float:
     return round(number, 2)
 
 
-def _clean_min_temp(value):
+def _clean_min_temp(value, *, label: str = "最低气温", lo: float = -30.0, hi: float = 45.0):
     if value is None or value == "":
         return None
     try:
         number = float(value)
     except (TypeError, ValueError):
-        raise ValueError("最低气温要填数字")
-    if not -30.0 <= number <= 45.0:
-        raise ValueError("最低气温要在 -30 到 45 之间")
+        raise ValueError("%s要填数字" % label)
+    if not lo <= number <= hi:
+        raise ValueError("%s要在 %g 到 %g 之间" % (label, lo, hi))
     return round(number, 1)
 
 
@@ -804,6 +831,10 @@ def clean_pool_item(kind: str, item: dict) -> dict:
     work = bool(item["work"]) if "work" in item and item.get("work") is not None else bool(defaults["work"])
     outdoor = bool(item["outdoor"]) if "outdoor" in item and item.get("outdoor") is not None else bool(defaults["outdoor"])
     min_temp = _clean_min_temp(item["min_temp"] if "min_temp" in item else defaults["min_temp"])
+    min_water = _clean_min_temp(
+        item["min_water"] if "min_water" in item else defaults["min_water"],
+        label="最低水温", lo=-5.0, hi=40.0,
+    )
     return {
         "text": text,
         "w": weight,
@@ -816,11 +847,12 @@ def clean_pool_item(kind: str, item: dict) -> dict:
         "work": work,
         "outdoor": outdoor,
         "min_temp": min_temp,
+        "min_water": min_water,
     }
 
 
-def normalize_pools(data) -> dict:
-    """读进来的池子：哪个池子缺了或坏了就用默认的那份；单条坏了就跳过。"""
+def normalize_pools(data, *, merge_new_defaults: bool = False) -> dict:
+    """读进来的池子：哪个池子缺了或坏了就用默认的那份；单条坏了就跳过。merge_new_defaults=True 时仅补入 _NEW_DEFAULT_TEXTS 白名单新条。"""
     out = default_pools()
     if not isinstance(data, dict):
         return out
@@ -837,6 +869,11 @@ def normalize_pools(data) -> dict:
             if item["text"] not in seen:
                 seen.add(item["text"])
                 clean.append(item)
+        if merge_new_defaults:
+            for d_item in out[kind]:
+                if d_item["text"] in _NEW_DEFAULT_TEXTS and d_item["text"] not in seen:
+                    seen.add(d_item["text"])
+                    clean.append(d_item)
         out[kind] = clean
     return out
 
@@ -900,18 +937,29 @@ def build_live_context(
     world=None,
     store=None,
     shelf=None,
+    money=None,
+    companion=None,
 ) -> dict:
-    """采集当下补写窗口 [start, end] 的真实天气、库存、补给船与洗衣状态，供即时抽签联动。"""
+    """采集当下补写窗口 [start, end] 的真实天气、海水温度、库存、账面、补给船与洗衣状态，供即时抽签联动。"""
     flat_start = start.replace(tzinfo=None)
     flat_end = (end.replace(tzinfo=None) if end is not None else flat_start + datetime.timedelta(hours=3))
     if flat_end <= flat_start:
         flat_end = flat_start + datetime.timedelta(hours=2)
+
+    sea_t = None
+    try:
+        from . import weather as weather_mod
+        sea_t = weather_mod.sea_temp(flat_start, str(home or "").strip())
+    except Exception:
+        sea_t = None
 
     ctx: dict = {
         "start": flat_start,
         "end": flat_end,
         "home": str(home or "").strip(),
         "tone": str(tone or "").strip(),
+        "is_daytime": 6 <= flat_start.hour < 18,
+        "sea_temp": sea_t,
         "has_weather": False,
         "has_inventory": False,
         "has_supply": False,
@@ -929,7 +977,7 @@ def build_live_context(
                 "max_wind": max(int(h.get("wind") or 0) for h in win_hours),
                 "max_fog": max(int(h.get("fog") or 0) for h in win_hours),
                 "avg_cloud": sum(float(h.get("cloud") or 0.0) for h in win_hours) / max(1, len(win_hours)),
-                "min_temp": min(float(h.get("temp") or 18.0) for h in win_hours),
+                "min_temp": min(float(h["temp"]) if h.get("temp") is not None else 18.0 for h in win_hours),
                 "rained_recently": any(float(h.get("rain") or 0.0) >= 0.5 for h in past_hours),
             })
         except Exception:
@@ -972,12 +1020,21 @@ def build_live_context(
             has_wet_laundry = False
             has_winter_coat = False
             has_thick_quilt = False
+            scrap_stock = 0
+            sealed_loot_count = 0
             day_text_fn = weather_of if weather_of is not None else (lambda _d: "多云")
             home_at_fn = world.home_at if world is not None else (lambda _m: ctx["home"])
 
             for item in local_vals:
                 if things_mod.is_ended(item) is not None:
                     continue
+                if things_mod.cat_of(item) == things_mod.CAT_ITEM:
+                    if things_mod.is_sealed(item):
+                        sealed_loot_count += 1
+                    if things_mod.is_scrap(item):
+                        sc_info = things_mod.stock(item)
+                        if sc_info is None or float(sc_info.get("left") or 0.0) > 0:
+                            scrap_stock += 1
                 if things_mod.is_charcoal(item):
                     info = things_mod.measure(item)
                     charcoal_g += float((info or {}).get("left") or 0.0)
@@ -1061,9 +1118,110 @@ def build_live_context(
                 "has_winter_coat": has_winter_coat,
                 "has_thick_quilt": has_thick_quilt,
                 "has_winter_gear": has_winter_coat and has_thick_quilt,
+                "scrap_stock": scrap_stock,
+                "sealed_loot_count": sealed_loot_count,
             })
         except Exception:
             pass
+
+    # 主人清醒状态 & 船长出海深潜打算（纯结构化，供 together 池门禁）
+    master_sleeping = False
+    has_captain_intent = False
+    if world is not None:
+        try:
+            from .world import is_sleep as _is_sleep
+            m_cur = world.current("master", flat_start)
+            if m_cur is not None and _is_sleep(m_cur):
+                master_sleeping = True
+        except Exception:
+            pass
+    if companion is not None:
+        try:
+            if companion.safe("resting", flat_start, default=False):
+                master_sleeping = True
+        except Exception:
+            pass
+    # 仅认 topic ∈ {salvage_order, dive_outing}、已由主人拍板(resolved)且对应 intent 仍有效
+    if world is not None and companion is not None:
+        try:
+            active_ids = {str(p.get("id") or "") for p in (world.intentions() or []) if p.get("id")}
+            for dec in (companion._data().get("decisions") or []):
+                if (
+                    dec.get("status") == "resolved"
+                    and dec.get("topic") in ("salvage_order", "dive_outing")
+                    and dec.get("intent")
+                    and str(dec["intent"]) in active_ids
+                ):
+                    has_captain_intent = True
+                    break
+        except Exception:
+            pass
+    ctx["master_awake"] = not master_sleeping
+    ctx["has_captain_intent"] = has_captain_intent
+
+    # 钱匣余额（tin_box_yuan，缺失保持 None 绝不静默兜底 0.0）与距上次打捞/卖废铜天数（近 7 天，纯结构化）
+    if money is None and world is not None and getattr(world, "root", None) is not None:
+        try:
+            if (Path(world.root) / "money.json").exists():
+                from .money import MoneyBook
+                money = MoneyBook(world.root)
+        except Exception:
+            money = None
+    snap = None
+    if money is not None:
+        try:
+            snap = money.snapshot(flat_start, world)
+            tin_acc = (snap.get("accounts") or {}).get("tin_box") or {}
+            bal = tin_acc.get("balance")
+            if bal is not None:
+                ctx["tin_box_yuan"] = float(bal)
+        except Exception:
+            snap = None
+
+    latest_salvage: datetime.datetime | None = None
+    if world is not None:
+        try:
+            from .world import parse_time as _parse_time, real_stop as _real_stop
+            for back in range(0, 8):
+                d_str = (flat_start.date() - datetime.timedelta(days=back)).isoformat()
+                for e in world.entries(d_str):
+                    if _real_stop(e):
+                        continue
+                    en_t = _parse_time(e.get("end")) or _parse_time(e.get("start"))
+                    if en_t is None or en_t > flat_start:
+                        continue
+                    orig = e.get("origin")
+                    if isinstance(orig, dict) and orig.get("kind") != "foiled":
+                        o_grp = str(orig.get("group") or "") or cool_key(str(orig.get("text") or ""))
+                        if o_grp in _SALVAGE_GROUPS:
+                            if latest_salvage is None or en_t > latest_salvage:
+                                latest_salvage = en_t
+                    for op in (e.get("money") or []):
+                        if isinstance(op, dict) and str(op.get("kind") or "").lower() == "earn" and str(op.get("reason") or "").lower() in ("salvage", "sell"):
+                            op_t = _parse_time(op.get("at")) or en_t
+                            if op_t <= flat_start and (latest_salvage is None or op_t > latest_salvage):
+                                latest_salvage = op_t
+        except Exception:
+            pass
+    if isinstance(snap, dict):
+        try:
+            from .world import parse_time as _parse_time
+            for rec in snap.get("records") or []:
+                if not isinstance(rec, dict) or rec.get("kind") != "earn":
+                    continue
+                if str(rec.get("reason") or "").lower() not in ("salvage", "sell"):
+                    continue
+                r_t = _parse_time(rec.get("at"))
+                if r_t is not None and r_t <= flat_start and (latest_salvage is None or r_t > latest_salvage):
+                    latest_salvage = r_t
+        except Exception:
+            pass
+    if latest_salvage is not None:
+        ctx["days_since_salvage"] = max(0, (flat_start.date() - latest_salvage.date()).days)
+    elif world is not None or money is not None:
+        ctx["days_since_salvage"] = 99
+    else:
+        ctx["days_since_salvage"] = None
 
     return ctx
 
@@ -1096,8 +1254,14 @@ def _eval_gates(
     link = str(item.get("link") or "")
     outdoor = bool(item.get("outdoor"))
     min_temp_req = item.get("min_temp")
+    min_water_req = item.get("min_water")
     gates: list[tuple[str, str, str]] = []
     notes: list[str] = []
+
+    # 海边小镇 sea_temp 冬季下限 4.0°C，min_water=4.0 允许亚托莉冬季下水并在更冷覆盖场景下提供结构化拦截
+    sea_temp = ctx.get("sea_temp")
+    if min_water_req is not None and sea_temp is not None and float(sea_temp) < float(min_water_req):
+        gates.append(("water_cold", "hard", "海水太冷不宜下水"))
 
     if ctx.get("has_weather"):
         max_rain = float(ctx.get("max_rain") or 0.0)
@@ -1105,7 +1269,7 @@ def _eval_gates(
         max_wind = int(ctx.get("max_wind") or 0)
         max_fog = int(ctx.get("max_fog") or 0)
         avg_cloud = float(ctx.get("avg_cloud") or 1.0)
-        min_temp = float(ctx.get("min_temp") or 18.0)
+        min_temp = float(ctx["min_temp"]) if ctx.get("min_temp") is not None else 18.0
 
         if min_temp_req is not None and min_temp < float(min_temp_req):
             gates.append(("temp_cold", "hard", "天寒水冷不宜下水或露甲板吹冷风"))
@@ -1127,6 +1291,14 @@ def _eval_gates(
         elif wx == "calm":
             if max_rain >= 1.0 or max_wind > 4 or max_fog > 1:
                 gates.append(("wx_calm_bad", "discover", "风浪或海雾不适下水"))
+        elif wx == "dive":
+            if max_wind > 4 or max_fog >= 2:
+                gates.append(("wx_dive_bad", "discover", "风浪或海雾不适下水"))
+            elif grp == "水下溜达" and ctx.get("rained_recently"):
+                gates.append(("wx_dive_murky", "discover", "刚下过雨海水发浑，水下看不清"))
+        elif wx == "sub":
+            if max_wind > 5:
+                gates.append(("wx_sub_bad", "discover", "风浪过大，小潜艇不便出港"))
         elif wx == "rain":
             if max_rain < 0.2:
                 gates.append(("wx_need_rain", "hard", "此刻没下雨"))
@@ -1150,12 +1322,13 @@ def _eval_gates(
     if ctx.get("has_inventory"):
         wood_b = float(ctx.get("wood_bundles") or 0.0)
         if link == "wood_stove":
+            mt_val = ctx.get("min_temp")
+            mt = float(mt_val) if mt_val is not None else 15.0
             if wood_b <= 0:
                 gates.append(("no_wood", "hard", "家里没干柴烧柴炉"))
-            elif ctx.get("has_weather") and float(ctx.get("min_temp") or 15.0) > 17.5 and float(ctx.get("max_rain") or 0.0) < 0.2:
+            elif ctx.get("has_weather") and mt > 17.5 and float(ctx.get("max_rain") or 0.0) < 0.2:
                 gates.append(("warm_no_stove", "hard", "天暖无雨未点柴炉"))
             elif ctx.get("has_weather"):
-                mt = float(ctx.get("min_temp") or 15.0)
                 if mt <= 0.0:
                     mult *= 1.8
                     notes.append("严寒围炉 ×1.8")
@@ -1168,6 +1341,31 @@ def _eval_gates(
         elif link == "laundry":
             if ctx.get("has_wet_laundry"):
                 gates.append(("wet_laundry", "hard", "刚洗过或还有湿衣晾着"))
+
+    if link == "salvage":
+        tin_val = ctx.get("tin_box_yuan")
+        if tin_val is not None:
+            t_yuan = float(tin_val)
+            if t_yuan < 25.0:
+                mult *= 2.0
+                notes.append("铁盒紧缺 ×2.0")
+            elif t_yuan < 50.0:
+                mult *= 1.5
+                notes.append("铁盒偏紧 ×1.5")
+        days_salv = ctx.get("days_since_salvage")
+        if days_salv is not None and float(days_salv) >= 3.0:
+            mult *= 1.3
+            notes.append("多日未打捞 ×1.3")
+    elif link == "scrap_sell":
+        if float(ctx.get("scrap_stock") or 0.0) <= 0:
+            gates.append(("no_scrap", "hard", "家里没有可卖的废铜废铁库存"))
+    elif link == "captain_salvage":
+        if not ctx.get("is_daytime", True):
+            gates.append(("need_daytime", "hard", "夜间不出船深潜"))
+        elif not ctx.get("master_awake"):
+            gates.append(("need_master_awake", "hard", "主人休息中，无法同行出船"))
+        elif not ctx.get("has_captain_intent"):
+            gates.append(("need_captain_intent", "hard", "暂无船长约好的出海深潜打算"))
 
     if gates:
         return base, 0.0, gates, notes
@@ -1210,10 +1408,13 @@ def rows_for(items: list, name: str, home: str = "", work: bool = True, ctx: dic
 
 
 _FOIL_DRY_GROUPS = frozenset((
-    "晒铺盖", "洗衣裳", "礁岛", "赶海", "钓鱼", "旧大楼", "海上鸟居", "登高看海", "半沉学校", "收拾打捞船",
+    "晒铺盖", "洗衣裳", "礁岛", "赶海", "钓鱼", "旧大楼", "海上鸟居", "登高看海", "半沉学校", "收拾打捞船", "浅滩捡废", "卖废铜",
 ))
 _FOIL_DISCOVER_TEXT = {
     "wx_calm_bad": "到船边一看海面风浪发浑（或起了海雾），不便乘船或下水",
+    "wx_dive_bad": "到船边一看外头风浪偏大或海雾正浓，不便下水",
+    "wx_dive_murky": "探身往水里一望，刚下过雨海水还浑着看不清，改天再来",
+    "wx_sub_bad": "到港边一看风浪太大，小潜艇不好出港下潜",
     "wx_sunny_rain": "探头看海面阴云压过来、眼看要落雨",
     "wx_sunny_cloud": "到甲板一看天色阴沉返潮、没日头晒不透",
     "wx_sunny_wind": "探头见外头风浪太大、摆出去怕被吹乱打湿",
@@ -1234,8 +1435,8 @@ def foil_reason(item: dict, ctx: dict | None, groups: dict | None = None, *, nam
     if not gates or any(kind != "discover" for _code, kind, _msg in gates):
         return ""
     code = gates[0][0]
-    if code == "wx_calm_bad":
-        return _FOIL_DISCOVER_TEXT["wx_calm_bad"]
+    if code in ("wx_calm_bad", "wx_dive_bad", "wx_dive_murky", "wx_sub_bad"):
+        return _FOIL_DISCOVER_TEXT[code]
     if code in ("wx_sunny_rain", "wx_sunny_cloud", "wx_sunny_wind", "wx_dry_rain", "wx_dry_wind"):
         if grp in _FOIL_DRY_GROUPS:
             return _FOIL_DISCOVER_TEXT[code]
@@ -1282,7 +1483,7 @@ class PoolStore:
         if self._cache is not None and self._cache[0] == version:
             return self._cache[1]
         try:
-            data = normalize_pools(jsonio.load(self.path, {}))
+            data = normalize_pools(jsonio.load(self.path, {}), merge_new_defaults=True)
         except Exception:
             return default_pools()
         self._cache = (version, data)

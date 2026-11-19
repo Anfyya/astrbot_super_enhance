@@ -127,6 +127,7 @@ EARN_REASONS = ("work", "salvage", "sell", "consign_payout")
 MAX_ROUTINE_EARN = 300.0
 MAX_WORK_EARN = 50.0
 MAX_SALVAGE_EARN = 250.0
+AUTONOMOUS_SELL_LIMIT = 120.0
 # 大额进账习惯上交主人的参考阈值
 HANDOVER_HINT_YUAN = 50.0
 
@@ -139,7 +140,8 @@ SEASIDE_PRICE_GUIDE = (
     "- 冬衣大件（必须主人拍板）：旧衣铺厚棉衣 35~60 元，旧棉被 20~40 元，修船大件木料五金 60~250 元。\n"
     "- 赚钱门路（全须真干活或真交出库存实物，不准凭空变钱）：\n"
     "  1. 打零工/手艺零活：帮码头渔民清网卸货、帮诊所学校或镇民修旧收音机/灯具/小水泵，挣 10~35 元；\n"
-    "  2. 废金属过秤卖收购站：必须先把真在库存里的废铜旧铁旧零件扛去（items 记消耗/送人），按斤过秤换 15~120 元；\n"
+    "  2. 废金属过秤卖收购站：必须先把真在库存里的废铜旧铁旧零件扛去（items 记消耗/送人），"
+    f"按斤过秤换 15~{int(AUTONOMOUS_SELL_LIMIT)} 元（单笔 ≤ {int(AUTONOMOUS_SELL_LIMIT)} 元可自主结现；超过须先问主人）；\n"
     "  3. 打捞所接委托单：外人下单捞沉船/公寓物件，须主人同意后再接，交货后收 30~150 元工钱；\n"
     "  4. 完好旧时代遗物寄卖：沉街摸到的完好相机/唱片/老怀表随补给船寄去东港福记旧物行，等下趟船结算 200~800 元；\n"
     "  5. 多余渔获/鱼干/好浮木在集市或船坞卖出，换 8~40 元，或直接以物易物少掏现金。"
@@ -318,6 +320,7 @@ class MoneyBook(_JsonBook):
             "id": str(op.get("id") or "") or (wl_key if wl_key else self._next_rec_id()),
             "at": at_str,
             "kind": kind,
+            "reason": str(op.get("reason") or "").strip().lower(),
             "account": acc,
             "from_account": from_acc,
             "to_account": to_acc,
@@ -1187,6 +1190,12 @@ def validate_step_segments_money(
                             errors.append(
                                 f"{tag} money[{m_i}]：卖物换钱(reason=sell)必须在同段 things 或 items 里真有对应已有物品编号 id 的去货动作"
                                 f"（送人了/用完了/用掉一部分/用了），严禁无库存凭空变废铁卖钱！"
+                            )
+                            continue
+                        if not (has_master_intent or "master" in with_list) and amt > AUTONOMOUS_SELL_LIMIT:
+                            errors.append(
+                                f"{tag} money[{m_i}]：未经主人拍板（未绑定主人确认的 intent 且未与 master 同行），"
+                                f"单笔自主变卖(reason=sell)上限 {int(AUTONOMOUS_SELL_LIMIT)} 元，当前 {fmt_yuan(amt)} 元须先 ask_master 请主人定夺"
                             )
                             continue
                         if amt > MAX_ROUTINE_EARN:
