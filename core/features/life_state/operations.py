@@ -293,7 +293,8 @@ def tool_look_things(service, umo: str, kind: str = "food", thing_id: str = "") 
         item = shelf.find(key)
         if item is None:
             return "没有 %s 这一件。先不填编号看一遍清单。" % key
-        opening = service.things.is_sealed(item)
+        # 仅含 inside 密信/包裹才在查看编号时自动拆开展示；纯 weather.sealed=true 战利品留待主人拍板拆看
+        opening = bool(item.get("inside")) and not item.get("_opened") and service.things.is_sealed(item)
         if opening:
             service.things.open_item(item, platform_of(umo), fmt_time(now))
         text = service.things.history(item, now, shelf, service.bots.label_for)

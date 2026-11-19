@@ -1492,7 +1492,7 @@ class ContextPageApi:
                 raw = payload.get("item")
                 if isinstance(raw, dict):
                     raw = dict(raw)
-                    for keep_k in ("when", "where", "wx", "link", "work", "outdoor", "min_temp", "bucket"):
+                    for keep_k in ("when", "where", "wx", "link", "work", "outdoor", "min_temp", "min_water", "bucket"):
                         if keep_k not in raw and keep_k in rows[index]:
                             raw[keep_k] = rows[index][keep_k]
                 item = variety.clean_pool_item(kind, raw)

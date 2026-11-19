@@ -1214,7 +1214,7 @@ class ThingStore:
 
     def open_item(self, item: dict, by: str, at: str) -> None:
         tid = str((item or {}).get("id") or "")
-        if not tid or not self.is_sealed(item):
+        if not tid or not (item or {}).get("inside") or not self.is_sealed(item):
             return
         info = {"at": at, "by": by}
         self._load().setdefault("opened", {})[tid] = info
@@ -3015,7 +3015,7 @@ class ThingStore:
         seal = self.seal_text(item, label_fn)
         if seal:
             lines.append(seal)
-            if item.get("_opened"):
+            if item.get("_opened") and item.get("inside"):
                 lines.append("里面：%s" % item["inside"])
         if item.get("from"):
             lines.append("用这几件做的：%s" % "、".join(self._name_of(view, x) for x in item["from"]))

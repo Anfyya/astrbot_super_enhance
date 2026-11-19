@@ -750,9 +750,11 @@ class LifeStep:
         try:
             th_start = weather_mod.cabin_temp_info(start, self.world, text_of, home)
             if home == "海边小镇":
+                sea_t = weather_mod.sea_temp(start, home)
+                sea_note = "；海湾水温约 %.1f℃（港湾不封冻）" % sea_t if sea_t is not None else ""
                 lines.append(
-                    "- 起步时刻（%s）船屋内外实时温度：屋外/甲板约 %.1f℃（体感 %.1f℃）；船舱内——%s（铁桶柴炉刚点时炉边先热，约半小时后砖炕烟道渐暖、连烧一两小时炕面暖透而角落仍微凉；停火后舱内空气与远角先凉，砖炕蓄热能留温数小时再缓降至无火室温 %.1f℃；小炭炉只做饭不通炕道）。"
-                    % (start.strftime("%H:%M"), th_start["outdoor"], th_start["feels"], th_start["zones_desc"], th_start["base_cabin"])
+                    "- 起步时刻（%s）船屋内外实时温度：屋外/甲板约 %.1f℃（体感 %.1f℃）%s；船舱内——%s（铁桶柴炉刚点时炉边先热，约半小时后砖炕烟道渐暖、连烧一两小时炕面暖透而角落仍微凉；停火后舱内空气与远角先凉，砖炕蓄热能留温数小时再缓降至无火室温 %.1f℃；小炭炉只做饭不通炕道）。"
+                    % (start.strftime("%H:%M"), th_start["outdoor"], th_start["feels"], sea_note, th_start["zones_desc"], th_start["base_cabin"])
                 )
             else:
                 lines.append(
@@ -2323,6 +2325,7 @@ class LifeStep:
                     row["status"] = "resolved"
                     row["choice"] = said[:200]
                     row["resolved_at"] = fmt_time(self._now().replace(tzinfo=None))
+                    row["fast_replied"] = True
                     companion._save()
                     break
         return fixed, again
@@ -2915,7 +2918,7 @@ class LifeStep:
                         ) and not (master_replied or (intent_id and intent_id in chat_intent_ids) or "master" in [str(x) for x in (raw.get("with") or [])]):
                             errors.append(
                                 f"{tag} items[{i_i}]（{nm}）：置办过冬厚衣/棉被属于家里大额开销，未经当家主人发话拍板（该段未绑定主人确认的 intent 且未与 master 同行）"
-                                f"严禁擅自买回入库！本段请只写去打听价钱行情，并在顶层 ask_master 填 kind=\"decision\" 发消息请主人拿主意"
+                                f"严禁擅自买回入库！本段请只写去打听价钱行情，并在顶层 ask_master 填 kind=\"decision\", topic=\"winter_gear\" 发消息请主人拿主意"
                             )
                         if not _valid_place_struct(eff.get("place")):
                             errors.append(f"{tag} items[{i_i}]（{nm}）：place 格式不合法（须填 {{\"area\": ..., \"at\": ...}} 且均非空）")
@@ -2983,6 +2986,7 @@ class LifeStep:
                 seaside=seaside,
                 label_fn=self.label,
                 valid_intents=all_intent_ids,
+                master_replied=master_replied,
             ))
 
         return errors
@@ -3361,7 +3365,7 @@ class LifeStep:
                     )
                 if not ctx.get("has_winter_gear") and 8 <= win_start.hour <= 16 and max_rain < 1.0:
                     nudges.append(
-                        "- 单衣过冬与请示当家人：天已骤冷，船屋里还没有厚冬衣和厚棉被——未经主人点头不许擅自动家底买大件！白天可先去半淹商店街旧衣铺或集市布摊打听好厚棉衣与旧棉被的价钱，并在 ask_master 里填 kind=\"decision\" 报给主人拍板先买哪样。"
+                        "- 单衣过冬与请示当家人：天已骤冷，船屋里还没有厚冬衣和厚棉被——未经主人点头不许擅自动家底买大件！白天可先去半淹商店街旧衣铺或集市布摊打听好厚棉衣与旧棉被的价钱，并在 ask_master 里填 kind=\"decision\", topic=\"winter_gear\" 报给主人拍板先买哪样。"
                     )
             elif chilly and cabin_cool and not recent_wood:
                 if inv["wood_bundles"] > 0:

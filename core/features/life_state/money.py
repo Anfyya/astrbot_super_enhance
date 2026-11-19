@@ -1023,6 +1023,7 @@ def validate_step_segments_money(
     seaside: bool,
     label_fn=str,
     valid_intents: set[str] | None = None,
+    master_replied: bool = False,
 ) -> list[str]:
     """跨人跨段纯结构化校验与模拟余额追踪（绝不扫描正文猜金额）。"""
     errors: list[str] = []
@@ -1176,7 +1177,7 @@ def validate_step_segments_money(
                         errors.append(f"{tag} money[{m_i}]：零工/修补小活(reason=work)单笔最多 {int(MAX_WORK_EARN)} 元，当前 {fmt_yuan(amt)} 元过高")
                         continue
                     if reason == "salvage":
-                        if not has_master_intent and amt > MAX_WORK_EARN:
+                        if not (master_replied or has_master_intent or "master" in with_list) and amt > MAX_WORK_EARN:
                             errors.append(
                                 f"{tag} money[{m_i}]：较正式的打捞委托收费(reason=salvage > {int(MAX_WORK_EARN)}元)"
                                 f"须绑定主人同意的 intent 打算；未立单前只可先收小额探看/登记，不准后台私接大单收费"
@@ -1192,7 +1193,7 @@ def validate_step_segments_money(
                                 f"（送人了/用完了/用掉一部分/用了），严禁无库存凭空变废铁卖钱！"
                             )
                             continue
-                        if not (has_master_intent or "master" in with_list) and amt > AUTONOMOUS_SELL_LIMIT:
+                        if not (master_replied or has_master_intent or "master" in with_list) and amt > AUTONOMOUS_SELL_LIMIT:
                             errors.append(
                                 f"{tag} money[{m_i}]：未经主人拍板（未绑定主人确认的 intent 且未与 master 同行），"
                                 f"单笔自主变卖(reason=sell)上限 {int(AUTONOMOUS_SELL_LIMIT)} 元，当前 {fmt_yuan(amt)} 元须先 ask_master 请主人定夺"

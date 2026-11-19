@@ -592,10 +592,16 @@ class Companionship:
                     open_all = [x for x in decs if x.get("scene") == self._scene() and x.get("status") in ("pending", "idea")]
                     if len(open_all) == 1:
                         target_dec = open_all[0]
-            allowed_st = ("pending", "idea", "lapsed") if d_id else ("pending", "idea")
-            if target_dec is None or target_dec.get("status") not in allowed_st:
+            is_open = target_dec is not None and (
+                target_dec.get("status") in ("pending", "idea")
+                or (d_id and target_dec.get("status") == "lapsed")
+                or (target_dec.get("status") == "resolved" and not target_dec.get("intent"))
+            )
+            if not is_open:
                 continue
             if d_status == "deferred":
+                if target_dec.get("status") == "resolved":
+                    target_dec["status"] = "pending"
                 target_dec["deferred_at"] = fmt_time(now)
                 self._save()
                 continue
@@ -672,10 +678,22 @@ class Companionship:
                 lines.append(format_decision_line(dec, today_text, label_fn=self.label, include_bot=False, show_status=True))
             for dec in self.recent_resolved_decisions(now, bot=bot)[-3:]:
                 linked = ("（已接打算 %s）" % dec["intent"]) if dec.get("intent") else ""
-                lines.append("%s 已由主人拍板（%s）%s：%s → 主人已定：%s（不要再重复请示同一件事！）" % (
+                tail_note = (
+                    "（当场快回尚无绑定打算；若主人这批刚补充约定或改为算了/延后，可用该 d 编号补记 decisions）"
+                    if recorder and dec.get("fast_replied") and not dec.get("intent")
+                    else "（不要再重复请示同一件事！）"
+                )
+                lines.append("%s 已由主人拍板（%s）%s：%s → 主人已定：%s%s" % (
                     dec.get("id"), dec.get("resolved_at") or str(dec.get("created") or ""),
                     linked, clean_text(dec.get("question"), 120), clean_text(dec.get("choice"), 120),
+                    tail_note,
                 ))
+            if recorder:
+                for dec in self.recent_lapsed_decisions(now, bot=bot)[-3:]:
+                    lines.append("%s 已超24小时未回（曾于 %s 问主人，topic=%s）：%s（若主人这批提起或顺口拍板了这件，可用该 d 编号补记 decisions）" % (
+                        dec.get("id"), dec.get("asked_at") or str(dec.get("created") or ""),
+                        normalize_decision_topic(dec.get("topic")), clean_text(dec.get("question"), 120),
+                    ))
         stamp = self._ts(now)
         notices = [x for x in self._data()["notices"] if x["bot"] == bot and x.get("scene") == self._scene()
                    and 0 <= stamp - x["ts"] < 86400 and (not x.get("used_at") or x["used_at"] > stamp)]
