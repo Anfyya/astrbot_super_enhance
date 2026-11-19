@@ -90,7 +90,10 @@ class ToolCapFeature:
 
             return reset
 
-        self.patches.patch(ToolLoopAgentRunner, "reset", wrap_reset)
+        self.patches.patch(
+            ToolLoopAgentRunner, "reset", wrap_reset,
+            marker="_super_enhance_tool_cap_orig",
+        )
         logger.info("[super_enhance/tool_cap] 已安装：单轮同一工具最多调用 %d 次", self.max_per_tool)
 
     def uninstall(self) -> None:
