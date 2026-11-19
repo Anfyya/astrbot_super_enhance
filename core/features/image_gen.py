@@ -119,6 +119,7 @@ class ImageGenFeature:
         self.config = config
         self.dir = Path(data_dir) / "images"
         self.is_bot = is_bot or (lambda sender: False)
+        self.outfit_fn = None  # 可选回调：char_name -> (是否穿着冬装厚棉衣, 当前实时穿搭文案)，与聊天注入同源
         self._sent: dict[str, tuple[float, list]] = {}  # 会话 → (什么时候发的, 主人发的图)
         self._views: dict[str, tuple[str, str]] = {}  # 编号 → 回看用的小图 (mime, base64)
         self._recalled: tuple = ()  # 上次回看带了哪几张（变了才记日志）
@@ -238,7 +239,11 @@ class ImageGenFeature:
         return refs
 
     def _character_refs(self, characters, notes: list) -> tuple[list, list]:
-        """她填的人物 → ([(名字, mime, base64)], 认不出的名字)。"""
+        """她填的人物 → ([(名字, mime, base64, variant, worn)], 认不出的名字)。
+
+        当角色此刻世界线穿搭（与聊天注入同源）正穿着冬装厚棉衣，且存在 ``<名字>_冬装.{png,jpg,webp}``
+        时，自动切冬装立绘参考图；否则用常服官方立绘，确保生图与注入穿搭严格一致。
+        """
         names = characters if isinstance(characters, list) else re.split(r"[,，、/\s]+", str(characters or ""))
         out, seen, missing = [], set(), []
         for raw in names:
@@ -249,10 +254,29 @@ class ImageGenFeature:
             if name in seen:
                 continue
             seen.add(name)
-            path = next((p for p in (self.dir / REFS_DIR / (name + ext) for ext in (".png", ".jpg", ".webp")) if p.exists()), None)
+            want_winter, worn = False, ""
+            if self.outfit_fn is not None:
+                try:
+                    want_winter, worn = self.outfit_fn(name)
+                except Exception:
+                    want_winter, worn = False, ""
+            path = None
+            variant = "常服"
+            if want_winter:
+                path = next(
+                    (p for p in (self.dir / REFS_DIR / (name + "_冬装" + ext) for ext in (".png", ".jpg", ".webp")) if p.exists()),
+                    None,
+                )
+                if path is not None:
+                    variant = "冬装"
+            if path is None:
+                path = next(
+                    (p for p in (self.dir / REFS_DIR / (name + ext) for ext in (".png", ".jpg", ".webp")) if p.exists()),
+                    None,
+                )
             data = path.read_bytes() if path else b""
             if mime_of(data):
-                out.append((name, mime_of(data), base64.b64encode(data).decode()))
+                out.append((name, mime_of(data), base64.b64encode(data).decode(), variant, str(worn or "").strip()))
             else:
                 missing.append(raw)
         if missing:
@@ -262,12 +286,27 @@ class ImageGenFeature:
 
     @staticmethod
     def _lead(chars: list, others: int) -> str:
-        """写在 prompt 前面：第几张参考图是谁。"""
+        """写在 prompt 前面：第几张参考图是谁，并附带与聊天注入同源的此刻实时穿搭。"""
         if not chars:
             return ""
-        parts = ["第%d张参考图是「%s」的官方立绘" % (i + 1, name) for i, (name, _, _) in enumerate(chars)]
-        text = "；".join(parts) + "。画里的%s照着立绘画（脸、发型、发色、瞳色、身材、平时穿的衣服都照图），下面另说了穿什么就换成那身。" % (
-            "、".join("「%s」" % n for n, _, _ in chars))
+        parts = []
+        outfits = []
+        for i, item in enumerate(chars):
+            name = item[0]
+            variant = item[3] if len(item) > 3 else "常服"
+            worn = item[4] if len(item) > 4 else ""
+            if variant == "冬装":
+                parts.append("第%d张参考图是「%s」的冬装立绘（全扣高领厚棉衣、深灰针织打底裤与毛线袜冬靴）" % (i + 1, name))
+            else:
+                parts.append("第%d张参考图是「%s」的官方立绘" % (i + 1, name))
+            if worn:
+                outfits.append("「%s」此刻穿着：%s" % (name, worn))
+        text = "；".join(parts) + "。画里的%s照着立绘画（脸、发型、发色、瞳色、身材都严格照图）" % (
+            "、".join("「%s」" % item[0] for item in chars))
+        if outfits:
+            text += "；" + "；".join(outfits) + "（务必与参考图及此刻穿着一致，下面正文另指定换装时才按正文换）。"
+        else:
+            text += "，平时穿的衣服照图，下面另说了穿什么就换成那身。"
         if others:
             text += "后面的参考图是要照着画或者接着改的画面。"
         return text + "\n\n"
@@ -508,7 +547,7 @@ class ImageGenFeature:
             want = DEFAULT_IMAGE_SIZE
         chars, _ = self._character_refs(characters, notes)
         refs = (await self._refs(event, umo, bot, use_sent, use_last, notes))[:max(0, REF_MAX - len(chars))]
-        refs = [(mime, b64) for _, mime, b64 in chars] + refs
+        refs = [(item[1], item[2]) for item in chars] + refs
         prompt_text = self._lead(chars, len(refs) - len(chars)) + prompt
         began = time.time()
         found, used, why, usage, sent_extra = await self._ask(bot, prompt_text, refs, want, began)
@@ -528,7 +567,7 @@ class ImageGenFeature:
             view_mime, view_b64, dims = await asyncio.to_thread(preview_of, data)
             self._keep_view(image_id, name, view_mime, view_b64)
             item_meta = {"bot": bot, "file": name, "prompt": prompt[:300], "size": dims,
-                         "characters": [n for n, _, _ in chars], "model": used,
+                         "characters": [("%s(%s)" % (item[0], item[3]) if len(item) > 3 and item[3] != "常服" else item[0]) for item in chars], "model": used,
                          "at": stamp.strftime("%Y-%m-%d %H:%M"), "sent": []}
             if usage:
                 item_meta["usage"] = usage

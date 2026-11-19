@@ -560,6 +560,44 @@ OUTFIT_STATIC_SEASIDE = (
 OUTFIT_STATIC_GENERIC = "（关于身上穿的衣裳与体感：结合当下穿着与实时环境温度自然感受，不用刻意报衣服全名。）"
 
 
+_WINTER_COAT_WORDS = ("厚棉衣", "棉衣", "棉袄", "厚棉服", "棉服", "厚外套", "棉外套", "大衣")
+_COAT_OFF_WORDS = ("没", "无", "未", "脱", "搁", "放", "搭在主人", "给主人", "收好", "挂")
+
+
+def is_wearing_winter_coat(outfit: str) -> bool:
+    """按当前注入的穿搭文案判断是否正穿着冬装厚棉衣（与聊天注入同源，绝不同步错位）。"""
+    text = str(outfit or "").strip()
+    if not text:
+        return False
+    for clause in re.split(r"[，。；、（）()]+", text):
+        c = clause.strip()
+        if not c:
+            continue
+        if any(w in c for w in _WINTER_COAT_WORDS) and not any(off in c for off in _COAT_OFF_WORDS):
+            return True
+    return False
+
+
+def outfit_state_for_label(service, char_name: str) -> tuple[bool, str]:
+    """按角色名查询此刻与聊天注入完全一致的 (是否穿着厚棉衣, 当前穿搭文案)。"""
+    want = str(char_name or "").strip()
+    if service is None or not want:
+        return False, ""
+    world = getattr(service, "world", None)
+    bots = getattr(service, "bots", None)
+    bot_id = ""
+    if bots is not None:
+        for b in (getattr(service, "enabled_bots", lambda: [])() or []):
+            if str(bots.label_for(b) or "").strip() == want:
+                bot_id = str(b)
+                break
+    if not bot_id:
+        return False, ""
+    now = service._now() if hasattr(service, "_now") else datetime.datetime.now()
+    worn = current_outfit_of(world, bot_id, want, now)
+    return is_wearing_winter_coat(worn), worn
+
+
 def outfit_now_text(service, bot: str, now: datetime.datetime) -> str:
     """聊天实时注入她此刻身上穿的衣裳与铺盖实情（固定规则已放入 static_blocks 吃缓存）。"""
     world = getattr(service, "world", None)

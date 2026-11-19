@@ -48,7 +48,7 @@ from .core.features import error_voice
 from .core.features.cron_context import CronContextFeature
 from .core.features.cross_session import CrossSessionFeature
 from .core.features.life_state import LifeStateService
-from .core.features.life_state import operations as life_ops, raw_log
+from .core.features.life_state import operations as life_ops, raw_log, view as life_view
 from .core.features.life_state.proactive import is_proactive_event
 from .core.features.msg_time import MsgTimeFeature
 from .core.features.proactive_think import ProactiveThinkFilter
@@ -133,6 +133,8 @@ class SuperEnhance(Star):
         )
         # 聊天记录里的图（她发出去的、主人发来的），之后每轮放进本轮那条用户消息的副本里给她看
         self.transcript.attach = self.image_gen.attach_images
+        # 生图人物参考图按此刻世界线穿搭（与聊天注入同源）自动切换冬装/常服立绘
+        self.image_gen.outfit_fn = lambda name: life_view.outfit_state_for_label(self.life, name)
         # 发消息 / tell 的说明换成写死对象和会话号的中文版（只改这一轮的工具清单）
         self.bot_dialog.tool_bots_fn = self.life.enabled_bots
         self.tool_guide = self.bot_dialog
