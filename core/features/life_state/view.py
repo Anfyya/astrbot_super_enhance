@@ -519,20 +519,20 @@ DEFAULT_OUTFITS = {
     },
     "亚托莉": {
         "awake": "奶白色水手领及膝长袖连衣裙（在船舱里常光着脚、出门穿乐福鞋，身上没有厚外套）",
-        "sleep": "浅色棉质宽袖睡裙（盖着旧毛毯）",
+        "sleep": "奶白色微偏奶黄的蕾丝花边吊带睡裙（胸前带小黑蝴蝶结）配白色蓬松荷叶边灯笼短裤，光着脚",
     },
 }
 
 
 def current_outfit_of(world, bot: str, label: str, now: datetime.datetime) -> str:
-    """读取她此刻身上的真实穿搭：优先取最近一段已开始世界线上的结构化 outfit；尚未写过时回退人设自带单薄常服/睡衣。"""
+    """读取她此刻身上的真实穿搭：严格沿用最近一段已开始世界线上的结构化 outfit（不因进入睡觉段而瞬移换装）；尚未写过时才回退人设默认常服/睡衣。"""
     from .world import is_sleep as _is_sleep, real_stop as _real_stop
 
     flat = now.replace(tzinfo=None)
     cur = world.current(bot, flat) if world is not None else None
     sleeping = bool(cur is not None and _is_sleep(cur))
     if world is not None:
-        latest_by_sleep = {False: "", True: ""}
+        latest = ""
         for back in (4, 3, 2, 1, 0):
             d_str = (flat.date() - datetime.timedelta(days=back)).isoformat()
             for item in world.entries(d_str):
@@ -543,9 +543,9 @@ def current_outfit_of(world, bot: str, label: str, now: datetime.datetime) -> st
                     continue
                 worn = str(item.get("outfit") or "").strip()
                 if worn:
-                    latest_by_sleep[bool(_is_sleep(item))] = worn
-        if latest_by_sleep[sleeping]:
-            return latest_by_sleep[sleeping]
+                    latest = worn
+        if latest:
+            return latest
     defaults = DEFAULT_OUTFITS.get(str(label or "").strip()) or {
         "awake": "平时的单薄常服（没有厚外套）",
         "sleep": "单薄睡衣",
@@ -561,11 +561,11 @@ OUTFIT_STATIC_GENERIC = "（关于身上穿的衣裳与体感：结合当下穿�
 
 
 _WINTER_COAT_WORDS = ("厚棉衣", "棉衣", "棉袄", "厚棉服", "棉服", "厚外套", "棉外套", "大衣")
-_COAT_OFF_WORDS = ("没", "无", "未", "脱", "搁", "放", "搭在主人", "给主人", "收好", "挂")
+_PAJAMA_WORDS = ("睡衣", "睡裙", "吊带睡裙", "灯笼短裤", "和式睡衣")
+_OUTFIT_OFF_WORDS = ("没", "无", "未", "脱", "搁", "放", "搭在主人", "给主人", "收好", "叠好", "挂", "换下")
 
 
-def is_wearing_winter_coat(outfit: str) -> bool:
-    """按当前注入的穿搭文案判断是否正穿着冬装厚棉衣（与聊天注入同源，绝不同步错位）。"""
+def _clause_matches_any(outfit: str, words: tuple[str, ...]) -> bool:
     text = str(outfit or "").strip()
     if not text:
         return False
@@ -573,16 +573,26 @@ def is_wearing_winter_coat(outfit: str) -> bool:
         c = clause.strip()
         if not c:
             continue
-        if any(w in c for w in _WINTER_COAT_WORDS) and not any(off in c for off in _COAT_OFF_WORDS):
+        if any(w in c for w in words) and not any(off in c for off in _OUTFIT_OFF_WORDS):
             return True
     return False
 
 
-def outfit_state_for_label(service, char_name: str) -> tuple[bool, str]:
-    """按角色名查询此刻与聊天注入完全一致的 (是否穿着厚棉衣, 当前穿搭文案)。"""
+def is_wearing_winter_coat(outfit: str) -> bool:
+    """按当前注入的穿搭文案判断是否正穿着冬装厚棉衣（与聊天注入同源，绝不同步错位）。"""
+    return _clause_matches_any(outfit, _WINTER_COAT_WORDS)
+
+
+def is_wearing_pajamas(outfit: str) -> bool:
+    """按当前注入的穿搭文案判断是否正穿着睡衣/睡裙（只有真正换上睡衣才为 True）。"""
+    return _clause_matches_any(outfit, _PAJAMA_WORDS)
+
+
+def outfit_state_for_label(service, char_name: str) -> tuple[str, str]:
+    """按角色名查询此刻与聊天注入完全一致的 (立绘档位 '冬装'|'睡衣'|'常服', 当前穿搭文案)。"""
     want = str(char_name or "").strip()
     if service is None or not want:
-        return False, ""
+        return "常服", ""
     world = getattr(service, "world", None)
     bots = getattr(service, "bots", None)
     bot_id = ""
@@ -592,10 +602,14 @@ def outfit_state_for_label(service, char_name: str) -> tuple[bool, str]:
                 bot_id = str(b)
                 break
     if not bot_id:
-        return False, ""
+        return "常服", ""
     now = service._now() if hasattr(service, "_now") else datetime.datetime.now()
     worn = current_outfit_of(world, bot_id, want, now)
-    return is_wearing_winter_coat(worn), worn
+    if is_wearing_winter_coat(worn):
+        return "冬装", worn
+    if is_wearing_pajamas(worn):
+        return "睡衣", worn
+    return "常服", worn
 
 
 def outfit_now_text(service, bot: str, now: datetime.datetime) -> str:

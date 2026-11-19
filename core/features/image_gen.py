@@ -119,7 +119,7 @@ class ImageGenFeature:
         self.config = config
         self.dir = Path(data_dir) / "images"
         self.is_bot = is_bot or (lambda sender: False)
-        self.outfit_fn = None  # 可选回调：char_name -> (是否穿着冬装厚棉衣, 当前实时穿搭文案)，与聊天注入同源
+        self.outfit_fn = None  # 可选回调：char_name -> (立绘档位 '冬装'|'睡衣'|'常服', 当前实时穿搭文案)，与聊天注入同源
         self._sent: dict[str, tuple[float, list]] = {}  # 会话 → (什么时候发的, 主人发的图)
         self._views: dict[str, tuple[str, str]] = {}  # 编号 → 回看用的小图 (mime, base64)
         self._recalled: tuple = ()  # 上次回看带了哪几张（变了才记日志）
@@ -241,8 +241,10 @@ class ImageGenFeature:
     def _character_refs(self, characters, notes: list) -> tuple[list, list]:
         """她填的人物 → ([(名字, mime, base64, variant, worn)], 认不出的名字)。
 
-        当角色此刻世界线穿搭（与聊天注入同源）正穿着冬装厚棉衣，且存在 ``<名字>_冬装.{png,jpg,webp}``
-        时，自动切冬装立绘参考图；否则用常服官方立绘，确保生图与注入穿搭严格一致。
+        按角色此刻世界线穿搭（与聊天注入同源）自动选择立绘：
+        - ``冬装`` → ``<名字>_冬装.{png,jpg,webp}``
+        - ``睡衣`` → ``<名字>_睡衣.{png,jpg,webp}``
+        - 否则或无对应立绘时回退 ``<名字>.{png,jpg,webp}``（常服）。
         """
         names = characters if isinstance(characters, list) else re.split(r"[,，、/\s]+", str(characters or ""))
         out, seen, missing = [], set(), []
@@ -254,21 +256,25 @@ class ImageGenFeature:
             if name in seen:
                 continue
             seen.add(name)
-            want_winter, worn = False, ""
+            want_variant, worn = "常服", ""
             if self.outfit_fn is not None:
                 try:
-                    want_winter, worn = self.outfit_fn(name)
+                    got_v, worn = self.outfit_fn(name)
+                    if got_v is True:
+                        want_variant = "冬装"
+                    elif isinstance(got_v, str) and got_v in ("冬装", "睡衣", "常服"):
+                        want_variant = got_v
                 except Exception:
-                    want_winter, worn = False, ""
+                    want_variant, worn = "常服", ""
             path = None
             variant = "常服"
-            if want_winter:
+            if want_variant in ("冬装", "睡衣"):
                 path = next(
-                    (p for p in (self.dir / REFS_DIR / (name + "_冬装" + ext) for ext in (".png", ".jpg", ".webp")) if p.exists()),
+                    (p for p in (self.dir / REFS_DIR / (name + "_" + want_variant + ext) for ext in (".png", ".jpg", ".webp")) if p.exists()),
                     None,
                 )
                 if path is not None:
-                    variant = "冬装"
+                    variant = want_variant
             if path is None:
                 path = next(
                     (p for p in (self.dir / REFS_DIR / (name + ext) for ext in (".png", ".jpg", ".webp")) if p.exists()),
@@ -297,6 +303,8 @@ class ImageGenFeature:
             worn = item[4] if len(item) > 4 else ""
             if variant == "冬装":
                 parts.append("第%d张参考图是「%s」的冬装立绘（全扣高领厚棉衣、深灰针织打底裤与毛线袜冬靴）" % (i + 1, name))
+            elif variant == "睡衣":
+                parts.append("第%d张参考图是「%s」的睡衣立绘（奶白微偏奶黄的蕾丝花边吊带睡裙，胸前小黑蝴蝶结，下身配白色蓬松荷叶边灯笼短裤）" % (i + 1, name))
             else:
                 parts.append("第%d张参考图是「%s」的官方立绘" % (i + 1, name))
             if worn:
