@@ -284,25 +284,38 @@ def weathers(service) -> dict:
         out[day] = "%s::%s" % (home, text) if home and home != "穗织" else text
     return out
 
-def tool_look_things(service, umo: str, kind: str = "food", thing_id: str = "") -> str:
-    """看家里的东西：kind=food 列出家里现有的吃的，kind=item 列出吃的以外的东西；填了编号看那一件的来龙去脉。这一刻现算。"""
+def tool_look_things(
+    service,
+    umo: str,
+    keyword: str = "",
+    category: str = "",
+    owner: str = "",
+    place: str = "",
+    thing_id: str = "",
+    kind: str = "",
+) -> str:
+    """按条件查看屋里现存的食物与物品（紧凑单行 Top-15，绝不倒全量）；传编号看单件详情。"""
     now = service._now().replace(tzinfo=None)
     shelf = service.things.here(service.things.view(now), now)
     key = str(thing_id or "").strip()
     if key:
         item = shelf.find(key)
         if item is None:
-            return "没有 %s 这一件。先不填编号看一遍清单。" % key
+            return "屋里目前没有编号 %s 的东西，可换关键词或大类查一下。" % key
         # 仅含 inside 密信/包裹才在查看编号时自动拆开展示；纯 weather.sealed=true 战利品留待主人拍板拆看
         opening = bool(item.get("inside")) and not item.get("_opened") and service.things.is_sealed(item)
         if opening:
             service.things.open_item(item, platform_of(umo), fmt_time(now))
         text = service.things.history(item, now, shelf, service.bots.label_for)
         return ("（这一看就拆开了。）\n" + text) if opening else text
-    word = str(kind or "food").strip().lower()
-    if word in ("item", "items", "东西", "物品", "物件"):
-        return "家里的东西（吃的以外，%s）：\n%s" % (fmt_time(now), service.things.item_list(now, shelf, service.bots.label_for))
-    if word not in ("food", "foods", "食物", "吃的", ""):
-        return "kind 填 food（吃的）或 item（吃的以外的东西）。"
-    return "家里的吃的（%s）：\n%s" % (fmt_time(now), service.things.food_list(now, shelf, service.bots.label_for))
+    eff_cat = str(category or "").strip() or str(kind or "").strip()
+    return service.things.search_things(
+        now,
+        shelf,
+        keyword=keyword,
+        category=eff_cat,
+        owner=owner,
+        place=place,
+        label_fn=service.bots.label_for,
+    )
 

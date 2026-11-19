@@ -644,19 +644,38 @@ class SuperEnhance(Star):
         return life_ops.tool_recall(self.life, getattr(event, "unified_msg_origin", "") or "", keyword, date, time, entry)
 
     @filter.llm_tool(name="look_things")
-    async def look_things(self, event: AstrMessageEvent, kind: str = "food", id: str = "") -> str:
-        """调用可查看屋里食物或物品的内容、位置、余量与详情。
+    async def look_things(
+        self,
+        event: AstrMessageEvent,
+        keyword: str = "",
+        category: str = "",
+        owner: str = "",
+        place: str = "",
+        id: str = "",
+    ) -> str:
+        """调用可按关键词、大类、归属或地点查看屋里现存的食物与物品（统一全屋检索，不分吃的/用品）。
 
-        传 kind 查看列表（food 或 item）；传入 id 可进一步查看该项具体内容（未拆封的信件/包裹传入 id 查看后即视为已拆开，主人的东西未获允许勿擅自拆看）。调用此工具时本轮正文留空，拿到返回结果后再回复对方，严禁提及编号或查询过程。
+        传入 keyword / category / owner / place 任意一项或组合即可精准查看；传入 id 可进一步查看该项具体内容（未拆封的信件/包裹传入 id 查看后即视为已拆开，主人的东西未获允许勿擅自拆看）。调用此工具时本轮正文留空，拿到返回结果后再回复对方，严禁提及编号或查询过程。
 
         Args:
-            kind (string): 类目：food（吃的）或 item（吃的以外的东西）。
-            id (string): 物品编号，传入可查看该项详情与记录。
+            keyword (string): 关键词，多词空格隔开（如 "冬衣 围巾"、"油"、"废铁 铁盒"、"信"）。
+            category (string): 大类可选："现成饭菜" | "生鲜食材" | "油盐调料" | "米面干货" | "零食饮品" | "穿戴被褥" | "柴炭油灯" | "工具船具" | "废铁战利品" | "书画信纸" | "日用杂物" | "做饭"。
+            owner (string): 归属人筛选："主人" | "亚托莉" | "丛雨"。
+            place (string): 存放地点筛选（如 "仓棚"、"船舱"、"灶台"）。
+            id (string): 物品编号，传入可查看该项完整详情与记录。
 
         Returns:
             查到的内容。
         """
-        return life_ops.tool_look_things(self.life, getattr(event, "unified_msg_origin", "") or "", kind, id)
+        return life_ops.tool_look_things(
+            self.life,
+            getattr(event, "unified_msg_origin", "") or "",
+            keyword=keyword,
+            category=category,
+            owner=owner,
+            place=place,
+            thing_id=id,
+        )
 
     # 11-14：工具名和说明统一成「呈现画面」，避免她把 show_view 说成画图、画板、照片。
     # 10-24：呈现的是她眼前看到的东西、她自己不在画面里；说明里不写「相机」「拍照」这类字，免得被照抄进 prompt。

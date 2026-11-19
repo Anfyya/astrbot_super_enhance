@@ -3133,6 +3133,343 @@ class ThingStore:
             text += "\n最近一天没了的：\n" + "\n".join("- " + bit for _, bit in gone[-gone_max:])
         return text
 
+    def search_things(
+        self,
+        now: datetime.datetime,
+        view: View,
+        *,
+        keyword: str = "",
+        category: str = "",
+        owner: str = "",
+        place: str = "",
+        label_fn=None,
+        limit: int = 15,
+    ) -> str:
+        """聊天工具 look_things 专用：统一全库检索 + 固定大类桶 + 同义词簇展开 + 紧凑单行（单次恒定 ~100~400 字）。"""
+        flat = now.replace(tzinfo=None)
+        kw_str = str(keyword or "").strip()
+        cat_str = str(category or "").strip()
+        own_str = _norm_search_owner(owner, label_fn)
+        plc_str = str(place or "").strip()
+
+        active: list[tuple[dict, dict | None]] = []
+        spoiled: list[tuple[dict, dict]] = []
+        for it in view.values():
+            if is_ended(it) is not None:
+                continue
+            if cat_of(it) == CAT_FOOD:
+                prof = self.profile(it, flat, view)
+                if prof["fresh"]["level"] == "坏了":
+                    spoiled.append((it, prof))
+                else:
+                    active.append((it, prof))
+            else:
+                active.append((it, None))
+
+        b_counts: dict[str, int] = {}
+        for it, _ in active:
+            b = _search_bucket(it)
+            b_counts[b] = b_counts.get(b, 0) + 1
+
+        if not any((kw_str, cat_str, own_str, plc_str)):
+            b_txt = "、".join(
+                "%s(%d)" % (b, b_counts[b])
+                for b in _SEARCH_BUCKETS
+                if b_counts.get(b, 0)
+            )
+            bad_note = "（另有 %d 件已坏未扔食物）" % len(spoiled) if spoiled else ""
+            return "屋里现存 %d 件%s。请传入 category / keyword / owner / place 查询。\n可选大类：%s" % (
+                len(active), bad_note, b_txt,
+            )
+
+        want_spoiled = any(k in (kw_str + cat_str) for k in ("坏", "馊", "过期", "扔"))
+        source_pool = (spoiled if (want_spoiled and not active) else (active + spoiled if want_spoiled else active))
+
+        terms = [t for t in re.split(r"[\s,，、/]+", kw_str) if t]
+        hit_buckets: set[str] = set()
+        if cat_str:
+            c_low = cat_str.lower()
+            if c_low in _SEARCH_MACRO_CATS:
+                hit_buckets.update(_SEARCH_MACRO_CATS[c_low])
+            elif cat_str in _SEARCH_MACRO_CATS:
+                hit_buckets.update(_SEARCH_MACRO_CATS[cat_str])
+            else:
+                for b in _SEARCH_BUCKETS:
+                    if cat_str == b or cat_str in b:
+                        hit_buckets.add(b)
+
+        pool = []
+        for it, prof in source_pool:
+            b = _search_bucket(it)
+            if hit_buckets and b not in hit_buckets:
+                continue
+            st_last = (it.get("stages") or [{}])[-1]
+            it_owner = _norm_search_owner(self.owner_of(it) or st_last.get("owner") or "", label_fn)
+            if own_str and it_owner != own_str:
+                continue
+            it_place = str(self._where(st_last, label_fn) or st_last.get("place") or "")
+            if plc_str and plc_str not in it_place:
+                continue
+            pool.append((it, prof, b, st_last, it_owner, it_place))
+
+        if not terms:
+            scored = [
+                (10, str(st.get("at") or it.get("created") or ""), it, prof, b, st, it_own, it_plc)
+                for it, prof, b, st, it_own, it_plc in pool
+            ]
+        else:
+            scored = []
+            for it, prof, b, st, it_own, it_plc in pool:
+                name = str(it.get("name") or "")
+                kind = str(it.get("kind") or "")
+                look = str(it.get("look") or "")
+                state = str(st.get("state") or "")
+                last_at = str(st.get("at") or it.get("created") or "")
+                sc = 0
+                for t in terms:
+                    if t in name:
+                        sc += 40
+                    elif t in kind:
+                        sc += 25
+                    else:
+                        syns = _expand_synonyms(t)
+                        if syns and any(s in name for s in syns):
+                            sc += 28
+                        elif syns and any(s in kind for s in syns):
+                            sc += 18
+                        elif t in look or t in state:
+                            sc += 10
+                        elif t in it_plc:
+                            sc += 8
+                if sc > 0:
+                    scored.append((sc, last_at, it, prof, b, st, it_own, it_plc))
+
+            strong_hits = [x for x in scored if x[0] >= 18]
+            term_buckets: set[str] = set()
+            for t in terms:
+                if t in _SEARCH_MACRO_CATS:
+                    term_buckets.update(_SEARCH_MACRO_CATS[t])
+                for b, spec in _SEARCH_BUCKETS.items():
+                    if t == b or any(t == k or (len(t) >= 2 and (t in k or k in t)) for k in spec["kw"]):
+                        term_buckets.add(b)
+
+            if len(strong_hits) < 2 and term_buckets:
+                seen_ids = {x[2].get("id") for x in scored}
+                for it, prof, b, st, it_own, it_plc in pool:
+                    if b in term_buckets and it.get("id") not in seen_ids:
+                        last_at = str(st.get("at") or it.get("created") or "")
+                        scored.append((5, last_at, it, prof, b, st, it_own, it_plc))
+            elif len(strong_hits) >= 2:
+                scored = strong_hits
+
+        scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
+
+        def _compact_row(it: dict, prof: dict | None, st: dict, it_own: str, it_plc: str) -> str:
+            parts = ["%s %s" % (it.get("id") or "", str(it.get("name") or "").strip())]
+            rem = ""
+            if prof:
+                rem = str((prof.get("stock") or {}).get("left") or st.get("left") or "").strip()
+            else:
+                info = measure(it)
+                if info is not None and info.get("left") is not None:
+                    rem = fmt_amount(info["left"], info["unit"])
+                else:
+                    rem = str(st.get("left") or "").strip()
+            if rem:
+                rem_clean = re.sub(r"^(?:还剩|剩)\s*", "", rem)
+                if rem_clean:
+                    parts.append("剩%s" % rem_clean)
+            if prof:
+                fr = str((prof.get("fresh") or {}).get("level") or "").strip()
+                if fr and fr not in ("放得住", "新鲜", "还新鲜"):
+                    parts.append(fr)
+            else:
+                if self.is_sealed(it) and not it.get("_opened"):
+                    parts.append("未拆封")
+                if self.is_secret(it):
+                    parts.append("私人物品")
+            if it_own and it_own != "共用":
+                parts.append("归%s" % it_own)
+            if it_plc:
+                short_p = it_plc.split("·")[-1] if len(it_plc) > 10 else it_plc
+                parts.append(short_p)
+            return "｜".join(parts)
+
+        if not scored:
+            hint_parts = []
+            if own_str:
+                own_rows = []
+                for it, prof in active:
+                    st = (it.get("stages") or [{}])[-1]
+                    o = _norm_search_owner(self.owner_of(it) or st.get("owner") or "", label_fn)
+                    if o == own_str:
+                        p = str(self._where(st, label_fn) or st.get("place") or "")
+                        own_rows.append(_compact_row(it, prof, st, o, p))
+                if own_rows:
+                    hint_parts.append("归%s现存：%s" % (own_str, "；".join(own_rows[:6])))
+            conds = [x for x in (
+                "词=%s" % kw_str if kw_str else "",
+                "类=%s" % cat_str if cat_str else "",
+                "归=%s" % own_str if own_str else "",
+                "地=%s" % plc_str if plc_str else "",
+            ) if x]
+            extra = ("\n" + "\n".join(hint_parts)) if hint_parts else ""
+            return "屋里目前没有符合「%s」的东西。%s" % ("，".join(conds), extra)
+
+        shown = scored[:limit]
+        lines = ["- " + _compact_row(it, prof, st, it_own, it_plc) for _, _, it, prof, _, st, it_own, it_plc in shown]
+        if len(scored) > limit:
+            rest = scored[limit:]
+            rc: dict[str, int] = {}
+            for _, _, _, _, rb, _, _, _ in rest:
+                rc[rb] = rc.get(rb, 0) + 1
+            rtxt = "、".join("%s(%d)" % (k, v) for k, v in sorted(rc.items(), key=lambda kv: -kv[1]))
+            lines.append("（另匹配 %d 件：%s；缩小词或加归属/地点可细查）" % (len(rest), rtxt))
+        return "\n".join(lines)
+
+
+_SEASONING_WORDS = ("油", "盐", "酱", "醋", "糖", "蚝油", "味噌", "味精", "胡椒", "花椒", "八角", "香料", "葱", "姜", "蒜", "辣椒", "料酒")
+
+_SEARCH_BUCKETS: dict[str, dict] = {
+    "现成饭菜": {
+        "kinds": {"熟菜炒菜", "熟汤羹粥", "熟饭熟面", "熟肉卤味", "熟食"},
+        "kw": ("饭", "汤", "粥", "面", "炒", "炖", "煮", "烤", "蒸", "剩菜", "熟食", "晚饭", "午饭", "早饭", "现成"),
+    },
+    "生鲜食材": {
+        "kinds": {"生鱼虾水产", "生肉禽肉", "娇嫩细叶菜", "耐储根茎瓜菜", "耐储大叶菜", "茄果瓜豆菜", "普通水果", "鲜果", "鲜水豆腐", "禽蛋类", "菌菇"},
+        "kw": ("鱼", "虾", "蟹", "贝", "海鲜", "肉", "鸡", "蛋", "青菜", "白菜", "萝卜", "土豆", "番薯", "红薯", "南瓜", "豆腐", "食材", "生鲜", "蔬菜", "水果"),
+    },
+    "油盐调料": {
+        "kinds": {"葱姜蒜调味根茎", "调料"},
+        "kw": ("食用油", "盐", "酱油", "醋", "糖", "蚝油", "调料", "调味", "葱", "姜", "蒜", "味噌", "香料"),
+    },
+    "米面干货": {
+        "kinds": {"干货调料粮食", "腌菜酱菜泡菜", "腌腊咸菜", "干货", "粮食"},
+        "kw": ("米", "面粉", "面", "豆", "豆子", "干货", "海带", "裙带菜", "鱼干", "笋干", "罐头", "主食", "粮食", "腌菜", "咸菜"),
+    },
+    "零食饮品": {
+        "kinds": {"耐放糕饼点心", "茶汤鲜饮", "零食", "饮品", "别的吃的", "水果干"},
+        "kw": ("茶", "点心", "饼", "糕", "糖果", "零食", "可可", "咖啡", "饮品"),
+    },
+    "穿戴被褥": {
+        "kinds": {"衣物", "衣裳", "衬衫", "袜子", "围巾", "手套", "被褥", "薄被", "毛毯", "鞋", "靴", "帽", "外套", "棉衣", "睡衣"},
+        "kw": ("衣", "衣服", "冬衣", "棉衣", "棉袄", "外套", "衬衫", "单衣", "裙", "裤", "穿", "鞋", "靴", "袜", "围巾", "手套", "帽", "被", "被子", "褥", "毯", "铺盖", "泳衣"),
+    },
+    "柴炭油灯": {
+        "kinds": {"燃柴", "薪柴", "引火料", "木炭", "闷炭", "炭", "煤油", "油灯", "火柴", "燃料", "灯"},
+        "kw": ("柴", "柴火", "木柴", "干柴", "湿柴", "硬木", "枯枝", "炭", "闷炭", "木炭", "煤油", "灯油", "油灯", "火柴", "燃料", "生火", "炉"),
+    },
+    "工具船具": {
+        "kinds": {"工具", "木箱", "缆绳", "绳索", "渔具", "厨具", "餐具", "器皿", "灯具"},
+        "kw": ("工具", "锤", "凿", "扳手", "钳", "刀", "斧", "绳", "缆", "网兜", "吊钩", "船", "木箱", "桶", "盆", "锅", "碗", "火钳", "毛巾"),
+    },
+    "废铁战利品": {
+        "kinds": {"废铜旧铁", "废铁", "废铜", "旧金属", "打捞物", "旧物", "铁盒", "零件"},
+        "kw": ("废铁", "废铜", "铁皮", "铁管", "铜管", "金属", "战利品", "打捞", "铁盒", "零件", "上锁", "封口", "卖钱", "旧物"),
+    },
+    "书画信纸": {
+        "kinds": {"书", "画", "纸条", "信", "书签", "本子", "海图", "报纸", "唱片", "照片", "短句"},
+        "kw": ("书", "画", "纸条", "信", "书签", "本子", "账本", "日记", "海图", "报纸", "唱片", "作业本", "笔"),
+    },
+    "日用杂物": {
+        "kinds": set(),
+        "kw": ("杂物", "摆件", "贝壳", "石头", "钱盒", "零碎", "折纸", "窗花", "布片"),
+    },
+}
+
+_SEARCH_MACRO_CATS: dict[str, tuple[str, ...]] = {
+    "做饭": ("生鲜食材", "油盐调料", "米面干货"),
+    "吃的": ("现成饭菜", "生鲜食材", "油盐调料", "米面干货", "零食饮品"),
+    "食物": ("现成饭菜", "生鲜食材", "油盐调料", "米面干货", "零食饮品"),
+    "food": ("现成饭菜", "生鲜食材", "油盐调料", "米面干货", "零食饮品"),
+    "foods": ("现成饭菜", "生鲜食材", "油盐调料", "米面干货", "零食饮品"),
+    "物品": ("穿戴被褥", "柴炭油灯", "工具船具", "废铁战利品", "书画信纸", "日用杂物"),
+    "东西": ("穿戴被褥", "柴炭油灯", "工具船具", "废铁战利品", "书画信纸", "日用杂物"),
+    "item": ("穿戴被褥", "柴炭油灯", "工具船具", "废铁战利品", "书画信纸", "日用杂物"),
+    "items": ("穿戴被褥", "柴炭油灯", "工具船具", "废铁战利品", "书画信纸", "日用杂物"),
+    "调料": ("油盐调料",),
+    "干货": ("米面干货",),
+    "主食": ("米面干货",),
+    "燃料": ("柴炭油灯",),
+    "柴炭": ("柴炭油灯",),
+    "衣服": ("穿戴被褥",),
+    "衣物": ("穿戴被褥",),
+    "被子": ("穿戴被褥",),
+    "战利品": ("废铁战利品",),
+    "废铁": ("废铁战利品",),
+    "废铜": ("废铁战利品",),
+}
+
+_SEARCH_SYNONYMS: tuple[tuple[str, ...], ...] = (
+    ("废铁", "废铜", "铁皮", "铁管", "铜管", "旧铁", "旧金属", "弯头"),
+    ("柴", "柴火", "木柴", "枯枝", "干柴", "湿柴", "硬木", "木料", "劈柴"),
+    ("炭", "闷炭", "木炭"),
+    ("煤油", "灯油", "油灯"),
+    ("冬衣", "棉衣", "棉袄", "外套", "厚衣", "衣裳", "衣服", "衬衫", "单衣", "水手服"),
+    ("被子", "棉被", "薄被", "被褥", "毛毯", "铺盖"),
+    ("食用油", "炒菜油", "菜油"),
+    ("鱼", "小海鱼", "竹荚鱼", "鲳鱼", "鲈鱼", "墨鱼", "鱼干"),
+    ("书", "画册", "图鉴", "诗集", "漫画", "课本", "册子", "食谱"),
+    ("工具", "锤", "凿", "扳手", "钳", "火钳", "斧", "刀"),
+)
+
+_SEARCH_OWNER_ALIASES: dict[str, tuple[str, ...]] = {
+    "主人": ("主人", "master"),
+    "亚托莉": ("亚托莉", "napcat2", "atri"),
+    "丛雨": ("丛雨", "napcat", "murasame"),
+    "共用": ("共用", "家里", "大家", "公用"),
+}
+
+
+def _norm_search_owner(val: str, label_fn=None) -> str:
+    raw = str(val or "").strip()
+    if not raw:
+        return ""
+    if label_fn is not None:
+        try:
+            lbl = str(label_fn(raw) or "").strip()
+            if lbl:
+                raw = lbl
+        except Exception:
+            pass
+    low = raw.lower()
+    for canon, aliases in _SEARCH_OWNER_ALIASES.items():
+        if any(a.lower() == low for a in aliases):
+            return canon
+    return raw
+
+
+def _expand_synonyms(term: str) -> tuple[str, ...]:
+    out: list[str] = []
+    for grp in _SEARCH_SYNONYMS:
+        if any(term == w or (len(term) >= 2 and (term in w or w in term)) for w in grp):
+            out.extend(w for w in grp if w != term)
+    return tuple(dict.fromkeys(out))
+
+
+def _search_bucket(it: dict) -> str:
+    kind = str(it.get("kind") or "").strip()
+    name = str(it.get("name") or "").strip()
+    cat = cat_of(it)
+    purpose = str(it.get("purpose") or "").strip()
+    if purpose == "fuel":
+        return "柴炭油灯"
+    if purpose == "scrap":
+        return "废铁战利品"
+    if kind == "干货调料粮食":
+        if any(w in name for w in _SEASONING_WORDS) and not any(x in name for x in ("葱油饼", "葱油拌面", "可可")):
+            return "油盐调料"
+        return "米面干货"
+    for bname, spec in _SEARCH_BUCKETS.items():
+        if kind in spec["kinds"]:
+            return bname
+    if cat == CAT_FOOD:
+        return "零食饮品"
+    for bname in ("柴炭油灯", "穿戴被褥", "废铁战利品", "工具船具", "书画信纸"):
+        if any(k in name for k in _SEARCH_BUCKETS[bname]["kw"][:10]):
+            return bname
+    return "日用杂物"
+
 
 def _infer_what(step: dict, cat: str) -> str:
     """当单条漏填 what 时按字段做最小兜底推断；推断不出返回空串供调用方静默跳过。"""
