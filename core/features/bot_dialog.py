@@ -671,16 +671,18 @@ class BotDialogFeature:
         lines += ["- 留空 = 发到你现在这个会话（现在是：%s）" % where, "", 'messages 这样填：[{"type": "plain", "text": "要说的话"}]']
         return "\n".join(lines)
 
-    def tell_text(self, own: str) -> str:
+    def tell_text(self, own: str, *, allow_send: bool = True) -> str:
         others = self.others(own)
         name = others[0][0] if len(others) == 1 else "另一个角色"
-        return "\n".join([
+        lines = [
             "告诉%s一件事（只是让她知道，不用她回）。" % name, "",
             "- 这句话会写进%s和主人的聊天记录里一直留着，她下次开口就看得到；不发 QQ，她不会马上回你。" % name,
             "- 用在：主人让你转告的话、你答应过要告诉她的事、需要她知道的事。",
-            "- 要问她问题、要她回话、想跟她当场聊几句：用 send_message_to_user 发给她，不要用这个。",
-            "回复里说「已经跟她说了」之前，必须先真的调用这个工具；没调用就等于没说。",
-        ])
+        ]
+        if allow_send:
+            lines.append("- 要问她问题、要她回话、想跟她当场聊几句：用 send_message_to_user 发给她，不要用这个。")
+        lines.append("回复里说「已经跟她说了」之前，必须先真的调用这个工具；没调用就等于没说。")
+        return "\n".join(lines)
 
     def apply_tool_guide(self, event, req) -> None:
         tool_set = getattr(req, "func_tool", None) if req is not None else None
@@ -690,18 +692,26 @@ class BotDialogFeature:
         umo = str(getattr(event, "unified_msg_origin", "") or "")
         own = self._identity(event).bot
         enabled = set(self.tool_bots_fn() if self.tool_bots_fn else (self.bot_ids or ()))
-        if own and own in enabled:
+        is_managed_bot = bool(own and own in enabled)
+        cron = is_cron_event(event)
+        allow_send = cron or not is_managed_bot
+        if is_managed_bot:
             setattr(req, "_se_strip_idle_tools", True)
+            strip = list(IDLE_BUILTIN_TOOLS)
+            if not cron:
+                strip.append(SEND_TOOL)
             if hasattr(tool_set, "remove_tool"):
-                for tname in IDLE_BUILTIN_TOOLS:
+                for tname in strip:
                     tool_set.remove_tool(tname)
                 tools = getattr(tool_set, "tools", None) or []
             else:
-                tools[:] = [t for t in tools if getattr(t, "name", "") not in IDLE_BUILTIN_TOOLS]
+                strip_set = set(strip)
+                tools[:] = [t for t in tools if getattr(t, "name", "") not in strip_set]
         texts = {
-            SEND_TOOL: self.send_text(own, umo),
-            TELL_TOOL: self.tell_text(own),
+            TELL_TOOL: self.tell_text(own, allow_send=allow_send),
         }
+        if allow_send:
+            texts[SEND_TOOL] = self.send_text(own, umo)
         for index, tool in enumerate(tools):
             text = texts.get(getattr(tool, "name", ""))
             if text:
