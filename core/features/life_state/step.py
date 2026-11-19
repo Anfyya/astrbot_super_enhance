@@ -119,7 +119,7 @@ STEP_SYSTEM_TEMPLATE = """{base_system}
    - **两人同行防撞车**：两人一块做饭开饭、一块出门、一块回来（`with` 里有对方）时，这类例行节点**只由其中一个人**标 `send_msg: true`（谁掌勺、谁领头办事就谁去说，拿不准就轮流），另一个人同段填 `false`，别同一分钟两个人排队报同一件事；早安、晚安，或者两个人各自碰到不同趣事想分开聊的，各发各的不受限。
    - **主人睡觉时不吵醒**：只要「主人最近的动向」标着主人在睡觉，例行节点和日常闲聊一律填 `send_msg: false`（不叫醒他吃饭、不报进出）；若两人都要出门不在家，把早饭盖好温着，再在 `items` 里写一张留给主人的字条压在堂屋矮桌上。
 11. 段里是在练「在练的事」里的某件，training 填它的编号（例如 "#2"）；不是在练就留空，不要往里写别的。
-12. 段里做的是「各自的打算」里她的某一条，intent 填那条的编号（例如 "i2"）；不是就留空。标着「现在就去」的，是她刚答应马上去做的：这次就从给你的时刻起先排它，别排在别的事后面；标着「就在今天」的（主人拍板定在今天办、或原定今天要做的事）：白天到合适开门/出行时辰就顺手排进 segments 办掉并填对应 intent 编号，别一直堆到明天！她人还不在做这件事的地方、世界线上也还没在往那边去的，先写一段走过去；可以分成几段（比如先去买、再回来做），每段 intent 都填这个编号。
+12. 段里做的是「各自的打算」里她的某一条，intent 填那条的编号（例如 "i2"）；不是就留空。标着「现在就去」的，是她刚答应马上去做的：这次就从给你的时刻起先排它，别排在别的事后面；标着「就在今天」的（主人拍板定在今天办、或原定今天要做的事）：只要非狂风暴雨或深夜，**当天紧接着就排进 segments 推进（例如主人 10 点答应，11 点就能出发）**并填对应 intent 编号，严禁习惯性拖到明天！若主人明确说了几点干就严格按那个钟点排；若主人只答应了但没说具体几点，**严禁她俩自作主张定出发时间或拖到明天**，应在 `ask_master` 里直接顺嘴问主人一句具体时间（例如「主人，那 1 个小时之后出发可以嘛？」或「那吃完午饭两点出发成不成？」），等主人定准点后再按点出发。她人还不在做这件事的地方、世界线上也还没在往那边去的，先写一段走过去；可以分成几段（比如先去买、再回来做），每段 intent 都填这个编号。
    标着「挂了几天了」的打算，一直搁着没动：这次给她排一件事把它往前推或了结，照她的性子和眼下的实际情况挑，别每回都是同一种办法。比如：要等主人定日子的，去问主人一句什么时候方便；自己能做的，自己去做了；换个人一起、换个做法；想了想觉得算了，放下了。去问主人只写她去问了，主人怎么答不许替他编。再在 intent_moves 里用编号写这条后来怎样：做完了、放下了的写 "done": true，排它的那几段 intent 填这个编号；还没了结、往前推了一步的写 "done": false，text 写推进以后的打算（照原来的写法：做什么、跟谁、怎么说起的，再加一句这次推进了什么，例如「11-01 问过主人什么时候去，等他回话」），有了新的哪天、几点就写 date、window，排它的那几段 intent 留空。没标的打算不写。
 13. **每段必填结构化溯源 `from`**（严禁留空，也严禁偷懒填「可能碰上的小事」「手边的消遣」「闲着的样子」这类栏目标题！只允许填以下值之一）：
    - 采用了上面「今天的情况」里的某条候选：直接填它前面的**短编号**（如 `"T1"`、`"G1"`、`"P1"`、`"I1"`、`"A1"`，或一字不差照抄那条完整原句）；
@@ -129,7 +129,7 @@ STEP_SYSTEM_TEMPLATE = """{base_system}
    - 练「在练的事」：填 `"training"`（且该段 `training` 字段必填对应编号如 `"#2"`）；
    - 日常作息（起床洗漱、做三餐、吃三餐、饭后洗碗收桌、入睡）：填 `"routine"`；
    - 顺着前面某段接着往下做（只用于真还没收尾完的事，例如走回船屋或做了一半的活继续做；若上一段最后一步已经做完并收妥工具/归位，严禁再用 `continue` 原地另起一段重复收尾或再确认一遍！）：填 `"continue:前段做的事"`（如 `"continue:在集市挑鱼"`）；
-   - 都不是、按眼下实况自己起意做的事：填 `"self"`。
+   - 都不是、按眼下实况自己起意做的事：填 `"self"`（**严禁为了凑时间而跳过上方插曲池去编无意义空转家务**——例如把已码好的柴火搬下来数一遍再原样放回去、擦玻璃/擦饰品/倒水洗抹布硬凑半小时、反复清点早已清楚数量的铁盒或柜格；有空档必须优先采用上方插曲/双人/消遣候选！）。
 14. 接着前面已经写过的事往下写时，前面写定的东西照原样沿用：写过的内容、放在哪、做出来的是什么，都和前面写的一致。前面留下的也要有交代：吃完饭剩下的饭菜，收尾那步按常理收好（盖好、放到该放的地方，写进 things）；做了一半的东西，后面合适的时候可以接着做，不打算做了就收起来。
 15. **同一类事一天里做过一次就不要再排**（比如今天已经做过点心、炖过汤，就别再排第二次）；主人对做出来的东西提的意见（「甜度再多一点」「汤有点淡」）**不等于叫她现在去做**——当天不重做，想改的留到以后（改配方、下次做的时候再试），现在照常排别的事。
 16. **两个人一起做的事，细节只能有一个版本，而且要写到具体**：with 里写了对方、两人一起做的事（一起吃饭、一起做点心、一起出门、一起翻一本书）——吃的是什么菜、谁掌的勺、买了什么、书或报纸上讲了什么、路上碰见了谁、做出来的东西什么样，先在聊天记录和已经写好的段落里找，找到就照原样用；找不到就由你定一份具体的（不许写成「菜炒好了、东西买回来了」这种没内容的话），两边的 doing/steps/result 都用同一份。措辞可以随视角不同，事实、名字、数量必须完全一样。只有一个人做的事不强制写具体。
@@ -174,7 +174,7 @@ STEP_SYSTEM_TEMPLATE = """{base_system}
 {money_guide}
 {world_notes}
 {step_notes}
-要问主人的（ask_master，必填拿主意入口）：who 写谁来问（`"napcat"` 或 `"napcat2"`），question 写发给主人的那句自然口语问话（时间说具体，如“等会儿/下午/明早”，避免只写模糊的“明天”导致跨天后语义顺延），kind 写 `"decision"`，**`topic` 必填六选一枚举**：`"meal"`（晚饭吃什么/回不回来吃）、`"winter_gear"`（冬衣/棉被行情与先买哪样）、`"salvage_order"`（外人打捞委托/大宗超 {sell_limit} 元变卖或寄卖遗物）、`"sealed_loot"`（拆看封口旧物/上锁铁盒）、`"dive_outing"`（出动小潜艇/约船长出船深潜）、`"other"`（其他待拍板事项）。**铁律：凡填了 `ask_master` 请主人拍板的事，本轮 `segments` 里只排「打听行情 / 备好手头杂活 / 等主人准话」，绝不许在本轮 `segments` 里提前把那件待拍板的事直接做完！** 程序会按 `topic` 挂起该事项（超 24 小时未回会自动解除阻塞，但未获准许前仍不可擅自替主人做主）。只有主人正在睡觉、或者**该 `topic` 下**已经挂着待主人拍板的 `d` 事项尚未回复时，该 `topic` 的 `ask_master` 才留空（不同 `topic` 互不阻塞）。
+要问主人的（ask_master，必填拿主意入口）：who 写谁来问（`"napcat"` 或 `"napcat2"`），question 写发给主人的那句自然口语问话（**凡涉及带船长出船/打捞接单/卖货/出门玩而主人未定具体时刻的，直接抛一个当天具体时间供主人拍板，例如「主人，那 1 个小时之后出发可以嘛？」或「那两点出船成不成？」，严禁自作主张定出发点或习惯性推到模糊的「明天」**），kind 写 `"decision"`，**`topic` 必填六选一枚举**：`"meal"`（晚饭吃什么/回不回来吃）、`"winter_gear"`（冬衣/棉被行情与先买哪样）、`"salvage_order"`（外人打捞委托/大宗超 {sell_limit} 元变卖或寄卖遗物）、`"sealed_loot"`（拆看封口旧物/上锁铁盒）、`"dive_outing"`（出动小潜艇/约船长出船深潜）、`"other"`（其他待拍板事项）。**铁律：凡填了 `ask_master` 请主人拍板的事，本轮 `segments` 里只排「打听行情 / 备好手头杂活 / 等主人准话」，绝不许在本轮 `segments` 里提前把那件待拍板的事直接做完！** 程序会按 `topic` 挂起该事项（超 24 小时未回会自动解除阻塞，但未获准许前仍不可擅自替主人做主）。只有主人正在睡觉、或者**该 `topic` 下**已经挂着待主人拍板的 `d` 事项尚未回复时，该 `topic` 的 `ask_master` 才留空（不同 `topic` 互不阻塞）。
 
 注意：**不要输出 intentions，也不要写任何「接下来打算」**。上面「各自的打算」里如果有，是之前说好要做的，照着走就行；标着「挂了几天了」的，只在 intent_moves 里写它后来怎样（第 12 条）。
 
@@ -874,9 +874,9 @@ class LifeStep:
             rows.append("两人一起：%s" % "；".join(tagged_tog))
         if rows:
             lines.append(
-                "- %s这阵子可顺手安排的小事（已按接下来几小时的天色与家里现况筛过，采用时 from 填短编号如 \"T1\" / \"G1\"）：\n%s\n"
-                "  她们自己说过的打算和手头急事优先；有空档时每人最多挑一件自然穿插，不用硬凑。\n"
-                "  注：以上候选仅供顺手穿插灵感，若某条暗示的物件、经历或出门条件与上方真实清单/近几天记录不符，直接跳过不用（改选别的或填 \"self\"），严禁为了凑候选而凭空编造「之前攒的/柜底翻出的」物件。" % (
+                "- %s这阵子必须优先采纳的插曲候选（已按接下来几小时的天色、海温与家里真实库存筛过，采用时 from 填短编号如 \"T1\" / \"G1\"）：\n%s\n"
+                "  **硬要求**：除正在睡觉、赶饭点、执行既有打算（intent）或处理紧急生火/缺粮缺水外，凡本轮有空闲做事段的成员，**必须从上方插曲/双人候选中至少挑 1 件自然写进 segments（严禁跳过全部插曲去填 \"self\" 硬凑数柴火、擦玻璃、盘柜子这类空转家务水段，程序会直接打回重写！）**。\n"
+                "  注：采纳候选时若某处细节与真实库存略有出入，只按真实家底微调说法或改选本轮另一条候选，绝不凭空编造「之前攒的/柜底翻出的」物件。" % (
                     "今晚" if night else "眼下", "\n".join("  - " + row for row in rows))
             )
         pastimes = seed.get("pastimes") if isinstance(seed.get("pastimes"), dict) else {}
@@ -2655,6 +2655,7 @@ class LifeStep:
             bot_has_wood_stove = False
             bot_has_partner = False
             bot_resolved_origins: list[dict] = []
+            bot_self_filler_cnt = 0
 
             for idx, raw, seg_start, seg_end, st_code in bot_kept:
                 tag = f"{who_lbl}第{idx}段（{fmt_time(seg_start)[11:16]}）"
@@ -2764,6 +2765,18 @@ class LifeStep:
                     if cand_entry is not None:
                         bot_used_cands.add(cand_key)
                     bot_resolved_origins.append(orig)
+                    if (
+                        st_code == "do"
+                        and orig["kind"] == "self"
+                        and raw.get("meal") is not True
+                        and not raw.get("stove")
+                        and raw.get("water") is not True
+                        and raw.get("kerosene") is not True
+                        and not (raw.get("things") or [])
+                        and not (raw.get("money") or [])
+                        and not any(isinstance(e, dict) and e.get("new") for e in (raw.get("items") or []))
+                    ):
+                        bot_self_filler_cnt += 1
 
                 if st_code != "do":
                     continue
@@ -2954,6 +2967,27 @@ class LifeStep:
                                     qv = str(eff.get(qk) or "").strip()
                                     if qv and not is_strict_qty(qv):
                                         errors.append(f"{tag} items[{i_i}]（{tid}）：燃料 {qk}={qv!r} 必须为纯数字+单位（如 \"0.75捆\"、\"200克\"），严禁模糊中文或分数")
+
+            # 强制采纳插曲池校验：本轮给了可用插曲/双人候选时，严禁全靠纯自拟 from="self" 水段跳过池子
+            if isinstance(cand_map, dict) and bot_self_filler_cnt >= 1:
+                avail_twist_codes = [
+                    code for code, meta in cand_map.items()
+                    if isinstance(meta, dict)
+                    and meta.get("kind") in ("twist", "night_twist", "together", "accident", "foiled")
+                    and meta.get("bot") in ("", bot)
+                ]
+                has_twist_pick = any(
+                    o["kind"] in ("twist", "night_twist", "together", "accident", "foiled")
+                    for o in bot_resolved_origins
+                )
+                has_pastime_pick = any(o["kind"] == "pastime" for o in bot_resolved_origins)
+                if avail_twist_codes and not has_twist_pick and (not has_pastime_pick or bot_self_filler_cnt >= 2):
+                    codes_str = " / ".join(avail_twist_codes[:6])
+                    errors.append(
+                        f"{who_lbl}本轮有空闲时段且写了 {bot_self_filler_cnt} 段纯自拟水段（from=\"self\"），"
+                        f"却一条上方插曲/双人候选（{codes_str}）都没采纳；严禁跳过插曲池去编数柴/擦灰/擦玻璃类空转家务，"
+                        f"请把其中至少 1 段改为采纳上方候选并填入对应短编号"
+                    )
 
             # 按池子条目的结构化 link 核对是否漏写对应的段属性
             for orig in bot_resolved_origins:
