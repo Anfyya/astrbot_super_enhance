@@ -203,9 +203,35 @@ _DEFAULT_POOLS_RAW: dict[str, tuple[dict, ...]] = {
         _e("去坡上柴料场挑一捆便宜半湿硬木柴或带湿原段，扛回仓棚劈开码在通风干燥架上晾着", 0.15, 0.5, group="弄柴·柴场", bucket="镇上谋生", where="海边小镇", wx="dry", outdoor=True),
         _e("退潮后去漂流物小湾高潮线以上拾雨水冲刷晒透的干陆枝，或挑根结实浮木带去船坞换干柴", 0.25, 0.55, group="弄柴·岸边", bucket="水域探索", where="海边小镇", wx="dry", outdoor=True, min_temp=4.0),
 
-        # ---------- 海边小镇：天候与必要整备（去日常擦灰凑数） ----------
+        # ---------- 海边小镇：全气象专属事件（中雨扛雨/暴雨十万火急/雪天/大风台风/浓雾/严寒/酷暑/风雨后黄金捡漏） ----------
         _e("下了一场雨，把船上能接水的桶盆都摆出来接雨水，看雨点落进水里", 0.6, 0.6, group="存雨水", bucket="天候应对", where="海边小镇", wx="rain"),
+        _e("扛着中雨冲去打捞船和仓棚压紧帆布、把舱底积水舀干，顺手确认系船缆绳没松", 0.4, 0.85, group="中雨巡船", bucket="天候应对", where="海边小镇", wx="mid_rain", outdoor=True),
+        _e("顶着中雨躲进杂货铺或船坞檐下避雨，顺便蹭听大陆广播或帮老船匠递木料搭把手", 0, 0.85, group="躲雨见闻", bucket="观察闲逛", where="海边小镇", wx="mid_rain", outdoor=True),
+        _e("冒着中雨跑到码头棚子底下找躲雨渔民闲聊，顺便打听雨停后哪片水域好摸货", 0.5, 0.85, group="躲雨见闻", bucket="镇上谋生", where="海边小镇", wx="mid_rain", outdoor=True, link="salvage"),
+        _e("仗着魂魄体淋不着凉，雨幕里飘去半沉学校或半淹商店街走廊听雨敲铁皮顶、顺手探路", 0.95, 0, group="雨中探路", bucket="出门走走", where="海边小镇", wx="mid_rain", outdoor=True),
+        _e("暴雨涨潮浪砸码头，十万火急冒雨冲去打捞船和仓棚抢绑松脱缆绳、抢收差点滑下海的废铁工具", 0.5, 1.0, group="暴雨抢险", bucket="天候应对", where="海边小镇", wx="heavy_rain", outdoor=True),
+        _e("暴雨里码头或镇上有人急喊船缆快断、货要泡水，顶着大雨冲出去救场，完事挣回工钱或热食谢礼", 0, 0.95, group="暴雨救场", bucket="镇上谋生", where="海边小镇", wx="heavy_rain", outdoor=True),
+        _e("大雨把旧城和上游的木料或封口旧箱冲进港湾浅滩，冒雨在防波堤盯准落点或先抢拽回仓棚等船长拍板", 0.7, 0.95, group="暴雨抢货", bucket="水域探索", where="海边小镇", wx="heavy_rain", outdoor=True, link="salvage"),
+        _e("暴雨砸得铁皮舱顶震天响，边拿盆接漏水点检查舱缝、边借炉火拆摆白天摸回来的旧零件", 0.8, 0.8, group="暴雨守舱", bucket="天候应对", where="海边小镇", wx="heavy_rain"),
+        _e("外头飘起雪花，半沉旧城屋顶盖了一层薄白，跑上甲板踩脚印、捏小雪球玩得不亦乐乎", 0.9, 0.85, group="玩雪", bucket="出门走走", where="海边小镇", wx="snow", outdoor=True),
+        _e("雨夹雪冻得铁皮甲板直打滑，赶紧抓把炉灰撒上防滑、把系船缆绳上的冰碴敲干净", 0.55, 0.85, group="除冰防滑", bucket="天候应对", where="海边小镇", wx="snow", outdoor=True),
+        _e("雪天飘出去绕着落白的海港和海上鸟居看了一圈，回来趁记着样子给主人画一张雪海画", 0.95, 0.5, group="雪景画", bucket="出门走走", where="海边小镇", wx="snow", outdoor=True),
         _e("浪大起来，把甲板上没收的绳索水桶一样样收进舱里", 0.6, 0.6, group="天气", bucket="天候应对", where="海边小镇", wx="wind"),
+        _e("趁大风大浪刚把海底杂物拍上高潮线，顶着风去漂流物小湾抢拣最新鲜的海漂木料与铁件", 0.5, 0.85, group="大风捡漂", bucket="水域探索", where="海边小镇", wx="wind", outdoor=True, link="salvage"),
+        _e("大风刮得人站不稳，反倒乘着海风在船篷上空飘得歪歪扭扭玩上瘾，差点撞上桅杆", 0.9, 0, group="乘风玩", bucket="出门走走", where="海边小镇", wx="wind", outdoor=True),
+        _e("狂风掀巨浪扑上防波堤，十万火急和码头渔民一起拉双缆把船屋与打捞船捆死防撞堤", 0.5, 1.0, group="台风固船", bucket="天候应对", where="海边小镇", wx="gale", outdoor=True),
+        _e("台风或狂风稍歇的空当，十万火急探出舱门巡一圈船壳与仓棚铁皮顶有没有被掀开", 0.7, 0.95, group="台风巡检", bucket="天候应对", where="海边小镇", wx="gale", outdoor=True),
+        _e("浓雾锁港看不清码头桩位，有渔船靠岸迷了向，打着强光头灯站在堤头把船引回岸挣了谢礼", 0, 0.95, group="雾港引航", bucket="镇上谋生", where="海边小镇", wx="fog", outdoor=True),
+        _e("白茫茫大雾里飘出去想探旧街，结果转了两圈彻底迷向、稀里糊涂绕回自家船尾闹了笑话", 0.95, 0, group="雾中迷路", bucket="出门走走", where="海边小镇", wx="fog", outdoor=True),
+        _e("浓雾里听见看不见船影的远方汽笛和沉闷钟声，隔着舷窗紧张巴巴猜了半天是什么船", 0.75, 0.7, group="雾港听声", bucket="观察闲逛", where="海边小镇", wx="fog"),
+        _e("清早铁皮甲板和栏杆结满白霜踩着咯吱响，舀一瓢温水浇化冻住的门栓和水桶盖", 0.7, 0.8, group="化霜冻", bucket="天候应对", where="海边小镇", wx="cold"),
+        _e("天寒退潮后浅滩小水洼边沿结了薄冰，蹲在礁石边把薄冰一块块踩碎玩，顺手翻翻石缝", 0.8, 0.8, group="严寒踩冰", bucket="水域探索", where="海边小镇", wx="cold", outdoor=True),
+        _e("冷得直哈白气，把番薯埋进柴炉热灰里，缩在烧烫的砖炕边等焦香味飘出来跟主人分着吃", 0.8, 0.8, group="严寒烘薯", bucket="天候应对", where="海边小镇", wx="cold", link="wood_stove"),
+        _e("大热天闷得发晕，扑通跳进船边海水里降温，顺手朝甲板泼水打起水仗", 0.7, 0.95, group="酷暑戏水", bucket="水域探索", where="海边小镇", wx="hot", outdoor=True),
+        _e("日头毒得晃眼，躲到船篷阴凉处或高架桥洞底下吹穿堂风，拿冷水罐镇瓜果解暑", 0.8, 0.8, group="酷暑乘凉", bucket="出门走走", where="海边小镇", wx="hot", outdoor=True),
+        _e("雷阵雨前又闷又热、鱼群全浮出水面换气，赶紧抓起网兜或鱼竿趁机到船边捞一票", 0.7, 0.85, group="闷热捞鱼", bucket="水域探索", where="海边小镇", wx="hot", outdoor=True),
+        _e("暴雨大风刚停放晴，抢在镇民前头冲去漂流物小湾扫头茬货，翻找刚冲上岸的好木料或旧铁箱回来给船长看", 0.7, 1.0, group="雨后扫滩", bucket="水域探索", where="海边小镇", wx="after_storm", outdoor=True, link="salvage"),
+        _e("风雨刚过海面挂起彩虹，去退潮旧街瞧见泥沙冲开后新露出的旧铺子角落，赶紧回船屋拉船长和同伴定夺", 1.0, 0.6, group="雨后探新", bucket="水域探索", where="海边小镇", wx="after_storm", outdoor=True, link="salvage"),
         _e("在打捞船上擦洗吊钩工具、盘好缆绳并试亮头灯，把船收拾利索随时待命", 0, 0.6, group="收拾打捞船", bucket="船舶整备", where="海边小镇", wx="dry", outdoor=True),
         _e("外头风浪大没法下海，窝在船舱里把潜水镜、呼吸管和密封圈拆开擦拭检查了一遍", 0, 0.6, group="收拾打捞船", bucket="船舶整备", where="海边小镇", wx="wind"),
         _e("拎着空油壶去坡上杂货铺打回一壶煤油，顺手带了一小盒火柴", 0, 0.45, group="伺候油灯", bucket="镇上谋生", where="海边小镇", wx="dry", outdoor=True),
@@ -249,19 +275,20 @@ _DEFAULT_POOLS_RAW: dict[str, tuple[dict, ...]] = {
         _t("两人在矮桌上拿贝壳石子自创棋局、翻花绳或比眼力，输的给赢的端水或夸一句", 0.8, group="游戏", bucket="手边静心", where="海边小镇"),
         _t("两人凑在一起对着旧海图圈下一处想去的地方，写好小纸条等主人拍板", 0.75, group="海图探路", bucket="心绪人情", where="海边小镇"),
         _t("外头刮风下雨出不了门，两人窝在船舱里守着铁桶柴炉烤火讲怪谈、聊以前的事", 0.7, bucket="天候应对", where="海边小镇", wx="rain", link="wood_stove"),
+        _t("暴雨砸得舱顶噼啪响，两人一边守着柴炉烘湿衣查渗水、一边摊开海图圈定雨停后拉船长抢头茬的路线", 0.9, group="暴雨守舱", bucket="天候应对", where="海边小镇", wx="heavy_rain", link="wood_stove"),
         _t("海上起了大风浪，两人一起把甲板上的桶盆绳索抢收进舱，再把舱门栓牢", 0.7, group="天气", bucket="天候应对", where="海边小镇", wx="wind"),
+        _t("狂风大浪扑上码头，两人十万火急冲出去合力拉紧船屋与打捞船缆绳、把仓棚帆布压石块绑牢", 0.95, group="台风固船", bucket="天候应对", where="海边小镇", wx="gale", outdoor=True),
+        _t("外头飘雪落满甲板，两人跑上甲板堆了个歪歪扭扭的小雪人、互扔雪球闹得满身雪沫", 0.95, group="玩雪", bucket="出门走走", where="海边小镇", wx="snow", outdoor=True),
+        _t("风雨刚停放晴，两人拎着大网兜结伴冲去漂流物小湾和礁石滩抢捡头茬冲上岸的好货", 0.95, group="雨后扫滩", bucket="水域探索", where="海边小镇", wx="after_storm", outdoor=True, link="salvage"),
+        _t("酷暑天热得直冒汗，两人一个泡水里一个蹲船舷打水仗，闹累了再一块躲船篷底下吹风", 0.9, group="酷暑戏水", bucket="水域探索", where="海边小镇", wx="hot", outdoor=True),
     ),
     "night_twists": (
-        # ---------- 通用（均改为单人视角起念） ----------
-        _e("晚上抬头看星星或月亮看了很久", 0.6, 0.9, bucket="观察闲逛", wx="sunny"),
-        _e("夜里翻看自己平时记东西的本子，顺着几页旧字看了一会儿", 0.5, 0.6, group="旧物", bucket="手边静心"),
-        _e("给身上的衣裳添了两针线脚，把磨松的纽扣或开线处补牢", 0.4, 0.5, group="修东西", bucket="手边静心"),
-        _e("睡前静下来想起一件藏在心里的事，翻来覆去琢磨了一会儿", 0.4, 0.4, group="聊心事", bucket="心绪人情"),
-        _e("睡前给主人写一张小纸条或留言", 1.2, 1.2, bucket="心绪人情"),
-        _e("睡不着，起来安安静静坐了一会儿", 0.5, 0.5, bucket="心绪人情"),
-        _e("想起白天的一件事，又琢磨了好一阵", 0.6, 0.6, bucket="心绪人情"),
-        _e("一个人想起以前的好些事，在夜里发了一会儿呆", 0.5, 0.4, group="旧事", bucket="心绪人情"),
-        _e("睡前想起白天漏了一件随手小事没弄利索，爬起来补做完", 0.4, 0.5, bucket="船舶整备"),
+        # ---------- 通用（均改为单人视角起念，去发呆凑数） ----------
+        _e("晚上抬头看星星或月亮看了很久", 0.5, 0.7, bucket="观察闲逛", wx="sunny"),
+        _e("夜里翻看自己平时记东西的本子，顺着几页旧字看了一会儿", 0.45, 0.55, group="旧物", bucket="手边静心"),
+        _e("给身上的衣裳添了两针线脚，把磨松的纽扣或开线处补牢", 0.35, 0.45, group="修东西", bucket="手边静心"),
+        _e("睡前给主人写一张小纸条或留言", 0.6, 0.6, group="写纸条", bucket="心绪人情"),
+        _e("睡前想起白天漏了一件随手小事没弄利索，爬起来补做完", 0.35, 0.45, bucket="船舶整备"),
 
         # ---------- 穗织夜晚 ----------
         _e("夜里风吹得竹林沙沙响，疑神疑鬼不敢一个人待着", 0.6, 0, group="怪声", bucket="天候应对", where="穗织"),
@@ -271,16 +298,20 @@ _DEFAULT_POOLS_RAW: dict[str, tuple[dict, ...]] = {
         _e("放张唱片听，跟着哼两句老调子", 0.25, 0.3, group="唱歌", bucket="手边静心", where="穗织"),
         _e("夜里在院子附近听见一点动静，探头看了一眼才安心", 0.4, 0.4, group="怪声", bucket="观察闲逛", where="穗织"),
 
-        # ---------- 海边小镇夜晚（去重看黑海，留真有事可干的晚间事件） ----------
-        _e("夜里有人提着灯到码头或打捞船边急问明早能不能下水帮捞掉海里的物件，记下地方和出价等船长拍板", 0, 0.85, group="打捞所·夜单", bucket="镇上谋生", where="海边小镇", wx="dry", link="salvage"),
+        # ---------- 海边小镇夜晚（去重看黑海，留真有事可干的晚间事件 + 夜间气象氛围） ----------
+        _e("夜里有人提着灯到码头或打捞船边急问明早能不能下水帮捞掉海里的物件，记下地方和出价等船长拍板", 0, 0.7, group="打捞所·夜单", bucket="镇上谋生", where="海边小镇", wx="dry"),
         _e("就着油灯摊开旧海图，拿铅笔圈出明天想拉船长一起去探的一两处水下旧屋或新路线", 0.65, 0.85, group="海图探路", bucket="手边静心", where="海边小镇"),
         _e("油灯下摆弄白天摸回来的旧小物件或废零件，琢磨能不能修好或拼成好玩的小东西", 0.5, 0.75, group="摆弄旧零碎", bucket="手边静心", where="海边小镇"),
         _e("点起小油灯翻开打捞所账本和记事本，算算离想给家里添的大件还差多少钱、盘算明天怎么挣", 0.5, 0.75, group="记账", bucket="镇上谋生", where="海边小镇"),
         _e("夜里捻小油灯讲五百年前或海上的怪谈，反倒把自己吓着往炕边缩", 0.85, 0.5, group="怪声", bucket="心绪人情", where="海边小镇"),
         _e("夜里起雾，水面上飘来旧城钟楼被风吹响的闷声，竖着耳朵听了半天不敢开窗", 0.85, 0.5, group="怪声", bucket="天候应对", where="海边小镇", wx="fog"),
+        _e("夜里暴雨砸得铁皮舱顶砰砰响，披衣打手电探头查看系船缆绳和舱顶有没有渗水", 0.65, 0.85, group="暴雨守舱", bucket="天候应对", where="海边小镇", wx="heavy_rain"),
+        _e("夜里飘起小雪，隔着舷窗看雪花借着码头微光悄悄落在船篷和海面上", 0.8, 0.8, group="玩雪", bucket="观察闲逛", where="海边小镇", wx="snow"),
+        _e("严寒夜里把柴炉压出暖意，躲在烧烫的砖炕被窝里听船外寒风呼啸、小声聊以前的趣事", 0.8, 0.8, group="严寒烘薯", bucket="心绪人情", where="海边小镇", wx="cold", link="wood_stove"),
+        _e("夏夜闷热睡不着，拖着凉席到甲板上吹海风、比赛数天上的星星和海面渔火", 0.8, 0.8, group="酷暑乘凉", bucket="观察闲逛", where="海边小镇", wx="hot", outdoor=True),
         _e("夜里退大潮露出平时看不见的旧街屋顶，或岸边泛出幽蓝海萤，趴在舷窗边看了好一阵", 0.6, 0.6, bucket="观察闲逛", where="海边小镇", wx="sunny"),
         _e("夜里听见船底下有大鱼蹭过船板的咕咚声，悄悄伏在舷边打探了好半天", 0.6, 0.6, bucket="观察闲逛", where="海边小镇", wx="dry"),
-        _e("睡前拿热水泡暖冻凉的手脚，或者悄悄给主人写张小纸条再钻进被窝", 0.65, 0.65, bucket="心绪人情", where="海边小镇"),
+        _e("睡前拿热水泡暖冻凉的手脚，浑身暖和过来再钻进被窝", 0.6, 0.65, bucket="心绪人情", where="海边小镇"),
         _e("摸黑把明天要用的头灯、潜水镜和绳圈放在顺手的位置", 0, 0.55, bucket="船舶整备", where="海边小镇"),
     ),
     "pastimes": (
@@ -598,13 +629,20 @@ DEFAULT_WHERE = {
 WX_LABELS = {
     "": "不限天气",
     "sunny": "需晴好/晴夜",
-    "dry": "需无雨（普通海风不拦）",
+    "dry": "需无中大雨（毛毛雨/小雨/普通海风不拦）",
     "calm": "需风平浪静（划船/水面）",
     "dive": "需水下作业海况（风≤4级、无浓雾）",
     "sub": "需潜艇出港海况（风≤5级，雾不拦）",
-    "rain": "需正在下雨",
+    "rain": "需正在下雨（≥1mm，不含纯雪）",
+    "mid_rain": "需下中雨（2.5~7.9mm）",
+    "heavy_rain": "需下大雨/暴雨（≥8mm）",
+    "snow": "需正在下雪/雨夹雪",
     "fog": "需起雾",
-    "wind": "需起风浪",
+    "wind": "需起大风（≥5级）",
+    "gale": "需狂风/台风（≥8级）",
+    "cold": "需严寒/霜冻（≤3℃）",
+    "hot": "需酷暑/闷热（≥28℃）",
+    "after_storm": "需风雨刚过后放晴/停雨",
 }
 LINK_LABELS = {
     "": "无特殊联动",
@@ -907,11 +945,19 @@ def build_live_context(
                 "has_weather": True,
                 "max_rain": max(float(h.get("rain") or 0.0) for h in win_hours),
                 "soon_rain": max(float(h.get("rain") or 0.0) for h in ahead_hours),
+                "max_liquid_rain": max((float(h.get("rain") or 0.0) for h in win_hours if not h.get("snow")), default=0.0),
+                "soon_liquid_rain": max((float(h.get("rain") or 0.0) for h in ahead_hours if not h.get("snow")), default=0.0),
+                "has_snow": any(bool(h.get("snow")) for h in win_hours),
                 "max_wind": max(int(h.get("wind") or 0) for h in win_hours),
                 "max_fog": max(int(h.get("fog") or 0) for h in win_hours),
                 "avg_cloud": sum(float(h.get("cloud") or 0.0) for h in win_hours) / max(1, len(win_hours)),
                 "min_temp": min(float(h["temp"]) if h.get("temp") is not None else 18.0 for h in win_hours),
+                "max_temp": max(float(h["temp"]) if h.get("temp") is not None else 18.0 for h in win_hours),
                 "rained_recently": any(float(h.get("rain") or 0.0) >= 0.5 for h in past_hours),
+                "storm_passed": any(
+                    (float(h.get("rain") or 0.0) >= 2.5 and not h.get("snow")) or int(h.get("wind") or 0) >= 6
+                    for h in past_hours
+                ),
             })
         except Exception:
             pass
@@ -1196,13 +1242,18 @@ def _eval_gates(
     if min_water_req is not None and sea_temp is not None and float(sea_temp) < float(min_water_req):
         gates.append(("water_cold", "hard", "海水太冷不宜下水"))
 
+    mult = 1.0
     if ctx.get("has_weather"):
         max_rain = float(ctx.get("max_rain") or 0.0)
         soon_rain = float(ctx.get("soon_rain") or 0.0)
+        max_liquid_rain = float(ctx["max_liquid_rain"]) if ctx.get("max_liquid_rain") is not None else (0.0 if ctx.get("has_snow") else max_rain)
+        soon_liquid_rain = float(ctx["soon_liquid_rain"]) if ctx.get("soon_liquid_rain") is not None else (0.0 if ctx.get("has_snow") else soon_rain)
+        has_snow = bool(ctx.get("has_snow"))
         max_wind = int(ctx.get("max_wind") or 0)
         max_fog = int(ctx.get("max_fog") or 0)
         avg_cloud = float(ctx.get("avg_cloud") or 1.0)
         min_temp = float(ctx["min_temp"]) if ctx.get("min_temp") is not None else 18.0
+        max_temp = float(ctx["max_temp"]) if ctx.get("max_temp") is not None else min_temp
 
         if min_temp_req is not None and min_temp < float(min_temp_req):
             gates.append(("temp_cold", "hard", "天寒水冷不宜下水或露甲板吹冷风"))
@@ -1217,8 +1268,8 @@ def _eval_gates(
             elif max_wind > 5:
                 gates.append(("wx_sunny_wind", "discover", "风浪偏大"))
         elif wx == "dry":
-            if soon_rain >= 0.05:
-                gates.append(("wx_dry_rain", "discover", "下雨或将下雨"))
+            if soon_liquid_rain >= 2.5:
+                gates.append(("wx_dry_rain", "discover", "正在下中大雨或将下大雨"))
         elif wx == "calm":
             if max_rain >= 1.0 or max_wind > 4 or max_fog > 1:
                 gates.append(("wx_calm_bad", "discover", "风浪或海雾不适下水"))
@@ -1231,25 +1282,67 @@ def _eval_gates(
             if max_wind > 5:
                 gates.append(("wx_sub_bad", "discover", "风浪过大，小潜艇不便出港"))
         elif wx == "rain":
-            if max_rain < 0.2:
-                gates.append(("wx_need_rain", "hard", "此刻没下雨"))
+            if max_liquid_rain < 1.0:
+                gates.append(("wx_need_rain", "hard", "此刻没下明显液态雨"))
             else:
-                notes.append("正逢下雨")
+                mult *= 1.3
+                notes.append("正逢下雨 ×1.3")
+        elif wx == "mid_rain":
+            if not (2.5 <= max_liquid_rain < 8.0):
+                gates.append(("wx_need_mid_rain", "hard", "此刻未下中雨"))
+            else:
+                mult *= 1.5
+                notes.append("正逢中雨 ×1.5")
+        elif wx == "heavy_rain":
+            if max_liquid_rain < 8.0:
+                gates.append(("wx_need_heavy_rain", "hard", "此刻未下大雨/暴雨"))
+            else:
+                mult *= 1.8
+                notes.append("暴雨抢险 ×1.8")
+        elif wx == "snow":
+            if not has_snow:
+                gates.append(("wx_need_snow", "hard", "此刻没下雪"))
+            else:
+                mult *= 1.6
+                notes.append("正逢下雪 ×1.6")
         elif wx == "fog":
             if max_fog < 1:
                 gates.append(("wx_need_fog", "hard", "此刻没起雾"))
             else:
-                notes.append("正逢起雾")
+                mult *= 1.5
+                notes.append("正逢起雾 ×1.5")
         elif wx == "wind":
             if max_wind < 5:
                 gates.append(("wx_need_wind", "hard", "此刻风浪不大"))
             else:
                 notes.append("正起风浪")
+        elif wx == "gale":
+            if max_wind < 8:
+                gates.append(("wx_need_gale", "hard", "此刻未起狂风/台风"))
+            else:
+                mult *= 1.8
+                notes.append("狂风戒备 ×1.8")
+        elif wx == "cold":
+            if min_temp > 3.0:
+                gates.append(("wx_need_cold", "hard", "此刻未到严寒霜冻温度"))
+            else:
+                mult *= 1.4
+                notes.append("严寒霜冻 ×1.4")
+        elif wx == "hot":
+            if max_temp < 28.0:
+                gates.append(("wx_need_hot", "hard", "此刻未到酷暑闷热温度"))
+            else:
+                mult *= 1.5
+                notes.append("酷暑消暑 ×1.5")
+        elif wx == "after_storm":
+            if not (ctx.get("storm_passed") and max_rain < 0.5 and max_wind <= 5):
+                gates.append(("wx_need_after_storm", "hard", "并非风雨刚过放晴窗"))
+            else:
+                mult *= 1.6
+                notes.append("风雨刚过黄金捡漏 ×1.6")
 
-        if outdoor and wx not in ("rain", "wind") and (max_wind >= 8 or max_rain >= 8.0):
-            gates.append(("storm", "hard", "狂风暴雨不宜外出"))
-
-    mult = 1.0
+        if outdoor and wx not in ("rain", "mid_rain", "heavy_rain", "wind", "gale", "snow") and (max_wind >= 8 or max_rain >= 8.0):
+            gates.append(("storm", "hard", "狂风暴雨不宜常规外出"))
     if ctx.get("has_inventory"):
         wood_b = float(ctx.get("wood_bundles") or 0.0)
         if link == "wood_stove":
