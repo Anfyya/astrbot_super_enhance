@@ -1325,11 +1325,13 @@ class WorldStore:
 
 
 def public_of(entry: dict) -> str:
-    """给别人看的粗粒度信息；没有就退回地点。"""
+    """给别人看的粗粒度信息；没填 public 时回退地点与正在做的事（不含结果）。"""
     value = str(entry.get("public") or "").strip()
     if value:
         return value
-    return str(entry.get("place") or "").strip()
+    place = str(entry.get("place") or "").strip()
+    doing = str(entry.get("doing") or "").strip()
+    return "，".join(x for x in (place, doing) if x)
 
 
 def detail_of(entry: dict) -> str:
@@ -1811,9 +1813,10 @@ def event_text_at(entry: dict, now: datetime.datetime, *, detail: bool = True, f
         return "尚未开始，仅是打算：%s" % (intention or entry.get("place") or "待定")
     done = is_event(entry) or (end is not None and end <= flat)
     if not detail:
+        seen = public_of(entry) or str(entry.get("place") or "").strip() or "这件事"
         if not done:
-            return "%s：还在进行，结果尚未发生" % (entry.get("place") or "这件事")
-        return public_of(entry)
+            return "%s（还在进行，结果尚未发生）" % seen
+        return seen
     if not done:
         return staged_of(entry, flat)
     text = detail_of(entry)
