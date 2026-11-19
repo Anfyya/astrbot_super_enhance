@@ -6,14 +6,15 @@ from astrbot.api import logger
 
 
 class RunnerHooks:
-    """聊天记录 → 图片 → 零思考重试 → 格式打回重说 → 上游报错补历史；卸载反序。"""
+    """聊天记录 → 图片 → 零思考重试 → 格式打回重说 → 单轮工具次数上限 → 上游报错补历史；卸载反序。"""
 
-    def __init__(self, transcript, image, zero_think, error_voice, reply_format=None) -> None:
+    def __init__(self, transcript, image, zero_think, error_voice, reply_format=None, tool_cap=None) -> None:
         self.transcript = transcript
         self.image = image
         self.zero_think = zero_think
         self.error_voice = error_voice
         self.reply_format = reply_format
+        self.tool_cap = tool_cap
 
     def install(self) -> None:
         order = [
@@ -23,6 +24,8 @@ class RunnerHooks:
         ]
         if self.reply_format is not None:
             order.append(("格式打回", self.reply_format.install))
+        if self.tool_cap is not None:
+            order.append(("工具次数上限", self.tool_cap.install))
         order.append(("报错补历史", self.error_voice.install))
         for name, install in order:
             try:
@@ -40,6 +43,8 @@ class RunnerHooks:
         ]
         if self.reply_format is not None:
             order.append(("格式打回", self.reply_format.uninstall))
+        if self.tool_cap is not None:
+            order.append(("工具次数上限", self.tool_cap.uninstall))
         order.append(("报错补历史", self.error_voice.uninstall))
         for _name, uninstall in reversed(order):
             try:
