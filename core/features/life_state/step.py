@@ -37,7 +37,7 @@ from . import weathering
 from . import supply as supply_mod
 from .homewords import localize
 from .menu import meal_slots, meals_text
-from .variety import PoolStore, build_live_context, cool_key, default_pools, draw_window, group_map, init_day_seed, twists_of, when_map, with_when
+from .variety import PoolStore, build_live_context, cool_key, default_pools, draw_window, group_map, init_day_seed, short_set, twists_of, when_map, with_when
 from .world import (MAX_MSG_PURPOSE, WorldStore, clean_flag, clean_text, doing_text, event_text_at, fmt_time, is_event, is_sleep, mood_text,
                     parse_steps, parse_time, progress_of, real_stop, result_text, steps_text, why_text)
 
@@ -93,7 +93,7 @@ STEP_SYSTEM_TEMPLATE = """{base_system}
 
 1. 只写下方「这次要你写的」里列出的人。每人从下面给的时刻开始，按时间顺序写几段，首尾相接、不重叠；最后一段的结束时间必须晚于下方给出的「现在」时刻。一次最多写到下方给出的「本次截止时刻」左右，不要把后面一整天都写完（睡觉那段除外，可以一直写到第二天起床）。
    **地方也要接上**：每人这次的第一段，从她上一段结束时人在哪、在干什么接下去（「这次要你写的」里写着那时候她在哪、结果怎样）。上一段结束时她还在路上、还在外面的，先把路走完——写一段走回去，或者这一段第一步就是走回去——到了地方才做下一件；不许上一段还在外面、下一段一开头就已经在屋里。段和段之间换到远一点的地方，中间也要写路上（在宿舍里换个屋子不用单写）。出门在外的事写到她到了地方为止，不许停在半路；快到本次截止时刻时正在路上的那段可以多写一点，把路走完。
-2. **一段只写一件事**：doing 只写这件事是什么（一句话），result 写这件事最后的结果（修好了没、找着没、谁赢了这类，一句；不算一步、没有分钟；state 是「闲着」「睡觉」的段不写），不要把几件事用「然后」「又」「再」串在同一段里。steps 把这件事按先后分成 1–5 步，每步写 text（一句，这一阵子她一直在干什么，写成能持续这一步那么多分钟的事）和 minutes（这一步按常理要几分钟）；最后一步是收尾，这件事用过的东西收好、归位都写在这一步里，做完就接着做下一件事。**这段做多久就是各步 minutes 加起来**，程序按它算结束时间，end 照着算好写上就行（洗碗十来分钟、吃饭二三十分钟、看书一两个小时……）；state 是「闲着」「睡觉」的段不写 steps，end 照常写。每段都是一件要花些工夫的事。上面今天已经做过的事，别再原样做一遍。
+2. **一段只写一件事，且长短严格按标签走**：doing 只写这件事是什么（一句话），result 写这件事最后的结果（修好了没、找着没、谁赢了这类，一句；不算一步、没有分钟；state 是「闲着」「睡觉」的段不写），不要把几件事用「然后」「又」「再」串在同一段里。steps 把这件事按先后分成 1–5 步，每步写 text（一句，这一阵子她一直在干什么，写成能持续这一步那么多分钟的事）和 minutes（这一步按常理要几分钟）；最后一步顺带收尾归位即可，做完就接着做下一件事。**这段做多久就是各步 minutes 加起来**，程序按它算结束时间，end 照着算好写上就行（洗碗十来分钟、吃饭二三十分钟、看书一两个小时……）；state 是「闲着」「睡觉」的段不写 steps，end 照常写。**短事 vs 正经活动硬区分**：下方候选里明确标着「短事·5~10分钟」的，本来就是几分钟利索干完的小事，**只写 1~2 步、总计 5~15 分钟收工**（严禁把拿东西 5 分钟、放回去 5 分钟凑成三四步拉满半小时！）；**没标「短事」的正经活动候选，绝不许只写几分钟敷衍糊弄，须按常理扎实展开到至少 15 分钟以上**。上面今天已经做过的事，别再原样做一遍。
 3. **每段写 state，三选一**：「做事」「闲着」「睡觉」。
    - 没事就写闲着：她手上没有打算、约定、规矩要做的事，也没什么想做的，就写一段闲着，state 填「闲着」：doing 照上面「闲着的样子」里她的写，steps 留空。闲着一段最长一小时，歇够了就接着写下一件事（也可以再歇一段）。
    - 拿起「手边的消遣」来做是做事：state 填「做事」，照常写 steps，result 写做到哪了（看到哪、织了多少）；做到一半去忙别的，回头可以接着做。
@@ -828,13 +828,28 @@ class LifeStep:
         return catalog
 
     @classmethod
-    def _seed_text(cls, seed: dict, labels: dict, night: bool = False, cand_map: dict | None = None) -> str:
+    def _seed_text(
+        cls,
+        seed: dict,
+        labels: dict,
+        night: bool = False,
+        cand_map: dict | None = None,
+        pools_data: dict | None = None,
+    ) -> str:
         """当天的随机起点，每条候选带唯一短编号（如 [T1]、[P1]、[I1]），供模型在 from 字段里精确填写。"""
         if cand_map is None:
             cand_map = cls._build_candidate_catalog(seed, labels, night)
         code_of: dict[tuple[str, str], str] = {}
         for code, meta in (cand_map or {}).items():
             code_of[(str(meta.get("bot") or ""), str(meta.get("text") or ""))] = code
+        shorts = short_set(pools_data)
+
+        def _fmt_cand(bot_key: str, raw_txt: str, body_txt: str) -> str:
+            code = code_of.get((bot_key, raw_txt), "")
+            short_tag = "（短事·5~10分钟、1~2步写完，勿凑半小时）" if raw_txt in shorts else ""
+            if code:
+                return f"[{code}]{short_tag} {body_txt}"
+            return f"{short_tag}{body_txt}"
 
         lines = ["今天的情况（系统随机给的，采用某条候选时段内 from 直接填它前面的短编号如 \"T1\"、\"P1\"、\"I1\"）："]
         if seed.get("weather"):
@@ -861,21 +876,16 @@ class LifeStep:
         for bot, items in per_bot.items():
             if not items or (bot and bot not in labels):
                 continue
-            tagged = [
-                f"[{code_of.get((str(bot or ''), str(x)), '')}] {with_when(x, when)}" if code_of.get((str(bot or ""), str(x))) else with_when(x, when)
-                for x in items
-            ]
+            tagged = [_fmt_cand(str(bot or ""), str(x), with_when(x, when)) for x in items]
             rows.append("%s：%s" % (labels.get(bot) or bot, "；".join(tagged)) if bot else "；".join(tagged))
         if together:
-            tagged_tog = [
-                f"[{code_of.get(('', str(x)), '')}] {with_when(x, when)}" if code_of.get(("", str(x))) else with_when(x, when)
-                for x in together
-            ]
+            tagged_tog = [_fmt_cand("", str(x), with_when(x, when)) for x in together]
             rows.append("两人一起：%s" % "；".join(tagged_tog))
         if rows:
             lines.append(
                 "- %s这阵子必须优先采纳的插曲候选（已按接下来几小时的天色、海温与家里真实库存筛过，采用时 from 填短编号如 \"T1\" / \"G1\"）：\n%s\n"
                 "  **硬要求**：除正在睡觉、赶饭点、执行既有打算（intent）或处理紧急生火/缺粮缺水外，凡本轮有空闲做事段的成员，**必须从上方插曲/双人候选中至少挑 1 件自然写进 segments（严禁跳过全部插曲去填 \"self\" 硬凑数柴火、擦玻璃、盘柜子这类空转家务水段，程序会直接打回重写！）**。\n"
+                "  **时长规则**：标了「短事」的只写 1~2 步、总计 5~15 分钟；**没标「短事」的正经候选须写足 ≥15 分钟**，不得敷衍成几分钟。\n"
                 "  注：采纳候选时若某处细节与真实库存略有出入，只按真实家底微调说法或改选本轮另一条候选，绝不凭空编造「之前攒的/柜底翻出的」物件。" % (
                     "今晚" if night else "眼下", "\n".join("  - " + row for row in rows))
             )
@@ -884,10 +894,7 @@ class LifeStep:
         for bot, items in pastimes.items():
             if not items or bot not in labels:
                 continue
-            tagged = [
-                f"[{code_of.get((str(bot), str(x)), '')}] {x}" if code_of.get((str(bot), str(x))) else str(x)
-                for x in items
-            ]
+            tagged = [_fmt_cand(str(bot), str(x), str(x)) for x in items]
             rows.append("%s：%s" % (labels.get(bot) or bot, "；".join(tagged)))
         if rows:
             lines.append("- 手边的消遣（今天在家闲下来时会拿起来做的，采用时 from 填短编号如 \"P1\"）：\n%s" % "\n".join("  - " + row for row in rows))
@@ -1990,7 +1997,7 @@ class LifeStep:
         labels = {bot: (self.label(bot) or bot) for bot in bots}
         win_seed, night = self._draw_window_for(tasks, now, labels)
         self._last_cand_map = self._build_candidate_catalog(win_seed, labels, night) if win_seed else {}
-        seed_text = self._seed_text(win_seed, labels, night, cand_map=self._last_cand_map) if win_seed else ""
+        seed_text = self._seed_text(win_seed, labels, night, cand_map=self._last_cand_map, pools_data=self._pools()) if win_seed else ""
         weather_text = ""
         try:
             weather_text = self._weather_block(
@@ -2765,6 +2772,21 @@ class LifeStep:
                     if cand_entry is not None:
                         bot_used_cands.add(cand_key)
                     bot_resolved_origins.append(orig)
+                    if st_code == "do" and orig["kind"] in ("twist", "night_twist", "together", "pastime"):
+                        p_info = pool_meta.get(orig["text"])
+                        if isinstance(p_info, dict):
+                            seg_mins = round((seg_end - seg_start).total_seconds() / 60.0)
+                            if p_info.get("short"):
+                                if seg_mins > 15:
+                                    errors.append(
+                                        f"{tag}：候选「{orig['text'][:18]}…」标为短事（5~10分钟），写了 {seg_mins} 分钟过长，"
+                                        f"请压缩为 1~2 步、总计 ≤15 分钟（勿把拿放归位硬凑时间）"
+                                    )
+                            elif until is None and seg_mins < 15:
+                                errors.append(
+                                    f"{tag}：候选「{orig['text'][:18]}…」不是短事，只写了 {seg_mins} 分钟过于敷衍，"
+                                    f"请按常理写足 ≥15 分钟"
+                                )
                     if (
                         st_code == "do"
                         and orig["kind"] == "self"

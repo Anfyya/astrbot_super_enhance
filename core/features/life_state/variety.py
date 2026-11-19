@@ -50,6 +50,7 @@ def _e(
     wx: str = "",
     link: str = "",
     outdoor: bool = False,
+    short: bool = False,
     min_temp: float | None = None,
     min_water: float | None = None,
     when: str = "",
@@ -63,6 +64,7 @@ def _e(
         "wx": wx,
         "link": link,
         "outdoor": bool(outdoor),
+        "short": bool(short),
         "min_temp": min_temp,
         "min_water": min_water,
         "when": when,
@@ -79,6 +81,7 @@ def _t(
     wx: str = "",
     link: str = "",
     outdoor: bool = False,
+    short: bool = False,
     min_temp: float | None = None,
     min_water: float | None = None,
     when: str = "",
@@ -92,6 +95,7 @@ def _t(
         "wx": wx,
         "link": link,
         "outdoor": bool(outdoor),
+        "short": bool(short),
         "min_temp": min_temp,
         "min_water": min_water,
         "when": when,
@@ -102,25 +106,23 @@ _DEFAULT_POOLS_RAW: dict[str, tuple[dict, ...]] = {
     "twists": (
         # ---------- 通用 ----------
         _e("悄悄给主人准备一样小惊喜", 0.75, 0.75, group="惊喜", bucket="心绪人情"),
-        _e("给主人写一张小纸条或留言", 0.75, 0.75, bucket="心绪人情"),
-        _e("一件小事让她想起了主人", 0.75, 0.75, bucket="心绪人情"),
-        _e("被一件小事逗得很开心", 0.6, 0.6, group="好笑", bucket="心绪人情"),
-        _e("碰上一件好笑的事，笑了好一阵", 0.25, 0.25, group="好笑", bucket="心绪人情"),
+        _e("给主人写一张小纸条或留言", 0.75, 0.75, group="写纸条", bucket="心绪人情", short=True),
+        _e("一件小事让她想起了主人", 0.75, 0.75, bucket="心绪人情", short=True),
+        _e("被一件小事逗得很开心", 0.6, 0.6, group="好笑", bucket="心绪人情", short=True),
         _e("给对方悄悄准备了一样小东西", 0.5, 0.5, group="惊喜", bucket="心绪人情"),
         _e("做饭时手忙脚乱，出了点小岔子", 0.6, 0.9, group="出岔子", bucket="手边静心"),
-        _e("一件事做砸了，从头又来了一遍", 0.25, 0.3, group="出岔子", bucket="手边静心"),
         _e("发现一个平时没注意过的角落或小路", 0.5, 0.5, bucket="出门走走", wx="dry", outdoor=True),
         _e("一只猫或一只鸟老在身边转，跟着它走了一段", 0.7, 0.7, bucket="观察闲逛", wx="dry", outdoor=True),
         _e("早起看日出，或者傍晚追着晚霞走", 0.5, 0.5, bucket="观察闲逛", wx="sunny", outdoor=True),
         _e("想学一首新歌，哼了一整天", 0.5, 0.5, group="唱歌", bucket="心绪人情"),
-        _e("心血来潮换个发型或换身打扮", 0.35, 0.35, bucket="心绪人情"),
-        _e("做了个奇怪的梦，一整天都在琢磨", 0.25, 0.4, bucket="心绪人情"),
+        _e("心血来潮换个发型或换身打扮", 0.35, 0.35, bucket="心绪人情", short=True),
+        _e("做了个奇怪的梦，一整天都在琢磨", 0.25, 0.4, bucket="心绪人情", short=True),
         _e("学做一道顺手的新菜，认真尝了好几遍味道", 0.4, 0.6, bucket="手边静心", when="三餐做饭的时候"),
         _e("看别人做一件事，跟着学了几手", 0.4, 0.4, group="学本事", bucket="观察闲逛", wx="dry", outdoor=True),
-        _e("被人夸了一句「高性能」，得意了好一阵", 0, 0.65, bucket="心绪人情", wx="dry", outdoor=True),
-        _e("被人认错了，或者自己认错了人", 0, 0.4, bucket="观察闲逛", wx="dry", outdoor=True),
-        _e("哼起以前的童谣（《通行了》之类）", 0.5, 0, group="唱歌", bucket="心绪人情"),
-        _e("想起五百年前的一件旧事", 0.5, 0, group="旧事", bucket="心绪人情"),
+        _e("被人夸了一句「高性能」，得意了好一阵", 0, 0.65, bucket="心绪人情", wx="dry", outdoor=True, short=True),
+        _e("被人认错了，或者自己认错了人", 0, 0.4, bucket="观察闲逛", wx="dry", outdoor=True, short=True),
+        _e("哼起以前的童谣（《通行了》之类）", 0.5, 0, group="唱歌", bucket="心绪人情", short=True),
+        _e("想起五百年前的一件旧事", 0.5, 0, group="旧事", bucket="心绪人情", short=True),
 
         # ---------- 穗织专属 ----------
         _e("有熟人来串门，或在路上碰见，站着聊了一会儿", 0, 1.5, where="穗织", bucket="心绪人情"),
@@ -204,7 +206,7 @@ _DEFAULT_POOLS_RAW: dict[str, tuple[dict, ...]] = {
         _e("退潮后去漂流物小湾高潮线以上拾雨水冲刷晒透的干陆枝，或挑根结实浮木带去船坞换干柴", 0.25, 0.55, group="弄柴·岸边", bucket="水域探索", where="海边小镇", wx="dry", outdoor=True, min_temp=4.0),
 
         # ---------- 海边小镇：全气象专属事件（中雨扛雨/暴雨十万火急/雪天/大风台风/浓雾/严寒/酷暑/风雨后黄金捡漏） ----------
-        _e("下了一场雨，把船上能接水的桶盆都摆出来接雨水，看雨点落进水里", 0.6, 0.6, group="存雨水", bucket="天候应对", where="海边小镇", wx="rain"),
+        _e("下了一场雨，把船上能接水的桶盆都摆出来接雨水，看雨点落进水里", 0.6, 0.6, group="存雨水", bucket="天候应对", where="海边小镇", wx="rain", short=True),
         _e("扛着中雨冲去打捞船和仓棚压紧帆布、把舱底积水舀干，顺手确认系船缆绳没松", 0.4, 0.85, group="中雨巡船", bucket="天候应对", where="海边小镇", wx="mid_rain", outdoor=True),
         _e("顶着中雨躲进杂货铺或船坞檐下避雨，顺便蹭听大陆广播或帮老船匠递木料搭把手", 0, 0.85, group="躲雨见闻", bucket="观察闲逛", where="海边小镇", wx="mid_rain", outdoor=True),
         _e("冒着中雨跑到码头棚子底下找躲雨渔民闲聊，顺便打听雨停后哪片水域好摸货", 0.5, 0.85, group="躲雨见闻", bucket="镇上谋生", where="海边小镇", wx="mid_rain", outdoor=True, link="salvage"),
@@ -216,21 +218,21 @@ _DEFAULT_POOLS_RAW: dict[str, tuple[dict, ...]] = {
         _e("雷声炸响闪电照亮半沉旧城剪影，平时威风的丛雨反倒怕大雷缩回船舱往炕边和主人身边躲", 0.95, 0.4, group="雷雨怕雷", bucket="心绪人情", where="海边小镇", wx="heavy_rain"),
         _e("暴雨前天色骤黑海鸟贴水乱飞，赶在雨砸下来前冲去晒鱼场帮渔民抢收鱼干，对方塞了几条鱼干或零钱致谢", 0, 0.95, group="雨前抢收", bucket="镇上谋生", where="海边小镇", wx="pre_storm", outdoor=True),
         _e("外头飘起雪花，半沉旧城屋顶盖了一层薄白，跑上甲板踩脚印、捏小雪球玩得不亦乐乎", 0.9, 0.85, group="玩雪", bucket="出门走走", where="海边小镇", wx="snow", outdoor=True),
-        _e("积雪压沉仓棚和船篷帆布，拿长竹竿把顶上厚雪扑簌簌捅下来，差点落自己一头雪沫", 0.7, 0.85, group="扫棚雪", bucket="天候应对", where="海边小镇", wx="snow", outdoor=True),
+        _e("积雪压沉仓棚和船篷帆布，拿长竹竿把顶上厚雪扑簌簌捅下来，差点落自己一头雪沫", 0.7, 0.85, group="扫棚雪", bucket="天候应对", where="海边小镇", wx="snow", outdoor=True, short=True),
         _e("雪天甲板或高地坡道印了一串小猫和野鸟脚印，顺着一路摸过去发现了平时没注意的避风角落", 0.8, 0.8, group="追雪印", bucket="出门走走", where="海边小镇", wx="snow", outdoor=True),
-        _e("雨夹雪冻得铁皮甲板直打滑，赶紧抓把炉灰撒上防滑、把系船缆绳上的冰碴敲干净", 0.55, 0.85, group="除冰防滑", bucket="天候应对", where="海边小镇", wx="snow", outdoor=True),
+        _e("雨夹雪冻得铁皮甲板直打滑，赶紧抓把炉灰撒上防滑、把系船缆绳上的冰碴敲干净", 0.55, 0.85, group="除冰防滑", bucket="天候应对", where="海边小镇", wx="snow", outdoor=True, short=True),
         _e("雪天飘出去绕着落白的海港和海上鸟居看了一圈，回来趁记着样子给主人画一张雪海画", 0.95, 0.5, group="雪景画", bucket="出门走走", where="海边小镇", wx="snow", outdoor=True),
-        _e("浪大起来，把甲板上没收的绳索水桶一样样收进舱里", 0.6, 0.6, group="天气", bucket="天候应对", where="海边小镇", wx="wind"),
+        _e("浪大起来，把甲板上没收的绳索水桶一样样收进舱里", 0.6, 0.6, group="天气", bucket="天候应对", where="海边小镇", wx="wind", short=True),
         _e("趁大风大浪刚把海底杂物拍上高潮线，顶着风去漂流物小湾抢拣最新鲜的海漂木料与铁件", 0.5, 0.85, group="大风捡漂", bucket="水域探索", where="海边小镇", wx="wind", outdoor=True, link="salvage"),
         _e("风浪大补给船靠不了岸，码头布告板和杂货铺前聚了一堆人嘀咕行情，顺手记下缺什么货回去找船长商量精打细算", 0.5, 0.8, group="风浪停航", bucket="镇上谋生", where="海边小镇", wx="wind", outdoor=True),
         _e("大风刮得人站不稳，反倒乘着海风在船篷上空飘得歪歪扭扭玩上瘾，差点撞上桅杆", 0.9, 0, group="乘风玩", bucket="出门走走", where="海边小镇", wx="wind", outdoor=True),
         _e("狂风掀巨浪扑上防波堤，十万火急和码头渔民一起拉双缆把船屋与打捞船捆死防撞堤", 0.5, 1.0, group="台风固船", bucket="天候应对", where="海边小镇", wx="gale", outdoor=True),
-        _e("台风或狂风稍歇的空当，十万火急探出舱门巡一圈船壳与仓棚铁皮顶有没有被掀开", 0.7, 0.95, group="台风巡检", bucket="天候应对", where="海边小镇", wx="gale", outdoor=True),
+        _e("台风或狂风稍歇的空当，十万火急探出舱门巡一圈船壳与仓棚铁皮顶有没有被掀开", 0.7, 0.95, group="台风巡检", bucket="天候应对", where="海边小镇", wx="gale", outdoor=True, short=True),
         _e("浓雾锁港看不清码头桩位，有渔船靠岸迷了向，打着强光头灯站在堤头把船引回岸挣了谢礼", 0, 0.95, group="雾港引航", bucket="镇上谋生", where="海边小镇", wx="fog", outdoor=True),
         _e("白茫茫大雾里飘出去想探旧街，结果转了两圈彻底迷向、稀里糊涂绕回自家船尾闹了笑话", 0.95, 0, group="雾中迷路", bucket="出门走走", where="海边小镇", wx="fog", outdoor=True),
         _e("日头一升大雾忽然散开，泡在海里的旧城区和摩天轮像从云里浮出来一样，赶紧记下样子回来讲给主人听", 0.8, 0.8, group="雾散浮城", bucket="观察闲逛", where="海边小镇", wx="fog", outdoor=True),
-        _e("浓雾里听见看不见船影的远方汽笛和沉闷钟声，隔着舷窗紧张巴巴猜了半天是什么船", 0.75, 0.7, group="雾港听声", bucket="观察闲逛", where="海边小镇", wx="fog"),
-        _e("清早铁皮甲板和栏杆结满白霜踩着咯吱响，舀一瓢温水浇化冻住的门栓和水桶盖", 0.7, 0.8, group="化霜冻", bucket="天候应对", where="海边小镇", wx="cold"),
+        _e("浓雾里听见看不见船影的远方汽笛和沉闷钟声，隔着舷窗紧张巴巴猜了半天是什么船", 0.75, 0.7, group="雾港听声", bucket="观察闲逛", where="海边小镇", wx="fog", short=True),
+        _e("清早铁皮甲板和栏杆结满白霜踩着咯吱响，舀一瓢温水浇化冻住的门栓和水桶盖", 0.7, 0.8, group="化霜冻", bucket="天候应对", where="海边小镇", wx="cold", short=True),
         _e("严寒清晨海面腾起一片白茫茫的“海浩”水汽像仙境一样，看呆了赶紧拉人过来看这难得奇景", 0.9, 0.75, group="冬晨海浩", bucket="观察闲逛", where="海边小镇", wx="cold", outdoor=True),
         _e("寒潮冷得直哈气，绕去煮盐棚或公共澡堂外头蹭热气，顺手搭把手换点热乎吃食或打听镇上消息", 0, 0.85, group="寒潮蹭暖", bucket="镇上谋生", where="海边小镇", wx="cold", outdoor=True),
         _e("天寒退潮后浅滩小水洼边沿结了薄冰，蹲在礁石边把薄冰一块块踩碎玩，顺手翻翻石缝", 0.8, 0.8, group="严寒踩冰", bucket="水域探索", where="海边小镇", wx="cold", outdoor=True),
@@ -264,7 +266,6 @@ _DEFAULT_POOLS_RAW: dict[str, tuple[dict, ...]] = {
         _t("两人互相教对方一样拿手的小本事", 0.5, group="学本事", bucket="心绪人情"),
         _t("一个人教另一个人一样小技巧", 0.4, group="学本事", bucket="心绪人情"),
         _t("两人比了一场耐性或眼力，谁也不服谁", 0.5, group="游戏", bucket="心绪人情"),
-        _t("两人一起把常坏的小绳结或旧扣子细心补好", 0.4, group="修东西", bucket="船舶整备"),
 
         # ---------- 穗织 ----------
         _t("两人一起去商店街逛一逛", 0.8, bucket="出门走走", where="穗织", wx="dry", outdoor=True),
@@ -282,22 +283,20 @@ _DEFAULT_POOLS_RAW: dict[str, tuple[dict, ...]] = {
         _t("两人去半沉学校或灯塔小石屋一起探险，回来一人一句讲给主人听", 0.8, group="半沉学校", bucket="出门走走", where="海边小镇", wx="dry", outdoor=True),
         _t("两人把仓棚里攒的废铁铜件分拣捆好，估出斤两后一块回船屋问船长什么时候拿去卖", 0.8, group="卖废铜", bucket="镇上谋生", where="海边小镇", wx="dry", outdoor=True, link="scrap_sell"),
         _t("两人在矮桌上拿贝壳石子自创棋局、翻花绳或比眼力，输的给赢的端水或夸一句", 0.8, group="游戏", bucket="手边静心", where="海边小镇"),
-        _t("两人凑在一起对着旧海图圈下一处想去的地方，写好小纸条等主人拍板", 0.75, group="海图探路", bucket="心绪人情", where="海边小镇"),
+        _t("两人凑在一起对着旧海图圈下一处想去的地方，写好小纸条等主人拍板", 0.75, group="旧海图", bucket="心绪人情", where="海边小镇"),
         _t("外头刮风下雨出不了门，两人窝在船舱里守着铁桶柴炉烤火讲怪谈、聊以前的事", 0.7, bucket="天候应对", where="海边小镇", wx="rain", link="wood_stove"),
         _t("暴雨砸得舱顶噼啪响，两人一边守着柴炉烘湿衣查渗水、一边摊开海图圈定雨停后拉船长抢头茬的路线", 0.9, group="暴雨守舱", bucket="天候应对", where="海边小镇", wx="heavy_rain", link="wood_stove"),
-        _t("海上起了大风浪，两人一起把甲板上的桶盆绳索抢收进舱，再把舱门栓牢", 0.7, group="天气", bucket="天候应对", where="海边小镇", wx="wind"),
+        _t("海上起了大风浪，两人一起把甲板上的桶盆绳索抢收进舱，再把舱门栓牢", 0.7, group="天气", bucket="天候应对", where="海边小镇", wx="wind", short=True),
         _t("狂风大浪扑上码头，两人十万火急冲出去合力拉紧船屋与打捞船缆绳、把仓棚帆布压石块绑牢", 0.95, group="台风固船", bucket="天候应对", where="海边小镇", wx="gale", outdoor=True),
         _t("外头飘雪落满甲板，两人跑上甲板堆了个歪歪扭扭的小雪人、互扔雪球闹得满身雪沫", 0.95, group="玩雪", bucket="出门走走", where="海边小镇", wx="snow", outdoor=True),
         _t("风雨刚停放晴，两人拎着大网兜结伴冲去漂流物小湾和礁石滩抢捡头茬冲上岸的好货", 0.95, group="雨后扫滩", bucket="水域探索", where="海边小镇", wx="after_storm", outdoor=True, link="salvage"),
         _t("酷暑天热得直冒汗，两人一个泡水里一个蹲船舷打水仗，闹累了再一块躲船篷底下吹风", 0.9, group="酷暑戏水", bucket="水域探索", where="海边小镇", wx="hot", outdoor=True),
     ),
     "night_twists": (
-        # ---------- 通用（均改为单人视角起念，去发呆凑数） ----------
+        # ---------- 通用（均改为单人视角起念，去翻本子/发呆/补小事凑数） ----------
         _e("晚上抬头看星星或月亮看了很久", 0.5, 0.7, bucket="观察闲逛", wx="sunny"),
-        _e("夜里翻看自己平时记东西的本子，顺着几页旧字看了一会儿", 0.45, 0.55, group="旧物", bucket="手边静心"),
-        _e("给身上的衣裳添了两针线脚，把磨松的纽扣或开线处补牢", 0.35, 0.45, group="修东西", bucket="手边静心"),
-        _e("睡前给主人写一张小纸条或留言", 0.6, 0.6, group="写纸条", bucket="心绪人情"),
-        _e("睡前想起白天漏了一件随手小事没弄利索，爬起来补做完", 0.35, 0.45, bucket="船舶整备"),
+        _e("给身上的衣裳添了两针线脚，把磨松的纽扣或开线处补牢", 0.35, 0.45, group="修东西", bucket="手边静心", short=True),
+        _e("睡前给主人写一张小纸条或留言", 0.6, 0.6, group="写纸条", bucket="心绪人情", short=True),
 
         # ---------- 穗织夜晚 ----------
         _e("夜里风吹得竹林沙沙响，疑神疑鬼不敢一个人待着", 0.6, 0, group="怪声", bucket="天候应对", where="穗织"),
@@ -307,27 +306,27 @@ _DEFAULT_POOLS_RAW: dict[str, tuple[dict, ...]] = {
         _e("放张唱片听，跟着哼两句老调子", 0.25, 0.3, group="唱歌", bucket="手边静心", where="穗织"),
         _e("夜里在院子附近听见一点动静，探头看了一眼才安心", 0.4, 0.4, group="怪声", bucket="观察闲逛", where="穗织"),
 
-        # ---------- 海边小镇夜晚（去重看黑海，留真有事可干的晚间事件 + 夜间气象氛围） ----------
+        # ---------- 海边小镇夜晚（去翻账本/看黑海，留真有事可干的晚间事件 + 短事标记） ----------
         _e("夜里有人提着灯到码头或打捞船边急问明早能不能下水帮捞掉海里的物件，记下地方和出价等船长拍板", 0, 0.7, group="打捞所·夜单", bucket="镇上谋生", where="海边小镇", wx="dry"),
-        _e("就着油灯摊开旧海图，拿铅笔圈出明天想拉船长一起去探的一两处水下旧屋或新路线", 0.65, 0.85, group="海图探路", bucket="手边静心", where="海边小镇"),
-        _e("油灯下摆弄白天摸回来的旧小物件或废零件，琢磨能不能修好或拼成好玩的小东西", 0.5, 0.75, group="摆弄旧零碎", bucket="手边静心", where="海边小镇"),
-        _e("点起小油灯翻开打捞所账本和记事本，算算离想给家里添的大件还差多少钱、盘算明天怎么挣", 0.5, 0.75, group="记账", bucket="镇上谋生", where="海边小镇"),
+        _e("就着油灯摊开旧海图，拿铅笔圈出明天想拉船长一起去探的一两处水下旧屋或新路线", 0.65, 0.85, group="旧海图", bucket="手边静心", where="海边小镇"),
+        _e("油灯下摆弄白天摸回来的旧小物件或废零件，琢磨能不能修好或拼成好玩的小东西", 0.55, 0.75, group="摆弄旧零碎", bucket="手边静心", where="海边小镇"),
+        _e("就着油灯拧开旧收音机调频道，居然撞上一段大陆深夜电台节目或老歌，听得入了神", 0.65, 0.75, group="听夜播", bucket="手边静心", where="海边小镇"),
+        _e("晚上在矮桌上拿彩笔比赛画想象中的深海怪鱼或水下旧城，画完互相挑刺笑成一团", 0.8, 0.75, group="画画比试", bucket="手边静心", where="海边小镇"),
         _e("夜里捻小油灯讲五百年前或海上的怪谈，反倒把自己吓着往炕边缩", 0.85, 0.5, group="怪声", bucket="心绪人情", where="海边小镇"),
-        _e("夜里起雾，水面上飘来旧城钟楼被风吹响的闷声，竖着耳朵听了半天不敢开窗", 0.85, 0.5, group="怪声", bucket="天候应对", where="海边小镇", wx="fog"),
-        _e("夜里暴雨砸得铁皮舱顶砰砰响，披衣打手电探头查看系船缆绳和舱顶有没有渗水", 0.65, 0.85, group="暴雨守舱", bucket="天候应对", where="海边小镇", wx="heavy_rain"),
+        _e("夜里起雾，水面上飘来旧城钟楼被风吹响的闷声，竖着耳朵听了半天不敢开窗", 0.85, 0.5, group="怪声", bucket="天候应对", where="海边小镇", wx="fog", short=True),
+        _e("夜里暴雨砸得铁皮舱顶砰砰响，披衣打手电探头查看系船缆绳和舱顶有没有渗水", 0.65, 0.85, group="暴雨守舱", bucket="天候应对", where="海边小镇", wx="heavy_rain", short=True),
         _e("夜里飘起小雪，隔着舷窗看雪花借着码头微光悄悄落在船篷和海面上", 0.8, 0.8, group="玩雪", bucket="观察闲逛", where="海边小镇", wx="snow"),
         _e("严寒夜里把柴炉压出暖意，躲在烧烫的砖炕被窝里听船外寒风呼啸、小声聊以前的趣事", 0.8, 0.8, group="严寒烘薯", bucket="心绪人情", where="海边小镇", wx="cold", link="wood_stove"),
         _e("夏夜闷热睡不着，拖着凉席到甲板上吹海风、比赛数天上的星星和海面渔火", 0.8, 0.8, group="酷暑乘凉", bucket="观察闲逛", where="海边小镇", wx="hot", outdoor=True),
         _e("夜里退大潮露出平时看不见的旧街屋顶，或岸边泛出幽蓝海萤，趴在舷窗边看了好一阵", 0.6, 0.6, bucket="观察闲逛", where="海边小镇", wx="sunny"),
-        _e("夜里听见船底下有大鱼蹭过船板的咕咚声，悄悄伏在舷边打探了好半天", 0.6, 0.6, bucket="观察闲逛", where="海边小镇", wx="dry"),
-        _e("睡前拿热水泡暖冻凉的手脚，浑身暖和过来再钻进被窝", 0.6, 0.65, bucket="心绪人情", where="海边小镇"),
-        _e("摸黑把明天要用的头灯、潜水镜和绳圈放在顺手的位置", 0, 0.55, bucket="船舶整备", where="海边小镇"),
+        _e("夜里听见船底下有大鱼蹭过船板的咕咚声，悄悄伏在舷边打探了好半天", 0.6, 0.6, bucket="观察闲逛", where="海边小镇", wx="dry", short=True),
+        _e("睡前拿热水泡暖冻凉的手脚，浑身暖和过来再钻进被窝", 0.55, 0.6, bucket="心绪人情", where="海边小镇", short=True),
+        _e("摸黑把明天要用的头灯、潜水镜和绳圈放在顺手的位置", 0, 0.5, bucket="船舶整备", where="海边小镇", short=True),
     ),
     "pastimes": (
         # ---------- 通用（不产出新东西、不凭空吃库存零食） ----------
         _e("练一样拿手或不拿手的小本事", 1.0, 0.7, group="练本事", bucket="手边静心"),
         _e("靠着打个盹", 0.8, 0.4, bucket="心绪人情"),
-        _e("玩翻花绳", 0.5, 0.5, group="绳结", bucket="手边静心"),
         _e("玩单手翻花绳，换着花样挑出新结法，举着看半天", 0.5, 0.4, group="绳结", bucket="手边静心"),
         _e("练习编绳结，把同一段绳翻来覆去换着法子打结", 0.5, 0.5, group="绳结", bucket="手边静心"),
         _e("坐着听风听浪，跟着节拍轻声哼曲子", 0.4, 0.35, group="唱歌", bucket="心绪人情"),
@@ -357,20 +356,16 @@ _DEFAULT_POOLS_RAW: dict[str, tuple[dict, ...]] = {
         _e("一个人玩纸牌接龙", 0.4, 0.4, bucket="手边静心", where="穗织"),
         _e("把想说的话写成小诗或短句", 0.4, 0.3, bucket="手边静心", where="穗织"),
 
-        # ---------- 海边小镇：严格锚定船屋固有物件（去家务化凑数） ----------
+        # ---------- 海边小镇：严格锚定船屋固有物件（海图合并去重、去擦小刀与默数拍子） ----------
         _e("用彩笔在旧作业本空白页上画窗户外面看见的海、海鸟或船", 0.6, 0.7, bucket="手边静心", where="海边小镇"),
-        _e("摊开祖母留下的旧海图，对着窗外的海认以前旧街镇的位置", 0.5, 0.65, bucket="手边静心", where="海边小镇"),
-        _e("对着旧海图空白边角，拿铅笔轻轻标着哪里水浅、哪里礁石多", 0.25, 0.65, bucket="手边静心", where="海边小镇"),
+        _e("摊开祖母留下的旧海图，对着窗外认旧街水道并拿铅笔在边角标出浅水礁石", 0.45, 0.65, group="旧海图", bucket="手边静心", where="海边小镇"),
         _e("在旧作业本背面练字，慢慢写满一页边角", 0.45, 0.35, bucket="手边静心", where="海边小镇"),
         _e("拿捡来的小木块或贝壳试着磨或串个小挂件送主人", 0.6, 0.65, group="小手工", bucket="手边静心", where="海边小镇"),
         _e("翻旧报纸或旧传单认大陆的新鲜词，琢磨现在外头是什么样", 0.55, 0.6, group="看书", bucket="手边静心", where="海边小镇"),
         _e("缝补磨破或松了线脚的随身衣物", 0.25, 0.3, group="修东西", bucket="船舶整备", where="海边小镇"),
         _e("抱着旧钓竿试了试轮座和竿梢的松紧，把松掉的细绳重新绕牢", 0, 0.45, group="钓鱼", bucket="船舶整备", where="海边小镇"),
-        _e("拿着潜水用的小刀仔细擦拭刀身、试了试刀鞘卡扣紧不紧", 0, 0.3, bucket="船舶整备", where="海边小镇"),
         _e("坐在甲板边放一竿空线垂到海里看鱼绕着游，钓不钓得上都随它", 0.45, 0.5, group="钓鱼", bucket="观察闲逛", where="海边小镇", wx="dry", outdoor=True, min_temp=5.0),
-        _e("听着外头浪打船板或雨落舱顶的声响，按着节拍默数拍子消磨时间", 0.4, 0.4, bucket="心绪人情", where="海边小镇"),
-        _e("摊开海图背记附近几处水道和旧街屋顶的朝向，看看自己能记住多少", 0.35, 0.55, bucket="手边静心", where="海边小镇"),
-        _e("翻看旧日志本或作业本前面写过的几页，对照着看这段日子的变化", 0.5, 0.55, group="旧物", bucket="手边静心", where="海边小镇"),
+        _e("翻看旧日志本或作业本前面写过的几页，对照着看这段日子的变化", 0.35, 0.4, group="旧物", bucket="手边静心", where="海边小镇"),
     ),
     "idles": (
         # ---------- 通用 ----------
@@ -700,6 +695,7 @@ for _pool_kind, _rows in _DEFAULT_POOLS_RAW.items():
             "link": _row.get("link") or "",
             "work": False,
             "outdoor": bool(_row.get("outdoor")),
+            "short": bool(_row.get("short")),
             "min_temp": _row.get("min_temp"),
             "min_water": _row.get("min_water"),
         }
@@ -718,6 +714,7 @@ def _default_meta(text: str) -> dict:
         "link": "",
         "work": False,
         "outdoor": False,
+        "short": False,
         "min_temp": None,
         "min_water": None,
     }
@@ -737,6 +734,7 @@ def default_pools() -> dict:
                 "link": row.get("link") or "",
                 "work": False,
                 "outdoor": bool(row.get("outdoor")),
+                "short": bool(row.get("short")),
                 "min_temp": row.get("min_temp"),
                 "min_water": row.get("min_water"),
             }
@@ -812,6 +810,7 @@ def clean_pool_item(kind: str, item: dict) -> dict:
         raise ValueError("联动条件不支持：%s" % link)
     work = bool(item["work"]) if "work" in item and item.get("work") is not None else bool(defaults["work"])
     outdoor = bool(item["outdoor"]) if "outdoor" in item and item.get("outdoor") is not None else bool(defaults["outdoor"])
+    short = bool(item["short"]) if "short" in item and item.get("short") is not None else bool(defaults["short"])
     min_temp = _clean_min_temp(item["min_temp"] if "min_temp" in item else defaults["min_temp"])
     min_water = _clean_min_temp(
         item["min_water"] if "min_water" in item else defaults["min_water"],
@@ -828,6 +827,7 @@ def clean_pool_item(kind: str, item: dict) -> dict:
         "link": link,
         "work": work,
         "outdoor": outdoor,
+        "short": short,
         "min_temp": min_temp,
         "min_water": min_water,
     }
@@ -878,6 +878,12 @@ def group_map(pools: dict) -> dict:
 def bucket_map(pools: dict) -> dict:
     """池子里每条的大类桶：{原文: 桶名（没有就空）}。"""
     return {item["text"]: item.get("bucket") or "" for kind in POOL_KINDS for item in pools.get(kind) or []}
+
+
+def short_set(pools: dict | None = None) -> set[str]:
+    """池子里标为短事（5~10分钟、1~2步写完）的条目集合。"""
+    src = pools if pools is not None else default_pools()
+    return {item["text"] for kind in POOL_KINDS for item in (src.get(kind) or []) if item.get("short")}
 
 
 def _base_weight(item: dict, name: str) -> float:
