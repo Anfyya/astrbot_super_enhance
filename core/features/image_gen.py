@@ -244,6 +244,7 @@ class ImageGenFeature:
         按角色此刻世界线穿搭（与聊天注入同源）自动选择立绘：
         - ``冬装`` → ``<名字>_冬装.{png,jpg,webp}``
         - ``睡衣`` → ``<名字>_睡衣.{png,jpg,webp}``
+        - ``粉白常服`` → ``<名字>_粉白常服.{png,jpg,webp}``
         - 否则或无对应立绘时回退 ``<名字>.{png,jpg,webp}``（常服）。
         """
         names = characters if isinstance(characters, list) else re.split(r"[,，、/\s]+", str(characters or ""))
@@ -262,13 +263,13 @@ class ImageGenFeature:
                     got_v, worn = self.outfit_fn(name)
                     if got_v is True:
                         want_variant = "冬装"
-                    elif isinstance(got_v, str) and got_v in ("冬装", "睡衣", "常服"):
+                    elif isinstance(got_v, str) and got_v in ("冬装", "睡衣", "粉白常服", "常服"):
                         want_variant = got_v
                 except Exception:
                     want_variant, worn = "常服", ""
             path = None
             variant = "常服"
-            if want_variant in ("冬装", "睡衣"):
+            if want_variant in ("冬装", "睡衣", "粉白常服"):
                 path = next(
                     (p for p in (self.dir / REFS_DIR / (name + "_" + want_variant + ext) for ext in (".png", ".jpg", ".webp")) if p.exists()),
                     None,
@@ -305,6 +306,8 @@ class ImageGenFeature:
                 parts.append("第%d张参考图是「%s」的冬装立绘（全扣高领厚棉衣、深灰针织打底裤与毛线袜冬靴）" % (i + 1, name))
             elif variant == "睡衣":
                 parts.append("第%d张参考图是「%s」的睡衣立绘（奶白微偏奶黄的蕾丝花边吊带睡裙，胸前小黑蝴蝶结，下身配白色蓬松荷叶边灯笼短裤）" % (i + 1, name))
+            elif variant == "粉白常服":
+                parts.append("第%d张参考图是「%s」的粉白和式常服立绘（紫色大缎带高单马尾、白底花边肩披、樱花粉宽袖、浅金大蝴蝶结腰带、白粉百褶裙、白色过膝袜与红鞋）" % (i + 1, name))
             else:
                 parts.append("第%d张参考图是「%s」的官方立绘" % (i + 1, name))
             if worn:

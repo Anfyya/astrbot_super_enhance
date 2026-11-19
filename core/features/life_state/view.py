@@ -562,6 +562,7 @@ OUTFIT_STATIC_GENERIC = "（关于身上穿的衣裳与体感：结合当下穿�
 
 _WINTER_COAT_WORDS = ("厚棉衣", "棉衣", "棉袄", "厚棉服", "棉服", "厚外套", "棉外套", "大衣")
 _PAJAMA_WORDS = ("睡衣", "睡裙", "吊带睡裙", "灯笼短裤", "和式睡衣")
+_PINK_KIMONO_WORDS = ("粉白", "粉白色", "樱花粉", "和式女仆", "复活后的常服", "复活后常服")
 _OUTFIT_OFF_WORDS = ("没", "无", "未", "脱", "搁", "放", "搭在主人", "给主人", "收好", "叠好", "挂", "换下")
 
 
@@ -588,8 +589,13 @@ def is_wearing_pajamas(outfit: str) -> bool:
     return _clause_matches_any(outfit, _PAJAMA_WORDS)
 
 
+def is_wearing_pink_kimono(outfit: str) -> bool:
+    """按当前注入的穿搭文案判断是否正穿着丛雨的粉白和式常服。"""
+    return _clause_matches_any(outfit, _PINK_KIMONO_WORDS)
+
+
 def outfit_state_for_label(service, char_name: str) -> tuple[str, str]:
-    """按角色名查询此刻与聊天注入完全一致的 (立绘档位 '冬装'|'睡衣'|'常服', 当前穿搭文案)。"""
+    """按角色名查询此刻与聊天注入完全一致的 (立绘档位 '冬装'|'睡衣'|'粉白常服'|'常服', 当前穿搭文案)。"""
     want = str(char_name or "").strip()
     if service is None or not want:
         return "常服", ""
@@ -609,6 +615,8 @@ def outfit_state_for_label(service, char_name: str) -> tuple[str, str]:
         return "冬装", worn
     if is_wearing_pajamas(worn):
         return "睡衣", worn
+    if is_wearing_pink_kimono(worn):
+        return "粉白常服", worn
     return "常服", worn
 
 
