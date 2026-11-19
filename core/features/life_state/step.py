@@ -30,7 +30,7 @@ from .money import SEASIDE_PRICE_GUIDE, normalize_step_money_list, validate_step
 from .things import FactConflict
 from .things import (CAT_FOOD, CAT_ITEM, END_STEPS, ITEM_END_STEPS, ITEM_MID_STEPS, ITEM_START_STEPS, KEEPS, KINDS, MEASURED_KINDS, MID_STEPS,
                      SPOTS, START_STEPS, _same_name, cat_of, checked_place, had_before, is_charcoal, is_ended, is_strict_qty,
-                     norm_kind, norm_state, spots_for, staple_of, norm_step, split_keep, step_no, MAX_INSIDE)
+                     norm_kind, norm_state, parse_amount, spots_for, staple_of, norm_step, split_keep, step_no, MAX_INSIDE)
 from . import weather as weather_mod
 from . import weathering
 from . import supply as supply_mod
@@ -142,7 +142,7 @@ STEP_SYSTEM_TEMPLATE = """{base_system}
    - 端给主人的（送到主人跟前、递到他手上的那一份）：那一步的 place 写 {{"area": "主人", "at": "跟前", "detail": ""}}（at 一律写「跟前」，递到手上、搁在手边也写跟前；新做好直接端上去的，做好那步就这么写；已有的写一步「挪地方」）。程序见到放在主人跟前的，一个小时后当主人吃完了，所以只端了一部分上去、剩下的还在原处的，端上去的那份别写在原来那件上；摆在桌上大家一起吃的、留给主人温着还没端过去的，area 照常写屋子。
    - 做饭用料先用家里有的，先用快不行了的；新鲜的料（豆腐、菜、鱼肉、蛋、水果）家里没有，就在做饭之前排一段去买回来。米面油盐、调料干货、腌菜这些按量记的（清单里写着「还剩多少克 / 毫升」），用到的也要写：写进那盘菜的 from，再各写一步「用掉一部分」，used 必须填阿拉伯数字+单位（如 `"250克"`、`"3克"`、`"15毫升"`，严禁写 `"少许"`、`"约五分之一"`、`"小半"` 等模糊词）；标着「快用完了」的，排一段去买（买回来的 amount 与 left 也必须填数字+单位，如 `"5斤"`、`"500毫升"`）。海边船屋的食材和常备调料已在清单里列明，严禁填「原来就有」；家里没有的调料食材须先排一段去集市或杂货铺买回来入库（非海边住处若头一回用到常备调料才可记「原来就有」）。两人一起做的饭、一起吃的饭，things 写在其中一个人那段里。
    - 清单里写了口感和保鲜的：凡落在「按时间算已经坏了、还没说扔的」里的（馊掉/长毛/发臭），以及已经反复回锅两三回、标着「熬咸了/又咸又浓/没什么味了/菜都黄烂了」的剩菜，**不要再回锅热去给人吃，更绝不可端到主人跟前，发现坏了或难吃到没法吃就该写「坏了扔了」扔掉，给主人吃就现做一碗新的**；还没坏、只是凉了的剩菜才热一热（写一步「热了一下」），发硬的饭炒成炒饭，蔫了的菜泡会儿冷水，熟过头的香蕉做成饼，串了味的拿去做红烧、麻辣这种重口的菜；标着有毒的（土豆发芽发绿）扔掉。放东西也照常理：剩菜盖好收着，挪到矮桌/跟前就别再挂着「灶上温着」；气味冲的（葱蒜、卤味、鱼）跟豆腐、米饭、点心分开放或者都盖好；生肉包好，跟熟食分开放；炸的晾凉了再盖。
-   - 段内是否开火（stove，三选一）：每段填 `"stove": ""`（没点火：备菜、洗碗、吃饭、聊天、外出、睡觉填 `""`；仅站在灶边商量菜单也没点火）、`"charcoal"`（船屋灶台小炭炉真点着开火做饭、烧水、热菜、煎蛋）或 `"wood"`（船屋柴炉真点着烧柴取暖、烘烤衣物/鱼干或烟熏；穗织住处统一填 `""`）。小炭炉烧闷炭/木炭由程序按顿自动从家里闷炭库存扣减，不用在 items 里手写扣炭；若闷炭已用光为 0，在弄回新炭之前小炭炉点不着火（`stove` 不能填 `"charcoal"`）。**闷炭金贵稀缺，取得全看运气与时机、不可把炭当成随手就有**：光烧普通枯枝只会化成白灰；煮盐棚并非天天生火开锅，就算开锅那点锅底余炭也多半自留或早被镇上别人家挑水换光，跑一趟可能吃闭门羹/扑空，真碰巧赶上缺人手挑海水添柴累半天也至多换回一小捧到半小罐（约 `300~500 克`）；澡堂隔几天才烧一回且多杂枝，去搭把手未必有余炭、偶有剩也只换一小把（约 `150~250 克`）；柴料场买炭也可能遇上紧俏卖空；自家柴炉得专烧实木硬木头、未化灰时拿火钳夹进陶罐闷灭才能攒出零星一两小块（约 `100~200 克`，须在 from 填所烧硬柴编号，items 写 new 入库）。因炭来之不易，留给灶台做饭烧水用，非万不得已不拿小炭炉干烧取暖。点柴炉（`stove="wood"`）时记得消耗干柴（items 记用了哪捆柴），冷柴炉烘不干鱼也熏不熟东西。给还在睡或不在家的主人留饭时，必须盖好保温（熬粥、饭团盖在锅里温着，汤面只留汤头等主人醒了现下面条，绝不把煮好的汤面敞口摆在矮桌上泡几个钟头）。
+   - 段内是否开火（stove，三选一）：每段填 `"stove": ""`（没点火：备菜、洗碗、吃饭、聊天、外出、睡觉填 `""`；仅站在灶边商量菜单也没点火）、`"charcoal"`（船屋灶台小炭炉真点着开火做饭、烧水、热菜、煎蛋）或 `"wood"`（船屋柴炉真点着烧柴取暖、烘烤衣物/鱼干或烟熏；穗织住处统一填 `""`）。小炭炉烧闷炭/木炭由程序按顿自动从家里闷炭库存扣减，不用在 items 里手写扣炭；若闷炭已用光为 0，在弄回新炭之前小炭炉点不着火（`stove` 不能填 `"charcoal"`）。**闷炭金贵稀缺，取得全看运气与时机、绝不会烧柴炉就自动产炭**：光烧普通细枯枝（`kindling`）只会化成白灰；煮盐棚并非天天生火开锅，就算开锅那点锅底余炭也多半自留或早被镇上别人家挑水换光，跑一趟可能吃闭门羹/扑空，真碰巧赶上缺人手挑海水添柴累半天也至多换回一小捧到半小罐（约 `300~500 克`）；澡堂隔几天才烧一回且多杂枝，去搭把手未必有余炭、偶有剩也只换一小把（约 `150~250 克`）；柴料场买炭也可能遇上紧俏卖空；**自家柴炉只有专门烧粗硬木劈柴（清单标着「硬木粗柴·可夹闷炭」、`weather.fuel_size="split"`）、在火旺未化灰时动手拿火钳把红炭夹进陶罐闷灭才能产出零星闷炭（约 `100~200 克`，须同段 `stove="wood"`、steps 写明夹炭闷灭、items 写 `what="做好了"`、`new` 闷炭并在 `from` 填所烧硬柴编号；拿细枯枝或未标硬木柴填进 `from` 一律打回）**。因炭来之不易，留给灶台做饭烧水用，非万不得已不拿小炭炉干烧取暖。点柴炉（`stove="wood"`）时记得消耗干柴（items 记用了哪捆柴），冷柴炉烘不干鱼也熏不熟东西。给还在睡或不在家的主人留饭时，必须盖好保温（熬粥、饭团盖在锅里温着，汤面只留汤头等主人醒了现下面条，绝不把煮好的汤面敞口摆在矮桌上泡几个钟头）。
    - kind 从这几类里挑：{kinds}；keep（怎么放）从这几样里挑：{keeps}；spot（放在哪，管冷热）从这几样里挑：{spots}。
 19. **被打断的事后来怎么样了**：上面「被打断、还没交代后来怎么样的事」里每一件，在 stopped_results 里用编号写一句后来怎么样了：撂下不做了、交给谁接着做完了、等手上的事忙完回头接着做完了、或者赶紧几下做完了，挑合情理的写。只写这个人自己怎么处理这件事，不替别人定事实：别人那件做没做完、做出了什么，以世界线上别人那段写的为准（标着「做到……先放下了」的就是没做完），拿不准就写撂下了或者等回头再说。要和你这次排的段对得上：写了回头接着做，就把接着做的那段排上；写了交给对方，对方那段就是接着做这件事。没列出来的不写。
 20. **家里的东西**（吃的以外）：上面「家里的东西」是此刻家里有的（编号、样子、在哪、在谁手上）。段里做了、用了、挪了、交给别人了、接着做了一截的东西，写进这段的 items（没动到就是空数组）：
@@ -202,6 +202,9 @@ STEP_SYSTEM_TEMPLATE = """{base_system}
 - `"items"`（非食物物品变动数组，没动物品填 `[]`；凡换物、捡柴、换闷炭/夹闷炭、筛草木灰、做手工、写纸条必填，以物易物须同时写消耗旧物 `id` 与换回新物 `new`；**同一批已有物件只是搬动、拆捆、摊晾、码架或取用一部分时，必须沿用已有编号 `id` 写 `挪地方/用了/变了样`，严禁用 `new` 再复制一份同名物件**；描述铁桶柴炉时用「柴火/炉膛红灰」，别混写成「炭火」）：
   - 动已有物品：`{{"id": "p编号或x代号", "what": "挪地方|交给|用了|清点|做了一截|做好了|变了样|送人了|丢了|坏了扔了|用完了", "used": "1捆(可选)", "left": "剩余(可选)", "place": {{"area": "船舱", "at": "储物格", "detail": ""}}, "holder": "", "owner": "改归属时才填(如master)", "state": "做完后的状态", "step": 1}}`
   - 新物品入库：`{{"new": "x1", "name": "闷炭", "kind": "燃料", "look": "小半罐零碎硬木炭", "owner": "共用", "origin": "煮盐棚帮工换回", "from": [], "what": "开始做|做好了|买回来|收到|捡到", "amount": "400克", "place": {{"area": "船舱", "at": "灶台边", "detail": "陶罐里"}}, "state": "干燥盖严", "step": 2}}`
+  - **新炉柴入库（`kind` 必填 `"燃柴"` / `"薪柴"` / `"引火料"`，并必填 `weather` 区分来源与粗细，缺一项都会打回）**：
+    `{{"new": "x1", "name": "硬木劈柴", "kind": "燃柴", "look": "劈好的粗硬木段，断面干燥", "owner": "共用", "origin": "码头布告板帮镇民清倒树分回", "from": [], "what": "买回来|收到|捡到", "amount": "1捆", "weather": {{"fuel_source": "land_deadwood|pruning|workshop|reclaimed|supplier|drift_unknown", "fuel_size": "kindling(细枯枝引火料，只化灰)|split(硬木劈柴/粗实木边角，耐烧且可夹出闷炭)|log(整段粗原木)", "fuel_state": "ready|wet|drying", "split": true}}, "place": {{"area": "船舱", "at": "柴架", "detail": "上层"}}, "state": "码齐干燥", "step": 2}}`
+    （若捡/买回整段未劈或带湿硬柴，`fuel_size` 写 `"log"` 且 `split: false` / `fuel_state: "wet"`，后续另排一段劈柴晒干把该 `id` 的 `weather` 改为 `{{"fuel_size": "split", "split": true, "fuel_state": "ready"}}` 后才可进炉；自家柴炉手动夹炭时 `what` 填 `"做好了"`、`amount` 填 `"150克"`、`from` 填正烧的 `split` 硬木柴编号。）
 - `"money"`（钱财进出与赊账数组，必填；没动钱填 `[]`，`"闲着"`/`"睡觉"` 段必填 `[]`）：
   - 花钱：`{{"kind": "spend", "account": "napcat2", "amount": 12, "counterparty": "集市鱼摊", "what": "买了两条海鱼", "step": 1}}`
   - 进账：`{{"kind": "earn", "account": "napcat2", "reason": "work|salvage|sell", "amount": 20, "counterparty": "诊所老医生", "what": "修好坏掉的手电筒挣零工钱", "step": 2}}`
@@ -2400,6 +2403,7 @@ class LifeStep:
         batch_measured_food_keys: set[str] = set()
         batch_item_keys: set[str] = set()
         batch_fuel_keys: set[str] = set()
+        batch_wood_tier: dict[str, str] = {}
         first_charcoal_at: datetime.datetime | None = None
         first_wood_at: datetime.datetime | None = None
         first_oil_at: datetime.datetime | None = None
@@ -2497,6 +2501,8 @@ class LifeStep:
                                         first_charcoal_at = cursor
                                 if kd_str in weathering.STOVE_WOOD_KINDS or purp_str == "fuel":
                                     batch_fuel_keys.add(item_key)
+                                    w_meta = weathering.wood_fuel_meta({"kind": kd_str, "stages": [{"weather": eff.get("weather")}]})
+                                    batch_wood_tier[item_key] = w_meta["tier"]
                                     if _wood_ready_weather(eff, True) and (first_wood_at is None or seg_end < first_wood_at):
                                         first_wood_at = seg_end
                             else:
@@ -2504,6 +2510,12 @@ class LifeStep:
                                 tid_str = str(eff.get("id") or "").strip()
                                 hit_item = shelf.find(tid_str) if (shelf is not None and tid_str) else None
                                 is_wood_ref = tid_str in batch_fuel_keys or (hit_item is not None and weathering.fuel_item(hit_item) and not is_charcoal(hit_item))
+                                if is_wood_ref:
+                                    w_step = weathering.clean_conditions(eff.get("weather"))
+                                    if w_step.get("fuel_size") == "split" or w_step.get("split") is True:
+                                        batch_wood_tier[tid_str] = "hardwood"
+                                    elif tid_str not in batch_wood_tier and hit_item is not None:
+                                        batch_wood_tier[tid_str] = weathering.wood_fuel_meta(hit_item, seg_end)["tier"]
                                 if is_wood_ref and _wood_ready_weather(eff, False):
                                     if first_wood_at is None or seg_end < first_wood_at:
                                         first_wood_at = seg_end
@@ -2738,6 +2750,51 @@ class LifeStep:
                             left_txt = str(eff.get("left") or "").strip()
                             if left_txt and not is_strict_qty(left_txt):
                                 errors.append(f"{tag} items[{i_i}]（{nm}）：新入库燃料 left={left_txt!r} 必须为纯数字+单位")
+                        if is_new_wood:
+                            w_decl = weathering.clean_conditions(eff.get("weather"))
+                            if not w_decl.get("fuel_source"):
+                                errors.append(
+                                    f"{tag} items[{i_i}]（{nm}）：新入库炉柴必须在 weather 中写明结构化来源 fuel_source"
+                                    f"（{' / '.join(weathering.CONDITION_VALUES['fuel_source'])}）"
+                                )
+                            if not w_decl.get("fuel_size"):
+                                errors.append(
+                                    f"{tag} items[{i_i}]（{nm}）：新入库炉柴必须在 weather 中写明结构化规格 fuel_size"
+                                    f"（\"kindling\" 细枯枝引火料 / \"split\" 已劈硬木粗柴 / \"log\" 整段未劈原木）"
+                                )
+                            elif w_decl.get("fuel_size") == "log" and "split" not in w_decl:
+                                errors.append(
+                                    f"{tag} items[{i_i}]（{nm}）：整段原木 fuel_size=\"log\" 时请在 weather 中显式填 split（未劈填 false，劈好可进炉改 true）"
+                                )
+                        if is_new_charcoal:
+                            from_tokens = [str(x).strip() for x in (eff.get("from") or []) if str(x).strip()]
+                            is_stove_charcoal = (what in ("做好了", "开始做")) or bool(from_tokens)
+                            if is_stove_charcoal:
+                                if st_code != "do" or raw.get("at_home") is not True or raw.get("stove") != "wood":
+                                    errors.append(
+                                        f"{tag} items[{i_i}]（{nm}）：自家柴炉手动夹出闷炭必须在同段点着柴炉"
+                                        f"（at_home=true 且 stove=\"wood\"）；若是外出买/换回的炭请用 what=\"买回来\"/\"收到\" 且 from=[]"
+                                    )
+                                if not from_tokens:
+                                    errors.append(
+                                        f"{tag} items[{i_i}]（{nm}）：自家柴炉夹出闷炭必须在 from 中填入正在烧的硬木粗柴编号（如 [\"p290\"]），严禁空手凭空产炭"
+                                    )
+                                for tok in from_tokens:
+                                    tok_ok = batch_wood_tier.get(tok) == "hardwood"
+                                    if not tok_ok and shelf is not None:
+                                        s_hit = shelf.find(tok)
+                                        if s_hit is not None and weathering.is_charcoal_wood(s_hit, seg_end):
+                                            tok_ok = True
+                                    if not tok_ok:
+                                        errors.append(
+                                            f"{tag} items[{i_i}]（{nm}）：from 中的 {tok!r} 不是结构化标明为硬木粗柴（weather.fuel_size=\"split\"）的炉柴——"
+                                            f"细枯枝/引火料/未劈原木烧完只会化灰，绝不能夹出闷炭"
+                                        )
+                                parsed_c = parse_amount(amt_txt) if amt_txt else None
+                                if parsed_c is not None and parsed_c[1] == "克" and parsed_c[0] > 300:
+                                    errors.append(
+                                        f"{tag} items[{i_i}]（{nm}）：单次柴炉夹红炭闷灭最多攒出约 100~200 克闷炭（上限 300 克），不能写 {amt_txt}"
+                                    )
                         if what not in ITEM_START_STEPS:
                             allowed_item_hint = "开始做/做好了/买回来/收到/捡到" if seaside else "开始做/做好了/买回来/收到/捡到/原来就有"
                             errors.append(f"{tag} items[{i_i}]（{nm}）：new 物品的 what 必须填 {allowed_item_hint}（当前={eff.get('what')!r}）")
@@ -3069,11 +3126,35 @@ class LifeStep:
         return {
             "charcoal_g": float(ctx.get("charcoal_g") or 0.0) if ctx.get("has_inventory") else 999.0,
             "wood_bundles": float(ctx.get("wood_bundles") or 0.0) if ctx.get("has_inventory") else 2.0,
+            "hardwood_bundles": float(ctx.get("hardwood_bundles") or 0.0) if ctx.get("has_inventory") else 1.0,
             "oil_ml": float(ctx.get("oil_ml") or 0.0) if ctx.get("has_inventory") else None,
             "ship_unpicked": bool(ctx.get("ship_unpicked")),
             "lamp_ok": lamp_ok,
             "ctx": ctx,
         }
+
+    def _recent_wood_sources(self, win_start: datetime.datetime, days: int = 5) -> list[str]:
+        """按结构化 items.weather.fuel_source 查最近几次新弄回炉柴的来源（用于轮换避重）。"""
+        out: list[str] = []
+        for back in range(days, -1, -1):
+            d_str = (win_start.date() - datetime.timedelta(days=back)).isoformat()
+            for e in self.world.entries(d_str):
+                if real_stop(e):
+                    continue
+                en_t = parse_time(e.get("start")) or parse_time(e.get("end"))
+                if en_t is None or en_t > win_start:
+                    continue
+                for eff in (e.get("things") or []) + (e.get("items") or []):
+                    if not isinstance(eff, dict) or not (eff.get("new") or str(eff.get("what") or "") in ITEM_START_STEPS):
+                        continue
+                    kd = clean_text(eff.get("kind"), 10)
+                    purp = str(eff.get("purpose") or "").strip()
+                    if kd not in weathering.STOVE_WOOD_KINDS and purp != "fuel":
+                        continue
+                    src = weathering.clean_conditions(eff.get("weather")).get("fuel_source")
+                    if src:
+                        out.append(src)
+        return out
 
     def _seaside_living_nudges(self, tasks: dict | None, flat: datetime.datetime, shelf) -> str:
         """海边船居四大硬日常纯结构化感知（柴炉暖舱清灰 / 菜篮断鲜 / 淡水见底 / 煤油见底）：只看结构化字段与库存，零正文关键词扫描。"""
@@ -3120,9 +3201,23 @@ class LifeStep:
             chilly = freezing_cold or (min_temp <= 13.5) or (evening_or_night and min_temp <= 15.5) or (max_rain >= 0.3 and min_temp <= 16.0)
             th_win = weather_mod.cabin_temp_info(win_start, self.world, self._weather_text_of(), self.home)
             cabin_cool = th_win["mode"] != "burning" and th_win["delta"] < 2.5
+            recent_sources = self._recent_wood_sources(win_start)
+            last_src = recent_sources[-1] if recent_sources else ""
+            rot_hint = ""
+            if last_src:
+                last_lbl = weathering.FUEL_SOURCE_LABELS.get(last_src, last_src)
+                rot_hint = f"（上一回刚用过「{last_lbl}」[{last_src}]，这次务必换条门路，严禁连续两次在同一处拾枯枝）"
+            hardwood_hint = ""
+            if inv["hardwood_bundles"] <= 0:
+                hardwood_hint = "（家里眼下没有能夹出闷炭的硬木粗柴 `fuel_size=\"split\"`，优先弄硬木劈柴/船坞实木边角回来）"
             wood_ways = (
-                "别老只跑坡上薪柴地，按海边地图换着路子弄柴：去坡上薪柴地拾枯枝或帮镇民修枝清道分柴、"
-                "去船坞帮老船匠收场换干净实木边料与刨花，或去坡上柴料场与干燥棚买柴、以物换柴、帮工换柴"
+                "别老只跑坡上薪柴地，按海边地图换着路子弄柴%s%s："
+                "① 看码头布告板接镇民清倒树/风断枝短工或去坡上菜地帮菜农剪老果木主枝（得硬木劈柴 `fuel_source=\"pruning\", fuel_size=\"split\"`）；"
+                "② 去船坞帮老船匠收场换未刷漆胶合的厚实硬木船料边角（`workshop`, `split`）或干刨花（`kindling`），也可拿海漂木换干柴；"
+                "③ 去坡上柴料场与干燥棚买干硬柴、以物换柴或买便宜半湿硬木/原木段回来劈晾烘干（`supplier`, `split`/`log`）；"
+                "④ 换去山丘灯塔/旧观景台/旧信号塔山路或坡上薪柴地拾枯落松枝硬枝（`land_deadwood`）；"
+                "⑤ 退潮去漂流物小湾高潮线以上拾雨水冲刷晒透的干陆枝（`drift_unknown`）"
+                % (rot_hint, hardwood_hint)
             )
             if freezing_cold:
                 if cabin_cool and not recent_wood:

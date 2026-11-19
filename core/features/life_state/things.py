@@ -2850,6 +2850,13 @@ class ThingStore:
             tags.append("用 %s 做的" % "、".join(self._name_of(view, x) for x in item["from"]))
         if any(x.get("what") == "做好了" for x in stages):
             tags.append("已做好")
+        if weathering.fuel_item(item):
+            fmeta = weathering.wood_fuel_meta(item)
+            tier_labels = {"hardwood": "硬木粗柴·可夹闷炭", "kindling": "细枝引火·烧完化灰", "unsplit_log": "整段原木·未劈"}
+            if fmeta["tier"] in tier_labels:
+                tags.append(tier_labels[fmeta["tier"]])
+            if fmeta["source_label"]:
+                tags.append(fmeta["source_label"])
         came = item.get("origin") or "%s %s%s" % (str(first.get("at"))[5:16], self._who(first.get("by"), label_fn), first.get("what"))
         owner = self.owner_of(item)
         look, state = str(item.get("look") or ""), str(last.get("state") or "")
@@ -2891,20 +2898,20 @@ class ThingStore:
                 "【灶台闷炭已用光：现余 0 克！】没弄回新炭之前，船舱灶台的小炭炉点不着火、没法用小炭炉做热饭烧水！"
                 "闷炭稀缺难得，可试着安排：① 若凑巧煮盐棚今天开锅且还没被别人领光，去挑海水添柴帮工一趟也至多换回一小捧到半小罐（约300~500克，去了也可能没开锅或已换完而扑空）；"
                 "② 去坡上柴料场/集市问问有没有木炭卖（常遇断货）或碰澡堂烧水日顺手换一小把（约150~250克）；"
-                "③ 点柴炉烧硬木头尚未化成白灰时专门拿火钳夹红炭进陶罐闷灭（约100~200克，from 填所烧硬柴编号）；"
-                "只有真换到/买到/闷出时才在 items 写 new 入库并标明真实少量的 amount。"
+                "③ 点柴炉烧家里已有的硬木粗柴（标着「硬木粗柴·可夹闷炭」）尚未化灰时，专门动手拿火钳夹红炭进陶罐闷灭（约100~200克，what=\"做好了\"，from 填所烧硬柴编号；细枯枝只会成灰，绝不能夹炭）；"
+                "只有真换到/买到/手动闷出时才在 items 写 new 入库并标明真实少量的 amount。"
             )
         if total_g <= CHARCOAL_LOW_GRAMS:
             return (
                 "【灶台闷炭快见底了：现余 %s（只够小炭炉再做一两顿饭，省着点用）】小炭炉开火做饭由程序自动按顿扣炭，"
                 "但炭绝不会自动增加且难得——可抽空试试：① 煮盐棚未必开锅也常早被镇民换完，若碰巧赶上缺人挑海水添柴帮工一趟至多换一小捧到半小罐（约300~500克）；"
                 "② 去柴料场买炭（未必有货）或碰澡堂烧水日看还有没有余炭可换（约150~250克）；"
-                "③ 柴炉烧硬木未化灰时拿火钳夹出一点红炭闷灭（约100~200克，from 填所烧硬柴编号）；"
+                "③ 点柴炉烧家里硬木粗柴未化灰时，动手拿火钳夹出红炭进陶罐闷灭（约100~200克，what=\"做好了\"，from 填所烧硬柴编号；细枯枝只会烧成灰不能夹炭）；"
                 "真正办成后才在 items 里写 new 入库并标明 amount。" % amt
             )
         return (
             "灶台闷炭余量：现余 %s（小炭炉做饭烧水由程序自动按顿扣炭，不用手写扣炭；"
-            "新换来、买来或趁柴炉硬柴未化灰时动手夹进陶罐闷出的炭须在 items 里写 new 入库）。" % amt
+            "新换来、买来或趁柴炉烧硬木粗柴未化灰时手动拿火钳夹进陶罐闷出的炭须在 items 里写 new 入库）。" % amt
         )
 
     def cooking_staple_alert(self, now: datetime.datetime, view: View) -> str:

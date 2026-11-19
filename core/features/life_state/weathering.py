@@ -75,6 +75,15 @@ CONDITION_VALUES = {
     "seasoning": ("seasoned", "green"),
     "fuel_size": ("kindling", "split", "log"),
 }
+FUEL_SOURCE_LABELS = {
+    "land_deadwood": "山坡/山路拾枯枝",
+    "pruning": "菜地剪枝/布告板清树",
+    "workshop": "船坞木工边料",
+    "reclaimed": "旧屋干燥拆木料",
+    "supplier": "柴料场买换",
+    "drift_unknown": "高潮线以上干枝",
+    "sea_salvage": "海漂修补木料",
+}
 GREEN_WORDS = ("新鲜枝木", "新鲜修枝", "刚砍", "新砍", "新伐", "刚修剪", "刚剪下", "鲜木", "青木")
 WET_WORDS = ("湿透", "泡透", "浸湿", "淋湿", "潮湿", "湿木", "湿柴", "湿的", "返潮", "受潮")
 DEEP_SOAK_WORDS = ("泡透", "内部湿透", "久泡", "海里捞", "海底捞")
@@ -202,6 +211,58 @@ def usable_stove_wood(item: dict, now: datetime.datetime, day_text, home_at, fir
     if isinstance(moved, dict) and moved.get("sea"):
         return False
     return True
+
+
+def wood_fuel_meta(item: dict, now: datetime.datetime | None = None) -> dict:
+    """纯按结构化字段读取炉柴的来源与规格（kindling/split/log），零关键词猜测。"""
+    kind = re.sub(r"\s+", "", str(item.get("kind") or ""))
+    stages = list(item.get("stages") or [])
+    flat = now.replace(tzinfo=None) if now is not None else None
+    ordered = sorted(
+        (x for x in stages if isinstance(x, dict) and (flat is None or _parse(x.get("at")) is None or _parse(x.get("at")) <= flat)),
+        key=lambda x: str(x.get("at") or ""),
+    )
+    source = ""
+    size = ""
+    declared_split = None
+    top_w = clean_conditions(item.get("weather"))
+    if top_w.get("fuel_source"):
+        source = top_w["fuel_source"]
+    if top_w.get("fuel_size"):
+        size = top_w["fuel_size"]
+    if "split" in top_w:
+        declared_split = top_w["split"]
+    for s in ordered:
+        w = clean_conditions(s.get("weather"))
+        if w.get("fuel_source"):
+            source = w["fuel_source"]
+        if w.get("fuel_size"):
+            size = w["fuel_size"]
+        if "split" in w:
+            declared_split = w["split"]
+
+    if declared_split is False or (size == "log" and declared_split is not True):
+        tier = "unsplit_log"
+    elif size == "split" or (size == "log" and declared_split is True):
+        tier = "hardwood"
+    elif size == "kindling" or kind == "引火料":
+        tier = "kindling"
+    else:
+        tier = "unknown"
+
+    return {
+        "source": source,
+        "source_label": FUEL_SOURCE_LABELS.get(source, ""),
+        "size": size,
+        "split": declared_split,
+        "tier": tier,
+        "can_charcoal": tier == "hardwood",
+    }
+
+
+def is_charcoal_wood(item: dict, now: datetime.datetime | None = None) -> bool:
+    """只有结构化标明已劈硬木/粗实木（fuel_size='split' 或已劈原木）才允许夹出闷炭；细枯枝与旧模糊木柴一律不可。"""
+    return fuel_item(item) and wood_fuel_meta(item, now)["can_charcoal"]
 
 
 def storage_conditions(stage: dict) -> dict:

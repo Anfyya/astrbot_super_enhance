@@ -225,6 +225,12 @@ _DEFAULT_POOLS_RAW: dict[str, tuple[dict, ...]] = {
         _e("看集市上刚出锅的热吃食直咽口水，围着摊子转了三圈也没法自己买", 0.8, 0, bucket="观察闲逛", where="海边小镇", wx="dry", outdoor=True),
         _e("海上起了白茫茫的大雾，总觉得雾里有什么东西在动，缩在船舱避风处不敢往窗外看", 0.9, 0, group="怪声", bucket="天候应对", where="海边小镇", wx="fog"),
         _e("海上起大雾出不了船，码头边的渔民聚在棚子底下补网闲聊，凑过去听了一耳朵", 0.5, 0.7, group="码头见闻", bucket="观察闲逛", where="海边小镇", wx="fog", outdoor=True),
+        _e("去码头布告板接了一张镇民家屋后倒树或风断枝清理短工，帮着锯断劈开后分走一捆硬木劈柴", 0.15, 0.65, group="弄柴·清树", bucket="镇上谋生", where="海边小镇", wx="dry", outdoor=True),
+        _e("去坡上菜地帮菜农清理老果木修剪下来的硬枝和旧木架，顺手捆一捆硬木柴回船屋", 0.25, 0.6, group="弄柴·菜地", bucket="镇上谋生", where="海边小镇", wx="dry", outdoor=True),
+        _e("去船坞帮老船匠收拾木料渣滓，换回一抱未刷漆胶合的厚实硬木船料边角和干刨花", 0.2, 0.65, group="弄柴·船坞", bucket="镇上谋生", where="海边小镇", wx="dry", outdoor=True),
+        _e("走上山丘灯塔和旧观景台那边的山路散步，顺路拾一捆风刮落的干松枝与硬木断枝带回", 0.55, 0.45, group="弄柴·山路", bucket="出门走走", where="海边小镇", wx="dry", outdoor=True),
+        _e("去坡上柴料场挑一捆便宜半湿硬木柴或带湿原段，扛回仓棚劈开码在通风干燥架上晾着", 0.15, 0.5, group="弄柴·柴场", bucket="镇上谋生", where="海边小镇", wx="dry", outdoor=True),
+        _e("退潮后去漂流物小湾高潮线以上拾雨水冲刷晒透的干陆枝，或挑根结实浮木带去船坞换干柴", 0.25, 0.55, group="弄柴·岸边", bucket="水域探索", where="海边小镇", wx="dry", outdoor=True, min_temp=4.0),
 
         # ---------- 海边小镇：天候、船居、整备 ----------
         _e("下了一场雨，把船上能接水的桶盆都摆出来接雨水，看雨点落进水里", 0.6, 0.6, group="存雨水", bucket="天候应对", where="海边小镇", wx="rain"),
@@ -955,6 +961,8 @@ def build_live_context(
             local_vals = store._local_items(shelf.values(), flat_start)
             charcoal_g = 0.0
             wood_bundles = 0.0
+            hardwood_bundles = 0.0
+            kindling_bundles = 0.0
             oil_ml = 0.0
             salt_g = 0.0
             sugar_g = 0.0
@@ -976,10 +984,12 @@ def build_live_context(
                     continue
                 if weathering.usable_stove_wood(item, flat_start, day_text_fn, home_at_fn):
                     st_info = things_mod.stock(item)
-                    if st_info is not None:
-                        wood_bundles += float(st_info.get("left") or 0.0)
+                    qty = float(st_info.get("left") or 0.0) if st_info is not None else 0.5
+                    wood_bundles += qty
+                    if weathering.is_charcoal_wood(item, flat_start):
+                        hardwood_bundles += qty
                     else:
-                        wood_bundles += 0.5
+                        kindling_bundles += qty
                     continue
                 if things_mod.cat_of(item) == things_mod.CAT_FOOD:
                     info = things_mod.measure(item)
@@ -1035,6 +1045,8 @@ def build_live_context(
                 "has_inventory": True,
                 "charcoal_g": charcoal_g,
                 "wood_bundles": wood_bundles,
+                "hardwood_bundles": hardwood_bundles,
+                "kindling_bundles": kindling_bundles,
                 "oil_ml": oil_ml,
                 "salt_g": salt_g,
                 "sugar_g": sugar_g,
