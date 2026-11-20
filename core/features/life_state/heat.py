@@ -58,21 +58,60 @@ ZONE_META = {
     "far": {"label": "舱门与舷窗角", "sub": "储物舱入口 / 靠海书桌"},
 }
 
-# 主人可在平面图上自由移动的标准锚点（与 v6.blend 家具坐标、FIX-39 睡眠规范 100% 对齐）
-MASTER_SPOTS = (
-    {"id": "kang", "label": "砖炕", "place": "船屋·砖炕", "doing": "在砖炕上待着", "at_home": True, "zone": "kang", "sleep_ok": True},
-    {"id": "stove", "label": "柴炉边", "place": "船屋·船舱·柴炉边", "doing": "在铁桶柴炉边烤火", "at_home": True, "zone": "near", "sleep_ok": False},
-    {"id": "table", "label": "矮桌", "place": "船屋·船舱矮桌", "doing": "坐在矮桌旁", "at_home": True, "zone": "mid", "sleep_ok": False},
-    {"id": "desk", "label": "海图书桌", "place": "船屋·船舱·靠海书桌", "doing": "在靠海书桌前", "at_home": True, "zone": "far", "sleep_ok": False},
-    {"id": "kitchen", "label": "小灶台", "place": "船屋·船舱·小灶台", "doing": "在小灶台边", "at_home": True, "zone": "near", "sleep_ok": False},
-    {"id": "floor_bed", "label": "炕边地铺", "place": "船屋·船舱·炕边地铺", "doing": "在炕边地铺上", "at_home": True, "zone": "mid", "sleep_ok": True},
-    {"id": "hammock", "label": "吊床", "place": "船屋·船舱·横梁吊床", "doing": "在吊床边待着", "at_home": True, "zone": "mid", "sleep_ok": True},
-    {"id": "storage", "label": "储物舱", "place": "船屋·船舱·储物舱", "doing": "在储物舱里", "at_home": True, "zone": "far", "sleep_ok": False},
-    {"id": "door", "label": "舱门口", "place": "船屋·船舱门口", "doing": "在船舱门口", "at_home": True, "zone": "far", "sleep_ok": False},
-    {"id": "deck", "label": "船头甲板", "place": "船屋·船头甲板", "doing": "在船头甲板上吹风", "at_home": True, "zone": "deck", "sleep_ok": False},
-    {"id": "outside", "label": "外出", "place": "外头", "doing": "出门去了", "at_home": False, "zone": "outside", "sleep_ok": False},
+# 镇上常见去处快捷选项（也支持用户直接自由输入任意地点）
+TOWN_PLACES = (
+    "防波堤码头",
+    "打捞所",
+    "镇上菜市场",
+    "杂货铺",
+    "半淹商店街",
+    "船坞码头",
+    "煮盐棚",
+    "镇外崖坡",
 )
-MASTER_SPOT_MAP = {s["id"]: s for s in MASTER_SPOTS}
+
+
+def _clamp_cabin_xy(wx: float, wy: float) -> tuple[float, float]:
+    """将船屋米制坐标钳制在真实船体（船舱 + 船头甲板）轮廓内。"""
+    y = max(-5.32, min(4.62, float(wy)))
+    if y >= -3.36:
+        max_x = 2.28
+    elif y >= -4.75:
+        t = (-3.36 - y) / (-3.36 - (-4.75))
+        max_x = 2.28 - (2.28 - 1.50) * t
+    else:
+        t = (-4.75 - y) / (-4.75 - (-5.35))
+        max_x = 1.50 - (1.50 - 0.72) * max(0.0, min(1.0, t))
+    x = max(-max_x, min(max_x, float(wx)))
+    return round(x, 2), round(y, 2)
+
+
+def _describe_cabin_xy(wx: float, wy: float) -> dict[str, Any]:
+    """根据船屋真实米制坐标（v6.blend），返回对应自然地点描述、温区与是否属睡眠区。"""
+    if wy < -3.36:
+        return {"place": "船屋·船头甲板", "doing": "在船头甲板上", "zone": "deck", "spot": "deck", "sleep_ok": False, "label": "船头甲板"}
+    if wy >= 3.24:
+        return {"place": "船屋·船舱·储物舱", "doing": "在储物舱里", "zone": "far", "spot": "storage", "sleep_ok": False, "label": "储物舱"}
+    if wx >= 0.45 and wy >= 0.55:
+        return {"place": "船屋·砖炕", "doing": "在砖炕上待着", "zone": "kang", "spot": "kang", "sleep_ok": True, "label": "红砖火炕"}
+    if ((wx - 0.45) ** 2 + (wy - 0.06) ** 2) ** 0.5 <= 0.82:
+        return {"place": "船屋·船舱·柴炉边", "doing": "在铁桶柴炉边", "zone": "near", "spot": "stove", "sleep_ok": False, "label": "铁桶柴炉边"}
+    if wx <= -0.85 and wy <= -0.65:
+        return {"place": "船屋·船舱·小灶台", "doing": "在小灶台边", "zone": "near", "spot": "kitchen", "sleep_ok": False, "label": "小灶台边"}
+    if -2.25 <= wx <= -0.35 and 1.25 <= wy <= 3.18:
+        return {"place": "船屋·船舱·靠海书桌", "doing": "在靠海书桌前", "zone": "far", "spot": "desk", "sleep_ok": False, "label": "海图书桌"}
+    if -1.85 <= wx <= 0.10 and -0.60 <= wy <= 1.15:
+        return {"place": "船屋·船舱矮桌", "doing": "在矮桌旁", "zone": "mid", "spot": "table", "sleep_ok": False, "label": "矮桌旁"}
+    if 0.05 <= wx <= 1.50 and -2.85 <= wy <= -0.95:
+        return {"place": "船屋·船舱·横梁吊床", "doing": "在吊床边", "zone": "mid", "spot": "hammock", "sleep_ok": True, "label": "横梁吊床"}
+    if 0.80 <= wx <= 2.28 and -1.05 <= wy <= 0.50:
+        return {"place": "船屋·船舱·炕边地铺", "doing": "在炕边地铺旁", "zone": "mid", "spot": "floor_bed", "sleep_ok": True, "label": "炕边地铺"}
+    if -1.15 <= wx <= 0.40 and wy <= -2.45:
+        return {"place": "船屋·船舱门口", "doing": "在船舱门口", "zone": "far", "spot": "door", "sleep_ok": False, "label": "前舱门口"}
+    # 其余船舱任意位置：按距离判定是靠窗角落还是舱内中段
+    if abs(wx) >= 1.75 or wy <= -2.40 or wy >= 2.65:
+        return {"place": "船屋·船舱舷窗边", "doing": "在船舱靠舷窗一侧", "zone": "far", "spot": "cabin", "sleep_ok": False, "label": "船舱舷窗边"}
+    return {"place": "船屋·船舱", "doing": "在船舱里", "zone": "mid", "spot": "cabin", "sleep_ok": False, "label": "船舱中段"}
 
 
 def _weather_text_of(life):
@@ -403,10 +442,17 @@ def _people_positions(life, now: datetime.datetime, th: dict, home: str) -> list
         sleeping = bool(is_sleep(cur))
         meal = bool(cur.get("meal"))
         is_deck = bool(place) and "舱" not in place and any(k in place for k in ("甲板", "船头", "船顶", "船篷", "船舷"))
+        pos = cur.get("pos") if isinstance(cur.get("pos"), dict) else None
         if at_home is False:
             zone = "outside"
             spot = "outside"
             local_t = th["outdoor"]
+            pos = None
+        elif pos is not None and pos.get("x") is not None and pos.get("y") is not None and home == "海边小镇":
+            meta = _describe_cabin_xy(float(pos["x"]), float(pos["y"]))
+            zone = meta["zone"]
+            spot = meta["spot"]
+            local_t = th["outdoor"] if zone == "deck" else th.get(zone, th["mid"])
         elif is_deck:
             zone = "deck"
             spot = "deck"
@@ -425,6 +471,7 @@ def _people_positions(life, now: datetime.datetime, th: dict, home: str) -> list
             "at_home": at_home is not False,
             "zone": zone,
             "spot": spot,
+            "pos": pos,
             "place": place or ("船屋·船舱" if at_home is not False else "外头"),
             "doing": str(cur.get("doing") or "")[:48],
             "sleeping": sleeping,
@@ -617,7 +664,7 @@ def heat_snapshot(life, now: datetime.datetime) -> dict[str, Any]:
         },
         "fuel": fuel,
         "people": people,
-        "master_spots": list(MASTER_SPOTS) if home == "海边小镇" else [],
+        "town_places": list(TOWN_PLACES) if home == "海边小镇" else [],
         "curve": curve,
         "history": history,
     }
@@ -838,22 +885,49 @@ def heat_action(life, payload: dict, now: datetime.datetime) -> dict[str, Any]:
     preferred_id = str(payload.get("item_id") or "").strip()
 
     if action == "move_master":
-        spot_id = str(payload.get("spot") or "").strip().lower()
-        sp = MASTER_SPOT_MAP.get(spot_id)
-        if sp is None:
-            raise ValueError("未知的位置：%s" % (spot_id or "空"))
+        has_xy = payload.get("x") is not None and payload.get("y") is not None
+        raw_place = str(payload.get("place") or "").strip()
+        raw_doing = str(payload.get("doing") or "").strip()
+        pos_val = None
+
+        if has_xy:
+            try:
+                wx, wy = _clamp_cabin_xy(float(payload["x"]), float(payload["y"]))
+            except (TypeError, ValueError):
+                raise ValueError("坐标格式无效")
+            meta = _describe_cabin_xy(wx, wy)
+            place = meta["place"]
+            doing = raw_doing or meta["doing"]
+            at_home = True
+            sleep_ok = bool(meta["sleep_ok"])
+            label = meta["label"]
+            pos_val = {"x": wx, "y": wy}
+        elif raw_place:
+            place = raw_place[:40]
+            at_home = place.startswith("船屋")
+            if at_home:
+                sleep_ok = any(k in place for k in ("炕", "地铺", "吊床"))
+            else:
+                sleep_ok = False
+            label = place.replace("船屋·船舱·", "").replace("船屋·", "")
+            doing = raw_doing or ("在%s" % label)
+        else:
+            raise ValueError("请拖动到船屋任意位置，或输入想去的地方")
+
         master_cur = life.world.current("master", flat)
         if master_cur is not None and is_sleep(master_cur) and not master_cur.get("end"):
-            if not sp.get("sleep_ok"):
-                raise ValueError("主人眼下还在睡，先起床再挪去%s（睡着时只能移到砖炕、炕边地铺或吊床）" % sp["label"])
+            if not sleep_ok:
+                raise ValueError("主人眼下还在睡，先起床再挪去%s（睡着时只能移到砖炕、地铺或吊床）" % label)
             sleep_day = str(master_cur.get("start") or "")[:10] or flat.date().isoformat()
-            life.world.update(sleep_day, str(master_cur.get("id")), mode="normal", place=sp["place"])
-            logger.info("[super_enhance/heat] 调整主人睡眠位置 -> %s (%s)", sp["label"], sp["place"])
+            life.world.update(sleep_day, str(master_cur.get("id")), mode="normal", place=place)
+            if pos_val is not None:
+                life.world.patch_entry(sleep_day, str(master_cur.get("id")), {"pos": pos_val})
+            logger.info("[super_enhance/heat] 调整主人睡眠位置 -> %s (%s)", label, place)
             return {
                 "action": "move_master",
-                "spot": sp["id"],
-                "place": sp["place"],
-                "message": "已把主人的睡眠位置调到%s（对话注入已同步）" % sp["label"],
+                "place": place,
+                "pos": pos_val,
+                "message": "已把主人的睡眠位置调到%s（对话注入已同步）" % label,
             }
 
         today = flat.date().isoformat()
@@ -861,7 +935,7 @@ def heat_action(life, payload: dict, now: datetime.datetime) -> dict[str, Any]:
             x for x in life.world.master_trail(today)
             if not real_stop(x) and (parse_time(x.get("start")) is not None) and parse_time(x.get("start")) <= flat
         ]
-        # 若最近一条本身就是 5 分钟内网页手动挪位，替换它以免连续拖动把世界线刷满
+        # 5 分钟内连续拖动/选位只保留最后一次，避免世界线被中间过程刷满
         if trail:
             last_m = trail[-1]
             last_st = parse_time(last_m.get("start"))
@@ -875,23 +949,26 @@ def heat_action(life, payload: dict, now: datetime.datetime) -> dict[str, Any]:
             ):
                 life.world.delete_entry(today, str(last_m.get("id")), _notify_drop=False)
 
-        rec = life.world.add_entry(today, {
+        entry_data: dict[str, Any] = {
             "who": "master",
             "kind": "event",
             "start": fmt_time(flat),
-            "place": sp["place"],
-            "at_home": bool(sp["at_home"]),
-            "doing": sp["doing"],
+            "place": place,
+            "at_home": at_home,
+            "doing": doing,
             "source": "manual",
             "src_quote": "heat_move",
-        })
-        logger.info("[super_enhance/heat] 手动移动主人位置 -> %s (%s)", sp["label"], sp["place"])
+        }
+        if pos_val is not None:
+            entry_data["pos"] = pos_val
+        rec = life.world.add_entry(today, entry_data)
+        logger.info("[super_enhance/heat] 手动移动主人位置 -> %s (%s, pos=%s)", label, place, pos_val)
         return {
             "action": "move_master",
-            "spot": sp["id"],
-            "place": sp["place"],
+            "place": place,
+            "pos": pos_val,
             "record": rec,
-            "message": "主人已移到%s（对话注入已同步）" % sp["label"],
+            "message": "主人已移到%s（对话注入已同步）" % label,
         }
 
     if action == "extinguish":

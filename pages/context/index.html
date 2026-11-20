@@ -1182,132 +1182,140 @@
     .prow-m{padding-left:0}
   }
 
-  /* ============ 家里热源分布页（沉浸式热成像 · 零卡片） ============ */
-  #heatView .scene{padding-top:20px;padding-bottom:72px}
-  .htop{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:14px}
+  /* ============ 家里热源分布页（温暖手账船屋俯视图风 · 浅/深双主题） ============ */
+  #heatView .scene{padding-top:18px;padding-bottom:68px}
+  .htop{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:12px}
   .htop-main{display:flex;flex-direction:column;gap:4px;min-width:0}
   .htop-nums{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
-  .htop-big{font:700 32px/1 var(--mono);letter-spacing:-.03em;color:var(--t1)}
-  .htop-big small{font:500 14px/1 var(--font);color:var(--t3);margin-left:3px}
-  .htop-meta{display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:13px;color:var(--t2)}
-  .htop-meta b{font-weight:600;color:var(--t1);font-family:var(--mono)}
-  .htop-desc{font-size:13px;color:var(--t3);line-height:1.5}
-  .htop-scale{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--t3);font-family:var(--mono);padding-bottom:3px}
-  .htop-bar{width:116px;height:6px;border-radius:999px;background:linear-gradient(90deg,#12244d 0%,#1f5c87 28%,#8f6c38 56%,#e66a22 80%,#ffd36b 100%)}
+  .htop-big{font:600 30px/1 var(--mono);letter-spacing:-.03em;color:var(--t1)}
+  .htop-big small{font:400 13px/1 var(--font);color:var(--t3);margin-left:3px}
+  .htop-meta{display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:12.5px;color:var(--t3)}
+  .htop-meta b{font-weight:500;color:var(--t1);font-family:var(--mono)}
+  .htop-desc{font-size:12.5px;color:var(--t3);line-height:1.5}
 
-  .hstage{position:relative;border-radius:16px;overflow:hidden;background:#0b1426;box-shadow:0 12px 32px rgba(10,16,32,.14);margin-bottom:22px;user-select:none}
-  :root[data-theme="dark"] .hstage{box-shadow:0 12px 36px rgba(0,0,0,.45),0 0 0 1px rgba(255,255,255,.07)}
+  .hstage{position:relative;border-radius:12px;overflow:hidden;background:#c8d7dc;border:1px solid #d9d3c7;margin-bottom:10px;user-select:none}
+  :root[data-theme="dark"] .hstage{background:#222e38;border-color:rgba(255,255,255,.09)}
   @media (prefers-color-scheme: dark){
-    :root:not([data-theme]) .hstage{box-shadow:0 12px 36px rgba(0,0,0,.45),0 0 0 1px rgba(255,255,255,.07)}
+    :root:not([data-theme]) .hstage{background:#222e38;border-color:rgba(255,255,255,.09)}
   }
   .hcanvas{display:block;width:100%;height:auto;aspect-ratio:760 / 420;cursor:crosshair}
-  .hprobe{position:absolute;pointer-events:none;z-index:12;transform:translate(12px,-50%);padding:4px 9px;border-radius:8px;background:rgba(10,15,28,.84);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.16);color:#f8fafc;font:600 12px/1.3 var(--mono);white-space:nowrap;box-shadow:0 6px 16px rgba(0,0,0,.35)}
-  .hprobe small{font:400 11px/1 var(--font);color:rgba(226,232,240,.75);margin-left:5px}
+  .hprobe{position:absolute;pointer-events:none;z-index:12;transform:translate(12px,-50%);padding:4px 9px;border-radius:7px;background:#fffdf9;border:1px solid #ddd2c0;color:#2c2520;font:600 11.5px/1.35 var(--mono);white-space:nowrap;box-shadow:0 4px 14px rgba(44,37,32,.14)}
+  .hprobe small{font:400 11px/1 var(--font);color:#7a6c5e;margin-left:5px}
+  :root[data-theme="dark"] .hprobe{background:rgba(31,28,25,.95);border-color:rgba(255,255,255,.14);color:#f5f0e6;box-shadow:0 6px 16px rgba(0,0,0,.4)}
+  :root[data-theme="dark"] .hprobe small{color:rgba(235,228,218,.68)}
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme]) .hprobe{background:rgba(31,28,25,.95);border-color:rgba(255,255,255,.14);color:#f5f0e6;box-shadow:0 6px 16px rgba(0,0,0,.4)}
+    :root:not([data-theme]) .hprobe small{color:rgba(235,228,218,.68)}
+  }
 
   .hspot{position:absolute;transform:translate(-50%,-50%);border:0;background:transparent;padding:0;cursor:pointer;z-index:8;border-radius:50%;display:flex;align-items:center;justify-content:center}
-  .hspot-ring{width:100%;height:100%;border-radius:50%;border:1.5px solid rgba(255,255,255,.45);transition:transform .16s ease,border-color .16s ease,box-shadow .16s ease}
-  .hspot.lit .hspot-ring{border-color:rgba(255,214,107,.92);box-shadow:0 0 18px rgba(249,115,22,.65);animation:hbreathe 2s ease-in-out infinite}
-  .hspot:hover .hspot-ring,.hspot.on .hspot-ring{transform:scale(1.12);border-color:#fff;box-shadow:0 0 20px rgba(255,255,255,.45)}
-  @keyframes hbreathe{0%,100%{transform:scale(1);opacity:.95}50%{transform:scale(1.08);opacity:.65}}
+  .hspot-ring{width:100%;height:100%;border-radius:50%;border:1.5px solid transparent;transition:border-color .15s ease,transform .15s ease,background .15s ease}
+  .hspot:hover .hspot-ring,.hspot.on .hspot-ring{transform:scale(1.08);border-color:rgba(44,37,32,.55);background:rgba(255,253,249,.22)}
+  :root[data-theme="dark"] .hspot:hover .hspot-ring,:root[data-theme="dark"] .hspot.on .hspot-ring{border-color:rgba(245,235,220,.65);background:rgba(255,255,255,.08)}
 
-  /* 主人可拖动换位锚点 + 吸附目标圈 + 选位浮层 */
-  .hspot-master{position:absolute;transform:translate(-50%,-50%);width:30px;height:30px;border:0;background:transparent;padding:0;cursor:grab;z-index:10;border-radius:50%;display:flex;align-items:center;justify-content:center;touch-action:none}
-  .hspot-master::after{content:"";width:22px;height:22px;border-radius:50%;border:1.5px solid rgba(192,132,252,.65);box-shadow:0 0 12px rgba(192,132,252,.35);transition:transform .14s ease,border-color .14s ease,box-shadow .14s ease}
-  .hspot-master:hover::after,.hspot-master.on::after{transform:scale(1.18);border-color:#e9d5ff;box-shadow:0 0 18px rgba(192,132,252,.72)}
-  .hspot-master.dragging{cursor:grabbing}
-  .hspot-out{position:absolute;top:10px;right:14px;z-index:10;padding:4px 10px;border-radius:999px;border:1px solid rgba(192,132,252,.45);background:rgba(14,20,34,.8);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);color:#e9d5ff;font-size:11.5px;font-weight:500;cursor:pointer;transition:background .12s,border-color .12s}
-  .hspot-out:hover{background:rgba(168,85,247,.28);border-color:#d8b4fe;color:#fff}
-  .hdrop-ring{position:absolute;transform:translate(-50%,-50%);width:34px;height:34px;border-radius:50%;border:2px dashed #d8b4fe;background:rgba(192,132,252,.18);box-shadow:0 0 22px rgba(192,132,252,.65);pointer-events:none;z-index:11;transition:left .08s ease,top .08s ease}
-  .hdrag-tip{position:absolute;pointer-events:none;z-index:22;transform:translate(14px,-50%);padding:5px 10px;border-radius:8px;background:rgba(20,14,36,.92);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid rgba(216,180,254,.45);color:#f5f3ff;font:600 12px/1.3 var(--font);font-variant-numeric:tabular-nums;white-space:nowrap;box-shadow:0 8px 20px rgba(0,0,0,.45)}
-  .hspot-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
-  .hspot-opt{padding:7px 6px;border-radius:8px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:rgba(241,245,249,.92);font-size:12px;font-weight:500;text-align:center;transition:background .12s,border-color .12s,color .12s}
-  .hspot-opt:hover:not(:disabled){background:rgba(192,132,252,.25);border-color:rgba(216,180,254,.65);color:#fff}
-  .hspot-opt.on{background:rgba(168,85,247,.34);border-color:#d8b4fe;color:#fff;font-weight:600}
-  .hspot-opt:disabled{opacity:.32;cursor:not-allowed}
-  .hfoot-link{border:0;background:transparent;padding:0;font-size:12px;color:var(--t2);cursor:pointer;display:inline-flex;align-items:center;gap:4px}
-  .hfoot-link:hover{color:var(--t1);text-decoration:underline;text-underline-offset:3px}
-  .hfoot-link b{color:var(--t1);font-weight:600}
+  /* 主人自由拖动标记（贴合手账小胶囊） */
+  .hspot-master{position:absolute;transform:translate(-50%,-50%);width:54px;height:26px;border:0;background:transparent;padding:0;cursor:grab;z-index:10;border-radius:13px;display:flex;align-items:center;justify-content:center;touch-action:none}
+  .hspot-master:hover::after,.hspot-master.on::after{content:"";position:absolute;inset:-2px;border-radius:15px;border:1.5px solid rgba(44,37,32,.45)}
+  :root[data-theme="dark"] .hspot-master:hover::after,:root[data-theme="dark"] .hspot-master.on::after{border-color:rgba(245,235,220,.55)}
+  .hspot-master.dragging{cursor:grabbing;width:20px;height:20px}
+  .hspot-master.dragging::after{content:"";position:static;width:14px;height:14px;border-radius:50%;background:#2c2520;border:2.5px solid #fffdf9;box-shadow:0 3px 10px rgba(44,37,32,.35)}
+  :root[data-theme="dark"] .hspot-master.dragging::after{background:#f3efe6;border-color:#1f1c19}
+  .hspot-out{position:absolute;top:11px;right:14px;z-index:10;padding:4px 10px;border-radius:7px;border:1px solid #cfc6b6;background:#fffdf9;color:#3a3028;font-size:11.5px;font-weight:500;cursor:pointer;box-shadow:0 2px 8px rgba(44,37,32,.1)}
+  .hspot-out:hover{background:#f7f2e8;border-color:#b8ac98}
+  :root[data-theme="dark"] .hspot-out{background:rgba(31,28,25,.92);border-color:rgba(255,255,255,.16);color:#f3efe6}
+  .hdrag-tip{position:absolute;pointer-events:none;z-index:22;transform:translate(14px,-50%);padding:4px 9px;border-radius:7px;background:#2c2520;color:#fffdf9;font:500 11.5px/1.35 var(--font);font-variant-numeric:tabular-nums;white-space:nowrap;box-shadow:0 6px 16px rgba(44,37,32,.25)}
 
-  .hpop{position:absolute;z-index:20;width:292px;max-width:calc(100% - 24px);padding:13px 15px;border-radius:13px;background:rgba(14,20,34,.9);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,.16);color:#f3f4f6;box-shadow:0 16px 38px rgba(0,0,0,.5)}
-  .hpop-h{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:5px}
-  .hpop-t{font-size:13.5px;font-weight:600;color:#fff}
-  .hpop-x{width:22px;height:22px;border:0;border-radius:6px;background:transparent;color:rgba(255,255,255,.65);display:inline-flex;align-items:center;justify-content:center}
-  .hpop-x:hover{background:rgba(255,255,255,.12);color:#fff}
-  .hpop-s{font-size:12px;color:rgba(226,232,240,.74);margin-bottom:11px;line-height:1.45}
+  /* 暖纸手账浮窗（浅色奶白纸 / 深色暗胡桃木） */
+  .hpop{position:absolute;z-index:20;width:282px;max-width:calc(100% - 24px);padding:13px 14px;border-radius:10px;background:#fffdf9;border:1px solid #ded4c3;color:#2c2520;box-shadow:0 10px 26px rgba(44,37,32,.15)}
+  .hpop-h{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px}
+  .hpop-t{font-size:13px;font-weight:600;color:#2c2520}
+  .hpop-x{width:22px;height:22px;border:0;border-radius:5px;background:transparent;color:#8c7d6e;display:inline-flex;align-items:center;justify-content:center}
+  .hpop-x:hover{background:#f3ede2;color:#2c2520}
+  .hpop-s{font-size:11.5px;color:#7a6c5e;margin-bottom:11px;line-height:1.45}
   .hpop-acts{display:flex;flex-direction:column;gap:8px}
   .hpop-btns{display:flex;gap:7px;align-items:center}
-  .hpop-btn{display:flex;align-items:center;justify-content:center;gap:6px;flex:1;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.07);color:#fff;font-size:12.5px;transition:background .12s,border-color .12s}
-  .hpop-btn:hover:not(:disabled){background:rgba(249,115,22,.32);border-color:rgba(251,146,60,.65)}
-  .hpop-btn.pri{background:linear-gradient(135deg,#ea580c,#d97706);border-color:transparent;font-weight:600}
-  .hpop-btn.pri:hover:not(:disabled){filter:brightness(1.08)}
-  .hpop-btn.stop{flex:0 0 auto;padding:8px 11px;background:rgba(239,68,68,.16);border-color:rgba(248,113,113,.38);color:#fecaca}
-  .hpop-btn.stop:hover:not(:disabled){background:rgba(239,68,68,.3)}
+  .hpop-btn{display:flex;align-items:center;justify-content:center;gap:6px;flex:1;height:32px;padding:0 10px;border-radius:7px;border:1px solid #dcd2c0;background:#f7f2e9;color:#2c2520;font-size:12.5px;font-weight:500;transition:background .12s,border-color .12s}
+  .hpop-btn:hover:not(:disabled){background:#efe7d9;border-color:#c6b9a3}
+  .hpop-btn.pri{background:#3a3028;border-color:#3a3028;color:#fffdf9;font-weight:500}
+  .hpop-btn.pri:hover:not(:disabled){background:#27201a;border-color:#27201a}
+  .hpop-btn.stop{flex:0 0 auto;padding:0 11px;background:transparent;border-color:rgba(185,68,54,.35);color:#b94436}
+  .hpop-btn.stop:hover:not(:disabled){background:rgba(185,68,54,.08)}
   .hpop-btn:disabled{opacity:.38;cursor:not-allowed}
 
-  /* 燃料滑动控制 + 实时烧时预览 */
+  .hpop-form{display:flex;gap:6px;margin-bottom:9px}
+  .hpop-inp{flex:1;min-width:0;height:30px;padding:0 9px;border-radius:6px;border:1px solid #d9cfbe;background:#faf7f0;color:#2c2520;font-size:12px;outline:none}
+  .hpop-inp:focus{border-color:#8c7b6a;background:#fff}
+  .hpop-inp::placeholder{color:#a39585}
+  .hpop-go{height:30px;padding:0 11px;border-radius:6px;border:0;background:#3a3028;color:#fffdf9;font-size:12px;font-weight:500;flex:none}
+  .hpop-go:hover:not(:disabled){background:#27201a}
+  .hpop-go:disabled{opacity:.38;cursor:not-allowed}
+  .hpop-tags{display:flex;flex-wrap:wrap;gap:5px}
+  .hpop-tag{padding:4px 8px;border-radius:6px;border:1px solid #e3dacb;background:#faf6ee;color:#4a3f36;font-size:11.5px;transition:background .12s,border-color .12s,color .12s}
+  .hpop-tag:hover:not(:disabled){background:#efe7d8;border-color:#cbbca6;color:#2c2520}
+  .hpop-tag.on{background:#3a3028;border-color:#3a3028;color:#fffdf9;font-weight:500}
+  .hpop-tag:disabled{opacity:.35;cursor:not-allowed}
+
+  /* 炉火滑条（纤细陶土色） */
   .hctl{display:flex;flex-direction:column;gap:8px}
   .hctl-top{display:flex;align-items:baseline;justify-content:space-between;gap:8px;flex-wrap:wrap}
-  .hctl-amt{font:600 13.5px/1.25 var(--font);font-variant-numeric:tabular-nums;color:var(--t1)}
-  .hctl-amt.muted{font-weight:500;color:var(--t3);font-size:12.5px}
-  .hctl-time{font:500 12.5px/1.25 var(--font);font-variant-numeric:tabular-nums;color:#d95d16;white-space:nowrap}
-  .hctl-time.muted{color:var(--t3);font-weight:400;font-size:12px}
-  .hctl-row{display:flex;align-items:center;gap:12px}
-  .hctl-row .hrange{flex:1;min-width:0}
-  .hctl-btns{display:inline-flex;align-items:center;gap:6px;flex:none}
-  .hrange{-webkit-appearance:none;appearance:none;display:block;width:100%;height:5px;border-radius:999px;outline:none;cursor:pointer;background:linear-gradient(90deg,#ea580c var(--pct,50%),var(--line2) var(--pct,50%))}
-  .hrange::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:17px;height:17px;border-radius:50%;background:#fff;border:2px solid #ea580c;box-shadow:0 1px 5px rgba(0,0,0,.22);cursor:pointer;transition:transform .12s ease,box-shadow .12s ease}
-  .hrange:hover:not(:disabled)::-webkit-slider-thumb,.hrange:focus-visible::-webkit-slider-thumb{transform:scale(1.12);box-shadow:0 0 0 4px rgba(234,88,12,.18),0 1px 6px rgba(0,0,0,.25)}
-  .hrange::-moz-range-thumb{width:17px;height:17px;border-radius:50%;background:#fff;border:2px solid #ea580c;box-shadow:0 1px 5px rgba(0,0,0,.22);cursor:pointer;transition:transform .12s ease}
-  .hrange:disabled{opacity:.36;cursor:not-allowed}
-  .hpop .hctl-amt{color:#fff}
-  .hpop .hctl-amt.muted{color:rgba(226,232,240,.65)}
-  .hpop .hctl-time{color:#fbbf24;font-size:12px}
-  .hpop .hctl-time.muted{color:rgba(226,232,240,.58)}
-  .hpop .hrange{flex:none;height:5px;background:linear-gradient(90deg,#f97316 var(--pct,50%),rgba(255,255,255,.2) var(--pct,50%));margin:6px 0}
-  .hpop .hrange::-webkit-slider-thumb{border-color:#f97316;box-shadow:0 1px 6px rgba(0,0,0,.45)}
-  .hpop .hrange::-moz-range-thumb{border-color:#f97316;box-shadow:0 1px 6px rgba(0,0,0,.45)}
+  .hctl-amt{font:600 13px/1.25 var(--font);font-variant-numeric:tabular-nums;color:#2c2520}
+  .hctl-amt.muted{font-weight:400;color:#8c7d6e;font-size:12px}
+  .hctl-time{font:500 12px/1.25 var(--font);font-variant-numeric:tabular-nums;color:#b45309;white-space:nowrap}
+  .hctl-time.muted{color:#9a8b7c;font-weight:400;font-size:11.5px}
+  .hrange{-webkit-appearance:none;appearance:none;display:block;flex:none;width:100%;height:3px;border-radius:999px;outline:none;cursor:pointer;margin:6px 0;background:linear-gradient(90deg,#b86035 var(--pct,50%),#e6ddd0 var(--pct,50%))}
+  .hrange::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:13px;height:13px;border-radius:50%;background:#b86035;border:2px solid #fffdf9;box-shadow:0 1px 4px rgba(44,37,32,.28);cursor:pointer;transition:transform .12s ease}
+  .hrange:hover:not(:disabled)::-webkit-slider-thumb{transform:scale(1.15)}
+  .hrange::-moz-range-thumb{width:13px;height:13px;border-radius:50%;background:#b86035;border:2px solid #fffdf9;box-shadow:0 1px 4px rgba(44,37,32,.28);cursor:pointer}
+  .hrange:disabled{opacity:.32;cursor:not-allowed}
 
-  /* 无框极简炉火操控条 */
-  .hdock{display:grid;grid-template-columns:minmax(0,1.25fr) 1px minmax(0,1fr);gap:24px;padding:4px 2px 20px;border-bottom:1px solid var(--line)}
-  .hdock-sep{background:var(--line)}
-  .hdock-col{display:flex;flex-direction:column;gap:10px;min-width:0}
-  .hdock-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap}
-  .hdock-name{display:inline-flex;align-items:center;gap:8px;font-size:14.5px;font-weight:600;color:var(--t1)}
-  .hdot-s{width:8px;height:8px;border-radius:50%;background:var(--t4);flex:none}
-  .hdot-s.lit{background:#ea580c;box-shadow:0 0 0 3px rgba(234,88,12,.18)}
-  .hdot-s.warm{background:#d97706}
-  .hdock-stat{font-size:12px;color:var(--t3);font-weight:400}
-  .hdock-fuel{border:0;background:transparent;padding:0;font-size:12.5px;color:var(--t2);cursor:pointer;display:inline-flex;align-items:center;gap:4px}
-  .hdock-fuel:hover{color:var(--t1);text-decoration:underline;text-underline-offset:3px}
-  .hdock-fuel b{font-family:var(--mono);font-weight:600;color:var(--t1)}
-  .hdock-fuel.low b{color:var(--danger)}
+  /* 深色模式暖胡桃木浮窗适配 */
+  :root[data-theme="dark"] .hpop{background:#211e1b;border-color:rgba(255,255,255,.12);color:#efeae1;box-shadow:0 12px 28px rgba(0,0,0,.48)}
+  :root[data-theme="dark"] .hpop-t,:root[data-theme="dark"] .hctl-amt{color:#f7f3eb}
+  :root[data-theme="dark"] .hpop-s,:root[data-theme="dark"] .hctl-amt.muted,:root[data-theme="dark"] .hctl-time.muted{color:rgba(235,228,218,.6)}
+  :root[data-theme="dark"] .hpop-x{color:rgba(235,228,218,.6)}
+  :root[data-theme="dark"] .hpop-x:hover{background:rgba(255,255,255,.08);color:#fff}
+  :root[data-theme="dark"] .hpop-btn.pri,:root[data-theme="dark"] .hpop-go{background:#f0eae0;border-color:#f0eae0;color:#1c1916}
+  :root[data-theme="dark"] .hpop-btn.pri:hover:not(:disabled),:root[data-theme="dark"] .hpop-go:hover:not(:disabled){background:#fff;border-color:#fff}
+  :root[data-theme="dark"] .hpop-inp{background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.15);color:#f7f3eb}
+  :root[data-theme="dark"] .hpop-tag{background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.12);color:#e5ded3}
+  :root[data-theme="dark"] .hpop-tag:hover:not(:disabled){background:rgba(255,255,255,.11);color:#fff}
+  :root[data-theme="dark"] .hpop-tag.on{background:#f0eae0;border-color:#f0eae0;color:#1c1916}
+  :root[data-theme="dark"] .hctl-time{color:#e3b172}
+  :root[data-theme="dark"] .hrange{background:linear-gradient(90deg,#d69554 var(--pct,50%),rgba(255,255,255,.18) var(--pct,50%))}
+  :root[data-theme="dark"] .hrange::-webkit-slider-thumb{background:#f0eae0;border-color:#211e1b}
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme]) .hpop{background:#211e1b;border-color:rgba(255,255,255,.12);color:#efeae1;box-shadow:0 12px 28px rgba(0,0,0,.48)}
+    :root:not([data-theme]) .hpop-t,:root:not([data-theme]) .hctl-amt{color:#f7f3eb}
+    :root:not([data-theme]) .hpop-s,:root:not([data-theme]) .hctl-amt.muted,:root:not([data-theme]) .hctl-time.muted{color:rgba(235,228,218,.6)}
+    :root:not([data-theme]) .hpop-btn.pri,:root:not([data-theme]) .hpop-go{background:#f0eae0;border-color:#f0eae0;color:#1c1916}
+    :root:not([data-theme]) .hpop-inp{background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.15);color:#f7f3eb}
+    :root:not([data-theme]) .hpop-tag{background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.12);color:#e5ded3}
+    :root:not([data-theme]) .hctl-time{color:#e3b172}
+    :root:not([data-theme]) .hrange{background:linear-gradient(90deg,#d69554 var(--pct,50%),rgba(255,255,255,.18) var(--pct,50%))}
+    :root:not([data-theme]) .hrange::-webkit-slider-thumb{background:#f0eae0;border-color:#211e1b}
+  }
 
-  .hseg{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
-  .hact{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 13px;border-radius:9px;border:1px solid var(--line2);background:transparent;color:var(--t1);font-size:13px;font-weight:500;transition:background .12s,border-color .12s,color .12s}
-  .hact:hover:not(:disabled){background:var(--hover);border-color:var(--t3)}
-  .hact.pri{background:#ea580c;border-color:#ea580c;color:#fff}
-  .hact.pri:hover:not(:disabled){background:#d94e07;border-color:#d94e07}
-  .hact.pri small{color:rgba(255,255,255,.85)}
-  .hact.stop{border-color:rgba(201,54,54,.35);color:var(--danger)}
-  .hact.stop:hover:not(:disabled){background:var(--danger-soft)}
-  .hact:disabled{opacity:.38;cursor:not-allowed}
-  .hact small{font-size:11.5px;color:var(--t3);font-family:var(--mono);font-weight:400}
-  .hbatch{display:flex;flex-direction:column;gap:6px;padding:8px 0 2px;font-size:12px;color:var(--t3)}
-  .hbatch-sel{height:28px;padding:0 8px;border:1px solid var(--line2);border-radius:7px;background:var(--bg);color:var(--t1);font-size:12px;max-width:300px}
+  /* 图下唯一一行素雅状态条（替代臃肿双炉底栏） */
+  .hmeta-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:6px 2px 14px;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--t3)}
+  .hmeta-left,.hmeta-right{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .hmeta-btn{border:0;background:transparent;padding:0;font-size:12.5px;color:var(--t2);cursor:pointer;display:inline-flex;align-items:center;gap:4px}
+  .hmeta-btn:hover{color:var(--t1);text-decoration:underline;text-underline-offset:3px}
+  .hmeta-btn b{font-family:var(--mono);font-weight:500;color:var(--t1)}
+  .hmeta-btn.low b{color:var(--danger)}
+  .hmeta-bar > span b,.hmeta-left > span b{font-family:var(--mono);font-weight:500;color:var(--t2)}
+  .hbatch{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 2px 10px;border-bottom:1px solid var(--line);font-size:12px;color:var(--t3)}
+  .hbatch-sel{height:28px;padding:0 8px;border:1px solid var(--line2);border-radius:6px;background:var(--bg);color:var(--t1);font-size:12px;max-width:320px}
 
-  .hfoot-info{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:10px 2px 0;font-size:12px;color:var(--t3)}
-  .hfoot-info b{color:var(--t2);font-weight:500}
-
-  /* 底部极简走势 / 记录切换（无框） */
-  .hsub-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:22px 0 12px}
+  /* 底部极简走势 / 记录切换 */
+  .hsub-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:18px 0 12px}
   .htabs{display:inline-flex;gap:18px}
-  .htab{border:0;background:transparent;padding:4px 0;font-size:13.5px;font-weight:500;color:var(--t3);position:relative}
+  .htab{border:0;background:transparent;padding:4px 0;font-size:13px;font-weight:500;color:var(--t3);position:relative}
   .htab:hover{color:var(--t1)}
   .htab.on{color:var(--t1);font-weight:600}
-  .htab.on::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:2px;border-radius:2px;background:var(--t1)}
-  .hchart-leg{display:flex;flex-wrap:wrap;gap:14px;font-size:11.5px;color:var(--t3)}
+  .htab.on::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:1.5px;background:var(--t1)}
+  .hchart-leg{display:flex;flex-wrap:wrap;gap:12px;font-size:11.5px;color:var(--t3)}
   .hchart-leg span{display:inline-flex;align-items:center;gap:5px}
-  .hchart-leg i{width:10px;height:2.5px;border-radius:2px;display:inline-block}
+  .hchart-leg i{width:9px;height:2px;border-radius:1px;display:inline-block}
   .hchart-svg{width:100%;height:auto;display:block}
 
   .hlog-plain{display:flex;flex-direction:column}
@@ -1316,16 +1324,14 @@
   .hlog-item.click{cursor:pointer}
   .hlog-item.click:hover{background:var(--hover)}
   .hlog-at{font-family:var(--mono);font-size:12px;color:var(--t3)}
-  .hlog-kind{font-weight:600;color:var(--t1)}
-  .hlog-kind.wood{color:#d95d16}
-  .hlog-kind.char{color:#b45309}
+  .hlog-kind{font-weight:500;color:var(--t1)}
+  .hlog-kind.wood{color:#b45309}
+  .hlog-kind.char{color:var(--t2)}
   .hlog-do{color:var(--t2);min-width:0}
   .hlog-do small{display:block;font-size:11.5px;color:var(--t3);margin-top:1px}
   .hlog-who{font-size:12px;color:var(--t3);white-space:nowrap}
 
   @media (max-width:740px){
-    .hdock{grid-template-columns:1fr;gap:16px}
-    .hdock-sep{height:1px;width:100%}
     .hlog-item{grid-template-columns:minmax(0,1fr) auto;row-gap:2px}
     .hlog-at{grid-column:1}
     .hlog-who{grid-column:2;grid-row:1}
@@ -5065,410 +5071,358 @@
     var ctx = canvas.getContext("2d");
     ctx.scale(dpr, dpr);
 
+    var dark = heatIsDark();
     var th = d.thermal || {};
     var wxInfo = d.weather || {};
     var st = d.stoves || {};
     var woodLit = !!(st.wood && st.wood.burning);
     var charLit = !!(st.charcoal && st.charcoal.burning);
+    var kangWarm = Number(th.kang_delta || 0) >= 2;
 
     function rRect(x, y, w, h, r) {
       ctx.beginPath();
       if (ctx.roundRect) { ctx.roundRect(x, y, w, h, r); }
       else { ctx.rect(x, y, w, h); }
     }
-    // 方便按世界坐标画矩形：wRect(xMin, xMax, yMin, yMax)
     function wRect(x0, x1, y0, y1, r) {
-      var px0 = toX(y1), px1 = toX(y0);
-      var py0 = toY(x1), py1 = toY(x0);
-      rRect(px0, py0, px1 - px0, py1 - py0, r || 4);
+      var px = toX(y1), py = toY(x1);
+      rRect(px, py, toX(y0) - toX(y1), toY(x0) - toY(x1), r || 3);
     }
 
-    // 1. 深海港湾背景 + 上方防波堤石砌码头（右舷靠码头、左舷靠海！）
-    var bgGrad = ctx.createLinearGradient(0, 0, 0, H);
-    bgGrad.addColorStop(0, "#091426");
-    bgGrad.addColorStop(1, "#0d1f36");
-    ctx.fillStyle = bgGrad;
+    var pal = dark ? {
+      seaTop: "#24303a", seaBot: "#1c2630", wave: "rgba(255,255,255,0.10)",
+      pier: "#35332f", pierEdge: "#292724", pierLine: "rgba(255,255,255,0.06)",
+      bollard: "#59554e", bollardStroke: "#242220", shadow: "rgba(0,0,0,0.42)",
+      floor: "#463b30", plank: "rgba(255,235,205,0.06)", storeTint: "rgba(0,0,0,0.18)",
+      deck: "#3b3630", deckPlank: "rgba(255,255,255,0.06)",
+      shelf: "#5e4e3c", shelfS: "#332a20", crate: "#504233",
+      kang: "#7c4c34", kangS: "#4d2c1c", mat: "#6a5943",
+      quilt: "#3f5162", quiltS: "#293642", pillow: "#8b8375", pillowS: "#5e574d",
+      chimney: "#6a3c27", chimneyS: "#3f2216",
+      table: "#6e5339", tableS: "#3d2d1e", cup1: "#d6cfc2", cup2: "#9fb0b8",
+      desk: "#684f38", deskS: "#3b2c1e", chart: "#998f7c", chartS: "#6e6658", chair: "#5b4430",
+      kitchen: "#565047", kitchenS: "#332f29",
+      woodRack: "#5e4833", woodRackS: "#36281c",
+      hammock: "rgba(180,170,152,0.28)", hammockS: "rgba(205,195,178,0.38)",
+      hullOuter: "#57656e", hullInner: "#887e70", wall: "#2b241d",
+      winFill: "#5c7d91", winStroke: "#323e46",
+      txtMain: "#f0e9dd", txtSub: "rgba(232,223,209,0.68)", txtDim: "rgba(218,210,198,0.48)",
+      pierTxt: "rgba(232,225,214,0.76)"
+    } : {
+      seaTop: "#c8d7dc", seaBot: "#b4c8d1", wave: "rgba(255,255,255,0.28)",
+      pier: "#ddd7ca", pierEdge: "#cbc3b3", pierLine: "rgba(95,86,74,0.18)",
+      bollard: "#6c6862", bollardStroke: "#3f3c38", shadow: "rgba(56,78,92,0.22)",
+      floor: "#e8d9c0", plank: "rgba(150,118,82,0.16)", storeTint: "rgba(110,94,76,0.12)",
+      deck: "#cfc2ac", deckPlank: "rgba(110,98,82,0.22)",
+      shelf: "#bda381", shelfS: "#7a6348", crate: "#a88d6b",
+      kang: "#cc855f", kangS: "#8a4b2d", mat: "#e3c99e",
+      quilt: "#87a0b5", quiltS: "#587085", pillow: "#f4efe4", pillowS: "#b5aa98",
+      chimney: "#a85d3c", chimneyS: "#753d24",
+      table: "#b58b5f", tableS: "#785838", cup1: "#f5f1e8", cup2: "#dce3e6",
+      desk: "#b08962", deskS: "#73563a", chart: "#f4eedc", chartS: "#c7bc9f", chair: "#9c7956",
+      kitchen: "#c9bfa8", kitchenS: "#857b68",
+      woodRack: "#9e7c58", woodRackS: "#6b5138",
+      hammock: "rgba(245,239,226,0.72)", hammockS: "rgba(155,142,122,0.65)",
+      hullOuter: "#4b5a63", hullInner: "#e6dfd2", wall: "#6b5d4e",
+      winFill: "#a6cadb", winStroke: "#4b5a63",
+      txtMain: "#2e2620", txtSub: "#6e6154", txtDim: "rgba(44,58,68,0.68)",
+      pierTxt: "#5c544b"
+    };
+
+    // 1. 柔和海面水彩底 + 细波纹
+    var seaG = ctx.createLinearGradient(0, 56, 0, H);
+    seaG.addColorStop(0, pal.seaTop);
+    seaG.addColorStop(1, pal.seaBot);
+    ctx.fillStyle = seaG;
     ctx.fillRect(0, 0, W, H);
 
-    // 上方防波堤石码头条带 (wx > 2.85 -> py < 70)
-    ctx.fillStyle = "rgba(148, 163, 184, 0.14)";
-    ctx.fillRect(0, 0, W, 62);
-    ctx.strokeStyle = "rgba(203, 213, 225, 0.24)";
-    ctx.lineWidth = 1.2;
-    ctx.beginPath(); ctx.moveTo(0, 62); ctx.lineTo(W, 62); ctx.stroke();
-    // 两个系缆柱示意
-    [toX(4.2), toX(-4.0)].forEach(function (bx) {
-      ctx.beginPath(); ctx.arc(bx, 48, 4.5, 0, Math.PI * 2);
-      ctx.fillStyle = "rgba(203,213,225,0.38)"; ctx.fill();
+    ctx.strokeStyle = pal.wave;
+    ctx.lineWidth = 1;
+    [[42,102,48],[680,118,54],[88,376,62],[620,388,70],[310,395,55],[520,76,42],[180,82,38]].forEach(function (w) {
+      ctx.beginPath();
+      ctx.moveTo(w[0], w[1]);
+      ctx.quadraticCurveTo(w[0] + w[2] * 0.5, w[1] - 3, w[0] + w[2], w[1]);
+      ctx.stroke();
     });
 
-    // 下方靠海极细水波纹
-    ctx.strokeStyle = "rgba(125, 196, 232, 0.08)";
+    // 上方防波堤石头码头 + 系缆柱
+    ctx.fillStyle = pal.pier;
+    ctx.fillRect(0, 0, W, 56);
+    ctx.fillStyle = pal.pierEdge;
+    ctx.fillRect(0, 52, W, 5);
+    ctx.strokeStyle = pal.pierLine;
     ctx.lineWidth = 1;
-    for (var wyLine = 94; wyLine <= H - 14; wyLine += 36) {
-      ctx.beginPath();
-      for (var pxw = 0; pxw <= W; pxw += 24) {
-        var pyw = wyLine + Math.sin(pxw * 0.025 + wyLine) * 2.2;
-        if (pxw === 0) { ctx.moveTo(pxw, pyw); } else { ctx.lineTo(pxw, pyw); }
-      }
-      ctx.stroke();
+    for (var sx = 48; sx < W; sx += 76) {
+      ctx.beginPath(); ctx.moveTo(sx, 0); ctx.lineTo(sx, 52); ctx.stroke();
     }
+    [toX(2.4), toX(-4.0)].forEach(function (bx) {
+      ctx.beginPath(); ctx.arc(bx, 40, 5, 0, Math.PI * 2);
+      ctx.fillStyle = pal.bollard; ctx.fill();
+      ctx.strokeStyle = pal.bollardStroke; ctx.lineWidth = 1.2; ctx.stroke();
+    });
 
-    // 2. 离屏连续像素热场渲染（裁切在精确船壳轮廓内）
-    var gw = 190, gh = 105;
-    var off = document.createElement("canvas");
-    off.width = gw; off.height = gh;
-    var octx = off.getContext("2d");
-    var img = octx.createImageData(gw, gh);
-    var buf = img.data;
-    var field = new Float32Array(gw * gh);
-    for (var gy = 0; gy < gh; gy++) {
-      var sy = (gy + 0.5) / gh * H;
-      for (var gx = 0; gx < gw; gx++) {
-        var sx = (gx + 0.5) / gw * W;
-        var s = sample(sx, sy);
-        field[gy * gw + gx] = s.temp;
-        var idx = (gy * gw + gx) * 4;
-        if (s.region === "sea" || s.region === "pier") {
-          buf[idx + 3] = 0;
-        } else {
-          var rgb = thermalColor(s.temp);
-          buf[idx] = rgb[0];
-          buf[idx + 1] = rgb[1];
-          buf[idx + 2] = rgb[2];
-          buf[idx + 3] = (s.region === "deck" || s.region === "aft_deck") ? 190 : 242;
-        }
-      }
-    }
-    octx.putImageData(img, 0, 0);
+    // 船体在水面的柔和投影
+    ctx.save();
+    ctx.translate(0, 5);
+    traceHullPath(ctx);
+    ctx.fillStyle = pal.shadow;
+    ctx.fill();
+    ctx.restore();
 
+    // 2. 船屋木地板 + 露天船头甲板 + 全部真实家具
     ctx.save();
     traceHullPath(ctx);
+    ctx.fillStyle = pal.floor;
+    ctx.fill();
     ctx.clip();
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = "high";
-    ctx.drawImage(off, 0, 0, W, H);
 
-    // 平滑 Marching Squares 等温线（每 3°C）
-    ctx.strokeStyle = "rgba(255,255,255,0.13)";
-    ctx.lineWidth = 0.9;
-    var stepX = W / gw, stepY = H / gh;
-    ctx.beginPath();
-    for (var lvl = 6; lvl <= 24; lvl += 3) {
-      for (var iy = 0; iy < gh - 1; iy++) {
-        for (var ix = 0; ix < gw - 1; ix++) {
-          var cx0 = (ix + 0.5) * stepX, cy0 = (iy + 0.5) * stepY;
-          if (inHullRegion(cx0, cy0) !== "cabin") { continue; }
-          var v0 = field[iy * gw + ix];
-          var v1 = field[iy * gw + ix + 1];
-          var v2 = field[(iy + 1) * gw + ix + 1];
-          var v3 = field[(iy + 1) * gw + ix];
-          var pts = [];
-          if ((v0 < lvl) !== (v1 < lvl)) { pts.push([cx0 + (lvl - v0) / (v1 - v0) * stepX, cy0]); }
-          if ((v1 < lvl) !== (v2 < lvl)) { pts.push([cx0 + stepX, cy0 + (lvl - v1) / (v2 - v1) * stepY]); }
-          if ((v3 < lvl) !== (v2 < lvl)) { pts.push([cx0 + (lvl - v3) / (v2 - v3) * stepX, cy0 + stepY]); }
-          if ((v0 < lvl) !== (v3 < lvl)) { pts.push([cx0, cy0 + (lvl - v0) / (v3 - v0) * stepY]); }
-          if (pts.length === 2) {
-            ctx.moveTo(pts[0][0], pts[0][1]);
-            ctx.lineTo(pts[1][0], pts[1][1]);
-          }
-        }
-      }
-    }
-    ctx.stroke();
-
-    // 前甲板微弱木板线
-    ctx.strokeStyle = "rgba(255,255,255,0.06)";
+    // 舱内暖松木地板缝
+    ctx.strokeStyle = pal.plank;
     ctx.lineWidth = 1;
-    for (var dpy = 90; dpy <= 370; dpy += 16) {
-      ctx.beginPath();
-      ctx.moveTo(toX(-3.36), dpy);
-      ctx.lineTo(toX(-5.35), dpy);
-      ctx.stroke();
+    for (var py = 92; py <= 368; py += 14) {
+      ctx.beginPath(); ctx.moveTo(toX(4.7), py); ctx.lineTo(toX(-3.36), py); ctx.stroke();
+    }
+    // 储物舱偏暗底色
+    ctx.fillStyle = pal.storeTint;
+    ctx.fillRect(toX(4.72), 80, toX(3.24) - toX(4.72), 300);
+
+    // 船头露天甲板
+    ctx.fillStyle = pal.deck;
+    ctx.fillRect(toX(-3.36), 80, toX(-5.45) - toX(-3.36), 300);
+    ctx.strokeStyle = pal.deckPlank;
+    for (var dy = 96; dy <= 364; dy += 13) {
+      ctx.beginPath(); ctx.moveTo(toX(-3.36), dy); ctx.lineTo(toX(-5.4), dy); ctx.stroke();
+    }
+
+    // 储物舱货架 & 箱子
+    ctx.fillStyle = pal.shelf; ctx.strokeStyle = pal.shelfS; ctx.lineWidth = 1.1;
+    wRect(1.67, 2.29, 3.35, 4.49, 2); ctx.fill(); ctx.stroke();
+    wRect(-2.29, -1.67, 3.35, 4.49, 2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = pal.crate;
+    wRect(-2.15, -1.78, 3.55, 4.05, 2); ctx.fill(); ctx.stroke();
+
+    // 红砖火炕 + 炕席 + 蓝花棉被 + 枕头 + 砖烟囱
+    ctx.fillStyle = pal.kang; ctx.strokeStyle = pal.kangS; ctx.lineWidth = 1.5;
+    wRect(0.47, 2.32, 0.60, 3.20, 4); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = pal.mat;
+    wRect(0.56, 2.24, 0.70, 3.10, 3); ctx.fill();
+    ctx.fillStyle = pal.quilt; ctx.strokeStyle = pal.quiltS; ctx.lineWidth = 1;
+    wRect(0.64, 2.16, 0.78, 2.48, 4); ctx.fill(); ctx.stroke();
+    ctx.strokeStyle = "rgba(255,255,255,0.18)";
+    ctx.beginPath(); ctx.moveTo(toX(2.42), toY(1.4)); ctx.lineTo(toX(0.84), toY(1.4)); ctx.stroke();
+    ctx.fillStyle = pal.pillow; ctx.strokeStyle = pal.pillowS; ctx.lineWidth = 1;
+    wRect(1.06, 1.72, 2.68, 3.02, 5); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = pal.chimney; ctx.strokeStyle = pal.chimneyS;
+    wRect(1.94, 2.32, 2.66, 3.04, 2); ctx.fill(); ctx.stroke();
+
+    // 矮桌 + 茶杯
+    ctx.fillStyle = pal.table; ctx.strokeStyle = pal.tableS; ctx.lineWidth = 1.2;
+    wRect(-1.58, -0.46, -0.08, 0.68, 4); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = pal.cup1; ctx.beginPath(); ctx.arc(toX(0.42), toY(-0.78), 3.1, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = pal.cup2; ctx.beginPath(); ctx.arc(toX(0.14), toY(-1.26), 3.1, 0, Math.PI * 2); ctx.fill();
+
+    // 海图书桌 + 摊开的海图 + 椅子
+    ctx.fillStyle = pal.desk; ctx.strokeStyle = pal.deskS; ctx.lineWidth = 1.1;
+    wRect(-1.90, -0.66, 1.82, 2.42, 3); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = pal.chart; ctx.strokeStyle = pal.chartS;
+    wRect(-1.68, -0.88, 1.92, 2.32, 1); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = pal.chair; ctx.strokeStyle = pal.deskS;
+    wRect(-1.50, -1.06, 1.26, 1.62, 3); ctx.fill(); ctx.stroke();
+
+    // 小灶台 + 小炭炉
+    ctx.fillStyle = pal.kitchen; ctx.strokeStyle = pal.kitchenS; ctx.lineWidth = 1.1;
+    wRect(-2.32, -1.16, -2.58, -0.45, 3); ctx.fill(); ctx.stroke();
+    var csx = toX(-2.32), csy = toY(-1.64);
+    if (charLit) {
+      var charG = ctx.createRadialGradient(csx, csy, 4, csx, csy, 68);
+      charG.addColorStop(0, "rgba(255,154,60,0.45)");
+      charG.addColorStop(1, "rgba(255,154,60,0)");
+      ctx.fillStyle = charG;
+      ctx.fillRect(csx - 75, csy - 75, 150, 150);
+    }
+    ctx.beginPath(); ctx.arc(csx, csy, 11, 0, Math.PI * 2);
+    ctx.fillStyle = "#5c534c"; ctx.fill(); ctx.strokeStyle = "#332e2a"; ctx.lineWidth = 1.2; ctx.stroke();
+    ctx.beginPath(); ctx.arc(csx, csy, 5.5, 0, Math.PI * 2);
+    ctx.fillStyle = charLit ? "#f59e0b" : "#3b3530"; ctx.fill();
+
+    // 柴架 & 吊床
+    ctx.fillStyle = pal.woodRack; ctx.strokeStyle = pal.woodRackS; ctx.lineWidth = 1;
+    wRect(1.68, 2.15, -1.65, -0.85, 2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = pal.hammock; ctx.strokeStyle = pal.hammockS; ctx.lineWidth = 1;
+    wRect(0.32, 1.08, -2.55, -1.05, 14); ctx.fill(); ctx.stroke();
+
+    // 3. 自然炉火暖光（生火时柔光照亮地板和火炕，余温时微暖）
+    var wsx = toX(0.06), wsy = toY(0.45);
+    if (woodLit || kangWarm) {
+      var warmG = ctx.createRadialGradient(wsx, wsy, 8, wsx, wsy, woodLit ? 220 : 115);
+      warmG.addColorStop(0, woodLit ? (dark ? "rgba(255,168,68,0.44)" : "rgba(255,168,68,0.40)") : "rgba(235,146,72,0.12)");
+      warmG.addColorStop(0.55, woodLit ? "rgba(245,152,66,0.15)" : "rgba(235,146,72,0.04)");
+      warmG.addColorStop(1, "rgba(245,152,66,0)");
+      ctx.fillStyle = warmG;
+      ctx.fillRect(0, 0, W, H);
+
+      var kangG = ctx.createRadialGradient(toX(1.8), toY(1.4), 12, toX(1.8), toY(1.4), 130);
+      kangG.addColorStop(0, woodLit ? "rgba(255,156,64,0.28)" : "rgba(235,140,68,0.14)");
+      kangG.addColorStop(1, "rgba(255,156,64,0)");
+      ctx.fillStyle = kangG;
+      ctx.fillRect(0, 0, W, H);
+    }
+
+    // 铁桶柴炉（暗铸铁桶 + 烧火时的暖红炉心）
+    ctx.beginPath(); ctx.arc(wsx, wsy, 17, 0, Math.PI * 2);
+    ctx.fillStyle = "#3f3b37"; ctx.fill(); ctx.strokeStyle = "#24211e"; ctx.lineWidth = 1.6; ctx.stroke();
+    ctx.beginPath(); ctx.arc(wsx, wsy, 9, 0, Math.PI * 2);
+    ctx.fillStyle = woodLit ? "#f59e0b" : "#5c544d"; ctx.fill();
+    if (woodLit) {
+      ctx.beginPath(); ctx.arc(wsx, wsy, 4.5, 0, Math.PI * 2);
+      ctx.fillStyle = "#fef3c7"; ctx.fill();
     }
     ctx.restore();
 
-    // 3. 精细 1:1 建筑蓝图白线稿（全部基于 v6.blend 精确坐标）
-    // 船体金属外壳
+    // 船体铁皮壳 & 隔墙 & 开着的前舱门
     traceHullPath(ctx);
-    ctx.strokeStyle = "rgba(255,255,255,0.44)";
-    ctx.lineWidth = 2;
-    ctx.stroke();
+    ctx.strokeStyle = pal.hullOuter; ctx.lineWidth = 3.8; ctx.stroke();
+    traceHullPath(ctx);
+    ctx.strokeStyle = pal.hullInner; ctx.lineWidth = 1.1; ctx.stroke();
 
-    // 左右舷主舱壁 (x = ±2.36, y ∈ [-3.36, +4.68])
-    ctx.strokeStyle = "rgba(255,255,255,0.38)";
-    ctx.lineWidth = 1.6;
+    ctx.strokeStyle = pal.wall; ctx.lineWidth = 2.4;
     ctx.beginPath();
-    ctx.moveTo(toX(4.68), toY(2.36)); ctx.lineTo(toX(-3.36), toY(2.36));
-    ctx.moveTo(toX(4.68), toY(-2.36)); ctx.lineTo(toX(-3.36), toY(-2.36));
-    // 船尾端壁 y=4.68
-    ctx.moveTo(toX(4.68), toY(2.36)); ctx.lineTo(toX(4.68), toY(-2.36));
-    // 储物舱隔墙 y=3.24（居中门洞 x ∈ [-0.49, +0.49]）
-    ctx.moveTo(toX(3.24), toY(2.36)); ctx.lineTo(toX(3.24), toY(0.49));
-    ctx.moveTo(toX(3.24), toY(-0.49)); ctx.lineTo(toX(3.24), toY(-2.36));
-    // 前舱壁 y=-3.36（前舱门洞 x ∈ [-0.89, +0.13]）
-    ctx.moveTo(toX(-3.36), toY(2.36)); ctx.lineTo(toX(-3.36), toY(0.13));
-    ctx.moveTo(toX(-3.36), toY(-0.89)); ctx.lineTo(toX(-3.36), toY(-2.36));
+    ctx.moveTo(toX(3.24), toY(2.34)); ctx.lineTo(toX(3.24), toY(0.49));
+    ctx.moveTo(toX(3.24), toY(-0.49)); ctx.lineTo(toX(3.24), toY(-2.34));
+    ctx.moveTo(toX(-3.36), toY(2.34)); ctx.lineTo(toX(-3.36), toY(0.13));
+    ctx.moveTo(toX(-3.36), toY(-0.89)); ctx.lineTo(toX(-3.36), toY(-2.34));
     ctx.stroke();
-
-    // 打开的前舱门（朝甲板外开）
-    ctx.strokeStyle = "rgba(255,255,255,0.78)";
-    ctx.lineWidth = 2;
+    // 敞开的前舱门
+    ctx.strokeStyle = pal.wall; ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(toX(-3.36), toY(-0.89));
-    ctx.lineTo(toX(-3.36 - 0.72), toY(-0.89 + 0.56));
+    ctx.lineTo(toX(-3.36 - 0.72), toY(-0.89 + 0.52));
     ctx.stroke();
 
-    // 5 个真实舷窗（右舷3个 + 左舷2个，左舷灶台 y=-2.05 无窗！）
-    ctx.strokeStyle = "rgba(125,211,252,0.88)";
-    ctx.lineWidth = 3.2;
-    ctx.lineCap = "round";
+    // 5 扇海蓝玻璃舷窗
     [[2.36, 2.05], [2.36, 0.05], [2.36, -2.05], [-2.36, 2.05], [-2.36, 0.05]].forEach(function (w) {
-      ctx.beginPath();
-      ctx.moveTo(toX(w[1] + 0.44), toY(w[0]));
-      ctx.lineTo(toX(w[1] - 0.44), toY(w[0]));
-      ctx.stroke();
+      var x0 = toX(w[1] + 0.42), x1 = toX(w[1] - 0.42), y = toY(w[0]);
+      ctx.fillStyle = pal.winFill; ctx.fillRect(x0, y - 3, x1 - x0, 6);
+      ctx.strokeStyle = pal.winStroke; ctx.lineWidth = 1; ctx.strokeRect(x0, y - 3, x1 - x0, 6);
     });
 
-    // 船尾储物舱左右货架 & 工具挂板
-    ctx.strokeStyle = "rgba(255,255,255,0.24)";
-    ctx.fillStyle = "rgba(10,16,30,0.22)";
-    ctx.lineWidth = 1.1;
-    wRect(1.67, 2.29, 3.35, 4.49, 3); ctx.fill(); ctx.stroke();
-    wRect(-2.29, -1.67, 3.35, 4.49, 3); ctx.fill(); ctx.stroke();
-    // 工具木挂板在船尾端壁 y=4.60
-    ctx.strokeStyle = "rgba(255,255,255,0.4)";
-    ctx.beginPath();
-    ctx.moveTo(toX(4.60), toY(1.2)); ctx.lineTo(toX(4.60), toY(-1.2));
-    ctx.stroke();
-
-    // === 1) 红砖火炕：x ∈ [0.47, 2.32], y ∈ [0.60, 3.20] ===
-    ctx.strokeStyle = Number(th.kang_delta || 0) >= 2 ? "rgba(255,220,160,0.68)" : "rgba(255,255,255,0.38)";
-    ctx.fillStyle = "rgba(255,255,255,0.04)";
-    ctx.lineWidth = 1.5;
-    wRect(0.47, 2.32, 0.60, 3.20, 6); ctx.fill(); ctx.stroke();
-    // 蓝花棉被与枕头轮廓（枕头靠储物隔墙床头 y=2.85）
-    ctx.strokeStyle = "rgba(255,255,255,0.18)";
-    ctx.lineWidth = 1;
-    wRect(0.58, 2.22, 0.72, 2.65, 4); ctx.stroke();
-    wRect(1.05, 1.72, 2.74, 3.06, 4); ctx.stroke();
-    // 炕底隐蔽烟道虚线路径（进烟口 → 墙角直角砖烟道）
-    ctx.save();
-    ctx.strokeStyle = woodLit ? "rgba(255,220,140,0.45)" : "rgba(255,255,255,0.15)";
-    ctx.lineWidth = 2;
-    ctx.setLineDash([4, 4]);
-    ctx.beginPath();
-    ctx.moveTo(toX(0.78), toY(1.16));
-    ctx.lineTo(toX(2.90), toY(1.30));
-    ctx.lineTo(toX(3.04), toY(2.15));
-    ctx.stroke();
-    ctx.restore();
-    // 墙角直角砖烟道：(2.15, 3.04), 0.32×0.32m
-    ctx.fillStyle = woodLit ? "rgba(255,150,70,0.52)" : "rgba(255,255,255,0.18)";
-    ctx.strokeStyle = "rgba(255,255,255,0.58)";
-    ctx.lineWidth = 1.2;
-    wRect(1.99, 2.31, 2.88, 3.20, 2); ctx.fill(); ctx.stroke();
-
-    // === 2) 铁桶柴炉隔热底座 & 横向铁烟管 ===
-    ctx.strokeStyle = "rgba(255,255,255,0.28)";
-    ctx.fillStyle = "rgba(10,16,30,0.25)";
-    ctx.lineWidth = 1.1;
-    wRect(0.02, 0.88, -0.39, 0.51, 4); ctx.fill(); ctx.stroke();
-
-    // 横向铁烟管：(0.68, 0.06) -> (0.90, 0.06) -> (1.16, 0.78)
-    ctx.save();
-    ctx.lineCap = "round"; ctx.lineJoin = "round";
-    ctx.strokeStyle = woodLit ? "rgba(255,205,115,0.92)" : "rgba(255,255,255,0.44)";
-    ctx.lineWidth = 5.5;
-    ctx.beginPath();
-    ctx.moveTo(toX(0.06), toY(0.68));
-    ctx.lineTo(toX(0.06), toY(0.90));
-    ctx.lineTo(toX(0.78), toY(1.16));
-    ctx.stroke();
-    ctx.restore();
-
-    // === 3) 右舷前侧：床边小几、干柴架、两卷铺盖、收拢吊床 ===
-    ctx.strokeStyle = "rgba(255,255,255,0.24)";
-    ctx.fillStyle = "rgba(10,16,30,0.18)";
-    ctx.lineWidth = 1.1;
-    wRect(1.72, 2.08, -0.73, -0.37, 3); ctx.fill(); ctx.stroke(); // 小几
-    wRect(1.70, 2.10, -1.55, -0.95, 3); ctx.fill(); ctx.stroke(); // 干柴分隔架
-    // 卷好的两卷铺盖 (1.72, -2.53 / -2.15)
-    wRect(1.40, 2.04, -2.68, -2.38, 5); ctx.stroke();
-    wRect(1.40, 2.04, -2.30, -2.00, 5); ctx.stroke();
-    // 横梁收拢吊床虚线 (x=0.70, y ∈ [-2.77, -0.88])
-    ctx.save();
-    ctx.strokeStyle = "rgba(255,255,255,0.22)";
-    ctx.setLineDash([4, 4]);
-    ctx.lineWidth = 1.2;
-    wRect(0.56, 0.84, -2.77, -0.88, 6); ctx.stroke();
-    ctx.restore();
-
-    // === 4) 左后：海图书桌 (-1.28, 2.12) 宽1.55 深0.76 + 旧椅 ===
-    ctx.strokeStyle = "rgba(255,255,255,0.32)";
-    ctx.fillStyle = "rgba(10,16,30,0.24)";
-    ctx.lineWidth = 1.2;
-    wRect(-2.06, -0.50, 1.74, 2.50, 4); ctx.fill(); ctx.stroke();
-    wRect(-1.49, -1.07, 1.14, 1.54, 3); ctx.stroke(); // 旧椅
-
-    // === 5) 左中：矮桌 (-1.02, 0.30) 宽1.35 深0.78 ===
-    wRect(-1.70, -0.34, -0.09, 0.69, 4); ctx.fill(); ctx.stroke();
-
-    // === 6) 左前无窗墙：深 1.05m 炊事小灶台 x ∈ [-2.32, -1.27], y ∈ [-2.75, -0.57] ===
-    wRect(-2.32, -1.27, -2.75, -0.57, 4); ctx.fill(); ctx.stroke();
-    // 案板 (-1.65, -1.28)
-    ctx.strokeStyle = "rgba(255,255,255,0.2)";
-    wRect(-1.96, -1.34, -1.63, -0.93, 2); ctx.stroke();
-    // 饮用淡水桶 (-1.60, -3.05) & 洗涤盆 (-1.06, -2.75)
-    ctx.strokeStyle = "rgba(255,255,255,0.3)";
-    ctx.beginPath(); ctx.arc(toX(-3.05), toY(-1.60), 8, 0, Math.PI * 2); ctx.stroke();
-    ctx.beginPath(); ctx.arc(toX(-2.75), toY(-1.06), 8, 0, Math.PI * 2); ctx.stroke();
-
-    // === 7) 前甲板：接雨水桶 & 晾衣绳 ===
-    ctx.strokeStyle = "rgba(255,255,255,0.32)";
-    ctx.beginPath(); ctx.arc(toX(-4.00), toY(1.48), 9, 0, Math.PI * 2); ctx.stroke();
-    ctx.beginPath(); ctx.arc(toX(-3.95), toY(2.08), 9, 0, Math.PI * 2); ctx.stroke();
-    ctx.save();
-    ctx.setLineDash([3, 3]);
-    ctx.beginPath(); ctx.moveTo(toX(-4.30), toY(2.15)); ctx.lineTo(toX(-4.30), toY(-2.15)); ctx.stroke();
-    ctx.restore();
-
-    // 4. 两个核心热源（精确坐标！）
-    // 铁桶柴炉 (x=0.45, y=0.06)
-    var wsx = toX(0.06), wsy = toY(0.45);
-    ctx.beginPath();
-    ctx.arc(wsx, wsy, 17, 0, Math.PI * 2);
-    ctx.fillStyle = woodLit ? "#f97316" : "rgba(15,23,42,0.75)";
-    ctx.fill();
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = woodLit ? "#fef08a" : "rgba(255,255,255,0.72)";
-    ctx.stroke();
-    ctx.beginPath(); ctx.arc(wsx, wsy, woodLit ? 7 : 4.5, 0, Math.PI * 2);
-    ctx.fillStyle = woodLit ? "#fff7c2" : (th.mode === "cooling" ? "rgba(251,146,60,0.7)" : "rgba(255,255,255,0.3)");
-    ctx.fill();
-
-    // 小炭炉 (x=-1.64, y=-2.32)
-    var csx = toX(-2.32), csy = toY(-1.64);
-    ctx.beginPath();
-    ctx.arc(csx, csy, 11.5, 0, Math.PI * 2);
-    ctx.fillStyle = charLit ? "#ea580c" : "rgba(15,23,42,0.75)";
-    ctx.fill();
-    ctx.lineWidth = 1.6;
-    ctx.strokeStyle = charLit ? "#fde047" : "rgba(255,255,255,0.62)";
-    ctx.stroke();
-    if (charLit) {
-      ctx.beginPath(); ctx.arc(csx, csy, 4.5, 0, Math.PI * 2);
-      ctx.fillStyle = "#fef08a"; ctx.fill();
-    }
-
-    // 5. 极简温区读数与空间标注（精确对齐 v6 位置）
-    function labelBlock(px, py, temp, title, big) {
+    // 4. 轻盈清晰的区域温度标注
+    function badge(px, py, temp, title) {
       ctx.save();
       ctx.textAlign = "center";
-      ctx.shadowColor = "rgba(6,10,20,0.88)";
-      ctx.shadowBlur = 8;
-      ctx.fillStyle = "#ffffff";
-      ctx.font = (big ? "700 19px " : "700 15px ") + "ui-monospace,SFMono-Regular,Menlo,Consolas,monospace";
+      ctx.fillStyle = pal.txtMain;
+      ctx.font = "600 13.5px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace";
       ctx.fillText(fmtTemp(temp), px, py);
-      ctx.fillStyle = "rgba(241,245,249,0.8)";
-      ctx.font = "500 10.5px -apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif";
-      ctx.fillText(title, px, py + 14);
-      ctx.restore();
-    }
-
-    function caption(px, py, text, align) {
-      ctx.save();
-      ctx.textAlign = align || "center";
-      ctx.shadowColor = "rgba(6,10,20,0.88)";
-      ctx.shadowBlur = 6;
-      ctx.fillStyle = "rgba(226,232,240,0.66)";
+      ctx.fillStyle = pal.txtSub;
       ctx.font = "500 10px -apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif";
-      ctx.fillText(text, px, py);
+      ctx.fillText(title, px, py + 13);
       ctx.restore();
     }
+    badge(toX(1.85), toY(1.48), th.kang, "红砖火炕");
+    badge(wsx + 54, wsy + 2, th.near, woodLit ? "柴炉 · 烧着" : "铁桶柴炉");
+    badge(toX(0.30), toY(-1.02), th.mid, "矮桌");
+    badge(toX(2.12), toY(-1.28), th.far, "海图书桌");
+    badge(toX(3.96), toY(0.0), th.far, "储物舱");
+    badge(toX(-4.35), toY(0.0), wxInfo.outdoor, "船头甲板");
 
-    // 各区域温度（直接落在对应真实家具上，互不遮挡）
-    labelBlock(toX(1.85), toY(1.48), th.kang, "红砖火炕", true);
-    labelBlock(wsx + 56, wsy + 3, th.near, woodLit ? "柴炉 · 燃烧中" : "铁桶柴炉", true);
-    labelBlock(toX(0.30), toY(-1.02), th.mid, "矮桌", false);
-    labelBlock(toX(2.12), toY(-1.28), th.far, "海图书桌", false);
-    labelBlock(toX(3.96), toY(0.0), th.far, "储物舱", false);
-    labelBlock(toX(-4.35), toY(0.0), wxInfo.outdoor, "船头甲板", false);
-
-    caption(toX(-1.35), toY(-1.75), "小灶台（无窗）", "center");
-    caption(csx, csy + 23, charLit ? "小炭炉 · 燃" : "小炭炉", "center");
-    caption(toX(-1.25), toY(1.90) + 4, "柴架", "center");
-    caption(toX(-1.82), toY(0.70) + 3, "吊床（梁上）", "center");
-    caption(toX(-3.36) - 4, toY(-0.38) + 4, "前舱门", "right");
-    caption(toX(2.84) + 5, toY(2.14) + 4, "烟道", "left");
-
-    // 上方码头 & 左上/右上环境角标
     ctx.save();
-    ctx.fillStyle = "rgba(226,232,240,0.78)";
-    ctx.font = "500 11.5px -apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif";
-    ctx.fillText("防波堤码头 · 屋外 " + fmtTemp(wxInfo.outdoor) + " · " + (wxInfo.sky_wind || "") + (wxInfo.sea_temp != null ? (" · 海水 " + fmtTemp(wxInfo.sea_temp)) : ""), 18, 26);
+    ctx.fillStyle = pal.txtSub;
+    ctx.font = "400 10px -apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("小灶台", toX(-1.35), toY(-1.75));
+    ctx.fillText(charLit ? "炭炉 · 燃" : "小炭炉", csx, csy + 21);
+    ctx.fillText("吊床", toX(-1.82), toY(0.70) + 3);
+    ctx.fillText("柴架", toX(-1.25), toY(1.90) + 3);
     ctx.restore();
-    caption(20, H - 14, "靠海侧（左舷）", "left");
 
-    // 6. 极简人物坐标点（严格按后端 spot 家具锚点精确落位，同家具多人紧密围坐且文字互不碰撞）
-    // 每槽格式：[px, py, align]（align: "left"=字在点右侧，"right"=字在点左侧）
+    ctx.save();
+    ctx.fillStyle = pal.pierTxt;
+    ctx.font = "500 11px -apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif";
+    ctx.textAlign = "left";
+    ctx.fillText("防波堤码头 · 屋外 " + fmtTemp(wxInfo.outdoor) + (wxInfo.sky_wind ? (" · " + wxInfo.sky_wind) : "") + (wxInfo.sea_temp != null ? (" · 海水 " + fmtTemp(wxInfo.sea_temp)) : ""), 18, 25);
+    ctx.fillStyle = pal.txtDim;
+    ctx.font = "400 10.5px -apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif";
+    ctx.fillText("靠海侧（左舷）", 18, H - 14);
+    ctx.textAlign = "right";
+    ctx.fillText("拖动「主人」可放船屋任意处 · 点击炉具控制炉火", W - 18, H - 14);
+    ctx.restore();
+
+    // 5. 人物手账小标签（奶白胶囊 / 主人深焙黑胶囊；支持自由坐标）
     var spotPts = {
-      table:     [[toX(0.30), toY(-0.18), "left"],  [toX(-0.22), toY(-1.02), "left"],  [toX(0.84), toY(-1.02), "right"]],
-      kang:      [[toX(1.30), toY(0.95), "left"],   [toX(2.35), toY(0.95), "left"],    [toX(1.30), toY(1.95), "left"]],
-      stove:     [[toX(-0.35), toY(0.45), "left"],  [toX(0.06), toY(1.05), "left"],    [toX(0.06), toY(-0.15), "left"]],
-      kitchen:   [[toX(-1.65), toY(-1.02), "left"], [toX(-2.32), toY(-1.02), "left"],  [toX(-0.95), toY(-1.02), "left"]],
-      desk:      [[toX(1.34), toY(-1.28), "left"],  [toX(2.12), toY(-0.32), "left"],   [toX(2.75), toY(-1.28), "right"]],
-      hammock:   [[toX(-1.80), toY(0.70), "left"],  [toX(-1.25), toY(0.70), "left"]],
-      floor_bed: [[toX(-0.25), toY(1.45), "left"],  [toX(-0.85), toY(1.45), "left"]],
-      storage:   [[toX(3.96), toY(0.55), "left"],   [toX(3.96), toY(-0.55), "left"]],
-      door:      [[toX(-2.95), toY(-0.38), "right"],[toX(-2.95), toY(0.25), "right"]],
-      deck:      [[toX(-4.00), toY(-0.85), "left"], [toX(-4.00), toY(0.75), "left"],   [toX(-4.65), toY(0.0), "left"]],
-      cabin:     [[toX(-0.90), toY(0.05), "left"],  [toX(-0.90), toY(-0.55), "left"],  [toX(-0.90), toY(0.58), "left"]]
+      table:     [[toX(0.30), toY(-0.18)],  [toX(-0.52), toY(-1.02)],  [toX(1.06), toY(-1.02)]],
+      kang:      [[toX(1.30), toY(0.95)],   [toX(2.35), toY(0.95)],    [toX(1.30), toY(1.95)]],
+      stove:     [[toX(-0.35), toY(0.45)],  [toX(0.06), toY(1.05)],    [toX(0.06), toY(-0.15)]],
+      kitchen:   [[toX(-1.65), toY(-1.02)], [toX(-2.32), toY(-1.02)],  [toX(-0.95), toY(-1.02)]],
+      desk:      [[toX(1.34), toY(-1.28)],  [toX(2.12), toY(-0.32)],   [toX(2.75), toY(-1.28)]],
+      hammock:   [[toX(-1.80), toY(0.70)],  [toX(-1.25), toY(0.70)]],
+      floor_bed: [[toX(-0.25), toY(1.45)],  [toX(-0.85), toY(1.45)]],
+      storage:   [[toX(3.96), toY(0.55)],   [toX(3.96), toY(-0.55)]],
+      door:      [[toX(-2.95), toY(-0.38)], [toX(-2.95), toY(0.25)]],
+      deck:      [[toX(-4.00), toY(-0.85)], [toX(-4.00), toY(0.75)],   [toX(-4.65), toY(0.0)]],
+      cabin:     [[toX(-0.90), toY(0.05)],  [toX(-0.90), toY(-0.55)],  [toX(-0.90), toY(0.58)]]
     };
     var fallbackZone = { kang: "kang", near: "stove", mid: "cabin", far: "desk", deck: "deck" };
     var used = {}, outside = [], masterPt = null;
+
+    function personPill(px, py, name, dotCol, isMaster) {
+      ctx.save();
+      ctx.font = (isMaster ? "600" : "500") + " 11px -apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif";
+      var tw = ctx.measureText(name).width;
+      var pw = tw + 22, ph = 20;
+      var x0 = Math.max(8, Math.min(W - pw - 8, px - pw / 2));
+      var y0 = Math.max(62, Math.min(H - ph - 22, py - ph / 2));
+      var cx = x0 + pw / 2, cy = y0 + ph / 2;
+      ctx.shadowColor = dark ? "rgba(0,0,0,0.45)" : "rgba(44,37,32,0.18)";
+      ctx.shadowBlur = 6; ctx.shadowOffsetY = 2;
+      rRect(x0, y0, pw, ph, 10);
+      var bg = isMaster ? (dark ? "#f3efe6" : "#2c2520") : (dark ? "#2b2723" : "#fffdf9");
+      var fg = isMaster ? (dark ? "#1f1c19" : "#fffdf9") : (dark ? "#f0e9dd" : "#2c2520");
+      var bd = isMaster ? bg : (dark ? "rgba(255,255,255,0.18)" : "rgba(95,82,68,0.28)");
+      ctx.fillStyle = bg; ctx.fill();
+      ctx.restore();
+
+      rRect(x0, y0, pw, ph, 10);
+      ctx.strokeStyle = bd; ctx.lineWidth = 1; ctx.stroke();
+      ctx.beginPath(); ctx.arc(x0 + 10, cy, 3.5, 0, Math.PI * 2);
+      ctx.fillStyle = dotCol; ctx.fill();
+      ctx.textAlign = "left"; ctx.fillStyle = fg;
+      ctx.font = (isMaster ? "600" : "500") + " 11px -apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif";
+      ctx.fillText(name, x0 + 17, cy + 4);
+      return { x: cx, y: cy };
+    }
+
     (d.people || []).forEach(function (p) {
       var spKey = p.spot || fallbackZone[p.zone] || "unknown";
-      if (spKey === "outside" || spKey === "unknown") { outside.push(p); return; }
-      var pts = spotPts[spKey] || spotPts.cabin;
-      var k = used[spKey] || 0; used[spKey] = k + 1;
-      var pt = pts[k % pts.length];
-      var align = pt[2] || "left";
-      var col = p.who === "napcat2" ? "#60a5fa" : (p.who === "napcat" ? "#34d399" : "#c084fc");
-      if (p.who === "master") { masterPt = { x: pt[0], y: pt[1], spot: spKey, person: p }; }
-      ctx.save();
-      ctx.beginPath(); ctx.arc(pt[0], pt[1], 7.5, 0, Math.PI * 2);
-      ctx.fillStyle = "rgba(8,14,26,0.78)"; ctx.fill();
-      ctx.beginPath(); ctx.arc(pt[0], pt[1], 4.5, 0, Math.PI * 2);
-      ctx.fillStyle = col; ctx.fill();
-      ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 1.5; ctx.stroke();
-
-      ctx.shadowColor = "rgba(6,10,20,0.95)"; ctx.shadowBlur = 6;
-      ctx.fillStyle = "#ffffff";
-      ctx.font = "600 11.5px -apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif";
-      ctx.textAlign = align;
-      ctx.fillText(p.label + (p.sleeping ? " · 睡" : ""), align === "right" ? (pt[0] - 10) : (pt[0] + 10), pt[1] + 4);
-      ctx.restore();
+      var hasFreePos = p.pos && p.pos.x !== undefined && p.pos.y !== undefined && p.at_home !== false;
+      if (!hasFreePos && (spKey === "outside" || spKey === "unknown")) { outside.push(p); return; }
+      var px, py;
+      if (hasFreePos) {
+        px = toX(Number(p.pos.y));
+        py = toY(Number(p.pos.x));
+      } else {
+        var pts = spotPts[spKey] || spotPts.cabin;
+        var k = used[spKey] || 0; used[spKey] = k + 1;
+        var pt = pts[k % pts.length];
+        px = pt[0]; py = pt[1];
+      }
+      var isM = p.who === "master";
+      var col = p.who === "napcat2" ? "#6495c9" : (p.who === "napcat" ? "#5d9e7e" : (dark ? "#b86035" : "#e7c38a"));
+      var center = personPill(px, py, p.label + (p.sleeping ? " · 睡" : ""), col, isM);
+      if (isM) { masterPt = { x: center.x, y: center.y, spot: spKey, person: p }; }
     });
 
     if (outside.length) {
       var outText = "外出：" + outside.map(function (p) {
-        return p.label + "（" + String(p.place || "外头").replace(/^海边小镇[·・]?/, "").slice(0, 8) + "）";
+        return p.label + "（" + String(p.place || "外头").replace(/^海边小镇[·・]?/, "").slice(0, 10) + "）";
       }).join(" · ");
       ctx.save();
       ctx.textAlign = "right";
-      ctx.fillStyle = "rgba(226,232,240,0.78)";
-      ctx.font = "500 11.5px -apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif";
-      ctx.fillText(outText, W - 18, 26);
+      ctx.fillStyle = pal.pierTxt;
+      ctx.font = "500 11px -apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif";
+      ctx.fillText(outText, W - 18, 25);
       ctx.restore();
     }
 
-    ctx.save();
-    ctx.textAlign = "right";
-    ctx.fillStyle = "rgba(226,232,240,0.48)";
-    ctx.font = "400 11px -apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif";
-    ctx.fillText("滑动测温 · 拖动「主人」换位置 · 点击炉具点火", W - 18, H - 14);
-    ctx.restore();
     return masterPt;
   }
 
@@ -5531,42 +5485,32 @@
     addSpot("wood", toX(0.06), toY(0.45), 5.8, woodLit, "点击控制铁桶柴炉");
     addSpot("charcoal", toX(-2.32), toY(-1.64), 4.2, charLit, "点击控制灶台小炭炉");
 
-    // 主人可拖动/点击换位置（10 个船屋精准落位 + 外出）
+    // 主人自由拖动（船屋任意坐标，不吸附固定格）+ 点击去镇上或输入任意地点
     var masterP = (d.people || []).find(function (p) { return p.who === "master"; }) || null;
-    var masterSpots = d.master_spots || [];
-    var dropTargets = [
-      { id: "kang",      label: "红砖火炕", x: toX(1.85),  y: toY(1.48),  sleep_ok: true  },
-      { id: "stove",     label: "铁桶柴炉边", x: toX(-0.35), y: toY(0.45), sleep_ok: false },
-      { id: "table",     label: "矮桌旁",   x: toX(0.30),  y: toY(-0.85), sleep_ok: false },
-      { id: "desk",      label: "海图书桌", x: toX(2.12),  y: toY(-1.28), sleep_ok: false },
-      { id: "kitchen",   label: "小灶台边", x: toX(-1.65), y: toY(-1.35), sleep_ok: false },
-      { id: "floor_bed", label: "炕边地铺", x: toX(-0.35), y: toY(1.45),  sleep_ok: true  },
-      { id: "hammock",   label: "横梁吊床", x: toX(-1.80), y: toY(0.70),  sleep_ok: true  },
-      { id: "storage",   label: "储物舱",   x: toX(3.96),  y: toY(0.0),   sleep_ok: false },
-      { id: "door",      label: "前舱门口", x: toX(-3.00), y: toY(-0.38), sleep_ok: false },
-      { id: "deck",      label: "船头甲板", x: toX(-4.25), y: toY(0.0),   sleep_ok: false }
-    ];
+    var townPlaces = d.town_places || [];
 
-    function nearestDrop(cx, cy, onlySleep) {
-      var best = null, bestD = 1e9;
-      dropTargets.forEach(function (t) {
-        if (onlySleep && !t.sleep_ok) { return; }
-        var dist = Math.hypot(cx - t.x, cy - t.y);
-        if (dist < bestD) { bestD = dist; best = t; }
-      });
-      return best;
+    function pxToWorld(cx, cy) {
+      var wy = 0.375 + (380 - cx) / 60.5;
+      var wx = (230 - cy) / 56.0;
+      wy = Math.max(-5.32, Math.min(4.62, wy));
+      var maxX = 2.28;
+      if (wy < -3.36 && wy >= -4.75) {
+        maxX = 2.28 - (2.28 - 1.50) * ((-3.36 - wy) / (-3.36 - (-4.75)));
+      } else if (wy < -4.75) {
+        maxX = 1.50 - (1.50 - 0.72) * Math.max(0, Math.min(1, (-4.75 - wy) / (-4.75 - (-5.35))));
+      }
+      wx = Math.max(-maxX, Math.min(maxX, wx));
+      return { wx: Math.round(wx * 100) / 100, wy: Math.round(wy * 100) / 100, cx: toX(wy), cy: toY(wx) };
     }
 
-    if (masterPt && masterSpots.length) {
-      var dropRing = h("div", { class: "hdrop-ring", hidden: true });
+    if (masterPt) {
       var dragTip = h("div", { class: "hdrag-tip", hidden: true });
-      stage.appendChild(dropRing);
       stage.appendChild(dragTip);
 
       var mHandle = h("button", {
         type: "button",
         class: "hspot-master" + (S.heatPop === "master" ? " on" : ""),
-        title: "拖动「主人」到其他位置，或点击选位",
+        title: "按住拖动到船屋任意处，或点击去别处",
         style: "left:" + (masterPt.x / CW * 100).toFixed(2) + "%;top:" + (masterPt.y / CH * 100).toFixed(2) + "%"
       });
 
@@ -5576,37 +5520,31 @@
         ev.preventDefault();
         var sx = ev.clientX, sy = ev.clientY;
         var moved = false;
-        var snapped = null;
-        var sleeping = !!(masterP && masterP.sleeping);
+        var lastPos = null;
         try { mHandle.setPointerCapture(ev.pointerId); } catch (e) {}
 
         function onMove(mv) {
           var dist = Math.hypot(mv.clientX - sx, mv.clientY - sy);
-          if (!moved && dist > 6) {
+          if (!moved && dist > 5) {
             moved = true;
             dragActive = true;
             probe.hidden = true;
             mHandle.classList.add("dragging");
-            dropRing.hidden = false;
             dragTip.hidden = false;
           }
           if (!moved) { return; }
           var rect = canvas.getBoundingClientRect();
           if (!rect.width || !rect.height) { return; }
-          var cx = Math.max(0, Math.min(CW, (mv.clientX - rect.left) / rect.width * CW));
-          var cy = Math.max(0, Math.min(CH, (mv.clientY - rect.top) / rect.height * CH));
-          mHandle.style.left = (cx / CW * 100).toFixed(2) + "%";
-          mHandle.style.top = (cy / CH * 100).toFixed(2) + "%";
-          snapped = nearestDrop(cx, cy, sleeping);
-          if (snapped) {
-            dropRing.style.left = (snapped.x / CW * 100).toFixed(2) + "%";
-            dropRing.style.top = (snapped.y / CH * 100).toFixed(2) + "%";
-            var spInfo = sample(snapped.x, snapped.y);
-            dragTip.textContent = "松手移到：" + snapped.label + " · " + fmtTemp(spInfo.temp) + "C";
-          }
-          var px = Math.max(8, Math.min(rect.width - 8, mv.clientX - rect.left));
-          var py = Math.max(18, Math.min(rect.height - 18, mv.clientY - rect.top));
-          var flip = px > rect.width * 0.65;
+          var rawX = (mv.clientX - rect.left) / rect.width * CW;
+          var rawY = (mv.clientY - rect.top) / rect.height * CH;
+          lastPos = pxToWorld(rawX, rawY);
+          mHandle.style.left = (lastPos.cx / CW * 100).toFixed(2) + "%";
+          mHandle.style.top = (lastPos.cy / CH * 100).toFixed(2) + "%";
+          var spInfo = sample(lastPos.cx, lastPos.cy);
+          dragTip.textContent = spInfo.label + " · " + fmtTemp(spInfo.temp) + "C";
+          var px = Math.max(8, Math.min(rect.width - 8, lastPos.cx / CW * rect.width));
+          var py = Math.max(18, Math.min(rect.height - 18, lastPos.cy / CH * rect.height));
+          var flip = px > rect.width * 0.68;
           dragTip.style.left = px + "px";
           dragTip.style.top = py + "px";
           dragTip.style.transform = flip ? "translate(calc(-100% - 14px), -50%)" : "translate(14px, -50%)";
@@ -5618,7 +5556,6 @@
           mHandle.removeEventListener("pointercancel", onUp);
           try { mHandle.releasePointerCapture(up.pointerId); } catch (e) {}
           mHandle.classList.remove("dragging");
-          dropRing.hidden = true;
           dragTip.hidden = true;
           dragActive = false;
 
@@ -5627,8 +5564,8 @@
             renderHeat();
             return;
           }
-          if (snapped && snapped.id !== masterPt.spot) {
-            runHeatAction({ action: "move_master", spot: snapped.id });
+          if (lastPos) {
+            runHeatAction({ action: "move_master", x: lastPos.wx, y: lastPos.wy });
           } else {
             mHandle.style.left = (masterPt.x / CW * 100).toFixed(2) + "%";
             mHandle.style.top = (masterPt.y / CH * 100).toFixed(2) + "%";
@@ -5640,7 +5577,7 @@
         mHandle.addEventListener("pointercancel", onUp);
       });
       stage.appendChild(mHandle);
-    } else if (masterSpots.length) {
+    } else if (masterP) {
       stage.appendChild(h("button", {
         type: "button",
         class: "hspot-out",
@@ -5649,48 +5586,69 @@
           S.heatPop = S.heatPop === "master" ? "" : "master";
           renderHeat();
         },
-        text: "主人（外出）· 点此移回船屋"
+        text: "主人在外 · 点此回船屋或换地点"
       }));
     }
 
-    if (S.heatPop === "master" && masterSpots.length) {
-      var curSpot = (masterP && masterP.spot) || "";
+    if (S.heatPop === "master") {
       var sleepingM = !!(masterP && masterP.sleeping);
+      var curPlace = (masterP && masterP.place) || "";
       var popLeft = masterPt ? Math.max(4, Math.min(58, masterPt.x / CW * 100 + 4)) : 56;
-      var popTop = masterPt ? Math.max(8, Math.min(44, masterPt.y / CH * 100 - 12)) : 14;
-      var mGrid = h("div", { class: "hspot-grid" });
-      masterSpots.forEach(function (sp) {
-        var dis = S.heatBusy || (sleepingM && !sp.sleep_ok);
-        mGrid.appendChild(h("button", {
+      var popTop = masterPt ? Math.max(8, Math.min(42, masterPt.y / CH * 100 - 10)) : 14;
+      var inp = h("input", {
+        type: "text",
+        class: "hpop-inp",
+        placeholder: sleepingM ? "睡眠中仅可移到砖炕/地铺/吊床" : "输入任意地点（如 防波堤、船长室…）",
+        disabled: S.heatBusy
+      });
+      function goCustom() {
+        var val = String(inp.value || "").trim();
+        if (!val) { return; }
+        runHeatAction({ action: "move_master", place: val });
+      }
+      inp.addEventListener("keydown", function (ev) { if (ev.key === "Enter") { ev.preventDefault(); goCustom(); } });
+
+      var tagBox = h("div", { class: "hpop-tags" });
+      if (!masterPt) {
+        tagBox.appendChild(h("button", {
+          type: "button", class: "hpop-tag on", disabled: S.heatBusy,
+          onclick: function () { runHeatAction({ action: "move_master", x: -0.35, y: 0.30 }); },
+          text: "回到船屋"
+        }));
+      }
+      townPlaces.forEach(function (pl) {
+        tagBox.appendChild(h("button", {
           type: "button",
-          class: "hspot-opt" + (curSpot === sp.id ? " on" : ""),
-          disabled: dis,
-          title: sleepingM && !sp.sleep_ok ? "睡着时只能移到砖炕、地铺或吊床" : ("移到 " + sp.place),
-          onclick: function () {
-            if (curSpot === sp.id) { S.heatPop = ""; renderHeat(); return; }
-            runHeatAction({ action: "move_master", spot: sp.id });
-          },
-          text: sp.label
+          class: "hpop-tag" + (curPlace === pl ? " on" : ""),
+          disabled: S.heatBusy || sleepingM,
+          onclick: function () { runHeatAction({ action: "move_master", place: pl }); },
+          text: pl
         }));
       });
+
       var mPop = h("div", {
         class: "hpop",
         style: "left:" + popLeft.toFixed(1) + "%;top:" + popTop.toFixed(1) + "%",
         onclick: function (ev) { ev.stopPropagation(); }
       },
         h("div", { class: "hpop-h" },
-          h("span", { class: "hpop-t", text: "移动主人位置" }),
+          h("span", { class: "hpop-t", text: "主人去哪" }),
           h("button", { class: "hpop-x", type: "button", onclick: function () { S.heatPop = ""; renderHeat(); } }, icon("x"))
         ),
         h("div", {
           class: "hpop-s",
-          text: "当前：" + ((masterP && masterP.place) || "暂无")
+          text: "当前：" + (curPlace || "船屋")
             + (masterP && masterP.temp != null ? (" · " + fmtTemp(masterP.temp) + "C") : "")
-            + (sleepingM ? "（睡眠中，仅可换睡处）" : " · 会同步写入对话注入")
+            + " · 屋里直接拖圆点，出门在下方任选或输入"
         }),
-        mGrid
+        h("div", { class: "hpop-form" },
+          inp,
+          h("button", { type: "button", class: "hpop-go", disabled: S.heatBusy, onclick: goCustom, text: "前往" })
+        ),
+        tagBox
       );
       stage.appendChild(mPop);
+      setTimeout(function () { try { inp.focus(); } catch (e) {} }, 0);
     }
 
     if (S.heatPop === "wood" || S.heatPop === "charcoal") {
@@ -5724,7 +5682,7 @@
     var dark = heatIsDark();
     var gridCol = dark ? "rgba(255,255,255,.07)" : "rgba(0,0,0,.06)";
     var txtCol = dark ? "#8a8a93" : "#6b6b63";
-    var futBg = dark ? "rgba(234,88,12,.06)" : "rgba(234,88,12,.04)";
+    var futBg = dark ? "rgba(194,105,57,.05)" : "rgba(194,105,57,.035)";
 
     var vals = [];
     points.forEach(function (p) { vals.push(p.outdoor, p.near, p.mid, p.far, p.kang); });
@@ -5739,7 +5697,7 @@
     for (var i = 0; i < points.length; i++) { if (!points[i].future) { nowIdx = i; } }
 
     var svg = ['<svg class="hchart-svg" viewBox="0 0 ' + W + ' ' + H + '">'];
-    svg.push('<defs><linearGradient id="hcKangArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#ea580c" stop-opacity="0.18"/><stop offset="100%" stop-color="#ea580c" stop-opacity="0"/></linearGradient></defs>');
+    svg.push('<defs><linearGradient id="hcKangArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#c26939" stop-opacity="0.13"/><stop offset="100%" stop-color="#c26939" stop-opacity="0"/></linearGradient></defs>');
     if (nowIdx >= 0 && nowIdx < points.length - 1) {
       var nx = xOf(nowIdx);
       svg.push('<rect x="' + nx.toFixed(1) + '" y="' + padT + '" width="' + (W - padR - nx).toFixed(1) + '" height="' + ch + '" fill="' + futBg + '"/>');
@@ -5756,11 +5714,11 @@
     svg.push('<polygon fill="url(#hcKangArea)" points="' + padL + ',' + (H - padB) + ' ' + kangPts.join(" ") + ' ' + (W - padR) + ',' + (H - padB) + '"/>');
 
     var series = [
-      { key: "outdoor", col: "#94a3b8", dash: "4 3", w: 1.3 },
-      { key: "far",     col: "#38bdf8", dash: "2 3", w: 1.4 },
-      { key: "mid",     col: "#5b6be0", dash: "",    w: 1.8 },
-      { key: "near",    col: "#f59e0b", dash: "",    w: 1.8 },
-      { key: "kang",    col: "#ea580c", dash: "",    w: 2.3 }
+      { key: "outdoor", col: "#a3a39b", dash: "4 3", w: 1.2 },
+      { key: "far",     col: "#7aa6b8", dash: "2 3", w: 1.3 },
+      { key: "mid",     col: "#64748b", dash: "",    w: 1.6 },
+      { key: "near",    col: "#c49a45", dash: "",    w: 1.7 },
+      { key: "kang",    col: "#c26939", dash: "",    w: 2.1 }
     ];
     series.forEach(function (s) {
       var pts = points.map(function (p, idx) { return xOf(idx).toFixed(1) + "," + yOf(p[s.key]).toFixed(1); }).join(" ");
@@ -5769,8 +5727,8 @@
 
     if (nowIdx >= 0) {
       var nx2 = xOf(nowIdx);
-      svg.push('<line x1="' + nx2.toFixed(1) + '" y1="' + padT + '" x2="' + nx2.toFixed(1) + '" y2="' + (H - padB) + '" stroke="#ea580c" stroke-width="1.2" stroke-dasharray="3 3"/>');
-      svg.push('<text x="' + nx2.toFixed(1) + '" y="' + (padT - 5) + '" text-anchor="middle" font-size="10" font-weight="600" fill="#ea580c">此刻 · 未来4h</text>');
+      svg.push('<line x1="' + nx2.toFixed(1) + '" y1="' + padT + '" x2="' + nx2.toFixed(1) + '" y2="' + (H - padB) + '" stroke="#c26939" stroke-width="1" stroke-dasharray="3 3"/>');
+      svg.push('<text x="' + nx2.toFixed(1) + '" y="' + (padT - 5) + '" text-anchor="middle" font-size="10" font-weight="500" fill="#c26939">此刻 · 未来4h</text>');
     }
 
     var xStep = Math.max(2, Math.round(points.length / 8));
@@ -5812,11 +5770,6 @@
           )
         ),
         h("div", { class: "htop-desc", text: th.stove_desc || th.zones_desc || "" })
-      ),
-      h("div", { class: "htop-scale" },
-        h("span", { text: "0°" }),
-        h("span", { class: "htop-bar" }),
-        h("span", { text: "25°+" })
       )
     ));
 
@@ -5825,86 +5778,68 @@
     }
 
     if (d.seaside) {
-      var wst = st.wood || {}, cst = st.charcoal || {};
       var woodBatches = fuel.wood_batches || [], charBatches = fuel.charcoal_batches || [];
       var woodTot = Number(fuel.wood_total_bundles || 0), charTot = Number(fuel.charcoal_total_g || 0);
       if (S.heatWoodPick && !woodBatches.some(function (b) { return b.id === S.heatWoodPick; })) { S.heatWoodPick = ""; }
       if (S.heatCharPick && !charBatches.some(function (b) { return b.id === S.heatCharPick; })) { S.heatCharPick = ""; }
 
-      var wCol = h("div", { class: "hdock-col" },
-        h("div", { class: "hdock-head" },
-          h("span", { class: "hdock-name" },
-            h("i", { class: "hdot-s" + (wst.burning ? " lit" : (th.mode === "cooling" && th.stove === "wood" ? " warm" : "")) }),
-            "铁桶柴炉",
-            h("span", { class: "hdock-stat", text: wst.burning ? ("燃烧中 · 余 " + wst.remain_min + "m · " + (wst.who_label || "主人")) : (Number(th.kang_delta || 0) >= 2 ? "炕留余温" : "未点") })
-          ),
-          h("button", {
-            type: "button", class: "hdock-fuel" + (woodTot < 0.5 ? " low" : ""),
-            title: "点击切换扣减批次或查看不可烧木料",
-            onclick: function () { S.heatBatchOpen = S.heatBatchOpen === "wood" ? "" : "wood"; renderHeat(); }
-          }, "干柴 ", h("b", { text: woodTot + " 捆" }), (S.heatWoodPick ? " · 指定" : ""))
-        ),
-        buildStoveControl("wood", d, false)
-      );
+      var leftItems = [
+        h("button", {
+          type: "button",
+          class: "hmeta-btn" + (woodTot < 0.5 ? " low" : ""),
+          title: "点击切换干柴扣减批次",
+          onclick: function () { S.heatBatchOpen = S.heatBatchOpen === "wood" ? "" : "wood"; renderHeat(); }
+        }, "干柴 ", h("b", { text: woodTot + " 捆" }), (S.heatWoodPick ? " · 指定" : "")),
+        h("button", {
+          type: "button",
+          class: "hmeta-btn" + (charTot < 200 ? " low" : ""),
+          title: "点击切换闷炭扣减批次",
+          onclick: function () { S.heatBatchOpen = S.heatBatchOpen === "charcoal" ? "" : "charcoal"; renderHeat(); }
+        }, "闷炭 ", h("b", { text: charTot + " 克" }), (S.heatCharPick ? " · 指定" : ""))
+      ];
+      if (fuel.lamp_hours !== null && fuel.lamp_hours !== undefined) {
+        leftItems.push(h("span", null, "煤油灯 ", h("b", { text: fuel.lamp_hours + "h" })));
+      }
+      if ((fuel.wood_unusable || []).length) {
+        leftItems.push(h("span", null, "另有 ", h("b", { text: fuel.wood_unusable.length + " 批" }), " 未劈/未干"));
+      }
+
+      var rightItems = [];
+      var masterRow = (d.people || []).find(function (p) { return p.who === "master"; });
+      if (masterRow) {
+        rightItems.push(h("button", {
+          type: "button",
+          class: "hmeta-btn",
+          title: "屋里直接拖圆点，点此去镇上或输入任意地点",
+          onclick: function () { S.heatPop = S.heatPop === "master" ? "" : "master"; renderHeat(); }
+        }, "主人：", h("b", { text: String(masterRow.place || "船舱").replace(/^船屋[·・]/, "") }), " · 去别处"));
+      }
+
+      box.appendChild(h("div", { class: "hmeta-bar" },
+        h("div", { class: "hmeta-left" }, leftItems),
+        rightItems.length ? h("div", { class: "hmeta-right" }, rightItems) : null
+      ));
+
       if (S.heatBatchOpen === "wood") {
         var wSel = h("select", { class: "hbatch-sel", disabled: S.heatBusy || !woodBatches.length });
-        wSel.appendChild(h("option", { value: "", text: "自动扣最旧可用干柴（默认）" }));
+        wSel.appendChild(h("option", { value: "", text: "干柴批次：自动扣最旧（默认）" }));
         woodBatches.forEach(function (b) {
           wSel.appendChild(h("option", { value: b.id, selected: S.heatWoodPick === b.id, text: b.id + " " + b.name + "（剩 " + b.left_text + (b.fuel_label ? " · " + b.fuel_label : "") + "）" }));
         });
         wSel.addEventListener("change", function () { S.heatWoodPick = wSel.value; renderHeat(); });
         var wBatch = h("div", { class: "hbatch" }, wSel);
         (fuel.wood_unusable || []).forEach(function (u) {
-          wBatch.appendChild(h("span", { text: "暂不可烧：" + u.id + " " + u.name + " — " + u.reason }));
+          wBatch.appendChild(h("span", { text: "暂不可烧：" + u.id + " " + u.name + "（" + u.reason + "）" }));
         });
-        wCol.appendChild(wBatch);
-      }
-
-      var cCol = h("div", { class: "hdock-col" },
-        h("div", { class: "hdock-head" },
-          h("span", { class: "hdock-name" },
-            h("i", { class: "hdot-s" + (cst.burning ? " lit" : "") }),
-            "小炭炉",
-            h("span", { class: "hdock-stat", text: cst.burning ? ("燃烧中 · 余 " + cst.remain_min + "m") : "未点 · 不通炕" })
-          ),
-          h("button", {
-            type: "button", class: "hdock-fuel" + (charTot < 200 ? " low" : ""),
-            title: "点击切换扣减批次",
-            onclick: function () { S.heatBatchOpen = S.heatBatchOpen === "charcoal" ? "" : "charcoal"; renderHeat(); }
-          }, "闷炭 ", h("b", { text: charTot + " 克" }), (S.heatCharPick ? " · 指定" : ""))
-        ),
-        buildStoveControl("charcoal", d, false)
-      );
-      if (S.heatBatchOpen === "charcoal") {
+        box.appendChild(wBatch);
+      } else if (S.heatBatchOpen === "charcoal") {
         var cSel = h("select", { class: "hbatch-sel", disabled: S.heatBusy || !charBatches.length });
-        cSel.appendChild(h("option", { value: "", text: "自动扣最旧闷炭（默认）" }));
+        cSel.appendChild(h("option", { value: "", text: "闷炭批次：自动扣最旧（默认）" }));
         charBatches.forEach(function (b) {
           cSel.appendChild(h("option", { value: b.id, selected: S.heatCharPick === b.id, text: b.id + " " + b.name + "（剩 " + b.left_text + "）" }));
         });
         cSel.addEventListener("change", function () { S.heatCharPick = cSel.value; renderHeat(); });
-        cCol.appendChild(h("div", { class: "hbatch" }, cSel));
-      }
-
-      box.appendChild(h("div", { class: "hdock" }, wCol, h("div", { class: "hdock-sep" }), cCol));
-
-      var footBits = [];
-      var masterRow = (d.people || []).find(function (p) { return p.who === "master"; });
-      if (masterRow && (d.master_spots || []).length) {
-        footBits.push(h("button", {
-          type: "button",
-          class: "hfoot-link",
-          title: "点击切换主人所在位置（或直接拖动图上紫点）",
-          onclick: function () { S.heatPop = S.heatPop === "master" ? "" : "master"; renderHeat(); }
-        }, "主人在 ", h("b", { text: String(masterRow.place || "船舱").replace(/^船屋[·・]/, "") }), " · 换位置"));
-      }
-      if (fuel.lamp_hours !== null && fuel.lamp_hours !== undefined) {
-        footBits.push(h("span", null, "煤油灯余 ", h("b", { text: fuel.lamp_hours + " 小时" })));
-      }
-      if ((fuel.wood_unusable || []).length) {
-        footBits.push(h("span", null, "另有 ", h("b", { text: fuel.wood_unusable.length + " 批" }), " 未劈/未干木料暂不可燃"));
-      }
-      if (footBits.length) {
-        box.appendChild(h("div", { class: "hfoot-info" }, footBits));
+        box.appendChild(h("div", { class: "hbatch" }, cSel));
       }
     }
 
@@ -5915,11 +5850,11 @@
         h("button", { type: "button", class: "htab" + (S.heatTab === "log" ? " on" : ""), onclick: function () { S.heatTab = "log"; renderHeat(); } }, "生火记录" + (hist.length ? (" (" + hist.length + ")") : ""))
       ),
       S.heatTab !== "log" ? h("div", { class: "hchart-leg" },
-        h("span", null, h("i", { style: "background:#ea580c" }), "砖炕"),
-        h("span", null, h("i", { style: "background:#f59e0b" }), "炉边"),
-        h("span", null, h("i", { style: "background:#5b6be0" }), "矮桌"),
-        h("span", null, h("i", { style: "background:#38bdf8" }), "角落"),
-        h("span", null, h("i", { style: "background:#94a3b8" }), "屋外")
+        h("span", null, h("i", { style: "background:#c26939" }), "砖炕"),
+        h("span", null, h("i", { style: "background:#c49a45" }), "炉边"),
+        h("span", null, h("i", { style: "background:#64748b" }), "矮桌"),
+        h("span", null, h("i", { style: "background:#7aa6b8" }), "角落"),
+        h("span", null, h("i", { style: "background:#a3a39b" }), "屋外")
       ) : null
     );
     box.appendChild(tabBar);

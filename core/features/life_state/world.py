@@ -585,6 +585,12 @@ class WorldStore:
             record["wrap"] = clean_text(entry.get("wrap"), MAX_STEP)
         if isinstance(entry.get("moved_from"), dict):
             record["moved_from"] = entry["moved_from"]
+        pos = entry.get("pos")
+        if isinstance(pos, dict) and pos.get("x") is not None and pos.get("y") is not None:
+            try:
+                record["pos"] = {"x": round(float(pos["x"]), 2), "y": round(float(pos["y"]), 2)}
+            except (TypeError, ValueError):
+                pass
         if not entry.get("id"):
             day["next_id"] = int(day.get("next_id") or 1) + 1
         return record
