@@ -1182,99 +1182,114 @@
     .prow-m{padding-left:0}
   }
 
-  /* ============ 家里热源分布页 ============ */
-  .hbanner{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;padding:14px 18px;border:1px solid var(--line);border-radius:12px;background:var(--side);margin-bottom:14px}
-  .hbanner-l{display:flex;flex-direction:column;gap:4px;min-width:0}
-  .hbanner-title{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:15px;font-weight:600;color:var(--t1)}
-  .hbanner-desc{font-size:13px;color:var(--t2);line-height:1.5}
-  .hbanner-r{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-  .hbadge{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600;line-height:1.4}
-  .hbadge.fire{background:rgba(234,88,12,.14);color:#c2410c;border:1px solid rgba(234,88,12,.28)}
-  .hbadge.warm{background:rgba(217,119,6,.13);color:#b45309;border:1px solid rgba(217,119,6,.26)}
-  .hbadge.cold{background:rgba(37,99,235,.1);color:#1d4ed8;border:1px solid rgba(37,99,235,.22)}
-  .hbadge .hdot{width:7px;height:7px;border-radius:50%;background:currentColor}
-  .hbadge.fire .hdot{animation:hpulse 1.5s ease-in-out infinite}
-  @keyframes hpulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.45);opacity:.55}}
-  :root[data-theme="dark"] .hbadge.fire{background:rgba(251,146,60,.18);color:#fdba74;border-color:rgba(251,146,60,.34)}
-  :root[data-theme="dark"] .hbadge.warm{background:rgba(251,191,36,.16);color:#fcd34d;border-color:rgba(251,191,36,.3)}
-  :root[data-theme="dark"] .hbadge.cold{background:rgba(96,165,250,.16);color:#93c5fd;border-color:rgba(96,165,250,.3)}
+  /* ============ 家里热源分布页（沉浸式热成像 · 零卡片） ============ */
+  #heatView .scene{padding-top:20px;padding-bottom:72px}
+  .htop{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:14px}
+  .htop-main{display:flex;flex-direction:column;gap:4px;min-width:0}
+  .htop-nums{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+  .htop-big{font:700 32px/1 var(--mono);letter-spacing:-.03em;color:var(--t1)}
+  .htop-big small{font:500 14px/1 var(--font);color:var(--t3);margin-left:3px}
+  .htop-meta{display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:13px;color:var(--t2)}
+  .htop-meta b{font-weight:600;color:var(--t1);font-family:var(--mono)}
+  .htop-desc{font-size:13px;color:var(--t3);line-height:1.5}
+  .htop-scale{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--t3);font-family:var(--mono);padding-bottom:3px}
+  .htop-bar{width:116px;height:6px;border-radius:999px;background:linear-gradient(90deg,#12244d 0%,#1f5c87 28%,#8f6c38 56%,#e66a22 80%,#ffd36b 100%)}
+
+  .hstage{position:relative;border-radius:16px;overflow:hidden;background:#0b1426;box-shadow:0 12px 32px rgba(10,16,32,.14);margin-bottom:22px;user-select:none}
+  :root[data-theme="dark"] .hstage{box-shadow:0 12px 36px rgba(0,0,0,.45),0 0 0 1px rgba(255,255,255,.07)}
   @media (prefers-color-scheme: dark){
-    :root:not([data-theme]) .hbadge.fire{background:rgba(251,146,60,.18);color:#fdba74;border-color:rgba(251,146,60,.34)}
-    :root:not([data-theme]) .hbadge.warm{background:rgba(251,191,36,.16);color:#fcd34d;border-color:rgba(251,191,36,.3)}
-    :root:not([data-theme]) .hbadge.cold{background:rgba(96,165,250,.16);color:#93c5fd;border-color:rgba(96,165,250,.3)}
+    :root:not([data-theme]) .hstage{box-shadow:0 12px 36px rgba(0,0,0,.45),0 0 0 1px rgba(255,255,255,.07)}
   }
+  .hcanvas{display:block;width:100%;height:auto;aspect-ratio:760 / 410;cursor:crosshair}
+  .hprobe{position:absolute;pointer-events:none;z-index:12;transform:translate(12px,-50%);padding:4px 9px;border-radius:8px;background:rgba(10,15,28,.84);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.16);color:#f8fafc;font:600 12px/1.3 var(--mono);white-space:nowrap;box-shadow:0 6px 16px rgba(0,0,0,.35)}
+  .hprobe small{font:400 11px/1 var(--font);color:rgba(226,232,240,.75);margin-left:5px}
 
-  .hgrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:16px}
-  .hcard{position:relative;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--bg);overflow:hidden;transition:border-color .15s ease,transform .15s ease}
-  .hcard::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--tc,var(--accent))}
-  .hcard-k{font-size:12px;color:var(--t3);display:flex;align-items:center;justify-content:space-between;gap:4px}
-  .hcard-v{font:700 24px/1.2 var(--mono);color:var(--t1);margin:4px 0 2px;letter-spacing:-.02em}
-  .hcard-v small{font:500 13px/1 var(--font);color:var(--t3);margin-left:2px}
-  .hcard-s{font-size:11.5px;color:var(--t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .hspot{position:absolute;transform:translate(-50%,-50%);border:0;background:transparent;padding:0;cursor:pointer;z-index:8;border-radius:50%;display:flex;align-items:center;justify-content:center}
+  .hspot-ring{width:100%;height:100%;border-radius:50%;border:1.5px solid rgba(255,255,255,.45);transition:transform .16s ease,border-color .16s ease,box-shadow .16s ease}
+  .hspot.lit .hspot-ring{border-color:rgba(255,214,107,.92);box-shadow:0 0 18px rgba(249,115,22,.65);animation:hbreathe 2s ease-in-out infinite}
+  .hspot:hover .hspot-ring,.hspot.on .hspot-ring{transform:scale(1.12);border-color:#fff;box-shadow:0 0 20px rgba(255,255,255,.45)}
+  @keyframes hbreathe{0%,100%{transform:scale(1);opacity:.95}50%{transform:scale(1.08);opacity:.65}}
 
-  .hmap-card{border:1px solid var(--line);border-radius:14px;background:var(--bg);padding:14px 16px 12px;margin-bottom:18px;box-shadow:var(--shadow-sm)}
-  .hmap-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px}
-  .hmap-head-t{font-size:13.5px;font-weight:600;color:var(--t1)}
-  .hmap-head-s{font-size:12px;color:var(--t3)}
-  .hmap-svg{width:100%;height:auto;display:block;border-radius:10px;user-select:none}
-  .hmap-svg .hclick{cursor:pointer}
-  .hmap-svg .hclick:hover{filter:brightness(1.06)}
-  .hlegend{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:10px;padding-top:10px;border-top:1px solid var(--line);font-size:12px;color:var(--t3)}
-  .hlegend-bar{display:flex;align-items:center;gap:8px}
-  .hlegend-grad{width:130px;height:8px;border-radius:999px;background:linear-gradient(90deg,#3b82f6 0%,#38bdf8 28%,#eab308 60%,#f97316 82%,#dc2626 100%)}
-  .hpeople-pills{display:flex;flex-wrap:wrap;gap:6px}
-  .hpill{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;background:var(--sunk);border:1px solid var(--line);font-size:12px;color:var(--t2)}
-  .hpill b{color:var(--t1);font-weight:600}
+  .hpop{position:absolute;z-index:20;width:276px;max-width:calc(100% - 24px);padding:12px 14px;border-radius:13px;background:rgba(14,20,34,.88);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,.16);color:#f3f4f6;box-shadow:0 16px 38px rgba(0,0,0,.5)}
+  .hpop-h{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px}
+  .hpop-t{font-size:13.5px;font-weight:600;color:#fff}
+  .hpop-x{width:22px;height:22px;border:0;border-radius:6px;background:transparent;color:rgba(255,255,255,.65);display:inline-flex;align-items:center;justify-content:center}
+  .hpop-x:hover{background:rgba(255,255,255,.12);color:#fff}
+  .hpop-s{font-size:12px;color:rgba(226,232,240,.78);margin-bottom:10px;line-height:1.45}
+  .hpop-acts{display:flex;flex-direction:column;gap:6px}
+  .hpop-btn{display:flex;align-items:center;justify-content:space-between;width:100%;padding:7px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.07);color:#fff;font-size:12.5px;transition:background .12s,border-color .12s}
+  .hpop-btn:hover:not(:disabled){background:rgba(249,115,22,.32);border-color:rgba(251,146,60,.65)}
+  .hpop-btn.pri{background:linear-gradient(135deg,#ea580c,#d97706);border-color:transparent;font-weight:600}
+  .hpop-btn.pri:hover:not(:disabled){filter:brightness(1.08)}
+  .hpop-btn.stop{background:rgba(239,68,68,.16);border-color:rgba(248,113,113,.38);color:#fecaca}
+  .hpop-btn.stop:hover:not(:disabled){background:rgba(239,68,68,.3)}
+  .hpop-btn:disabled{opacity:.38;cursor:not-allowed}
+  .hpop-btn small{font-size:11px;color:rgba(255,255,255,.75);font-family:var(--mono)}
 
-  .hctrl-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-bottom:16px}
-  .hstove{border:1px solid var(--line);border-radius:14px;background:var(--bg);padding:16px 18px;display:flex;flex-direction:column;gap:12px;transition:box-shadow .2s ease,border-color .2s ease}
-  .hstove.lit{border-color:rgba(234,88,12,.45);box-shadow:0 0 0 1px rgba(234,88,12,.14)}
-  .hstove.flash{box-shadow:0 0 0 3px var(--ring);border-color:var(--accent)}
-  .hstove-h{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
-  .hstove-n{font-size:15px;font-weight:600;color:var(--t1);display:flex;align-items:center;gap:7px}
-  .hstove-sub{font-size:12px;color:var(--t3);margin-top:2px}
-  .hstove-live{padding:9px 12px;border-radius:10px;background:var(--side);border:1px solid var(--line);font-size:12.5px;color:var(--t2);line-height:1.5}
-  .hstove.lit .hstove-live{background:rgba(234,88,12,.08);border-color:rgba(234,88,12,.22);color:var(--t1)}
-  .hfuel-row{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:12.5px}
-  .hfuel-tot{font-weight:600;color:var(--t1)}
-  .hfuel-tot.low{color:var(--danger)}
-  .hfuel-sel{height:30px;padding:0 8px;border:1px solid var(--line2);border-radius:8px;background:var(--bg);font-size:12px;max-width:220px}
-  .hbtn-grid{display:flex;flex-wrap:wrap;gap:8px}
-  .hbtn{display:inline-flex;flex-direction:column;align-items:flex-start;gap:1px;padding:7px 12px;border-radius:10px;border:1px solid var(--line2);background:var(--bg);color:var(--t1);transition:background .12s,border-color .12s,transform .1s;text-align:left}
-  .hbtn:hover:not(:disabled){background:var(--hover);border-color:var(--accent)}
-  .hbtn:active:not(:disabled){transform:translateY(1px)}
-  .hbtn:disabled{opacity:.45;cursor:not-allowed}
-  .hbtn.primary{background:linear-gradient(135deg,#ea580c,#d97706);border-color:transparent;color:#fff}
-  .hbtn.primary:hover:not(:disabled){filter:brightness(1.06);background:linear-gradient(135deg,#ea580c,#d97706)}
-  .hbtn.primary small{color:rgba(255,255,255,.88)}
-  .hbtn.stop{border-color:rgba(201,54,54,.35);color:var(--danger);background:var(--danger-soft)}
-  .hbtn.stop:hover:not(:disabled){filter:brightness(.97)}
-  .hbtn strong{font-size:13px;font-weight:600;line-height:1.3}
-  .hbtn small{font-size:11px;color:var(--t3);line-height:1.2}
-  .hunusable{font-size:12px;color:var(--t3);padding-top:8px;border-top:1px dashed var(--line);display:flex;flex-direction:column;gap:3px}
+  /* 无框极简炉火操控条 */
+  .hdock{display:grid;grid-template-columns:minmax(0,1.25fr) 1px minmax(0,1fr);gap:24px;padding:4px 2px 20px;border-bottom:1px solid var(--line)}
+  .hdock-sep{background:var(--line)}
+  .hdock-col{display:flex;flex-direction:column;gap:10px;min-width:0}
+  .hdock-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap}
+  .hdock-name{display:inline-flex;align-items:center;gap:8px;font-size:14.5px;font-weight:600;color:var(--t1)}
+  .hdot-s{width:8px;height:8px;border-radius:50%;background:var(--t4);flex:none}
+  .hdot-s.lit{background:#ea580c;box-shadow:0 0 0 3px rgba(234,88,12,.18)}
+  .hdot-s.warm{background:#d97706}
+  .hdock-stat{font-size:12px;color:var(--t3);font-weight:400}
+  .hdock-fuel{border:0;background:transparent;padding:0;font-size:12.5px;color:var(--t2);cursor:pointer;display:inline-flex;align-items:center;gap:4px}
+  .hdock-fuel:hover{color:var(--t1);text-decoration:underline;text-underline-offset:3px}
+  .hdock-fuel b{font-family:var(--mono);font-weight:600;color:var(--t1)}
+  .hdock-fuel.low b{color:var(--danger)}
 
-  .hlamp-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:10px 14px;border:1px solid var(--line);border-radius:10px;background:var(--side);font-size:12.5px;color:var(--t2);margin-bottom:18px}
-  .hchart-card{border:1px solid var(--line);border-radius:14px;background:var(--bg);padding:14px 16px;margin-bottom:18px}
-  .hchart-leg{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:var(--t2);margin-top:8px}
+  .hseg{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+  .hact{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 13px;border-radius:9px;border:1px solid var(--line2);background:transparent;color:var(--t1);font-size:13px;font-weight:500;transition:background .12s,border-color .12s,color .12s}
+  .hact:hover:not(:disabled){background:var(--hover);border-color:var(--t3)}
+  .hact.pri{background:#ea580c;border-color:#ea580c;color:#fff}
+  .hact.pri:hover:not(:disabled){background:#d94e07;border-color:#d94e07}
+  .hact.pri small{color:rgba(255,255,255,.85)}
+  .hact.stop{border-color:rgba(201,54,54,.35);color:var(--danger)}
+  .hact.stop:hover:not(:disabled){background:var(--danger-soft)}
+  .hact:disabled{opacity:.38;cursor:not-allowed}
+  .hact small{font-size:11.5px;color:var(--t3);font-family:var(--mono);font-weight:400}
+  .hbatch{display:flex;flex-direction:column;gap:6px;padding:8px 0 2px;font-size:12px;color:var(--t3)}
+  .hbatch-sel{height:28px;padding:0 8px;border:1px solid var(--line2);border-radius:7px;background:var(--bg);color:var(--t1);font-size:12px;max-width:300px}
+
+  .hfoot-info{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:10px 2px 0;font-size:12px;color:var(--t3)}
+  .hfoot-info b{color:var(--t2);font-weight:500}
+
+  /* 底部极简走势 / 记录切换（无框） */
+  .hsub-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:22px 0 12px}
+  .htabs{display:inline-flex;gap:18px}
+  .htab{border:0;background:transparent;padding:4px 0;font-size:13.5px;font-weight:500;color:var(--t3);position:relative}
+  .htab:hover{color:var(--t1)}
+  .htab.on{color:var(--t1);font-weight:600}
+  .htab.on::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:2px;border-radius:2px;background:var(--t1)}
+  .hchart-leg{display:flex;flex-wrap:wrap;gap:14px;font-size:11.5px;color:var(--t3)}
   .hchart-leg span{display:inline-flex;align-items:center;gap:5px}
-  .hchart-leg i{width:12px;height:3px;border-radius:2px;display:inline-block}
-  .hlog{border:1px solid var(--line);border-radius:12px;background:var(--bg);overflow:hidden}
-  .hlog-row{display:grid;grid-template-columns:112px 92px minmax(0,1fr) auto;gap:10px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line);font-size:12.5px}
-  .hlog-row:last-child{border-bottom:0}
-  .hlog-row.click{cursor:pointer}
-  .hlog-row.click:hover{background:var(--hover)}
+  .hchart-leg i{width:10px;height:2.5px;border-radius:2px;display:inline-block}
+  .hchart-svg{width:100%;height:auto;display:block}
+
+  .hlog-plain{display:flex;flex-direction:column}
+  .hlog-item{display:grid;grid-template-columns:108px 76px minmax(0,1fr) auto;gap:12px;align-items:baseline;padding:9px 2px;border-bottom:1px solid var(--line);font-size:12.5px}
+  .hlog-item:last-child{border-bottom:0}
+  .hlog-item.click{cursor:pointer}
+  .hlog-item.click:hover{background:var(--hover)}
   .hlog-at{font-family:var(--mono);font-size:12px;color:var(--t3)}
-  .hlog-tag{display:inline-flex;align-items:center;gap:4px;font-weight:600;color:var(--t1)}
-  .hlog-fuel{font-size:11.5px;color:var(--t3);margin-top:2px}
+  .hlog-kind{font-weight:600;color:var(--t1)}
+  .hlog-kind.wood{color:#d95d16}
+  .hlog-kind.char{color:#b45309}
+  .hlog-do{color:var(--t2);min-width:0}
+  .hlog-do small{display:block;font-size:11.5px;color:var(--t3);margin-top:1px}
   .hlog-who{font-size:12px;color:var(--t3);white-space:nowrap}
 
-  @media (max-width:760px){
-    .hgrid{grid-template-columns:repeat(2,minmax(0,1fr))}
-    .hctrl-grid{grid-template-columns:1fr}
-    .hlog-row{grid-template-columns:minmax(0,1fr) auto;row-gap:3px}
+  @media (max-width:740px){
+    .hdock{grid-template-columns:1fr;gap:16px}
+    .hdock-sep{height:1px;width:100%}
+    .hlog-item{grid-template-columns:minmax(0,1fr) auto;row-gap:2px}
     .hlog-at{grid-column:1}
     .hlog-who{grid-column:2;grid-row:1}
-    .hlog-tag{grid-column:1 / -1}
+    .hlog-kind{grid-column:1 / -1}
+    .hlog-do{grid-column:1 / -1}
   }
 </style>
 </head>
@@ -1720,7 +1735,7 @@
     insp: null,
     req: { list: [], idx: 0, data: null, err: "", disabled: false, tab: store.get("reqTab", "inject"), all: false, raw: false, loading: false },
     edits: {}, auto: true,
-    heat: null, heatErr: "", heatLoading: false, heatBusy: false, heatWoodPick: "", heatCharPick: "", heatFlash: "",
+    heat: null, heatErr: "", heatLoading: false, heatBusy: false, heatWoodPick: "", heatCharPick: "", heatPop: "", heatTab: "curve", heatBatchOpen: "",
     money: null, moneyErr: "", moneyLoading: false, moneyBalEdit: {}, moneyAccEdit: {}, moneyRecForm: null, moneyDebtForm: null, moneySettle: null,
     moneyAccFilter: "all", moneyKindFilter: "all", moneyQ: "", moneyShowAll: false,
     ledger: null, ledgerErr: "", ledgerLoading: false, ledEdit: {}, ledShowPast: false, trEdit: {},
@@ -4523,13 +4538,13 @@
 
   $("ledgerRefresh").addEventListener("click", function () { loadLedger().then(function () { if (!S.ledgerErr) { toast("已刷新"); } }); });
 
-  /* ================= 钱匣与账本 ================= */
-  /* ================= 家里热源分布 ================= */
+  /* ================= 家里热源分布（实时红外热场 · 零卡片） ================= */
   function loadHeat(silent) { return loadAuxPage("ctx/heat", "heat", "heat", renderHeat, silent); }
 
   function runHeatAction(body) {
     if (S.heatBusy) { return Promise.resolve(); }
     S.heatBusy = true;
+    S.heatPop = "";
     renderHeat();
     return post("ctx/heat/action", body).then(function (res) {
       S.heatBusy = false;
@@ -4548,42 +4563,10 @@
     return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
 
-  function tempRgb(t) {
-    var v = Number(t);
-    if (isNaN(v)) { v = 12; }
-    var stops = [
-      { t: 0,  r: 37,  g: 99,  b: 235 },
-      { t: 8,  r: 14,  g: 165, b: 233 },
-      { t: 13, r: 16,  g: 185, b: 129 },
-      { t: 17, r: 234, g: 179, b: 8   },
-      { t: 21, r: 249, g: 115, b: 22  },
-      { t: 26, r: 220, g: 38,  b: 38  }
-    ];
-    if (v <= stops[0].t) { return stops[0]; }
-    if (v >= stops[stops.length - 1].t) { return stops[stops.length - 1]; }
-    for (var i = 0; i < stops.length - 1; i++) {
-      var a = stops[i], b = stops[i + 1];
-      if (v >= a.t && v <= b.t) {
-        var f = (v - a.t) / Math.max(0.01, b.t - a.t);
-        return {
-          r: Math.round(a.r + (b.r - a.r) * f),
-          g: Math.round(a.g + (b.g - a.g) * f),
-          b: Math.round(a.b + (b.b - a.b) * f)
-        };
-      }
-    }
-    return stops[2];
-  }
-
-  function tempHex(t, alpha) {
-    var c = tempRgb(t);
-    return alpha === undefined ? ("rgb(" + c.r + "," + c.g + "," + c.b + ")") : ("rgba(" + c.r + "," + c.g + "," + c.b + "," + alpha + ")");
-  }
-
   function fmtTemp(t) {
     var v = Number(t);
     if (isNaN(v)) { return "--"; }
-    return (Math.round(v * 10) / 10) + "°C";
+    return (Math.round(v * 10) / 10).toFixed(1) + "°";
   }
 
   function heatIsDark() {
@@ -4593,232 +4576,601 @@
     return !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
   }
 
-  function buildCabinHeatmapSVG(d) {
+  // 专业红外热成像暖色谱（0°C 深海靛蓝 → 9°C 寒青 → 14°C 暖茶金 → 19°C 炉火橙 → 25°C 明黄白）
+  function thermalColor(t) {
+    var v = Number(t);
+    if (isNaN(v)) { v = 10; }
+    var stops = [
+      [0,  16,  33,  74],
+      [6,  24,  66, 118],
+      [10, 34, 102, 134],
+      [13, 94, 112,  92],
+      [16, 178, 114, 48],
+      [19, 228, 104, 34],
+      [22, 248, 154, 46],
+      [26, 255, 224, 138]
+    ];
+    if (v <= stops[0][0]) { return [stops[0][1], stops[0][2], stops[0][3]]; }
+    var last = stops[stops.length - 1];
+    if (v >= last[0]) { return [last[1], last[2], last[3]]; }
+    for (var i = 0; i < stops.length - 1; i++) {
+      var a = stops[i], b = stops[i + 1];
+      if (v >= a[0] && v <= b[0]) {
+        var f = (v - a[0]) / Math.max(0.01, b[0] - a[0]);
+        return [
+          Math.round(a[1] + (b[1] - a[1]) * f),
+          Math.round(a[2] + (b[2] - a[2]) * f),
+          Math.round(a[3] + (b[3] - a[3]) * f)
+        ];
+      }
+    }
+    return [94, 112, 92];
+  }
+
+  // 船屋 760x410 几何与连续物理热场采样（画布渲染与鼠标测温探针 100% 共用）
+  function distToSeg(px, py, x1, y1, x2, y2) {
+    var dx = x2 - x1, dy = y2 - y1;
+    var len2 = dx * dx + dy * dy;
+    if (len2 <= 1e-6) { return Math.hypot(px - x1, py - y1); }
+    var u = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / len2));
+    return Math.hypot(px - (x1 + u * dx), py - (y1 + u * dy));
+  }
+
+  function inHullRegion(x, y) {
+    if (x < 34 || x > 724 || y < 60 || y > 350) { return "sea"; }
+    if (x >= 116 && x <= 584 && y >= 62 && y <= 348) { return "cabin"; }
+    if (x >= 34 && x < 116) {
+      var t = (x - 34) / 82;
+      var halfH = 112 + 31 * t;
+      return Math.abs(y - 205) <= halfH ? "stern" : "sea";
+    }
+    if (x > 584 && x <= 724) {
+      var u = (x - 584) / 140;
+      var halfD = 143 * Math.sqrt(Math.max(0, 1 - u * u * 0.96));
+      return Math.abs(y - 205) <= halfD ? "deck" : "sea";
+    }
+    return "sea";
+  }
+
+  function makeThermalSampler(d) {
     var th = d.thermal || {};
     var wx = d.weather || {};
     var st = d.stoves || {};
-    var woodLit = !!(st.wood && st.wood.burning);
-    var charLit = !!(st.charcoal && st.charcoal.burning);
-    var dark = heatIsDark();
-
-    var seaBg = dark ? "#122233" : "#e3f1fa";
-    var seaWave = dark ? "rgba(125,211,252,.14)" : "rgba(14,116,144,.14)";
-    var hullFill = dark ? "#1e1f24" : "#f7f5f0";
-    var hullStroke = dark ? "#4a4b55" : "#8b7d6b";
-    var deckFill = dark ? "#272420" : "#ebe2d2";
-    var wallLine = dark ? "#3b3c46" : "#c7bfb2";
-    var furnFill = dark ? "#2a2b32" : "#ece8df";
-    var furnStroke = dark ? "#484956" : "#b8afa0";
-    var txtMain = dark ? "#f3f4f6" : "#1f2937";
-    var txtSub = dark ? "#a1a1aa" : "#64748b";
-    var pillBg = dark ? "rgba(24,24,29,.88)" : "rgba(255,255,255,.92)";
-
     var nearT = Number(th.near != null ? th.near : 12);
     var midT = Number(th.mid != null ? th.mid : 12);
     var farT = Number(th.far != null ? th.far : 10);
     var kangT = Number(th.kang != null ? th.kang : 12);
     var outT = Number(wx.outdoor != null ? wx.outdoor : 10);
-    var dKang = Number(th.kang_delta || 0);
+    var woodLit = !!(st.wood && st.wood.burning);
+    var charLit = !!(st.charcoal && st.charcoal.burning);
+    var pipeT = woodLit ? (nearT * 0.68 + kangT * 0.32) : Math.max(midT, kangT * 0.85 + midT * 0.15);
 
-    var cNear = tempHex(nearT, woodLit ? 0.56 : (th.mode === "cooling" ? 0.34 : 0.18));
-    var cMid = tempHex(midT, 0.24);
-    var cFar = tempHex(farT, 0.22);
-    var cKang = tempHex(kangT, dKang >= 2 ? 0.52 : 0.22);
-    var cChar = tempHex(charLit ? Math.max(nearT, 18) : farT, charLit ? 0.52 : 0.12);
-
-    var svg = [];
-    svg.push('<svg class="hmap-svg" viewBox="0 0 760 400" role="img" aria-label="船屋热源分布平面图">');
-    svg.push('<defs>');
-    svg.push('<radialGradient id="hgNear" cx="50%" cy="50%" r="52%"><stop offset="0%" stop-color="' + cNear + '"/><stop offset="55%" stop-color="' + tempHex(nearT, woodLit ? 0.22 : 0.08) + '"/><stop offset="100%" stop-color="' + tempHex(nearT, 0) + '"/></radialGradient>');
-    svg.push('<radialGradient id="hgChar" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="' + cChar + '"/><stop offset="100%" stop-color="' + tempHex(nearT, 0) + '"/></radialGradient>');
-    svg.push('<linearGradient id="hgKang" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="' + cKang + '"/><stop offset="100%" stop-color="' + tempHex(kangT, dKang >= 2 ? 0.26 : 0.12) + '"/></linearGradient>');
-    svg.push('<linearGradient id="hgPipe" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stop-color="' + (woodLit ? "#f97316" : (dKang >= 2 ? "#d97706" : "#78716c")) + '"/><stop offset="100%" stop-color="' + (woodLit ? "#ef4444" : (dKang >= 2 ? "#b45309" : "#64748b")) + '"/></linearGradient>');
-    svg.push('<clipPath id="cabinClip"><rect x="118" y="64" width="474" height="272" rx="14"/></clipPath>');
-    svg.push('</defs>');
-
-    // 港湾海水背景与波纹
-    svg.push('<rect x="0" y="0" width="760" height="400" rx="12" fill="' + seaBg + '"/>');
-    for (var wy = 32; wy <= 376; wy += 44) {
-      svg.push('<path d="M18 ' + wy + ' q24 -6 48 0 t48 0 M642 ' + (wy + 10) + ' q22 -5 44 0 t44 0" fill="none" stroke="' + seaWave + '" stroke-width="2" stroke-linecap="round"/>');
-    }
-
-    // 顶部海湾与屋外环境标注
-    svg.push('<text x="20" y="28" font-size="12" font-weight="600" fill="' + txtMain + '">防波堤港湾 · 屋外 ' + escSvg(fmtTemp(outT)) + (wx.sea_temp != null ? (' · 海水 ' + escSvg(fmtTemp(wx.sea_temp))) : '') + '</text>');
-    svg.push('<text x="20" y="45" font-size="11" fill="' + txtSub + '">' + escSvg(wx.sky_wind || "") + '</text>');
-
-    // 船体金属外壳（左船尾储物舱 → 中间主船舱 → 右船头露天甲板）
-    svg.push('<path d="M56 84 Q34 84 34 114 L34 286 Q34 316 56 316 L118 336 L592 336 L678 296 Q724 270 724 200 Q724 130 678 104 L592 64 L118 64 Z" fill="' + hullFill + '" stroke="' + hullStroke + '" stroke-width="3"/>');
-
-    // 右侧露天甲板
-    svg.push('<path d="M592 66 L676 105 Q721 130 721 200 Q721 270 676 295 L592 334 Z" fill="' + deckFill + '" stroke="' + wallLine + '" stroke-width="1.5"/>');
-    svg.push('<text x="646" y="128" text-anchor="middle" font-size="12" font-weight="600" fill="' + txtMain + '">船头甲板</text>');
-    svg.push('<text x="646" y="145" text-anchor="middle" font-size="11" fill="' + tempHex(outT) + '" font-weight="700">' + escSvg(fmtTemp(outT)) + '</text>');
-    // 接雨水桶
-    svg.push('<circle cx="634" cy="256" r="11" fill="' + (dark ? "#1e3a5f" : "#bae6fd") + '" stroke="' + furnStroke + '" stroke-width="1.5"/>');
-    svg.push('<circle cx="662" cy="264" r="10" fill="' + (dark ? "#1e3a5f" : "#bae6fd") + '" stroke="' + furnStroke + '" stroke-width="1.5"/>');
-    svg.push('<text x="648" y="288" text-anchor="middle" font-size="10" fill="' + txtSub + '">接雨水桶</text>');
-    svg.push('<line x1="610" y1="168" x2="684" y2="168" stroke="' + wallLine + '" stroke-width="1.2" stroke-dasharray="4 3"/>');
-    svg.push('<text x="646" y="182" text-anchor="middle" font-size="10" fill="' + txtSub + '">晾衣绳</text>');
-
-    // 左侧船尾储物舱（角落低温区）
-    svg.push('<path d="M56 86 Q36 86 36 114 L36 286 Q36 314 56 314 L118 334 L118 66 Z" fill="' + cFar + '" stroke="' + wallLine + '" stroke-width="1.5"/>');
-    svg.push('<text x="77" y="176" text-anchor="middle" font-size="11.5" font-weight="600" fill="' + txtMain + '">船尾</text>');
-    svg.push('<text x="77" y="192" text-anchor="middle" font-size="11.5" font-weight="600" fill="' + txtMain + '">储物舱</text>');
-    svg.push('<text x="77" y="211" text-anchor="middle" font-size="11" font-weight="700" fill="' + tempHex(farT) + '">' + escSvg(fmtTemp(farT)) + '</text>');
-    svg.push('<text x="77" y="229" text-anchor="middle" font-size="9.5" fill="' + txtSub + '">缆绳 · 工具板</text>');
-
-    // 主船舱底色与连续热力场（裁切在主舱内）
-    svg.push('<g clip-path="url(#cabinClip)">');
-    svg.push('<rect x="118" y="64" width="474" height="272" fill="' + cMid + '"/>');
-    // 角落冷区边缘微晕（舱门边、靠海舷窗角）
-    svg.push('<rect x="118" y="64" width="76" height="272" fill="' + cFar + '" opacity="0.55"/>');
-    svg.push('<rect x="118" y="266" width="230" height="70" fill="' + cFar + '" opacity="0.55"/>');
-    // 铁桶柴炉热辐射场
-    svg.push('<circle cx="305" cy="186" r="' + (woodLit ? 158 : 115) + '" fill="url(#hgNear)"/>');
-    // 小炭炉局部热晕
-    svg.push('<circle cx="218" cy="96" r="' + (charLit ? 78 : 42) + '" fill="url(#hgChar)"/>');
-    svg.push('</g>');
-
-    // 主船舱框线 + 入口舱门
-    svg.push('<rect x="118" y="64" width="474" height="272" rx="14" fill="none" stroke="' + wallLine + '" stroke-width="1.5"/>');
-    // 入口舱门（接甲板或左壁）
-    svg.push('<rect x="588" y="176" width="8" height="48" rx="3" fill="' + hullStroke + '"/>');
-    svg.push('<text x="580" y="204" text-anchor="end" font-size="10.5" fill="' + txtSub + '">舱门</text>');
-
-    // 1) 左上无窗墙面：小灶台 + 小炭炉 + 淡水桶
-    svg.push('<rect x="136" y="72" width="160" height="52" rx="8" fill="' + furnFill + '" stroke="' + furnStroke + '" stroke-width="1.4"/>');
-    svg.push('<text x="148" y="90" font-size="11" font-weight="600" fill="' + txtMain + '">小灶台（无窗墙）</text>');
-    svg.push('<text x="148" y="106" font-size="10" fill="' + txtSub + '">做饭烧水 · 淡水桶</text>');
-    // 小炭炉（可点击）
-    svg.push('<g class="hclick" data-stove-click="charcoal">');
-    svg.push('<circle cx="262" cy="98" r="18" fill="' + (charLit ? "rgba(234,88,12,.22)" : (dark ? "#22232a" : "#e5e0d5")) + '" stroke="' + (charLit ? "#ea580c" : furnStroke) + '" stroke-width="' + (charLit ? "2.4" : "1.6") + '"/>');
-    svg.push('<circle cx="262" cy="98" r="9" fill="' + (charLit ? "#f97316" : (dark ? "#3f3f46" : "#9ca3af")) + '"/>');
-    if (charLit) {
-      svg.push('<circle cx="262" cy="98" r="4.5" fill="#fef08a"><animate attributeName="r" values="4;6.5;4" dur="1.4s" repeatCount="indefinite"/></circle>');
-    }
-    svg.push('<text x="262" y="138" text-anchor="middle" font-size="10.5" font-weight="600" fill="' + (charLit ? "#ea580c" : txtSub) + '">小炭炉' + (charLit ? " 🔥" : "") + '</text>');
-    svg.push('</g>');
-
-    // 2) 靠里头宽大砖炕（红砖黄泥铁板实木火炕）+ 炕尾直角砖烟道
-    svg.push('<rect x="404" y="74" width="176" height="126" rx="10" fill="url(#hgKang)" stroke="' + (dKang >= 2 ? "#ea580c" : furnStroke) + '" stroke-width="' + (dKang >= 2 ? "2.2" : "1.6") + '"/>');
-    // 砖缝/铺盖装饰线
-    svg.push('<rect x="418" y="88" width="118" height="96" rx="7" fill="' + (dark ? "rgba(255,255,255,.06)" : "rgba(255,255,255,.42)") + '" stroke="' + (dark ? "rgba(255,255,255,.12)" : "rgba(180,83,9,.22)") + '" stroke-width="1"/>');
-    // 枕头示意
-    svg.push('<rect x="426" y="96" width="24" height="34" rx="5" fill="' + (dark ? "rgba(255,255,255,.12)" : "rgba(255,255,255,.78)") + '"/>');
-    // 炕尾墙角直角砖烟道（穿顶排烟）
-    svg.push('<rect x="548" y="80" width="24" height="24" rx="4" fill="' + (woodLit ? "#c2410c" : (dark ? "#3f3f46" : "#a8a29e")) + '" stroke="' + hullStroke + '" stroke-width="1.2"/>');
-    svg.push('<text x="560" y="95" text-anchor="middle" font-size="9" font-weight="700" fill="#fff">烟道</text>');
-    svg.push('<text x="488" y="114" text-anchor="middle" font-size="12.5" font-weight="700" fill="' + txtMain + '">红砖火炕</text>');
-    svg.push('<text x="488" y="135" text-anchor="middle" font-size="15" font-weight="800" fill="' + tempHex(kangT) + '">' + escSvg(fmtTemp(kangT)) + '</text>');
-    svg.push('<text x="488" y="153" text-anchor="middle" font-size="10" fill="' + txtSub + '">' + (dKang >= 6 ? "炕底蓄热暖烘烘" : (dKang >= 2 ? "留有余温" : "自然室温")) + '</text>');
-
-    // 横向铁烟管：铁桶柴炉 → 砖炕下火道
-    svg.push('<path d="M328 176 L372 176 L372 136 L404 136" fill="none" stroke="url(#hgPipe)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>');
-    svg.push('<path d="M328 176 L372 176 L372 136 L404 136" fill="none" stroke="' + (woodLit ? "#fde047" : "rgba(255,255,255,.22)") + '" stroke-width="2" stroke-dasharray="6 5" stroke-linecap="round"/>');
-    svg.push('<text x="366" y="128" text-anchor="middle" font-size="9.5" fill="' + txtSub + '">横向铁烟管</text>');
-
-    // 3) 舱中核心：铁桶柴炉（可点击）
-    svg.push('<g class="hclick" data-stove-click="wood">');
-    svg.push('<circle cx="304" cy="186" r="28" fill="' + (woodLit ? "rgba(234,88,12,.22)" : (dark ? "#24252c" : "#e7e2d9")) + '" stroke="' + (woodLit ? "#ea580c" : hullStroke) + '" stroke-width="' + (woodLit ? "2.8" : "2") + '"/>');
-    svg.push('<circle cx="304" cy="186" r="17" fill="' + (woodLit ? "#ea580c" : (dark ? "#374151" : "#6b7280")) + '"/>');
-    if (woodLit) {
-      svg.push('<path d="M304 174 c4 6 8 9 8 15 a8 8 0 0 1-16 0 c0-4 2-7 4-9 c0 3 1.5 4 3 4.5 c-.5-3.5 0-7 1-10.5z" fill="#fef08a"><animate attributeName="opacity" values="0.85;1;0.85" dur="1.1s" repeatCount="indefinite"/></path>');
-    } else {
-      svg.push('<circle cx="304" cy="186" r="6" fill="' + (th.mode === "cooling" ? "#b45309" : (dark ? "#1f2937" : "#4b5563")) + '"/>');
-    }
-    // 炉边温度胶囊
-    svg.push('<rect x="252" y="219" width="104" height="36" rx="8" fill="' + pillBg + '" stroke="' + (woodLit ? "#ea580c" : wallLine) + '" stroke-width="1.2"/>');
-    svg.push('<text x="304" y="234" text-anchor="middle" font-size="11" font-weight="700" fill="' + txtMain + '">铁桶柴炉' + (woodLit ? " 🔥" : "") + '</text>');
-    svg.push('<text x="304" y="249" text-anchor="middle" font-size="12" font-weight="800" fill="' + tempHex(nearT) + '">炉边 ' + escSvg(fmtTemp(nearT)) + '</text>');
-    svg.push('</g>');
-
-    // 4) 炕边地铺位 + 矮桌中段 + 吊床
-    svg.push('<rect x="466" y="210" width="110" height="44" rx="7" fill="none" stroke="' + furnStroke + '" stroke-width="1.2" stroke-dasharray="4 3"/>');
-    svg.push('<text x="521" y="236" text-anchor="middle" font-size="10.5" fill="' + txtSub + '">炕边地铺位</text>');
-
-    svg.push('<rect x="378" y="266" width="118" height="54" rx="9" fill="' + furnFill + '" stroke="' + furnStroke + '" stroke-width="1.4"/>');
-    svg.push('<text x="437" y="286" text-anchor="middle" font-size="11.5" font-weight="600" fill="' + txtMain + '">矮桌 · 吊床中段</text>');
-    svg.push('<text x="437" y="305" text-anchor="middle" font-size="13" font-weight="800" fill="' + tempHex(midT) + '">' + escSvg(fmtTemp(midT)) + '</text>');
-
-    // 5) 另一侧靠海墙面：堆满海图的书桌 + 望海舷窗
-    svg.push('<rect x="142" y="274" width="142" height="50" rx="8" fill="' + furnFill + '" stroke="' + furnStroke + '" stroke-width="1.4"/>');
-    svg.push('<text x="213" y="295" text-anchor="middle" font-size="11.5" font-weight="600" fill="' + txtMain + '">海图书桌 · 舷窗角</text>');
-    svg.push('<text x="213" y="313" text-anchor="middle" font-size="12" font-weight="700" fill="' + tempHex(farT) + '">' + escSvg(fmtTemp(farT)) + '</text>');
-    // 舷窗标记
-    svg.push('<line x1="176" y1="336" x2="250" y2="336" stroke="#38bdf8" stroke-width="4" stroke-linecap="round"/>');
-    svg.push('<text x="213" y="354" text-anchor="middle" font-size="10" fill="' + txtSub + '">望海舷窗</text>');
-
-    // 6) 实时人物定位气泡
-    var zoneCoords = {
-      kang: [{ x: 488, y: 174 }, { x: 446, y: 184 }, { x: 530, y: 184 }],
-      near: [{ x: 244, y: 186 }, { x: 356, y: 204 }, { x: 244, y: 158 }],
-      mid:  [{ x: 437, y: 254 }, { x: 370, y: 248 }, { x: 518, y: 274 }],
-      far:  [{ x: 162, y: 224 }, { x: 162, y: 252 }, { x: 546, y: 298 }],
-      deck: [{ x: 648, y: 212 }, { x: 648, y: 238 }, { x: 648, y: 158 }]
-    };
-    var zoneUsed = {};
-    var outsidePeople = [];
-    (d.people || []).forEach(function (p) {
-      if (p.zone === "outside" || p.zone === "unknown") {
-        outsidePeople.push(p);
-        return;
+    return function sample(x, y) {
+      var reg = inHullRegion(x, y);
+      if (reg === "sea") {
+        return { region: "sea", label: "防波堤港湾", temp: wx.sea_temp != null ? Number(wx.sea_temp) : outT };
       }
-      var list = zoneCoords[p.zone] || zoneCoords.mid;
-      var idx = zoneUsed[p.zone] || 0;
-      zoneUsed[p.zone] = idx + 1;
-      var pt = list[idx % list.length];
-      var tag = p.label + (p.sleeping ? "💤" : "") + (p.temp != null ? (" " + Math.round(p.temp) + "°") : "");
-      var w = Math.max(66, tag.length * 9 + 16);
-      var col = p.who === "napcat2" ? "#2563eb" : (p.who === "napcat" ? "#059669" : "#7c3aed");
-      svg.push('<g>');
-      svg.push('<rect x="' + (pt.x - w / 2) + '" y="' + (pt.y - 12) + '" width="' + w + '" height="24" rx="12" fill="' + col + '" stroke="#fff" stroke-width="1.5"/>');
-      svg.push('<text x="' + pt.x + '" y="' + (pt.y + 4) + '" text-anchor="middle" font-size="11" font-weight="600" fill="#fff">' + escSvg(tag) + '</text>');
-      svg.push('</g>');
+      if (reg === "deck") {
+        var dDoor = Math.hypot(x - 584, y - 205);
+        var leak = Math.max(0, midT - outT) * 0.16 * Math.exp(-(dDoor * dDoor) / 1600);
+        return { region: "deck", label: "船头甲板", temp: outT + leak };
+      }
+      if (reg === "stern") {
+        var dWall = Math.max(0, 116 - x);
+        var tS = farT - Math.min(0.6, dWall / 120 * 0.6);
+        return { region: "stern", label: "船尾储物舱", temp: tS };
+      }
+
+      // 主船舱连续热扩散场
+      var t = midT;
+      var dLeft = Math.max(0, x - 116);
+      var dWin = distToSeg(x, y, 148, 348, 268, 348);
+      var dDoorIn = Math.hypot(x - 584, y - 205);
+      var coldF = Math.max(
+        Math.exp(-(dLeft * dLeft) / 3800) * 0.92,
+        Math.exp(-(dWin * dWin) / 4800),
+        Math.exp(-(dDoorIn * dDoorIn) / 3400) * 0.92
+      );
+      t = t + (farT - t) * Math.min(1, coldF);
+
+      var dWood = Math.hypot(x - 292, y - 205);
+      var woodSpan = woodLit ? 128 : 98;
+      var wInfluence = Math.exp(-(dWood * dWood) / (2 * woodSpan * woodSpan * 0.42));
+      var woodPeak = (charLit && !woodLit && th.mode === "burning") ? midT + (nearT - midT) * 0.25 : nearT;
+      if (woodPeak > t) { t = t + (woodPeak - t) * wInfluence; }
+
+      var dp = Math.min(
+        distToSeg(x, y, 312, 196, 364, 196),
+        distToSeg(x, y, 364, 196, 364, 144),
+        distToSeg(x, y, 364, 144, 396, 144)
+      );
+      var pInf = Math.exp(-(dp * dp) / 480);
+      if (pipeT > t) { t = t + (pipeT - t) * pInf * 0.85; }
+
+      var kx = Math.max(398, Math.min(568, x));
+      var ky = Math.max(76, Math.min(200, y));
+      var dk = Math.hypot(x - kx, y - ky);
+      var kInf = Math.exp(-(dk * dk) / 1150);
+      if (kangT > t) {
+        var headBoost = Math.exp(-Math.hypot(x - 420, y - 144) / 90) * (woodLit ? 0.8 : 0.3);
+        t = t + (kangT + headBoost - t) * kInf;
+      }
+
+      if (charLit) {
+        var dChar = Math.hypot(x - 246, y - 97);
+        var cPeak = Math.max(nearT, 18.5);
+        var cInf = Math.exp(-(dChar * dChar) / 2200);
+        if (cPeak > t) { t = t + (cPeak - t) * cInf; }
+      }
+
+      var lbl = "矮桌中段";
+      if (x >= 394 && x <= 574 && y >= 70 && y <= 206) { lbl = "红砖火炕"; }
+      else if (dWood <= 58) { lbl = "柴炉烤火圈"; }
+      else if (x >= 130 && x <= 284 && y >= 68 && y <= 128) { lbl = "小灶台 · 炭炉"; }
+      else if (x >= 130 && x <= 278 && y >= 274 && y <= 346) { lbl = "海图书桌 · 舷窗"; }
+      else if (x >= 464 && x <= 574 && y >= 210 && y <= 262) { lbl = "炕边地铺"; }
+      else if (dDoorIn <= 52) { lbl = "舱门边"; }
+      else if (x < 170) { lbl = "舱尾角落"; }
+      return { region: "cabin", label: lbl, temp: t };
+    };
+  }
+
+  function traceHullPath(ctx) {
+    ctx.beginPath();
+    ctx.moveTo(64, 86);
+    ctx.quadraticCurveTo(34, 96, 34, 134);
+    ctx.lineTo(34, 276);
+    ctx.quadraticCurveTo(34, 314, 64, 324);
+    ctx.quadraticCurveTo(92, 344, 118, 348);
+    ctx.lineTo(584, 348);
+    ctx.bezierCurveTo(648, 348, 724, 290, 724, 205);
+    ctx.bezierCurveTo(724, 120, 648, 62, 584, 62);
+    ctx.lineTo(118, 62);
+    ctx.quadraticCurveTo(92, 66, 64, 86);
+    ctx.closePath();
+  }
+
+  function drawThermalCanvas(canvas, d, sample) {
+    var W = 760, H = 410;
+    var dpr = Math.min(2, window.devicePixelRatio || 1);
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    var ctx = canvas.getContext("2d");
+    ctx.scale(dpr, dpr);
+
+    var th = d.thermal || {};
+    var wx = d.weather || {};
+    var st = d.stoves || {};
+    var woodLit = !!(st.wood && st.wood.burning);
+    var charLit = !!(st.charcoal && st.charcoal.burning);
+
+    var bgGrad = ctx.createLinearGradient(0, 0, W, H);
+    bgGrad.addColorStop(0, "#091324");
+    bgGrad.addColorStop(1, "#0d1b30");
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.strokeStyle = "rgba(125, 196, 232, 0.07)";
+    ctx.lineWidth = 1;
+    for (var wy = 28; wy <= 390; wy += 38) {
+      ctx.beginPath();
+      for (var wxp = 0; wxp <= W; wxp += 24) {
+        var py = wy + Math.sin(wxp * 0.025 + wy) * 2.5;
+        if (wxp === 0) { ctx.moveTo(wxp, py); } else { ctx.lineTo(wxp, py); }
+      }
+      ctx.stroke();
+    }
+
+    var gw = 190, gh = 102;
+    var off = document.createElement("canvas");
+    off.width = gw; off.height = gh;
+    var octx = off.getContext("2d");
+    var img = octx.createImageData(gw, gh);
+    var buf = img.data;
+    var field = new Float32Array(gw * gh);
+    for (var gy = 0; gy < gh; gy++) {
+      var sy = (gy + 0.5) / gh * H;
+      for (var gx = 0; gx < gw; gx++) {
+        var sx = (gx + 0.5) / gw * W;
+        var s = sample(sx, sy);
+        field[gy * gw + gx] = s.temp;
+        var idx = (gy * gw + gx) * 4;
+        if (s.region === "sea") {
+          buf[idx + 3] = 0;
+        } else {
+          var rgb = thermalColor(s.temp);
+          buf[idx] = rgb[0];
+          buf[idx + 1] = rgb[1];
+          buf[idx + 2] = rgb[2];
+          buf[idx + 3] = s.region === "deck" ? 195 : 242;
+        }
+      }
+    }
+    octx.putImageData(img, 0, 0);
+
+    ctx.save();
+    traceHullPath(ctx);
+    ctx.clip();
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(off, 0, 0, W, H);
+
+    ctx.strokeStyle = "rgba(255,255,255,0.13)";
+    ctx.lineWidth = 0.9;
+    var stepX = W / gw, stepY = H / gh;
+    ctx.beginPath();
+    for (var lvl = 6; lvl <= 24; lvl += 3) {
+      for (var iy = 0; iy < gh - 1; iy++) {
+        for (var ix = 0; ix < gw - 1; ix++) {
+          var cx0 = (ix + 0.5) * stepX, cy0 = (iy + 0.5) * stepY;
+          if (inHullRegion(cx0, cy0) !== "cabin") { continue; }
+          var v0 = field[iy * gw + ix];
+          var v1 = field[iy * gw + ix + 1];
+          var v2 = field[(iy + 1) * gw + ix + 1];
+          var v3 = field[(iy + 1) * gw + ix];
+          var pts = [];
+          if ((v0 < lvl) !== (v1 < lvl)) { pts.push([cx0 + (lvl - v0) / (v1 - v0) * stepX, cy0]); }
+          if ((v1 < lvl) !== (v2 < lvl)) { pts.push([cx0 + stepX, cy0 + (lvl - v1) / (v2 - v1) * stepY]); }
+          if ((v3 < lvl) !== (v2 < lvl)) { pts.push([cx0 + (lvl - v3) / (v2 - v3) * stepX, cy0 + stepY]); }
+          if ((v0 < lvl) !== (v3 < lvl)) { pts.push([cx0, cy0 + (lvl - v0) / (v3 - v0) * stepY]); }
+          if (pts.length === 2) {
+            ctx.moveTo(pts[0][0], pts[0][1]);
+            ctx.lineTo(pts[1][0], pts[1][1]);
+          }
+        }
+      }
+    }
+    ctx.stroke();
+
+    ctx.strokeStyle = "rgba(255,255,255,0.06)";
+    ctx.lineWidth = 1;
+    for (var dy = 80; dy <= 330; dy += 16) {
+      ctx.beginPath();
+      ctx.moveTo(584, dy);
+      ctx.lineTo(724, dy);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    traceHullPath(ctx);
+    ctx.strokeStyle = "rgba(255,255,255,0.42)";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.strokeStyle = "rgba(255,255,255,0.34)";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(116, 62); ctx.lineTo(116, 348);
+    ctx.moveTo(584, 62); ctx.lineTo(584, 182);
+    ctx.moveTo(584, 228); ctx.lineTo(584, 348);
+    ctx.stroke();
+
+    ctx.strokeStyle = "rgba(255,255,255,0.72)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(584, 182); ctx.lineTo(564, 218);
+    ctx.stroke();
+
+    function roundRect(x, y, w, h, r) {
+      ctx.beginPath();
+      if (ctx.roundRect) { ctx.roundRect(x, y, w, h, r); }
+      else { ctx.rect(x, y, w, h); }
+    }
+    ctx.strokeStyle = "rgba(255,255,255,0.28)";
+    ctx.fillStyle = "rgba(10,16,30,0.24)";
+    ctx.lineWidth = 1.2;
+    roundRect(132, 70, 148, 52, 6);
+    ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.arc(154, 96, 11, 0, Math.PI * 2); ctx.stroke();
+
+    ctx.strokeStyle = Number(th.kang_delta || 0) >= 2 ? "rgba(255,220,160,0.62)" : "rgba(255,255,255,0.34)";
+    ctx.fillStyle = "rgba(255,255,255,0.04)";
+    ctx.lineWidth = 1.5;
+    roundRect(396, 72, 174, 130, 8);
+    ctx.fill(); ctx.stroke();
+    ctx.strokeStyle = "rgba(255,255,255,0.18)";
+    ctx.lineWidth = 1;
+    roundRect(408, 84, 122, 106, 5); ctx.stroke();
+    roundRect(415, 92, 22, 34, 4); ctx.stroke();
+    ctx.fillStyle = woodLit ? "rgba(255,150,70,0.45)" : "rgba(255,255,255,0.14)";
+    ctx.strokeStyle = "rgba(255,255,255,0.45)";
+    roundRect(542, 78, 22, 22, 3); ctx.fill(); ctx.stroke();
+
+    ctx.save();
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = woodLit ? "rgba(255,205,115,0.9)" : "rgba(255,255,255,0.38)";
+    ctx.lineWidth = 6;
+    ctx.beginPath();
+    ctx.moveTo(312, 196); ctx.lineTo(364, 196); ctx.lineTo(364, 144); ctx.lineTo(396, 144);
+    ctx.stroke();
+    if (woodLit) {
+      ctx.strokeStyle = "rgba(255,248,210,0.75)";
+      ctx.lineWidth = 1.6;
+      ctx.setLineDash([5, 5]);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    ctx.save();
+    ctx.strokeStyle = "rgba(255,255,255,0.22)";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    roundRect(468, 214, 102, 42, 5); ctx.stroke();
+    ctx.restore();
+
+    ctx.strokeStyle = "rgba(255,255,255,0.28)";
+    ctx.fillStyle = "rgba(10,16,30,0.2)";
+    ctx.lineWidth = 1.2;
+    roundRect(354, 268, 98, 56, 7); ctx.fill(); ctx.stroke();
+
+    roundRect(134, 282, 138, 52, 6); ctx.fill(); ctx.stroke();
+    ctx.strokeStyle = "rgba(125,211,252,0.85)";
+    ctx.lineWidth = 3.5;
+    ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(164, 348); ctx.lineTo(244, 348); ctx.stroke();
+
+    ctx.strokeStyle = "rgba(255,255,255,0.3)";
+    ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.arc(630, 268, 10, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(656, 276, 9, 0, Math.PI * 2); ctx.stroke();
+    ctx.save();
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(604, 148); ctx.lineTo(680, 148); ctx.stroke();
+    ctx.restore();
+
+    // 铁桶柴炉 (292, 205)
+    ctx.beginPath();
+    ctx.arc(292, 205, 19, 0, Math.PI * 2);
+    ctx.fillStyle = woodLit ? "#f97316" : "rgba(15,23,42,0.72)";
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = woodLit ? "#fef08a" : "rgba(255,255,255,0.65)";
+    ctx.stroke();
+    if (woodLit) {
+      ctx.beginPath(); ctx.arc(292, 205, 8, 0, Math.PI * 2);
+      ctx.fillStyle = "#fff7c2"; ctx.fill();
+    } else {
+      ctx.beginPath(); ctx.arc(292, 205, 5, 0, Math.PI * 2);
+      ctx.fillStyle = th.mode === "cooling" ? "rgba(251,146,60,0.65)" : "rgba(255,255,255,0.28)";
+      ctx.fill();
+    }
+
+    // 小炭炉 (246, 97)
+    ctx.beginPath();
+    ctx.arc(246, 97, 13, 0, Math.PI * 2);
+    ctx.fillStyle = charLit ? "#ea580c" : "rgba(15,23,42,0.72)";
+    ctx.fill();
+    ctx.lineWidth = 1.6;
+    ctx.strokeStyle = charLit ? "#fde047" : "rgba(255,255,255,0.55)";
+    ctx.stroke();
+    if (charLit) {
+      ctx.beginPath(); ctx.arc(246, 97, 5, 0, Math.PI * 2);
+      ctx.fillStyle = "#fef08a"; ctx.fill();
+    }
+
+    function labelBlock(x, y, temp, title, align, big) {
+      ctx.save();
+      ctx.textAlign = align || "center";
+      ctx.shadowColor = "rgba(6,10,20,0.85)";
+      ctx.shadowBlur = 8;
+      ctx.fillStyle = "#ffffff";
+      ctx.font = (big ? "700 20px " : "700 16px ") + "ui-monospace,SFMono-Regular,Menlo,Consolas,monospace";
+      ctx.fillText(fmtTemp(temp), x, y);
+      ctx.fillStyle = "rgba(241,245,249,0.78)";
+      ctx.font = "500 11px -apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif";
+      ctx.fillText(title, x, y + 15);
+      ctx.restore();
+    }
+
+    function caption(x, y, text, align) {
+      ctx.save();
+      ctx.textAlign = align || "center";
+      ctx.shadowColor = "rgba(6,10,20,0.85)";
+      ctx.shadowBlur = 6;
+      ctx.fillStyle = "rgba(226,232,240,0.62)";
+      ctx.font = "500 10.5px -apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif";
+      ctx.fillText(text, x, y);
+      ctx.restore();
+    }
+
+    labelBlock(476, 134, th.kang, "红砖火炕", "center", true);
+    labelBlock(292, 248, th.near, woodLit ? "柴炉 · 燃烧中" : "铁桶柴炉", "center", true);
+    labelBlock(403, 297, th.mid, "矮桌中段", "center", false);
+    labelBlock(203, 307, th.far, "书桌 · 舷窗", "center", false);
+    labelBlock(76, 204, th.far, "储物舱", "center", false);
+    labelBlock(644, 204, wx.outdoor, "船头甲板", "center", false);
+
+    caption(192, 92, "小灶台", "center");
+    caption(246, 136, charLit ? "小炭炉 · 燃" : "小炭炉", "center");
+    caption(519, 239, "炕边地铺", "center");
+    caption(204, 366, "望海舷窗", "center");
+    caption(553, 114, "烟道", "center");
+
+    ctx.save();
+    ctx.fillStyle = "rgba(226,232,240,0.74)";
+    ctx.font = "500 11.5px -apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif";
+    ctx.fillText("屋外 " + fmtTemp(wx.outdoor) + " · " + (wx.sky_wind || "") + (wx.sea_temp != null ? (" · 海水 " + fmtTemp(wx.sea_temp)) : ""), 18, 26);
+    ctx.restore();
+
+    var zonePts = {
+      kang: [[476, 174], [432, 174], [520, 174]],
+      near: [[236, 205], [344, 224], [244, 174]],
+      mid:  [[403, 250], [346, 252], [448, 250]],
+      far:  [[162, 246], [546, 292], [162, 166]],
+      deck: [[644, 166], [644, 242], [676, 204]]
+    };
+    var used = {}, outside = [];
+    (d.people || []).forEach(function (p) {
+      if (p.zone === "outside" || p.zone === "unknown") { outside.push(p); return; }
+      var pts = zonePts[p.zone] || zonePts.mid;
+      var k = used[p.zone] || 0; used[p.zone] = k + 1;
+      var pt = pts[k % pts.length];
+      var col = p.who === "napcat2" ? "#60a5fa" : (p.who === "napcat" ? "#34d399" : "#c084fc");
+      ctx.save();
+      ctx.beginPath(); ctx.arc(pt[0], pt[1], 7.5, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(8,14,26,0.75)"; ctx.fill();
+      ctx.beginPath(); ctx.arc(pt[0], pt[1], 4.5, 0, Math.PI * 2);
+      ctx.fillStyle = col; ctx.fill();
+      ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 1.5; ctx.stroke();
+
+      ctx.shadowColor = "rgba(6,10,20,0.95)"; ctx.shadowBlur = 6;
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "600 11.5px -apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif";
+      ctx.textAlign = "left";
+      ctx.fillText(p.label + (p.sleeping ? " · 睡" : ""), pt[0] + 10, pt[1] + 4);
+      ctx.restore();
     });
 
-    if (outsidePeople.length) {
-      var ox = 740;
-      outsidePeople.forEach(function (p, i) {
-        var shortPlace = String(p.place || "外头").replace(/^海边小镇[·・]?/, "").slice(0, 10);
-        var tag = p.label + "在外：" + shortPlace + (p.temp != null ? (" " + Math.round(p.temp) + "°") : "");
-        var w = Math.min(240, Math.max(110, tag.length * 9.2 + 18));
-        var y = 14 + i * 26;
-        svg.push('<rect x="' + (ox - w) + '" y="' + y + '" width="' + w + '" height="22" rx="11" fill="' + pillBg + '" stroke="' + wallLine + '" stroke-width="1.2"/>');
-        svg.push('<text x="' + (ox - w / 2) + '" y="' + (y + 15) + '" text-anchor="middle" font-size="10.5" font-weight="600" fill="' + txtMain + '">' + escSvg(tag) + '</text>');
-      });
+    if (outside.length) {
+      var outText = "外出：" + outside.map(function (p) {
+        return p.label + "（" + String(p.place || "外头").replace(/^海边小镇[·・]?/, "").slice(0, 8) + "）";
+      }).join(" · ");
+      ctx.save();
+      ctx.textAlign = "right";
+      ctx.fillStyle = "rgba(226,232,240,0.72)";
+      ctx.font = "500 11.5px -apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif";
+      ctx.fillText(outText, W - 18, 26);
+      ctx.restore();
     }
 
-    svg.push('</svg>');
-    var wrap = document.createElement("div");
-    wrap.innerHTML = svg.join("");
-    var node = wrap.firstChild;
-    if (node) {
-      Array.prototype.forEach.call(node.querySelectorAll("[data-stove-click]"), function (el) {
-        el.addEventListener("click", function () {
-          var kind = el.getAttribute("data-stove-click");
-          S.heatFlash = kind;
-          var card = document.getElementById("heatStove-" + kind);
-          if (card) {
-            card.scrollIntoView({ behavior: "smooth", block: "center" });
-            card.classList.remove("flash");
-            void card.offsetWidth;
-            card.classList.add("flash");
-            setTimeout(function () { card.classList.remove("flash"); }, 1200);
-          }
-        });
-      });
+    ctx.save();
+    ctx.textAlign = "right";
+    ctx.fillStyle = "rgba(226,232,240,0.44)";
+    ctx.font = "400 11px -apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif";
+    ctx.fillText("滑动测温 · 点击炉具直接点火", W - 18, H - 14);
+    ctx.restore();
+  }
+
+  function buildThermalStage(d) {
+    var st = d.stoves || {};
+    var fuel = d.fuel || {};
+    var presets = d.presets || {};
+    var woodLit = !!(st.wood && st.wood.burning);
+    var charLit = !!(st.charcoal && st.charcoal.burning);
+
+    var stage = h("div", { class: "hstage" });
+    var canvas = document.createElement("canvas");
+    canvas.className = "hcanvas";
+    var sample = makeThermalSampler(d);
+    drawThermalCanvas(canvas, d, sample);
+    stage.appendChild(canvas);
+
+    var probe = h("div", { class: "hprobe", hidden: true });
+    stage.appendChild(probe);
+
+    function moveProbe(ev) {
+      var rect = canvas.getBoundingClientRect();
+      if (!rect.width || !rect.height) { return; }
+      var x = (ev.clientX - rect.left) / rect.width * 760;
+      var y = (ev.clientY - rect.top) / rect.height * 410;
+      var info = sample(x, y);
+      probe.hidden = false;
+      probe.textContent = "";
+      probe.appendChild(document.createTextNode(fmtTemp(info.temp) + "C"));
+      probe.appendChild(h("small", { text: info.label }));
+      var px = ev.clientX - rect.left;
+      var py = ev.clientY - rect.top;
+      var flip = px > rect.width * 0.72;
+      probe.style.left = px + "px";
+      probe.style.top = py + "px";
+      probe.style.transform = flip ? "translate(calc(-100% - 12px), -50%)" : "translate(12px, -50%)";
     }
-    return node;
+    canvas.addEventListener("mousemove", moveProbe);
+    canvas.addEventListener("mouseleave", function () { probe.hidden = true; });
+    canvas.addEventListener("click", function () {
+      if (S.heatPop) { S.heatPop = ""; renderHeat(); }
+    });
+
+    function addSpot(kind, cx, cy, sizePct, lit, title) {
+      var btn = h("button", {
+        type: "button",
+        class: "hspot" + (lit ? " lit" : "") + (S.heatPop === kind ? " on" : ""),
+        title: title,
+        style: "left:" + (cx / 760 * 100).toFixed(2) + "%;top:" + (cy / 410 * 100).toFixed(2) + "%;width:" + sizePct + "%;aspect-ratio:1/1",
+        onclick: function (ev) {
+          ev.stopPropagation();
+          S.heatPop = S.heatPop === kind ? "" : kind;
+          renderHeat();
+        }
+      }, h("span", { class: "hspot-ring" }));
+      stage.appendChild(btn);
+    }
+    addSpot("wood", 292, 205, 6.2, woodLit, "点击控制铁桶柴炉");
+    addSpot("charcoal", 246, 97, 4.6, charLit, "点击控制小炭炉");
+
+    if (S.heatPop === "wood" || S.heatPop === "charcoal") {
+      var isW = S.heatPop === "wood";
+      var cur = isW ? (st.wood || {}) : (st.charcoal || {});
+      var availText = isW ? ("可用干柴 " + Number(fuel.wood_total_bundles || 0) + " 捆") : ("可用闷炭 " + Number(fuel.charcoal_total_g || 0) + " 克");
+      var pop = h("div", {
+        class: "hpop",
+        style: isW ? "left:4%;top:22%" : "left:36%;top:10%",
+        onclick: function (ev) { ev.stopPropagation(); }
+      },
+        h("div", { class: "hpop-h" },
+          h("span", { class: "hpop-t", text: isW ? "铁桶柴炉" : "灶台小炭炉" }),
+          h("button", { class: "hpop-x", type: "button", onclick: function () { S.heatPop = ""; renderHeat(); } }, icon("x"))
+        ),
+        h("div", { class: "hpop-s", text: cur.burning
+          ? ("燃烧中 · 余 " + cur.remain_min + " 分钟（至 " + String(cur.end || "").slice(11, 16) + "）· " + availText)
+          : ("未点燃 · " + availText + (isW ? " · 通砖炕火道" : " · 仅加热炉前")) })
+      );
+      var acts = h("div", { class: "hpop-acts" });
+      if (cur.burning) {
+        if (isW) {
+          var wr = presets.wood_refuel || { minutes: 60, bundles: 0.25 };
+          var okW = Number(fuel.wood_total_bundles || 0) + 1e-6 >= Number(wr.bundles || 0.25);
+          acts.appendChild(h("button", {
+            type: "button", class: "hpop-btn pri", disabled: S.heatBusy || !okW,
+            onclick: function () { runHeatAction({ action: "refuel", stove: "wood", item_id: S.heatWoodPick }); }
+          }, h("span", { text: "+ 添柴续烧 " + wr.minutes + " 分钟" }), h("small", { text: okW ? ("-" + wr.bundles + "捆") : "不足" })));
+        } else {
+          var cr = presets.charcoal_refuel || { minutes: 30, grams: 80 };
+          var okC = Number(fuel.charcoal_total_g || 0) >= Number(cr.grams || 80);
+          acts.appendChild(h("button", {
+            type: "button", class: "hpop-btn pri", disabled: S.heatBusy || !okC,
+            onclick: function () { runHeatAction({ action: "refuel", stove: "charcoal", item_id: S.heatCharPick }); }
+          }, h("span", { text: "+ 添炭续烧 " + cr.minutes + " 分钟" }), h("small", { text: okC ? ("-" + cr.grams + "克") : "不足" })));
+        }
+        if (cur.can_stop && cur.manual_id) {
+          acts.appendChild(h("button", {
+            type: "button", class: "hpop-btn stop", disabled: S.heatBusy,
+            onclick: function () { runHeatAction({ action: "extinguish", stove: S.heatPop, manual_id: cur.manual_id }); }
+          }, h("span", { text: isW ? "提前封火熄灭" : "提前熄炭" }), h("small", { text: "转入余温" })));
+        }
+      } else if (isW) {
+        (presets.wood || []).forEach(function (p, i) {
+          var ok = Number(fuel.wood_total_bundles || 0) + 1e-6 >= Number(p.bundles || 0.25);
+          acts.appendChild(h("button", {
+            type: "button", class: "hpop-btn" + (i === 1 ? " pri" : ""), disabled: S.heatBusy || !ok,
+            onclick: function () { runHeatAction({ action: "ignite", stove: "wood", preset: p.id, item_id: S.heatWoodPick }); }
+          }, h("span", { text: p.label + " · " + Math.round(p.minutes / 60) + "小时" }), h("small", { text: ok ? ("-" + p.bundles + "捆") : "干柴不足" })));
+        });
+      } else {
+        (presets.charcoal || []).forEach(function (p, i) {
+          var ok = Number(fuel.charcoal_total_g || 0) >= Number(p.grams || 80);
+          acts.appendChild(h("button", {
+            type: "button", class: "hpop-btn" + (i === 0 ? " pri" : ""), disabled: S.heatBusy || !ok,
+            onclick: function () { runHeatAction({ action: "ignite", stove: "charcoal", preset: p.id, item_id: S.heatCharPick }); }
+          }, h("span", { text: p.label + " · " + p.minutes + "分钟" }), h("small", { text: ok ? ("-" + p.grams + "克") : "闷炭不足" })));
+        });
+      }
+      pop.appendChild(acts);
+      stage.appendChild(pop);
+    }
+
+    return stage;
   }
 
   function buildTempCurveSVG(points) {
     if (!points || points.length < 2) { return h("div", { class: "hint", text: "暂无曲线数据" }); }
-    var W = 740, H = 200, padL = 38, padR = 16, padT = 16, padB = 28;
+    var W = 760, H = 176, padL = 34, padR = 14, padT = 18, padB = 26;
     var cw = W - padL - padR, ch = H - padT - padB;
     var dark = heatIsDark();
-    var gridCol = dark ? "rgba(255,255,255,.08)" : "rgba(0,0,0,.07)";
+    var gridCol = dark ? "rgba(255,255,255,.07)" : "rgba(0,0,0,.06)";
     var txtCol = dark ? "#8a8a93" : "#6b6b63";
-    var futBg = dark ? "rgba(141,152,255,.07)" : "rgba(76,91,212,.05)";
+    var futBg = dark ? "rgba(234,88,12,.06)" : "rgba(234,88,12,.04)";
 
     var vals = [];
     points.forEach(function (p) { vals.push(p.outdoor, p.near, p.mid, p.far, p.kang); });
@@ -4830,11 +5182,10 @@
     function yOf(v) { return padT + (1 - (v - lo) / (hi - lo)) * ch; }
 
     var nowIdx = -1;
-    for (var i = 0; i < points.length; i++) {
-      if (!points[i].future) { nowIdx = i; }
-    }
+    for (var i = 0; i < points.length; i++) { if (!points[i].future) { nowIdx = i; } }
 
-    var svg = ['<svg class="hmap-svg" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="今日与未来4小时温区变化曲线">'];
+    var svg = ['<svg class="hchart-svg" viewBox="0 0 ' + W + ' ' + H + '">'];
+    svg.push('<defs><linearGradient id="hcKangArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#ea580c" stop-opacity="0.18"/><stop offset="100%" stop-color="#ea580c" stop-opacity="0"/></linearGradient></defs>');
     if (nowIdx >= 0 && nowIdx < points.length - 1) {
       var nx = xOf(nowIdx);
       svg.push('<rect x="' + nx.toFixed(1) + '" y="' + padT + '" width="' + (W - padR - nx).toFixed(1) + '" height="' + ch + '" fill="' + futBg + '"/>');
@@ -4847,12 +5198,15 @@
       svg.push('<text x="' + (padL - 6) + '" y="' + (gy + 3.5).toFixed(1) + '" text-anchor="end" font-size="10" fill="' + txtCol + '">' + gv + '°</text>');
     }
 
+    var kangPts = points.map(function (p, idx) { return xOf(idx).toFixed(1) + "," + yOf(p.kang).toFixed(1); });
+    svg.push('<polygon fill="url(#hcKangArea)" points="' + padL + ',' + (H - padB) + ' ' + kangPts.join(" ") + ' ' + (W - padR) + ',' + (H - padB) + '"/>');
+
     var series = [
-      { key: "outdoor", col: "#94a3b8", dash: "4 3", w: 1.5 },
-      { key: "far",     col: "#38bdf8", dash: "3 2", w: 1.6 },
-      { key: "mid",     col: "#4c5bd4", dash: "",    w: 2.0 },
-      { key: "near",    col: "#f59e0b", dash: "",    w: 2.0 },
-      { key: "kang",    col: "#ea580c", dash: "",    w: 2.5 }
+      { key: "outdoor", col: "#94a3b8", dash: "4 3", w: 1.3 },
+      { key: "far",     col: "#38bdf8", dash: "2 3", w: 1.4 },
+      { key: "mid",     col: "#5b6be0", dash: "",    w: 1.8 },
+      { key: "near",    col: "#f59e0b", dash: "",    w: 1.8 },
+      { key: "kang",    col: "#ea580c", dash: "",    w: 2.3 }
     ];
     series.forEach(function (s) {
       var pts = points.map(function (p, idx) { return xOf(idx).toFixed(1) + "," + yOf(p[s.key]).toFixed(1); }).join(" ");
@@ -4861,13 +5215,13 @@
 
     if (nowIdx >= 0) {
       var nx2 = xOf(nowIdx);
-      svg.push('<line x1="' + nx2.toFixed(1) + '" y1="' + padT + '" x2="' + nx2.toFixed(1) + '" y2="' + (H - padB) + '" stroke="#ef4444" stroke-width="1.4" stroke-dasharray="3 3"/>');
-      svg.push('<text x="' + nx2.toFixed(1) + '" y="' + (padT - 4) + '" text-anchor="middle" font-size="10" font-weight="600" fill="#ef4444">现在 · 预测 →</text>');
+      svg.push('<line x1="' + nx2.toFixed(1) + '" y1="' + padT + '" x2="' + nx2.toFixed(1) + '" y2="' + (H - padB) + '" stroke="#ea580c" stroke-width="1.2" stroke-dasharray="3 3"/>');
+      svg.push('<text x="' + nx2.toFixed(1) + '" y="' + (padT - 5) + '" text-anchor="middle" font-size="10" font-weight="600" fill="#ea580c">此刻 · 未来4h</text>');
     }
 
     var xStep = Math.max(2, Math.round(points.length / 8));
     for (var xi = 0; xi < points.length; xi += xStep) {
-      svg.push('<text x="' + xOf(xi).toFixed(1) + '" y="' + (H - 8) + '" text-anchor="middle" font-size="10" fill="' + txtCol + '">' + escSvg(points[xi].hm) + '</text>');
+      svg.push('<text x="' + xOf(xi).toFixed(1) + '" y="' + (H - 7) + '" text-anchor="middle" font-size="10" fill="' + txtCol + '">' + escSvg(points[xi].hm) + '</text>');
     }
     svg.push('</svg>');
     var wrap = document.createElement("div");
@@ -4880,7 +5234,7 @@
     var d = S.heat;
     if (!d) {
       if (S.heatErr) { box.appendChild(errState("读取失败", S.heatErr, function () { loadHeat(); })); }
-      else { box.appendChild(skeleton("people", ["height:100px", "height:320px", "height:210px"])); }
+      else { box.appendChild(skeleton("people", ["height:56px", "height:360px", "height:96px"])); }
       return;
     }
 
@@ -4890,253 +5244,200 @@
     var fuel = d.fuel || {};
     var presets = d.presets || {};
     var nowHm = String(d.now || "").slice(11, 16);
-    $("heatSub").textContent = (d.home || "") + " · " + nowHm + " 更新 · 屋外 " + fmtTemp(wx.outdoor) + " · 矮桌 " + fmtTemp(th.mid) + " · 砖炕 " + fmtTemp(th.kang);
+    $("heatSub").textContent = (d.home || "") + " · " + nowHm + " 实时更新";
 
-    // 1. 顶部状态横幅
-    var modeCls = th.mode === "burning" ? "fire" : (th.mode === "cooling" || Number(th.kang_delta || 0) >= 2 ? "warm" : "cold");
-    var modeText = th.mode === "burning"
-      ? ((th.stove === "charcoal" ? "小炭炉" : "铁桶柴炉") + "正在燃烧")
-      : (th.mode === "cooling" ? "停火余温未散" : (Number(th.kang_delta || 0) >= 2 ? "舱冷 · 砖炕尚有余温" : "炉火未点 · 自然室温"));
-
-    var banner = h("div", { class: "hbanner" },
-      h("div", { class: "hbanner-l" },
-        h("div", { class: "hbanner-title" },
-          h("span", { class: "hbadge " + modeCls }, h("i", { class: "hdot" }), modeText),
-          h("span", { text: "屋外 " + fmtTemp(wx.outdoor) + (wx.outdoor - wx.feels >= 1.5 ? "（体感 " + fmtTemp(wx.feels) + "）" : "") })
+    box.appendChild(h("div", { class: "htop" },
+      h("div", { class: "htop-main" },
+        h("div", { class: "htop-nums" },
+          h("span", { class: "htop-big" }, String(Math.round(Number(th.mid || 0) * 10) / 10), h("small", { text: "°C 舱内" })),
+          h("div", { class: "htop-meta" },
+            h("span", null, "砖炕 ", h("b", { text: fmtTemp(th.kang) })),
+            h("span", null, "炉边 ", h("b", { text: fmtTemp(th.near) })),
+            h("span", null, "角落 ", h("b", { text: fmtTemp(th.far) })),
+            h("span", null, "屋外 ", h("b", { text: fmtTemp(wx.outdoor) }))
+          )
         ),
-        h("div", { class: "hbanner-desc", text: th.stove_desc || th.zones_desc || "" })
+        h("div", { class: "htop-desc", text: th.stove_desc || th.zones_desc || "" })
       ),
-      h("div", { class: "hbanner-r" },
-        wx.sea_temp != null ? h("span", { class: "hpill" }, "海湾水温 ", h("b", { text: fmtTemp(wx.sea_temp) })) : null,
-        h("span", { class: "hpill" }, "未生火室温 ", h("b", { text: fmtTemp(th.base_cabin) }))
-      )
-    );
-    box.appendChild(banner);
-
-    // 2. 四温区大字卡片
-    var grid = h("div", { class: "hgrid" });
-    (d.zones || []).forEach(function (z) {
-      var diff = Math.round((Number(z.temp) - Number(th.base_cabin || 0)) * 10) / 10;
-      var diffStr = diff >= 0.5 ? ("+" + diff + "° 加热") : "自然室温";
-      grid.appendChild(h("div", { class: "hcard", style: "--tc:" + tempHex(z.temp) },
-        h("div", { class: "hcard-k" }, h("span", { text: z.label }), h("span", { style: "color:" + tempHex(z.temp), text: diffStr })),
-        h("div", { class: "hcard-v" }, String(Math.round(Number(z.temp) * 10) / 10), h("small", { text: "°C" })),
-        h("div", { class: "hcard-s", text: z.sub || "" })
-      ));
-    });
-    box.appendChild(grid);
-
-    // 3. 交互式船屋热源分布平面图
-    if (d.seaside) {
-      var mapCard = h("div", { class: "hmap-card" },
-        h("div", { class: "hmap-head" },
-          h("span", { class: "hmap-head-t", text: "船屋热源分布图（点炉具可快速定位操作）" }),
-          h("span", { class: "hmap-head-s", text: "与聊天/世界线 100% 同源物理温区模型" })
-        ),
-        buildCabinHeatmapSVG(d)
-      );
-      var pills = h("div", { class: "hpeople-pills" });
-      (d.people || []).forEach(function (p) {
-        pills.appendChild(h("span", { class: "hpill", title: p.doing || p.place },
-          h("b", { text: p.label }),
-          (p.sleeping ? "（睡）" : "") + " " + String(p.place || "").replace(/^海边小镇[·・]?/, "") + (p.temp != null ? (" · " + fmtTemp(p.temp)) : "")
-        ));
-      });
-      mapCard.appendChild(h("div", { class: "hlegend" },
-        h("div", { class: "hlegend-bar" }, h("span", { text: "0°C 寒" }), h("span", { class: "hlegend-grad" }), h("span", { text: "25°C 暖" })),
-        pills
-      ));
-      box.appendChild(mapCard);
-    }
-
-    // 4. 手动点火 & 热源控制（严格扣库存）
-    var ctrlSec = h("div", { class: "lsec" }, lsecHead("手动点火与热源控制", "点火立即扣减真实干柴 / 闷炭库存，并实时联动船舱温度、砖炕余温与她们感知"));
-    if (!d.seaside) {
-      ctrlSec.appendChild(h("div", { class: "pc", text: "当前住处（" + (d.home || "") + "）没有海边船屋铁桶柴炉与小炭炉。" }));
-    } else {
-      var ctrlGrid = h("div", { class: "hctrl-grid" });
-
-      // --- 铁桶柴炉卡片 ---
-      var wst = st.wood || {};
-      var woodBatches = fuel.wood_batches || [];
-      var woodTot = Number(fuel.wood_total_bundles || 0);
-      if (S.heatWoodPick && !woodBatches.some(function (b) { return b.id === S.heatWoodPick; })) { S.heatWoodPick = ""; }
-      var woodSel = h("select", { class: "hfuel-sel", disabled: S.heatBusy || !woodBatches.length });
-      woodSel.appendChild(h("option", { value: "", text: "自动扣最旧可用干柴（FIFO）" }));
-      woodBatches.forEach(function (b) {
-        woodSel.appendChild(h("option", {
-          value: b.id,
-          selected: S.heatWoodPick === b.id,
-          text: b.id + " " + b.name + "（剩 " + b.left_text + (b.fuel_label ? " · " + b.fuel_label : "") + "）"
-        }));
-      });
-      woodSel.addEventListener("change", function () { S.heatWoodPick = woodSel.value; });
-
-      var woodBtns = h("div", { class: "hbtn-grid" });
-      if (wst.burning) {
-        var wr = presets.wood_refuel || { minutes: 60, bundles: 0.25 };
-        var canRefuelW = woodTot + 1e-6 >= Number(wr.bundles || 0.25);
-        woodBtns.appendChild(h("button", {
-          type: "button", class: "hbtn primary", disabled: S.heatBusy || !canRefuelW,
-          onclick: function () { runHeatAction({ action: "refuel", stove: "wood", item_id: S.heatWoodPick }); }
-        }, h("strong", { text: "+ 添柴续烧 " + wr.minutes + " 分钟" }), h("small", { text: canRefuelW ? ("实扣 " + wr.bundles + " 捆干柴") : "干柴库存不足" })));
-        if (wst.can_stop && wst.manual_id) {
-          woodBtns.appendChild(h("button", {
-            type: "button", class: "hbtn stop", disabled: S.heatBusy,
-            onclick: function () { runHeatAction({ action: "extinguish", stove: "wood", manual_id: wst.manual_id }); }
-          }, h("strong", { text: "提前封火熄灭" }), h("small", { text: "停止继续升温，转入余温衰退" })));
-        }
-      } else {
-        (presets.wood || []).forEach(function (p, idx) {
-          var ok = woodTot + 1e-6 >= Number(p.bundles || 0.25);
-          woodBtns.appendChild(h("button", {
-            type: "button", class: "hbtn" + (idx === 1 ? " primary" : ""), disabled: S.heatBusy || !ok,
-            onclick: function () { runHeatAction({ action: "ignite", stove: "wood", preset: p.id, item_id: S.heatWoodPick }); }
-          }, h("strong", { text: p.label + " · " + Math.round(p.minutes / 60) + "h" }), h("small", { text: ok ? ("实扣 " + p.bundles + " 捆干柴") : "干柴不足" })));
-        });
-      }
-
-      var woodCard = h("div", { class: "hstove" + (wst.burning ? " lit" : ""), id: "heatStove-wood" },
-        h("div", { class: "hstove-h" },
-          h("div", null,
-            h("div", { class: "hstove-n", text: "铁桶柴炉（暖舱 · 通砖炕）" }),
-            h("div", { class: "hstove-sub", text: "横向铁烟管直通炕底火道，烧透可留温 6~10 小时" })
-          ),
-          h("span", { class: "hbadge " + (wst.burning ? "fire" : "cold") }, h("i", { class: "hdot" }), wst.burning ? "燃烧中" : "未点燃")
-        ),
-        h("div", { class: "hstove-live", text: wst.burning
-          ? ("由「" + (wst.who_label || "主人") + "」于 " + String(wst.start || "").slice(11, 16) + " 点燃，预计烧至 " + String(wst.end || "").slice(11, 16) + "（余 " + wst.remain_min + " 分钟）" + (wst.doing ? " · " + wst.doing : ""))
-          : ("炉膛未燃 · 炉边 " + fmtTemp(th.near) + " · 砖炕 " + fmtTemp(th.kang)) }),
-        h("div", { class: "hfuel-row" },
-          h("span", { class: "hfuel-tot" + (woodTot < 0.5 ? " low" : ""), text: "可用干柴：" + woodTot + " 捆（" + woodBatches.length + " 批）" }),
-          woodSel
-        ),
-        woodBtns
-      );
-      if ((fuel.wood_unusable || []).length) {
-        var unBox = h("div", { class: "hunusable" }, h("span", { text: "以下木料暂不可直接进炉：" }));
-        fuel.wood_unusable.forEach(function (u) {
-          unBox.appendChild(h("span", { text: "· " + u.id + " " + u.name + (u.left_text ? "（" + u.left_text + "）" : "") + " — " + u.reason }));
-        });
-        woodCard.appendChild(unBox);
-      }
-      ctrlGrid.appendChild(woodCard);
-
-      // --- 小炭炉卡片 ---
-      var cst = st.charcoal || {};
-      var charBatches = fuel.charcoal_batches || [];
-      var charTot = Number(fuel.charcoal_total_g || 0);
-      if (S.heatCharPick && !charBatches.some(function (b) { return b.id === S.heatCharPick; })) { S.heatCharPick = ""; }
-      var charSel = h("select", { class: "hfuel-sel", disabled: S.heatBusy || !charBatches.length });
-      charSel.appendChild(h("option", { value: "", text: "自动扣最旧闷炭（FIFO）" }));
-      charBatches.forEach(function (b) {
-        charSel.appendChild(h("option", {
-          value: b.id,
-          selected: S.heatCharPick === b.id,
-          text: b.id + " " + b.name + "（剩 " + b.left_text + "）"
-        }));
-      });
-      charSel.addEventListener("change", function () { S.heatCharPick = charSel.value; });
-
-      var charBtns = h("div", { class: "hbtn-grid" });
-      if (cst.burning) {
-        var cr = presets.charcoal_refuel || { minutes: 30, grams: 80 };
-        var canRefuelC = charTot >= Number(cr.grams || 80);
-        charBtns.appendChild(h("button", {
-          type: "button", class: "hbtn primary", disabled: S.heatBusy || !canRefuelC,
-          onclick: function () { runHeatAction({ action: "refuel", stove: "charcoal", item_id: S.heatCharPick }); }
-        }, h("strong", { text: "+ 添炭续烧 " + cr.minutes + " 分钟" }), h("small", { text: canRefuelC ? ("实扣 " + cr.grams + " 克闷炭") : "闷炭库存不足" })));
-        if (cst.can_stop && cst.manual_id) {
-          charBtns.appendChild(h("button", {
-            type: "button", class: "hbtn stop", disabled: S.heatBusy,
-            onclick: function () { runHeatAction({ action: "extinguish", stove: "charcoal", manual_id: cst.manual_id }); }
-          }, h("strong", { text: "提前熄炭" }), h("small", { text: "停止继续加热" })));
-        }
-      } else {
-        (presets.charcoal || []).forEach(function (p, idx) {
-          var ok = charTot >= Number(p.grams || 80);
-          charBtns.appendChild(h("button", {
-            type: "button", class: "hbtn" + (idx === 0 ? " primary" : ""), disabled: S.heatBusy || !ok,
-            onclick: function () { runHeatAction({ action: "ignite", stove: "charcoal", preset: p.id, item_id: S.heatCharPick }); }
-          }, h("strong", { text: p.label + " · " + p.minutes + "分钟" }), h("small", { text: ok ? ("实扣 " + p.grams + " 克闷炭") : "闷炭不足" })));
-        });
-      }
-
-      var charCard = h("div", { class: "hstove" + (cst.burning ? " lit" : ""), id: "heatStove-charcoal" },
-        h("div", { class: "hstove-h" },
-          h("div", null,
-            h("div", { class: "hstove-n", text: "灶台小炭炉（做饭 · 不通炕道）" }),
-            h("div", { class: "hstove-sub", text: "局部炭火烤手热饭，仅加热炉前小圈、不烘砖炕" })
-          ),
-          h("span", { class: "hbadge " + (cst.burning ? "fire" : "cold") }, h("i", { class: "hdot" }), cst.burning ? "燃烧中" : "未点燃")
-        ),
-        h("div", { class: "hstove-live", text: cst.burning
-          ? ("由「" + (cst.who_label || "主人") + "」于 " + String(cst.start || "").slice(11, 16) + " 点燃，预计烧至 " + String(cst.end || "").slice(11, 16) + "（余 " + cst.remain_min + " 分钟）" + (cst.doing ? " · " + cst.doing : ""))
-          : "灶台炭炉未点 · 只烧闷炭/木炭" }),
-        h("div", { class: "hfuel-row" },
-          h("span", { class: "hfuel-tot" + (charTot < 200 ? " low" : ""), text: "可用闷炭：" + charTot + " 克（" + charBatches.length + " 批）" }),
-          charSel
-        ),
-        charBtns
-      );
-      ctrlGrid.appendChild(charCard);
-      ctrlSec.appendChild(ctrlGrid);
-
-      if (fuel.lamp_hours !== null && fuel.lamp_hours !== undefined) {
-        ctrlSec.appendChild(h("div", { class: "hlamp-bar" },
-          h("span", null, h("b", { text: "煤油灯余量：" }), fuel.lamp_text || ("约还能点 " + fuel.lamp_hours + " 小时")),
-          h("span", { class: "hint", text: "约余 " + fuel.lamp_hours + " 小时照明" })
-        ));
-      }
-    }
-    box.appendChild(ctrlSec);
-
-    // 5. 今日 + 未来 4 小时温度走势与升温预测
-    var chartSec = h("div", { class: "lsec" }, lsecHead("今日温度变化与未来 4 小时走势", "点火后右侧预测区会实时更新砖炕蓄热与各区回暖曲线"));
-    chartSec.appendChild(h("div", { class: "hchart-card" },
-      buildTempCurveSVG(d.curve || []),
-      h("div", { class: "hchart-leg" },
-        h("span", null, h("i", { style: "background:#ea580c" }), "砖炕炕面"),
-        h("span", null, h("i", { style: "background:#f59e0b" }), "炉边烤火圈"),
-        h("span", null, h("i", { style: "background:#4c5bd4" }), "矮桌中段"),
-        h("span", null, h("i", { style: "background:#38bdf8" }), "舱门/舷窗角"),
-        h("span", null, h("i", { style: "background:#94a3b8" }), "屋外气温")
+      h("div", { class: "htop-scale" },
+        h("span", { text: "0°" }),
+        h("span", { class: "htop-bar" }),
+        h("span", { text: "25°+" })
       )
     ));
-    box.appendChild(chartSec);
 
-    // 6. 近 24 小时生火记录
+    if (d.seaside) {
+      box.appendChild(buildThermalStage(d));
+    }
+
+    if (d.seaside) {
+      var wst = st.wood || {}, cst = st.charcoal || {};
+      var woodBatches = fuel.wood_batches || [], charBatches = fuel.charcoal_batches || [];
+      var woodTot = Number(fuel.wood_total_bundles || 0), charTot = Number(fuel.charcoal_total_g || 0);
+      if (S.heatWoodPick && !woodBatches.some(function (b) { return b.id === S.heatWoodPick; })) { S.heatWoodPick = ""; }
+      if (S.heatCharPick && !charBatches.some(function (b) { return b.id === S.heatCharPick; })) { S.heatCharPick = ""; }
+
+      var wActs = h("div", { class: "hseg" });
+      if (wst.burning) {
+        var wr = presets.wood_refuel || { minutes: 60, bundles: 0.25 };
+        var okW = woodTot + 1e-6 >= Number(wr.bundles || 0.25);
+        wActs.appendChild(h("button", {
+          type: "button", class: "hact pri", disabled: S.heatBusy || !okW,
+          onclick: function () { runHeatAction({ action: "refuel", stove: "wood", item_id: S.heatWoodPick }); }
+        }, "+1h 添柴", h("small", { text: okW ? ("-" + wr.bundles + "捆") : "不足" })));
+        if (wst.can_stop && wst.manual_id) {
+          wActs.appendChild(h("button", {
+            type: "button", class: "hact stop", disabled: S.heatBusy,
+            onclick: function () { runHeatAction({ action: "extinguish", stove: "wood", manual_id: wst.manual_id }); }
+          }, "封火熄灭"));
+        }
+      } else {
+        (presets.wood || []).forEach(function (p, i) {
+          var ok = woodTot + 1e-6 >= Number(p.bundles || 0.25);
+          wActs.appendChild(h("button", {
+            type: "button", class: "hact" + (i === 1 ? " pri" : ""), disabled: S.heatBusy || !ok,
+            title: ok ? p.desc : ("可用干柴仅剩 " + woodTot + " 捆，不足 " + p.bundles + " 捆"),
+            onclick: function () { runHeatAction({ action: "ignite", stove: "wood", preset: p.id, item_id: S.heatWoodPick }); }
+          }, "点 " + Math.round(p.minutes / 60) + "h", h("small", { text: "-" + p.bundles + "捆" })));
+        });
+      }
+
+      var wCol = h("div", { class: "hdock-col" },
+        h("div", { class: "hdock-head" },
+          h("span", { class: "hdock-name" },
+            h("i", { class: "hdot-s" + (wst.burning ? " lit" : (th.mode === "cooling" && th.stove === "wood" ? " warm" : "")) }),
+            "铁桶柴炉",
+            h("span", { class: "hdock-stat", text: wst.burning ? ("燃烧中 · 余 " + wst.remain_min + "m · " + (wst.who_label || "主人")) : (Number(th.kang_delta || 0) >= 2 ? "炕留余温" : "未点") })
+          ),
+          h("button", {
+            type: "button", class: "hdock-fuel" + (woodTot < 0.5 ? " low" : ""),
+            title: "点击切换扣减批次或查看不可烧木料",
+            onclick: function () { S.heatBatchOpen = S.heatBatchOpen === "wood" ? "" : "wood"; renderHeat(); }
+          }, "干柴 ", h("b", { text: woodTot + " 捆" }), (S.heatWoodPick ? " · 指定" : ""))
+        ),
+        wActs
+      );
+      if (S.heatBatchOpen === "wood") {
+        var wSel = h("select", { class: "hbatch-sel", disabled: S.heatBusy || !woodBatches.length });
+        wSel.appendChild(h("option", { value: "", text: "自动扣最旧可用干柴（默认）" }));
+        woodBatches.forEach(function (b) {
+          wSel.appendChild(h("option", { value: b.id, selected: S.heatWoodPick === b.id, text: b.id + " " + b.name + "（剩 " + b.left_text + (b.fuel_label ? " · " + b.fuel_label : "") + "）" }));
+        });
+        wSel.addEventListener("change", function () { S.heatWoodPick = wSel.value; renderHeat(); });
+        var wBatch = h("div", { class: "hbatch" }, wSel);
+        (fuel.wood_unusable || []).forEach(function (u) {
+          wBatch.appendChild(h("span", { text: "暂不可烧：" + u.id + " " + u.name + " — " + u.reason }));
+        });
+        wCol.appendChild(wBatch);
+      }
+
+      var cActs = h("div", { class: "hseg" });
+      if (cst.burning) {
+        var cr = presets.charcoal_refuel || { minutes: 30, grams: 80 };
+        var okC = charTot >= Number(cr.grams || 80);
+        cActs.appendChild(h("button", {
+          type: "button", class: "hact pri", disabled: S.heatBusy || !okC,
+          onclick: function () { runHeatAction({ action: "refuel", stove: "charcoal", item_id: S.heatCharPick }); }
+        }, "+30m 添炭", h("small", { text: okC ? ("-" + cr.grams + "克") : "不足" })));
+        if (cst.can_stop && cst.manual_id) {
+          cActs.appendChild(h("button", {
+            type: "button", class: "hact stop", disabled: S.heatBusy,
+            onclick: function () { runHeatAction({ action: "extinguish", stove: "charcoal", manual_id: cst.manual_id }); }
+          }, "熄炭"));
+        }
+      } else {
+        (presets.charcoal || []).forEach(function (p) {
+          var ok = charTot >= Number(p.grams || 80);
+          cActs.appendChild(h("button", {
+            type: "button", class: "hact", disabled: S.heatBusy || !ok,
+            title: ok ? p.desc : ("可用闷炭仅剩 " + charTot + " 克，不足 " + p.grams + " 克"),
+            onclick: function () { runHeatAction({ action: "ignite", stove: "charcoal", preset: p.id, item_id: S.heatCharPick }); }
+          }, "点 " + p.minutes + "m", h("small", { text: "-" + p.grams + "克" })));
+        });
+      }
+
+      var cCol = h("div", { class: "hdock-col" },
+        h("div", { class: "hdock-head" },
+          h("span", { class: "hdock-name" },
+            h("i", { class: "hdot-s" + (cst.burning ? " lit" : "") }),
+            "小炭炉",
+            h("span", { class: "hdock-stat", text: cst.burning ? ("燃烧中 · 余 " + cst.remain_min + "m") : "未点 · 不通炕" })
+          ),
+          h("button", {
+            type: "button", class: "hdock-fuel" + (charTot < 200 ? " low" : ""),
+            title: "点击切换扣减批次",
+            onclick: function () { S.heatBatchOpen = S.heatBatchOpen === "charcoal" ? "" : "charcoal"; renderHeat(); }
+          }, "闷炭 ", h("b", { text: charTot + " 克" }))
+        ),
+        cActs
+      );
+      if (S.heatBatchOpen === "charcoal") {
+        var cSel = h("select", { class: "hbatch-sel", disabled: S.heatBusy || !charBatches.length });
+        cSel.appendChild(h("option", { value: "", text: "自动扣最旧闷炭（默认）" }));
+        charBatches.forEach(function (b) {
+          cSel.appendChild(h("option", { value: b.id, selected: S.heatCharPick === b.id, text: b.id + " " + b.name + "（剩 " + b.left_text + "）" }));
+        });
+        cSel.addEventListener("change", function () { S.heatCharPick = cSel.value; renderHeat(); });
+        cCol.appendChild(h("div", { class: "hbatch" }, cSel));
+      }
+
+      box.appendChild(h("div", { class: "hdock" }, wCol, h("div", { class: "hdock-sep" }), cCol));
+
+      var footBits = [];
+      if (fuel.lamp_hours !== null && fuel.lamp_hours !== undefined) {
+        footBits.push(h("span", null, "煤油灯余 ", h("b", { text: fuel.lamp_hours + " 小时" })));
+      }
+      if ((fuel.wood_unusable || []).length) {
+        footBits.push(h("span", null, "另有 ", h("b", { text: fuel.wood_unusable.length + " 批" }), " 未劈/未干木料暂不可燃"));
+      }
+      if (footBits.length) {
+        box.appendChild(h("div", { class: "hfoot-info" }, footBits));
+      }
+    }
+
     var hist = d.history || [];
-    var logSec = h("div", { class: "lsec" }, lsecHead("近 24 小时生火记录", hist.length ? ("共 " + hist.length + " 次 · 点世界线条目可跳转查看") : "近 24 小时还没有生过火"));
-    if (hist.length) {
-      var list = h("div", { class: "hlog" });
+    var tabBar = h("div", { class: "hsub-bar" },
+      h("div", { class: "htabs" },
+        h("button", { type: "button", class: "htab" + (S.heatTab !== "log" ? " on" : ""), onclick: function () { S.heatTab = "curve"; renderHeat(); } }, "温度走势"),
+        h("button", { type: "button", class: "htab" + (S.heatTab === "log" ? " on" : ""), onclick: function () { S.heatTab = "log"; renderHeat(); } }, "生火记录" + (hist.length ? (" (" + hist.length + ")") : ""))
+      ),
+      S.heatTab !== "log" ? h("div", { class: "hchart-leg" },
+        h("span", null, h("i", { style: "background:#ea580c" }), "砖炕"),
+        h("span", null, h("i", { style: "background:#f59e0b" }), "炉边"),
+        h("span", null, h("i", { style: "background:#5b6be0" }), "矮桌"),
+        h("span", null, h("i", { style: "background:#38bdf8" }), "角落"),
+        h("span", null, h("i", { style: "background:#94a3b8" }), "屋外")
+      ) : null
+    );
+    box.appendChild(tabBar);
+
+    if (S.heatTab !== "log") {
+      box.appendChild(buildTempCurveSVG(d.curve || []));
+    } else if (!hist.length) {
+      box.appendChild(h("div", { class: "hint", text: "近 24 小时还没有生过火" }));
+    } else {
+      var logList = h("div", { class: "hlog-plain" });
       hist.forEach(function (r) {
         var fuelTxt = (r.fuel || []).map(function (f) { return f.id + " " + f.name + " -" + f.used; }).join("，");
         var isWorld = r.source === "world" && r.entry_date && r.id;
-        var row = h("div", {
-          class: "hlog-row" + (isWorld ? " click" : ""),
+        logList.appendChild(h("div", {
+          class: "hlog-item" + (isWorld ? " click" : ""),
           onclick: isWorld ? function () { openWorldEntry(r.entry_date, r.id, r.who); } : null
         },
-          h("div", { class: "hlog-at", text: String(r.start || "").slice(5, 16) + "–" + String(r.end || "").slice(11, 16) }),
-          h("div", { class: "hlog-tag" },
-            h("span", { text: (r.stove === "wood" ? "🔥 " : "🟠 ") + r.stove_label }),
-            r.active ? h("span", { class: "hbadge fire", style: "padding:1px 6px;font-size:10.5px", text: "燃烧中" }) : null
+          h("span", { class: "hlog-at", text: String(r.start || "").slice(5, 16) + "–" + String(r.end || "").slice(11, 16) }),
+          h("span", { class: "hlog-kind " + (r.stove === "wood" ? "wood" : "char"), text: r.stove_label }),
+          h("div", { class: "hlog-do" },
+            r.doing || (r.source === "manual" ? "手动点火" : "生火"),
+            fuelTxt ? h("small", { text: "扣库存：" + fuelTxt }) : null
           ),
-          h("div", null,
-            h("div", { text: r.doing || (r.source === "manual" ? "手动点火" : "生火") }),
-            fuelTxt ? h("div", { class: "hlog-fuel", text: "实扣库存：" + fuelTxt }) : null
-          ),
-          h("div", { class: "hlog-who", text: (r.who_label || "") + (r.source === "manual" ? " · 网页手动" : "") + " · " + r.minutes + "m" })
-        );
-        list.appendChild(row);
+          h("span", { class: "hlog-who", text: (r.who_label || "") + (r.source === "manual" ? " · 手动" : "") + " · " + r.minutes + "m" })
+        ));
       });
-      logSec.appendChild(list);
+      box.appendChild(logList);
     }
-    box.appendChild(logSec);
   }
 
   $("heatRefresh").addEventListener("click", function () { loadHeat().then(function () { if (!S.heatErr) { toast("已刷新"); } }); });
-
   /* ================= 钱匣与账本 ================= */
   function loadMoney(silent) { return loadAuxPage("ctx/money", "money", "money", renderMoney, silent); }
   function moneyPost(body, okMsg, done) { return resourcePost("ctx/money/edit", loadMoney, body, okMsg, done); }
