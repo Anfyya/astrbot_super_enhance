@@ -16,6 +16,28 @@ from .food import room_temp
 from .world import fmt_time, is_event, is_sleep, parse_time, real_stop, stove_active_in_entry
 
 # 与 things.py 保持一致的真实燃料消耗标准
+WOOD_MIN_PER_BUNDLE = 240  # 1 捆干柴 = 240 分钟（0.25 捆 = 1 小时）
+CHARCOAL_MIN_PER_GRAM = 0.3  # 100 克闷炭 = 30 分钟（200 克 = 1 小时）
+
+WOOD_SLIDER = {
+    "min": 0.05,
+    "max": 2.0,
+    "step": 0.05,
+    "default": 0.5,
+    "refuel_default": 0.25,
+    "min_per_unit": WOOD_MIN_PER_BUNDLE,
+    "unit": "捆",
+}
+CHARCOAL_SLIDER = {
+    "min": 30,
+    "max": 400,
+    "step": 10,
+    "default": 100,
+    "refuel_default": 80,
+    "min_per_unit": CHARCOAL_MIN_PER_GRAM,
+    "unit": "克",
+}
+
 WOOD_PRESETS = (
     {"id": "wood_60", "label": "小烧暖舱", "minutes": 60, "bundles": 0.25, "desc": "烧 1 小时 · 扣 0.25 捆干柴"},
     {"id": "wood_120", "label": "暖舱烘炕", "minutes": 120, "bundles": 0.5, "desc": "烧 2 小时 · 扣 0.5 捆干柴"},
@@ -579,6 +601,10 @@ def heat_snapshot(life, now: datetime.datetime) -> dict[str, Any]:
             for k in ("near", "kang", "mid", "far")
         ],
         "stoves": stoves,
+        "slider": {
+            "wood": dict(WOOD_SLIDER),
+            "charcoal": dict(CHARCOAL_SLIDER),
+        },
         "presets": {
             "wood": list(WOOD_PRESETS),
             "wood_refuel": dict(WOOD_REFUEL),
@@ -727,6 +753,74 @@ def _record_master_fire_event(life, flat: datetime.datetime, stove: str, doing: 
         logger.warning("[super_enhance/heat] 写入世界线瞬间事件失败（不影响炉火与扣库存）", exc_info=True)
 
 
+def _fmt_dur(minutes: int) -> str:
+    m = max(1, int(minutes))
+    if m < 60:
+        return "%d分钟" % m
+    h, r = divmod(m, 60)
+    return ("%d小时" % h) if r == 0 else ("%d小时%d分钟" % (h, r))
+
+
+def _fmt_end_clock(start_t: datetime.datetime, end_t: datetime.datetime) -> str:
+    hm = end_t.strftime("%H:%M")
+    return ("次日 %s" % hm) if end_t.date() > start_t.date() else hm
+
+
+def _resolve_fuel_request(stove: str, action: str, payload: dict) -> tuple[float, int, str, str]:
+    """解析点火/添料燃料量与对应燃烧时长，优先读取滑块传入的结构化数值，未传时兼容旧 preset。"""
+    if stove == "wood":
+        raw = payload.get("bundles")
+        if raw is not None and str(raw).strip() != "":
+            try:
+                bundles = round(float(raw), 2)
+            except (TypeError, ValueError):
+                raise ValueError("干柴数量格式无效")
+            if bundles < WOOD_SLIDER["min"] - 1e-6 or bundles > WOOD_SLIDER["max"] + 1e-6:
+                raise ValueError(
+                    "单次用柴需在 %s～%s 捆之间"
+                    % (_num_text(WOOD_SLIDER["min"]), _num_text(WOOD_SLIDER["max"]))
+                )
+            minutes = max(12, int(round(bundles * WOOD_MIN_PER_BUNDLE)))
+            cost_text = "%s捆干柴" % _num_text(bundles)
+            label = "%s · %s" % (cost_text, _fmt_dur(minutes))
+            return bundles, minutes, cost_text, label
+        if action == "refuel":
+            bundles = float(WOOD_REFUEL["bundles"])
+            minutes = int(WOOD_REFUEL["minutes"])
+            cost_text = "%s捆干柴" % _num_text(bundles)
+            return bundles, minutes, cost_text, "%s · %s" % (cost_text, _fmt_dur(minutes))
+        preset_id = str(payload.get("preset") or "").strip()
+        preset = next((p for p in WOOD_PRESETS if p["id"] == preset_id), WOOD_PRESETS[0])
+        bundles = float(preset["bundles"])
+        minutes = int(preset["minutes"])
+        return bundles, minutes, "%s捆干柴" % _num_text(bundles), str(preset["label"])
+
+    raw = payload.get("grams")
+    if raw is not None and str(raw).strip() != "":
+        try:
+            grams = int(round(float(raw)))
+        except (TypeError, ValueError):
+            raise ValueError("闷炭克数格式无效")
+        if grams < CHARCOAL_SLIDER["min"] or grams > CHARCOAL_SLIDER["max"]:
+            raise ValueError(
+                "单次用炭需在 %d～%d 克之间" % (CHARCOAL_SLIDER["min"], CHARCOAL_SLIDER["max"])
+            )
+        minutes = max(9, int(round(grams * CHARCOAL_MIN_PER_GRAM)))
+        cost_text = "%d克闷炭" % grams
+        label = "%s · %s" % (cost_text, _fmt_dur(minutes))
+        return float(grams), minutes, cost_text, label
+    if action == "refuel":
+        grams = int(CHARCOAL_REFUEL["grams"])
+        minutes = int(CHARCOAL_REFUEL["minutes"])
+        cost_text = "%d克闷炭" % grams
+        return float(grams), minutes, cost_text, "%s · %s" % (cost_text, _fmt_dur(minutes))
+    preset_id = str(payload.get("preset") or "").strip()
+    preset = next((p for p in CHARCOAL_PRESETS if p["id"] == preset_id), CHARCOAL_PRESETS[0])
+    grams = int(preset["grams"])
+    minutes = int(preset["minutes"])
+    return float(grams), minutes, "%d克闷炭" % grams, str(preset["label"])
+
+
 def heat_action(life, payload: dict, now: datetime.datetime) -> dict[str, Any]:
     """处理网页手动点火 / 添燃料续烧 / 提前熄火请求。"""
     flat = now.replace(tzinfo=None, second=0, microsecond=0)
@@ -760,89 +854,80 @@ def heat_action(life, payload: dict, now: datetime.datetime) -> dict[str, Any]:
     fuel = _fuel_batches(life, flat)
     stoves = _active_stoves(life.world, flat, home)
     active_info = stoves[stove]
+    st_name = "铁桶柴炉" if stove == "wood" else "小炭炉"
 
     if action == "ignite":
-        preset_id = str(payload.get("preset") or "").strip()
+        amt, minutes, cost_text, label = _resolve_fuel_request(stove, "ignite", payload)
         if stove == "wood":
-            preset = next((p for p in WOOD_PRESETS if p["id"] == preset_id), WOOD_PRESETS[0])
-            minutes = int(preset["minutes"])
-            plan = _plan_wood_deduction(fuel["wood_batches"], float(preset["bundles"]), preferred_id=preferred_id)
-            st_name = "铁桶柴炉"
-            cost_text = "%s捆干柴" % _num_text(preset["bundles"])
+            plan = _plan_wood_deduction(fuel["wood_batches"], float(amt), preferred_id=preferred_id)
         else:
-            preset = next((p for p in CHARCOAL_PRESETS if p["id"] == preset_id), CHARCOAL_PRESETS[0])
-            minutes = int(preset["minutes"])
-            plan = _plan_charcoal_deduction(fuel["charcoal_batches"], int(preset["grams"]), preferred_id=preferred_id)
-            st_name = "小炭炉"
-            cost_text = "%d克闷炭" % int(preset["grams"])
+            plan = _plan_charcoal_deduction(fuel["charcoal_batches"], int(round(amt)), preferred_id=preferred_id)
 
         # 若此时同炉已有手动火在烧，直接在原结束时间基础上顺延，避免浪费燃料
         if active_info.get("burning") and active_info.get("manual_id"):
             old_end = parse_time(active_info["end"]) or flat
             new_end = max(flat, old_end) + datetime.timedelta(minutes=minutes)
-            deducted = _commit_fuel_plan(life, flat, plan, "网页手动给%s添料续烧（+%d分钟）" % (st_name, minutes), active_info["manual_id"])
+            end_lbl = _fmt_end_clock(flat, new_end)
+            deducted = _commit_fuel_plan(life, flat, plan, "网页手动给%s添料续烧（+%s）" % (st_name, _fmt_dur(minutes)), active_info["manual_id"])
             rec = life.world.extend_manual_stove(
                 active_info["manual_id"],
                 new_end,
                 fuel_extra=deducted,
-                note="主人手动续烧%s至 %s" % (st_name, new_end.strftime("%H:%M")),
+                note="主人手动续烧%s至 %s" % (st_name, end_lbl),
             )
-            _record_master_fire_event(life, flat, stove, "给%s添了%s续烧至 %s" % (st_name, cost_text, new_end.strftime("%H:%M")))
+            _record_master_fire_event(life, flat, stove, "给%s添了%s续烧至 %s" % (st_name, cost_text, end_lbl))
             logger.info("[super_enhance/heat] 手动续烧 %s +%dmin 扣 %s", st_name, minutes, deducted)
             return {
                 "action": "refuel",
                 "record": rec,
                 "deducted": deducted,
-                "message": "已给%s添料续烧至 %s（实扣 %s）" % (st_name, new_end.strftime("%H:%M"), cost_text),
+                "message": "已给%s添料续烧 +%s（至 %s，实扣 %s）" % (st_name, _fmt_dur(minutes), end_lbl, cost_text),
             }
 
         end_t = flat + datetime.timedelta(minutes=minutes)
-        deducted = _commit_fuel_plan(life, flat, plan, "网页手动点燃%s（%d分钟）" % (st_name, minutes))
+        end_lbl = _fmt_end_clock(flat, end_t)
+        deducted = _commit_fuel_plan(life, flat, plan, "网页手动点燃%s（%s）" % (st_name, _fmt_dur(minutes)))
         rec = life.world.add_manual_stove(
             stove,
             flat,
             end_t,
-            note="主人手动点起%s（%s）" % (st_name, preset["label"]),
+            note="主人手动点起%s（%s）" % (st_name, label),
             fuel=deducted,
             by="master",
         )
-        _record_master_fire_event(life, flat, stove, "亲手用%s点起了%s（烧至 %s）" % (cost_text, st_name, end_t.strftime("%H:%M")))
+        _record_master_fire_event(life, flat, stove, "亲手用%s点起了%s（烧%s，至 %s）" % (cost_text, st_name, _fmt_dur(minutes), end_lbl))
         logger.info("[super_enhance/heat] 手动点火 %s %dmin 扣 %s", st_name, minutes, deducted)
         return {
             "action": "ignite",
             "record": rec,
             "deducted": deducted,
-            "message": "已点燃%s，预计烧至 %s（实扣 %s）" % (st_name, end_t.strftime("%H:%M"), cost_text),
+            "message": "已点燃%s，预计烧 %s（至 %s，实扣 %s）" % (st_name, _fmt_dur(minutes), end_lbl, cost_text),
         }
 
     if action == "refuel":
+        amt, minutes, cost_text, _ = _resolve_fuel_request(stove, "refuel", payload)
         if stove == "wood":
-            minutes = int(WOOD_REFUEL["minutes"])
-            plan = _plan_wood_deduction(fuel["wood_batches"], float(WOOD_REFUEL["bundles"]), preferred_id=preferred_id)
-            st_name = "铁桶柴炉"
-            cost_text = "%s捆干柴" % _num_text(WOOD_REFUEL["bundles"])
+            plan = _plan_wood_deduction(fuel["wood_batches"], float(amt), preferred_id=preferred_id)
         else:
-            minutes = int(CHARCOAL_REFUEL["minutes"])
-            plan = _plan_charcoal_deduction(fuel["charcoal_batches"], int(CHARCOAL_REFUEL["grams"]), preferred_id=preferred_id)
-            st_name = "小炭炉"
-            cost_text = "%d克闷炭" % int(CHARCOAL_REFUEL["grams"])
+            plan = _plan_charcoal_deduction(fuel["charcoal_batches"], int(round(amt)), preferred_id=preferred_id)
 
         if active_info.get("burning") and active_info.get("manual_id"):
             old_end = parse_time(active_info["end"]) or flat
             new_end = max(flat, old_end) + datetime.timedelta(minutes=minutes)
-            deducted = _commit_fuel_plan(life, flat, plan, "网页手动给%s添料续烧（+%d分钟）" % (st_name, minutes), active_info["manual_id"])
+            end_lbl = _fmt_end_clock(flat, new_end)
+            deducted = _commit_fuel_plan(life, flat, plan, "网页手动给%s添料续烧（+%s）" % (st_name, _fmt_dur(minutes)), active_info["manual_id"])
             rec = life.world.extend_manual_stove(
                 active_info["manual_id"],
                 new_end,
                 fuel_extra=deducted,
-                note="主人手动续烧%s至 %s" % (st_name, new_end.strftime("%H:%M")),
+                note="主人手动续烧%s至 %s" % (st_name, end_lbl),
             )
-            _record_master_fire_event(life, flat, stove, "给%s添了%s续烧至 %s" % (st_name, cost_text, new_end.strftime("%H:%M")))
+            _record_master_fire_event(life, flat, stove, "给%s添了%s续烧至 %s" % (st_name, cost_text, end_lbl))
             return {
                 "action": "refuel",
                 "record": rec,
                 "deducted": deducted,
-                "message": "已给%s添料续烧至 %s（实扣 %s）" % (st_name, new_end.strftime("%H:%M"), cost_text),
+                "message": "已给%s添料续烧 +%s（至 %s，实扣 %s）" % (st_name, _fmt_dur(minutes), end_lbl, cost_text),
             }
 
         # 如果此刻是她们在世界线里点着的火，顺接在她们停火时间之后续烧一段
@@ -850,7 +935,8 @@ def heat_action(life, payload: dict, now: datetime.datetime) -> dict[str, Any]:
         if base_start is None or base_start < flat:
             base_start = flat
         new_end = base_start + datetime.timedelta(minutes=minutes)
-        deducted = _commit_fuel_plan(life, flat, plan, "网页手动给%s添料续烧（+%d分钟）" % (st_name, minutes))
+        end_lbl = _fmt_end_clock(flat, new_end)
+        deducted = _commit_fuel_plan(life, flat, plan, "网页手动给%s添料续烧（+%s）" % (st_name, _fmt_dur(minutes)))
         rec = life.world.add_manual_stove(
             stove,
             base_start,
@@ -859,12 +945,12 @@ def heat_action(life, payload: dict, now: datetime.datetime) -> dict[str, Any]:
             fuel=deducted,
             by="master",
         )
-        _record_master_fire_event(life, flat, stove, "往%s里添了%s续烧至 %s" % (st_name, cost_text, new_end.strftime("%H:%M")))
+        _record_master_fire_event(life, flat, stove, "往%s里添了%s续烧至 %s" % (st_name, cost_text, end_lbl))
         return {
             "action": "refuel",
             "record": rec,
             "deducted": deducted,
-            "message": "已给%s添料续烧至 %s（实扣 %s）" % (st_name, new_end.strftime("%H:%M"), cost_text),
+            "message": "已给%s添料续烧 +%s（至 %s，实扣 %s）" % (st_name, _fmt_dur(minutes), end_lbl, cost_text),
         }
 
     raise ValueError("不支持的操作：%s" % action)
