@@ -126,7 +126,7 @@ STEP_SYSTEM_TEMPLATE = """{base_system}
    标着「挂了几天了」的打算，一直搁着没动：这次给她排一件事把它往前推或了结，照她的性子和眼下的实际情况挑，别每回都是同一种办法。比如：要等主人定日子的，去问主人一句什么时候方便；自己能做的，自己去做了；换个人一起、换个做法；想了想觉得算了，放下了。去问主人只写她去问了，主人怎么答不许替他编。再在 intent_moves 里用编号写这条后来怎样：做完了、放下了的写 "done": true，排它的那几段 intent 填这个编号；还没了结、往前推了一步的写 "done": false，text 写推进以后的打算（照原来的写法：做什么、跟谁、怎么说起的，再加一句这次推进了什么，例如「11-01 问过主人什么时候去，等他回话」），有了新的哪天、几点就写 date、window，排它的那几段 intent 留空。没标的打算不写。
 13. **每段必填结构化溯源 `from`**（严禁留空，也严禁偷懒填「可能碰上的小事」「手边的消遣」「闲着的样子」这类栏目标题！只允许填以下值之一）：
    - 采用了上面「今天的情况」里的某条候选：直接填它前面的**短编号**（如 `"T1"`、`"G1"`、`"P1"`、`"I1"`、`"A1"`，或一字不差照抄那条完整原句）；
-   - 做「各自的打算」：填 `"intent"`（且该段 `intent` 字段必填对应编号如 `"i282"`）；
+   - 做「各自的打算」：填 `"intent"`（且该段 `intent` 字段必填对应编号如 `"i282"`；若与同伴同行执行同伴名下的打算，也可填同伴那条 `i` 编号）；
    - 做「还没做的约定」：填 `"promise"`；
    - 守「生效中的约束」：填 `"rule"`；
    - 练「在练的事」：填 `"training"`（且该段 `training` 字段必填对应编号如 `"#2"`）；
@@ -1150,13 +1150,18 @@ class LifeStep:
                 return "master" in (item.get("with") or [])
         return False
 
-    def intent_id(self, value, bot: str) -> str:
-        """只认她自己那几条打算的编号；对不上就空。"""
+    def intent_id(self, value, bot: str, with_bots: list[str] | None = None) -> str:
+        """认她自己名下的打算编号；若本段与同伴同行（with 含该打算归属人）或该打算的 with 含自己，也认同伴名下那条打算编号。"""
         text = str(value or "").strip().lower()
         if not text:
             return ""
+        peers = {str(x) for x in (with_bots or []) if x}
         for item in self.world.intentions():
-            if str(item.get("who")) == bot and str(item.get("id") or "").lower() == text:
+            if str(item.get("id") or "").lower() != text:
+                continue
+            owner = str(item.get("who") or "")
+            item_with = {str(x) for x in (item.get("with") or []) if x}
+            if owner == bot or owner in peers or bot in item_with:
                 return str(item.get("id"))
         return ""
 
@@ -2823,8 +2828,8 @@ class LifeStep:
                             f"{tag}：前面刚和主人（with 含 \"master\"）一起在外头，这段回到住处（at_home=true）却没把 \"master\" 写进 with 一起带回来！"
                             f"with 出去也得 with 回来，严禁把主人丢在外面自己回家"
                         )
-                    else:
-                        bot_master_out_with_me = False
+                    # 无论本段是否漏写 master，这趟回家已经判定完毕；必须重置状态，避免连坐误报后续独自出门回家的段
+                    bot_master_out_with_me = False
                 if seaside and raw.get("lamp") is True:
                     if sleep:
                         errors.append(f"{tag}：睡觉段 lamp 必须为 false")
@@ -2862,7 +2867,7 @@ class LifeStep:
 
                 raw_intent = str(raw.get("intent") or "").strip()
                 raw_training = str(raw.get("training") or "").strip()
-                intent_id = "" if idle else self.intent_id(raw_intent, bot)
+                intent_id = "" if idle else self.intent_id(raw_intent, bot, with_ids)
                 training_id = self.training_id(raw_training, bot)
                 if raw_intent and not intent_id:
                     errors.append(f"{tag}：intent={raw_intent!r} 不是 {who_lbl} 当前有效的打算编号")
@@ -3154,7 +3159,7 @@ class LifeStep:
             norm_segs = {}
             for m_bot, (bot_kept, _, _) in kept_by_bot.items():
                 norm_segs[m_bot] = [
-                    dict(raw, start=fmt_time(seg_start), intent=self.intent_id(raw.get("intent"), m_bot))
+                    dict(raw, start=fmt_time(seg_start), intent=self.intent_id(raw.get("intent"), m_bot, [str(x) for x in (raw.get("with") or [])]))
                     for _idx, raw, seg_start, _seg_end, _st_code in bot_kept
                 ]
             all_intent_ids = {str(x.get("id")) for x in (self.world.intentions() or []) if x.get("id")}
@@ -3291,7 +3296,7 @@ class LifeStep:
             for raw, seg_start, seg_end, state, idle, sleep, _texts, parsed_steps in bot_plan:
                 raw_with = [str(x) for x in (raw.get("with") or [])]
                 with_list = [x for x in raw_with if x in bots and x != bot]
-                intent = "" if idle else self.intent_id(raw.get("intent"), bot)
+                intent = "" if idle else self.intent_id(raw.get("intent"), bot, raw_with)
                 if intent in moves and not moves[intent]["done"]:
                     intent = ""
                 training = self.training_id(raw.get("training"), bot)
