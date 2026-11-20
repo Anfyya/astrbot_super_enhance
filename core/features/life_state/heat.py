@@ -387,31 +387,17 @@ def _cabin_spot_of(place: str, *, sleeping: bool = False, meal: bool = False) ->
 
 
 def _master_entry_now(world, flat: datetime.datetime):
-    """与 view.py 保持 100% 同源的主人实时位置解析：未结束睡眠优先，否则按 master_trail 倒序取截至此刻最新有效条目。"""
+    """主人实时位置（FIX-50：改调 world.master_where 唯一权威，未结束睡眠优先、到家回落在家）。"""
     master_cur = world.current("master", flat)
     if master_cur is not None and is_sleep(master_cur) and not master_cur.get("end"):
         return master_cur
-
-    today = flat.date().isoformat()
-    valid = []
-    for item in world.master_trail(today):
-        if real_stop(item):
-            continue
-        st = parse_time(item.get("start"))
-        if st is None or st > flat:
-            continue
-        valid.append(item)
-
-    if valid:
-        latest = valid[-1]
-        if not str(latest.get("place") or "").strip():
-            placed = [x for x in valid if str(x.get("place") or "").strip()]
-            if placed:
-                merged = dict(latest)
-                merged["place"] = placed[-1].get("place")
-                merged["at_home"] = placed[-1].get("at_home")
-                return merged
-        return latest
+    got = None
+    try:
+        got = world.master_where(flat)
+    except Exception:
+        got = None
+    if got is not None:
+        return got
     return master_cur or world.last_activity("master", flat)
 
 

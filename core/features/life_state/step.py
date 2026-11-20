@@ -1808,7 +1808,7 @@ class LifeStep:
         for back in (1, 0):
             day = (flat.date() - datetime.timedelta(days=back)).isoformat()
             trail.extend(x for x in self.world.master_trail(day)
-                         if parse_time(x.get("start")) is not None and parse_time(x.get("start")) <= flat)
+                         if not real_stop(x) and parse_time(x.get("start")) is not None and parse_time(x.get("start")) <= flat)
         master_latest = trail[-1] if trail else None
         master_cur = self.world.current("master", flat)
         master_sleeping = (master_cur is not None and is_sleep(master_cur)) or bool(
@@ -2516,14 +2516,14 @@ class LifeStep:
         }
         # 校验主人当前是否已在外面、以及今天是否有明确带钟点的主人出行约定，防止补写擅自把在家的主人带出门
         from . import view as view_mod
-        m_trail_now = [
-            x for x in self.world.master_trail(date_text)
-            if not real_stop(x) and (parse_time(x.get("start")) is not None) and parse_time(x.get("start")) <= flat
-        ]
-        m_latest = m_trail_now[-1] if m_trail_now else None
+        m_where = None
+        try:
+            m_where = self.world.master_where(flat)
+        except Exception:
+            m_where = None
         master_outside_now = (
-            view_mod._is_outside_place(m_latest.get("place"), m_latest.get("at_home"), self.home)
-            if m_latest is not None else False
+            view_mod._is_outside_place(m_where.get("place"), m_where.get("at_home"), self.home)
+            if m_where is not None else False
         )
         timed_master_intent_ids: set[str] = set()
         timed_master_minutes: list[int] = []

@@ -276,12 +276,19 @@ class Companionship:
                 continue
             if not self._valid(src, now):
                 continue
-            # 清醒/睡眠状态全平台共用且以快捷指令为准；位置和私聊内容不自动跨角色共享。
+            # 清醒/睡眠状态全平台共用且以快捷指令为准（FIX-50：位置改由 world.master_where
+            # 唯一权威提供，停读 observations 的旧 place 行——主人在哪跟着世界线走）
             if "state" in row and (is_shortcut or not has_shortcut):
                 result["state"] = row["state"]
                 result["source"] = src
-            if "place" in row and (not bot or row.get("bot") == bot):
-                result["place"] = row["place"]
+        try:
+            got = self.world.master_where(now)
+        except Exception:
+            got = None
+        if got is not None:
+            p = str(got.get("place") or "").strip()
+            if p:
+                result["place"] = p
         return result
 
     def resting(self, now):
@@ -652,7 +659,7 @@ class Companionship:
                   "busy": "明确正在忙", "unknown": "当前能否互动不明"}
         if state.get("source"):
             return "主人即时状态：%s%s。没回复不改变状态。" % (
-                labels[state["state"]], "，最后明确位置：" + state["place"] if state["place"] else ""
+                labels[state["state"]], "，此刻在" + state["place"] if state["place"] else ""
             )
         if self.resting(now):
             return "联系时机：目前普通邀约先留着，继续自己手上适合做的事情，不编主人的位置。"

@@ -889,6 +889,58 @@ class WorldStore:
                 items.append(item)
         return items
 
+    def master_where(self, now: datetime.datetime):
+        """主人此刻的权威落点（FIX-50：五本账归一，解析层合成、绝不写入世界线）。
+
+        优先级：未结束的 master 睡眠段 > master_trail 里最后一条已开始段
+        （未结束=真在路上；已结束的外出同行段，须同段任一 bot 紧接其后已回到
+        住处才合成「回到家」——主人独自出门或她们还在外头时绝不瞬移）>
+        名下兜底 last_activity。跨午夜看昨天+今天；空 place 向前继承；
+        heat 拖动写进段里的 pos 原样透传。"""
+        flat = now.replace(tzinfo=None) if isinstance(now, datetime.datetime) else now
+        master_cur = self.current("master", flat)
+        if master_cur is not None and is_sleep(master_cur) and not master_cur.get("end"):
+            return master_cur
+        trail = []
+        for back in (1, 0):
+            day = (flat.date() - datetime.timedelta(days=back)).isoformat()
+            trail.extend(x for x in self.master_trail(day)
+                         if not real_stop(x) and parse_time(x.get("start")) is not None
+                         and parse_time(x.get("start")) <= flat)
+        if trail:
+            latest = trail[-1]
+            end_t = parse_time(latest.get("end")) if latest.get("end") else None
+            finished = end_t is not None and end_t <= flat
+            if finished and str(latest.get("who") or "") != "master" and latest.get("at_home") is False:
+                partners = [str(latest.get("who") or "")] + [str(x) for x in (latest.get("with") or [])]
+                for bot in [b for b in partners if b and b != "master"]:
+                    for seg in self.activities(bot, flat):
+                        seg_s = parse_time(seg.get("start"))
+                        if (seg_s is not None and seg_s >= end_t and seg_s <= flat
+                                and seg.get("at_home") is True):
+                            home = self.home_at(flat) or ""
+                            place = "船屋·船舱" if home == "海边小镇" else "宿舍"
+                            merged = dict(latest)
+                            merged.update({
+                                "place": place,
+                                "at_home": True,
+                                "doing": "回到住处",
+                                "end": "",
+                                "synthetic": True,
+                            })
+                            merged["start"] = latest.get("end") or latest.get("start")
+                            return merged
+            # 未结束、或主人自己的条目、或同行但尚未确认到家：照实返回最后一段
+            if not str(latest.get("place") or "").strip():
+                placed = [x for x in trail if str(x.get("place") or "").strip()]
+                if placed:
+                    merged = dict(latest)
+                    merged["place"] = placed[-1].get("place")
+                    merged["at_home"] = placed[-1].get("at_home")
+                    return merged
+            return latest
+        return master_cur or self.last_activity("master", flat)
+
     def activities(self, who: str, now: datetime.datetime, back_days: int = 1) -> list:
         """某人最近几天的 activity，按开始时间排好（跨天的睡觉那段在前一天的文件里）。"""
         moment = now.replace(tzinfo=None)
