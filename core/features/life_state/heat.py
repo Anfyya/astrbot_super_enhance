@@ -58,6 +58,22 @@ ZONE_META = {
     "far": {"label": "舱门与舷窗角", "sub": "储物舱入口 / 靠海书桌"},
 }
 
+# 主人可在平面图上自由移动的标准锚点（与 v6.blend 家具坐标、FIX-39 睡眠规范 100% 对齐）
+MASTER_SPOTS = (
+    {"id": "kang", "label": "砖炕", "place": "船屋·砖炕", "doing": "在砖炕上待着", "at_home": True, "zone": "kang", "sleep_ok": True},
+    {"id": "stove", "label": "柴炉边", "place": "船屋·船舱·柴炉边", "doing": "在铁桶柴炉边烤火", "at_home": True, "zone": "near", "sleep_ok": False},
+    {"id": "table", "label": "矮桌", "place": "船屋·船舱矮桌", "doing": "坐在矮桌旁", "at_home": True, "zone": "mid", "sleep_ok": False},
+    {"id": "desk", "label": "海图书桌", "place": "船屋·船舱·靠海书桌", "doing": "在靠海书桌前", "at_home": True, "zone": "far", "sleep_ok": False},
+    {"id": "kitchen", "label": "小灶台", "place": "船屋·船舱·小灶台", "doing": "在小灶台边", "at_home": True, "zone": "near", "sleep_ok": False},
+    {"id": "floor_bed", "label": "炕边地铺", "place": "船屋·船舱·炕边地铺", "doing": "在炕边地铺上", "at_home": True, "zone": "mid", "sleep_ok": True},
+    {"id": "hammock", "label": "吊床", "place": "船屋·船舱·横梁吊床", "doing": "在吊床边待着", "at_home": True, "zone": "mid", "sleep_ok": True},
+    {"id": "storage", "label": "储物舱", "place": "船屋·船舱·储物舱", "doing": "在储物舱里", "at_home": True, "zone": "far", "sleep_ok": False},
+    {"id": "door", "label": "舱门口", "place": "船屋·船舱门口", "doing": "在船舱门口", "at_home": True, "zone": "far", "sleep_ok": False},
+    {"id": "deck", "label": "船头甲板", "place": "船屋·船头甲板", "doing": "在船头甲板上吹风", "at_home": True, "zone": "deck", "sleep_ok": False},
+    {"id": "outside", "label": "外出", "place": "外头", "doing": "出门去了", "at_home": False, "zone": "outside", "sleep_ok": False},
+)
+MASTER_SPOT_MAP = {s["id"]: s for s in MASTER_SPOTS}
+
 
 def _weather_text_of(life):
     seeds = life.seed_log.load() or {}
@@ -332,37 +348,25 @@ def _cabin_spot_of(place: str, *, sleeping: bool = False, meal: bool = False) ->
 
 
 def _master_entry_now(world, flat: datetime.datetime):
-    """与 view.py 保持 100% 同源的主人实时位置解析：未结束睡眠优先，否则取 master_trail 截至此刻最新有效段（含 with=['master']）。"""
+    """与 view.py 保持 100% 同源的主人实时位置解析：未结束睡眠优先，否则按 master_trail 倒序取截至此刻最新有效条目。"""
     master_cur = world.current("master", flat)
     if master_cur is not None and is_sleep(master_cur) and not master_cur.get("end"):
         return master_cur
 
     today = flat.date().isoformat()
-    trail = list(world.master_trail(today))
-    active = []
-    past = []
-    for item in trail:
+    valid = []
+    for item in world.master_trail(today):
         if real_stop(item):
             continue
         st = parse_time(item.get("start"))
         if st is None or st > flat:
             continue
-        en = parse_time(item.get("end")) if item.get("end") else None
-        is_ev = is_event(item)
-        if not is_ev and (en is None or flat < en):
-            active.append((st, item))
-        else:
-            past.append((en or st, st, item))
+        valid.append(item)
 
-    if active:
-        # 优先正在进行且已明确开始时间最晚、且有具体地点的段（例如 12:05 一起在矮桌吃午饭 > 11:25 开口记录）
-        active.sort(key=lambda row: (row[0], 1 if row[1].get("end") else 0, 1 if str(row[1].get("place") or "").strip() else 0))
-        return active[-1][1]
-    if past:
-        past.sort(key=lambda row: (row[0], row[1], 1 if str(row[2].get("place") or "").strip() else 0))
-        latest = past[-1][2]
+    if valid:
+        latest = valid[-1]
         if not str(latest.get("place") or "").strip():
-            placed = [row[2] for row in past if str(row[2].get("place") or "").strip()]
+            placed = [x for x in valid if str(x.get("place") or "").strip()]
             if placed:
                 merged = dict(latest)
                 merged["place"] = placed[-1].get("place")
@@ -613,6 +617,7 @@ def heat_snapshot(life, now: datetime.datetime) -> dict[str, Any]:
         },
         "fuel": fuel,
         "people": people,
+        "master_spots": list(MASTER_SPOTS) if home == "海边小镇" else [],
         "curve": curve,
         "history": history,
     }
@@ -831,6 +836,63 @@ def heat_action(life, payload: dict, now: datetime.datetime) -> dict[str, Any]:
     action = str(payload.get("action") or "").strip().lower()
     stove = str(payload.get("stove") or "").strip().lower()
     preferred_id = str(payload.get("item_id") or "").strip()
+
+    if action == "move_master":
+        spot_id = str(payload.get("spot") or "").strip().lower()
+        sp = MASTER_SPOT_MAP.get(spot_id)
+        if sp is None:
+            raise ValueError("未知的位置：%s" % (spot_id or "空"))
+        master_cur = life.world.current("master", flat)
+        if master_cur is not None and is_sleep(master_cur) and not master_cur.get("end"):
+            if not sp.get("sleep_ok"):
+                raise ValueError("主人眼下还在睡，先起床再挪去%s（睡着时只能移到砖炕、炕边地铺或吊床）" % sp["label"])
+            sleep_day = str(master_cur.get("start") or "")[:10] or flat.date().isoformat()
+            life.world.update(sleep_day, str(master_cur.get("id")), mode="normal", place=sp["place"])
+            logger.info("[super_enhance/heat] 调整主人睡眠位置 -> %s (%s)", sp["label"], sp["place"])
+            return {
+                "action": "move_master",
+                "spot": sp["id"],
+                "place": sp["place"],
+                "message": "已把主人的睡眠位置调到%s（对话注入已同步）" % sp["label"],
+            }
+
+        today = flat.date().isoformat()
+        trail = [
+            x for x in life.world.master_trail(today)
+            if not real_stop(x) and (parse_time(x.get("start")) is not None) and parse_time(x.get("start")) <= flat
+        ]
+        # 若最近一条本身就是 5 分钟内网页手动挪位，替换它以免连续拖动把世界线刷满
+        if trail:
+            last_m = trail[-1]
+            last_st = parse_time(last_m.get("start"))
+            if (
+                str(last_m.get("who") or "") == "master"
+                and is_event(last_m)
+                and str(last_m.get("source") or "") == "manual"
+                and str(last_m.get("src_quote") or "") == "heat_move"
+                and last_st is not None
+                and abs((flat - last_st).total_seconds()) <= 300
+            ):
+                life.world.delete_entry(today, str(last_m.get("id")), _notify_drop=False)
+
+        rec = life.world.add_entry(today, {
+            "who": "master",
+            "kind": "event",
+            "start": fmt_time(flat),
+            "place": sp["place"],
+            "at_home": bool(sp["at_home"]),
+            "doing": sp["doing"],
+            "source": "manual",
+            "src_quote": "heat_move",
+        })
+        logger.info("[super_enhance/heat] 手动移动主人位置 -> %s (%s)", sp["label"], sp["place"])
+        return {
+            "action": "move_master",
+            "spot": sp["id"],
+            "place": sp["place"],
+            "record": rec,
+            "message": "主人已移到%s（对话注入已同步）" % sp["label"],
+        }
 
     if action == "extinguish":
         ms_id = str(payload.get("manual_id") or "").strip()

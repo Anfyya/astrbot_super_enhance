@@ -418,11 +418,13 @@ def world_text(service, bot: str, now: datetime.datetime) -> str:
 def _cabin_zone_of(place: str, *, sleeping: bool = False) -> str:
     """根据当前地点判定船舱内四个热区之一：kang / near / far / mid。"""
     p = str(place or "")
-    if (sleeping and not any(k in p for k in ("地铺", "地板", "吊床"))) or any(k in p for k in ("炕", "床", "被窝", "褥子", "铺位")):
+    if any(k in p for k in ("地铺", "地板", "吊床")):
+        return "mid"
+    if sleeping or any(k in p for k in ("炕", "床", "被窝", "褥子", "铺位")):
         return "kang"
     if any(k in p for k in ("柴炉", "炭炉", "灶", "炉")):
         return "near"
-    if any(k in p for k in ("舱门", "门边", "角落", "墙角", "储物", "舷窗")):
+    if any(k in p for k in ("舱门", "门边", "门口", "角落", "墙角", "储物", "舷窗", "书桌", "海图")):
         return "far"
     return "mid"
 
