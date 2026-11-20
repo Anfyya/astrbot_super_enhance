@@ -4596,12 +4596,33 @@
   $("ledgerRefresh").addEventListener("click", function () { loadLedger().then(function () { if (!S.ledgerErr) { toast("已刷新"); } }); });
 
   /* ================= 家里热源分布（实时红外热场 · 零卡片） ================= */
-  function loadHeat(silent) { return loadAuxPage("ctx/heat", "heat", "heat", renderHeat, silent); }
+  var heatSeq = 0;
+  function loadHeat(silent, force) {
+    if (S.heatLoading && !force) { return Promise.resolve(); }
+    var seq = ++heatSeq;
+    S.heatLoading = true;
+    return api("ctx/heat").then(function (d) {
+      if (seq !== heatSeq) { return; }
+      S.heatLoading = false;
+      S.heat = d;
+      S.heatErr = "";
+      renderSide();
+      if (S.view === "heat") { renderHeat(); }
+    }).catch(function (e) {
+      if (seq !== heatSeq) { return; }
+      S.heatLoading = false;
+      S.heatErr = errMsg(e);
+      renderSide();
+      if (S.view === "heat") { renderHeat(); }
+      if (!silent && S.view === "heat") { toast("读取失败：" + S.heatErr, { err: true }); }
+    });
+  }
 
   function runHeatAction(body) {
     if (S.heatBusy) { return Promise.resolve(); }
     S.heatBusy = true;
     S.heatPop = "";
+    heatSeq++; // 让操作前发出的旧 GET 自动作废，避免盖回旧状态
     renderHeat();
     return post("ctx/heat/action", body).then(function (res) {
       S.heatBusy = false;
@@ -4610,7 +4631,16 @@
       toast((res && res.message) || "操作成功");
       loadSide();
       if (S.things) { loadThings(true); }
-      return loadHeat(true);
+      if (res && res.snapshot) {
+        heatSeq++;
+        S.heatLoading = false;
+        S.heat = res.snapshot;
+        S.heatErr = "";
+        renderSide();
+        if (S.view === "heat") { renderHeat(); }
+        return res.snapshot;
+      }
+      return loadHeat(true, true);
     }).catch(function (e) {
       S.heatBusy = false;
       renderHeat();

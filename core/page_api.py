@@ -2739,9 +2739,12 @@ class ContextPageApi:
         if not isinstance(payload, dict):
             return _err("请求体格式错误")
         try:
-            from .features.life_state.heat import heat_action as run_heat_action
-            res = await asyncio.to_thread(run_heat_action, life, payload, life._now())
+            from .features.life_state.heat import heat_action as run_heat_action, heat_snapshot
+            now = life._now()
+            res = await asyncio.to_thread(run_heat_action, life, payload, now)
             self._things_cache = None
+            if isinstance(res, dict):
+                res["snapshot"] = await asyncio.to_thread(heat_snapshot, life, now)
             return _ok(res)
         except Exception as exc:
             return _err(exc)
