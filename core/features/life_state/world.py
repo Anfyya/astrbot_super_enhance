@@ -250,6 +250,119 @@ class WorldStore:
         self._save_state()
         return True
 
+    # ---------- 网页手动热源记录（纯结构化，独立于主人行程/睡眠，不触发自动双扣燃料） ----------
+
+    def manual_stoves(self, start_day: datetime.date | None = None, end_day: datetime.date | None = None) -> list[dict]:
+        """返回手工点火记录列表；传起止日期时仅返回区间有交集的记录。"""
+        raw = [dict(x) for x in (self._load_state().get("manual_stoves") or []) if isinstance(x, dict)]
+        if start_day is None and end_day is None:
+            return raw
+        lo = datetime.datetime.combine(start_day, datetime.time.min) if start_day is not None else None
+        hi = datetime.datetime.combine(end_day, datetime.time.max) if end_day is not None else None
+        out = []
+        for row in raw:
+            st = parse_time(row.get("start"))
+            en = parse_time(row.get("end"))
+            if st is None or en is None or en <= st:
+                continue
+            if lo is not None and en < lo:
+                continue
+            if hi is not None and st > hi:
+                continue
+            out.append(row)
+        return out
+
+    def add_manual_stove(
+        self,
+        stove: str,
+        start: datetime.datetime,
+        end: datetime.datetime,
+        *,
+        note: str = "",
+        fuel: list[dict] | None = None,
+        by: str = "master",
+    ) -> dict:
+        """新增一条手动炉火区间并落盘，递增 revision 刷新热力学与烘干缓存。"""
+        kind = str(stove or "").strip().lower()
+        if kind not in ("wood", "charcoal"):
+            raise ValueError("不支持的炉具类型：%s" % stove)
+        st = start.replace(tzinfo=None, second=0, microsecond=0)
+        en = end.replace(tzinfo=None, second=0, microsecond=0)
+        if en <= st:
+            raise ValueError("结束时间必须晚于开始时间")
+        state = self._load_state()
+        rows = [x for x in (state.get("manual_stoves") or []) if isinstance(x, dict)]
+        seq = int(state.get("manual_stove_seq") or 0) + 1
+        state["manual_stove_seq"] = seq
+        record = {
+            "id": "ms%d" % seq,
+            "stove": kind,
+            "start": fmt_time(st),
+            "end": fmt_time(en),
+            "by": str(by or "master"),
+            "note": clean_text(note, 120),
+            "fuel": [dict(x) for x in (fuel or []) if isinstance(x, dict)],
+            "created": fmt_time(self.now_local()),
+            "stopped_at": "",
+        }
+        rows.append(record)
+        cutoff = fmt_time(self.now_local() - datetime.timedelta(days=14))
+        rows = [x for x in rows if str(x.get("end") or "") >= cutoff][-200:]
+        state["manual_stoves"] = rows
+        self._revision += 1
+        self._save_state()
+        return dict(record)
+
+    def extend_manual_stove(
+        self,
+        ms_id: str,
+        new_end: datetime.datetime,
+        *,
+        fuel_extra: list[dict] | None = None,
+        note: str = "",
+    ) -> dict | None:
+        """给正在烧的手动炉火添柴/添炭续烧。"""
+        target_id = str(ms_id or "").strip()
+        en = new_end.replace(tzinfo=None, second=0, microsecond=0)
+        state = self._load_state()
+        rows = state.get("manual_stoves") or []
+        for row in rows:
+            if isinstance(row, dict) and str(row.get("id") or "") == target_id:
+                old_end = parse_time(row.get("end"))
+                if old_end is not None and en <= old_end:
+                    en = old_end
+                row["end"] = fmt_time(en)
+                row["stopped_at"] = ""
+                if fuel_extra:
+                    row["fuel"] = list(row.get("fuel") or []) + [dict(x) for x in fuel_extra if isinstance(x, dict)]
+                if note:
+                    row["note"] = clean_text(note, 120)
+                self._revision += 1
+                self._save_state()
+                return dict(row)
+        return None
+
+    def stop_manual_stove(self, ms_id: str, at: datetime.datetime) -> dict | None:
+        """提前熄灭/封火一条正在燃烧的手动炉火。"""
+        target_id = str(ms_id or "").strip()
+        cut = at.replace(tzinfo=None, second=0, microsecond=0)
+        state = self._load_state()
+        rows = state.get("manual_stoves") or []
+        for row in rows:
+            if isinstance(row, dict) and str(row.get("id") or "") == target_id:
+                st = parse_time(row.get("start"))
+                en = parse_time(row.get("end"))
+                if st is None or en is None or cut >= en:
+                    return None
+                if cut <= st:
+                    cut = st + datetime.timedelta(minutes=1)
+                row["end"] = fmt_time(cut)
+                row["stopped_at"] = fmt_time(cut)
+                self._revision += 1
+                self._save_state()
+                return dict(row)
+        return None
+
     def _day_path(self, date_text: str) -> Path:
         return self.dir / ("%s.json" % str(date_text).strip())
 

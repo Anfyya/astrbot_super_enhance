@@ -66,6 +66,8 @@ _ROUTE_SPECS = (
     ("ledger/edit", "edit_ledger", ("POST",), "上下文页面：编辑能力清单 / 约定"),
     ("money", "money_view", ("GET",), "上下文页面：船屋钱匣与账本流水"),
     ("money/edit", "money_edit", ("POST",), "上下文页面：手动调账 / 增删流水 / 管欠账"),
+    ("heat", "heat_view", ("GET",), "上下文页面：家里热源分布、温区温度与燃料余量"),
+    ("heat/action", "heat_action", ("POST",), "上下文页面：手动点火 / 添料续烧 / 提前熄火（实扣库存）"),
 )
 
 _MAX_BACKUP_FILES = 30
@@ -1688,6 +1690,11 @@ class ContextPageApi:
                     "accounts": {k: round_yuan(v.get("balance")) for k, v in msnap["accounts"].items()},
                     "open_debts": sum(1 for d in msnap["debts"] if d.get("status") == "open"),
                 }
+            try:
+                from .features.life_state.heat import heat_side_summary
+                out["heat"] = heat_side_summary(life, life._now())
+            except Exception:
+                logger.warning("[super_enhance/ctx] 侧栏：家里热源状态没取到", exc_info=True)
             return _ok(out)
         except Exception as exc:
             logger.error("[super_enhance/ctx] 侧栏读取失败", exc_info=True)
@@ -2709,3 +2716,32 @@ class ContextPageApi:
             return _err(exc)
         logger.info("[super_enhance/ctx] web 编辑钱匣账本：%s", action)
         return _ok(res)
+
+    async def heat_view(self):
+        """家里热源分布与各区域实时温度、燃料库存、温度曲线与近期生火记录。"""
+        life = getattr(self.plugin, "life", None)
+        if life is None:
+            return _err("动态生活状态未加载")
+        try:
+            from .features.life_state.heat import heat_snapshot
+            data = await asyncio.to_thread(heat_snapshot, life, life._now())
+            return _ok(data)
+        except Exception as exc:
+            logger.error("[super_enhance/ctx] 读取家里热源分布失败", exc_info=True)
+            return _err(exc)
+
+    async def heat_action(self):
+        """网页手动点火 / 添料续烧 / 提前熄火（严格扣减真实干柴或闷炭库存）。"""
+        life = getattr(self.plugin, "life", None)
+        if life is None:
+            return _err("动态生活状态未加载")
+        payload = await request.get_json(silent=True) or {}
+        if not isinstance(payload, dict):
+            return _err("请求体格式错误")
+        try:
+            from .features.life_state.heat import heat_action as run_heat_action
+            res = await asyncio.to_thread(run_heat_action, life, payload, life._now())
+            self._things_cache = None
+            return _ok(res)
+        except Exception as exc:
+            return _err(exc)

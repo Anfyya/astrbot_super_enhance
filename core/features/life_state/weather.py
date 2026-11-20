@@ -455,6 +455,20 @@ def _stove_spans_from_world(world, start_day: datetime.date, end_day: datetime.d
                 continue
             raw_spans.append((st, en, stove))
         cur_d += datetime.timedelta(days=1)
+    if hasattr(world, "manual_stoves"):
+        for ms in world.manual_stoves(start_day, end_day):
+            stove = str(ms.get("stove") or "").strip().lower()
+            if stove not in ("wood", "charcoal"):
+                continue
+            st = _parse_time(ms.get("start"))
+            en = _parse_time(ms.get("end"))
+            if st is None or en is None or en <= st:
+                continue
+            if clip_until is not None and st > clip_until:
+                continue
+            if has_homes and world.home_at(st) != "海边小镇":
+                continue
+            raw_spans.append((st, en, stove))
     if not raw_spans:
         return []
 

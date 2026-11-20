@@ -3373,6 +3373,19 @@ class LifeStep:
                     wood_count_30h += 1
                     if en_t >= cutoff_4h:
                         recent_wood = True
+        if hasattr(self.world, "manual_stoves"):
+            for ms in self.world.manual_stoves(win_start.date() - datetime.timedelta(days=2), win_start.date()):
+                if str(ms.get("stove") or "").strip().lower() != "wood":
+                    continue
+                st_t = parse_time(ms.get("start"))
+                en_t = parse_time(ms.get("end"))
+                if st_t is None or st_t > win_start:
+                    continue
+                ref_t = min(en_t, win_start) if en_t is not None else st_t
+                if ref_t >= cutoff_30h:
+                    wood_count_30h += 1
+                    if ref_t >= cutoff_4h or (en_t is not None and en_t > win_start):
+                        recent_wood = True
 
         if ctx.get("has_weather"):
             min_temp_val = ctx.get("min_temp")

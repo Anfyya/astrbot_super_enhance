@@ -2571,6 +2571,21 @@ class ThingStore:
                 if lit:
                     warm_tail = datetime.timedelta(hours=4 if stove == "wood" else 2)
                     windows.append((st, en + warm_tail))
+        if hasattr(self.world, "manual_stoves"):
+            lo_day = flat.date() - datetime.timedelta(days=SCAN_DAYS)
+            hi_day = flat.date() + datetime.timedelta(days=1)
+            for ms in self.world.manual_stoves(lo_day, hi_day):
+                stove = str(ms.get("stove") or "").strip().lower()
+                if stove not in ("wood", "charcoal"):
+                    continue
+                st = parse_time(ms.get("start"))
+                en = parse_time(ms.get("end"))
+                if st is None or en is None or en <= st:
+                    continue
+                if has_homes and self.world.home_at(st) != "海边小镇":
+                    continue
+                warm_tail = datetime.timedelta(hours=4 if stove == "wood" else 2)
+                windows.append((st, en + warm_tail))
         self._fire_win_cache = (key, windows)
         return windows
 
