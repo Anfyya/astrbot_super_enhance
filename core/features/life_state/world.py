@@ -907,6 +907,7 @@ class WorldStore:
             trail.extend(x for x in self.master_trail(day)
                          if not real_stop(x) and parse_time(x.get("start")) is not None
                          and parse_time(x.get("start")) <= flat)
+        trail.sort(key=lambda x: str(x.get("start") or ""))
         if trail:
             latest = trail[-1]
             end_t = parse_time(latest.get("end")) if latest.get("end") else None
@@ -916,20 +917,26 @@ class WorldStore:
                 for bot in [b for b in partners if b and b != "master"]:
                     for seg in self.activities(bot, flat):
                         seg_s = parse_time(seg.get("start"))
-                        if (seg_s is not None and seg_s >= end_t and seg_s <= flat
-                                and seg.get("at_home") is True):
+                        if seg_s is None or seg_s < end_t or real_stop(seg):
+                            continue
+                        # 紧接其后、已开始的第一段说了算：在家=主人也到家；在外头或还没
+                        # 开始都不算证据，直接换下一位 bot，绝不往后扫——防止主人留在
+                        # 后面的地方、bot 自己先回家时把主人瞬移回家（FIX-50 热修补）
+                        if seg_s <= flat and seg.get("at_home") is True:
                             home = self.home_at(flat) or ""
                             place = "船屋·船舱" if home == "海边小镇" else "宿舍"
-                            merged = dict(latest)
-                            merged.update({
+                            return {
+                                "id": "master_home_%s" % str(latest.get("id") or ""),
+                                "who": "master",
+                                "kind": "event",
+                                "start": latest.get("end") or latest.get("start"),
+                                "end": "",
                                 "place": place,
                                 "at_home": True,
                                 "doing": "回到住处",
-                                "end": "",
                                 "synthetic": True,
-                            })
-                            merged["start"] = latest.get("end") or latest.get("start")
-                            return merged
+                            }
+                        break
             # 未结束、或主人自己的条目、或同行但尚未确认到家：照实返回最后一段
             if not str(latest.get("place") or "").strip():
                 placed = [x for x in trail if str(x.get("place") or "").strip()]

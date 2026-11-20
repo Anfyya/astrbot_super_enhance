@@ -1809,7 +1809,12 @@ class LifeStep:
             day = (flat.date() - datetime.timedelta(days=back)).isoformat()
             trail.extend(x for x in self.world.master_trail(day)
                          if not real_stop(x) and parse_time(x.get("start")) is not None and parse_time(x.get("start")) <= flat)
-        master_latest = trail[-1] if trail else None
+        m_where = None
+        try:
+            m_where = self.world.master_where(flat)
+        except Exception:
+            m_where = None
+        master_latest = m_where if m_where is not None else (trail[-1] if trail else None)
         master_cur = self.world.current("master", flat)
         master_sleeping = (master_cur is not None and is_sleep(master_cur)) or bool(
             companion is not None and companion.safe("resting", flat, default=False)
@@ -1823,23 +1828,35 @@ class LifeStep:
             if master_sleeping else ""
         )
         if master_latest:
-            where = next((x for x in reversed(trail) if str(x.get("place") or "").strip()), None)
-            owner = str(master_latest.get("who") or "")
-            live_parts.append(
-                "主人最近的动向（只作参考，不许改写、不许替他编）：%s %s%s%s"
-                % (
-                    str(master_latest.get("start"))[5:16],
-                    "和%s一起，" % (self.label(owner) or owner) if owner != "master" else "",
-                    master_latest.get("place") or "",
-                    "，" + clean_text(master_latest.get("doing"), 80) if master_latest.get("doing") else "",
+            synthetic = bool(master_latest.get("synthetic"))
+            where = next((x for x in reversed(trail) if str(x.get("place") or "").strip() and not x.get("synthetic")), None)
+            if synthetic:
+                live_parts.append(
+                    "主人最近的动向（只作参考，不许改写、不许替他编）：%s 回到%s%s%s"
+                    % (
+                        str(master_latest.get("start"))[5:16],
+                        master_latest.get("place") or "住处",
+                        "（随她们到家推定）",
+                        "；他自己之后没再说过在哪、在干什么" + sleep_tail,
+                    )
                 )
-                + (
-                    "；最后一次说到他在哪：%s %s（之后没说过离开）"
-                    % (str(where.get("start"))[5:16], where.get("place"))
-                    if where is not None else "；%s 以来还没说过他在哪" % (flat.date() - datetime.timedelta(days=1)).isoformat()[5:]
+            else:
+                owner = str(master_latest.get("who") or "")
+                live_parts.append(
+                    "主人最近的动向（只作参考，不许改写、不许替他编）：%s %s%s%s"
+                    % (
+                        str(master_latest.get("start"))[5:16],
+                        "和%s一起，" % (self.label(owner) or owner) if owner != "master" else "",
+                        master_latest.get("place") or "",
+                        "，" + clean_text(master_latest.get("doing"), 80) if master_latest.get("doing") else "",
+                    )
+                    + (
+                        "；最后一次说到他在哪：%s %s（之后没说过离开）"
+                        % (str(where.get("start"))[5:16], where.get("place"))
+                        if where is not None else "；%s 以来还没说过他在哪" % (flat.date() - datetime.timedelta(days=1)).isoformat()[5:]
+                    )
+                    + sleep_tail
                 )
-                + sleep_tail
-            )
         elif sleep_tail:
             live_parts.append("主人最近的动向（只作参考，不许改写、不许替他编）：" + sleep_tail.lstrip("\n"))
         if companion is not None and not master_sleeping and 8 <= flat.hour <= 22:
