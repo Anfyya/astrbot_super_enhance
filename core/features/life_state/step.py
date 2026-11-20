@@ -104,7 +104,7 @@ STEP_SYSTEM_TEMPLATE = """{base_system}
 4. 每段写 at_home 和 meal：at_home 是这段她人在不在宿舍（屋里、院子、廊下、门口、后头小屋都算 true；出了宿舍去别处、走在路上都算 false）；meal 是这段是不是正在吃饭（吃早饭午饭晚饭、夜宵算 true；做饭、摆碗筷、洗碗都不算）。
 5. 睡觉也是一段：到了她今天定的入睡时刻，就写一段睡觉，state 填「睡觉」，从入睡时刻一直写到第二天定的起床时刻；睡前那段要在入睡时刻结束。过了入睡时刻还醒着的（比如答应了陪主人熬夜），那件事做完就接着写睡觉，睡到起床时刻。睡觉这段的 place 三选一：「船屋·船舱地铺」「船屋·船舱吊床」「船屋·船舱主人的床上」，doing 跟着写（铺盖/吊床/床），别写别的睡法；吊床只睡得下一个人，主人的床睡得下两个人（主人加一个），地铺能睡两个人。
 6. 下面「还没做的约定」里有钟点的：到那个钟点她要已经在约定的地方、和约定的人在一起。要换地方的，在那之前写一段赶过去，留足路上的工夫；约定那件事从约定的钟点开始写。
-7. **不许生成主人的条目，也不许替主人编他做了什么、说了什么。** 主人在哪只看「主人最近的动向」：他最后说在哪、之后没说离开，就当他还在那儿，她们可以待在他身边、在他旁边做自己的事；他说了出门、去上课、睡了这类，就照那个写，别写他在场。只有一种例外：「各自的打算」里标着「和主人一起」的，是主人提的或答应了的，真做到和主人一起的那一步才写成她和主人一起做，with 里写上 "master"；她自己先做的准备（比如先把要送他的东西做完）是她一个人做，不写 master；同一趟里接着往下的段（比如逛夜市逛到一半换个摊子）也写上 "master"，直到这件事做完、两人分开。在家吃饭默认是三个人一起吃：饭点那段主人在船屋（「主人最近的动向」里没说他出门、去上课、睡了），就写成她们和主人一起吃，with 里写上 "master"；主人不在家，就她们俩吃，给主人留一份收好。除此之外 with 里不写 master。
+7. **不许生成主人的条目，也不许替主人编他做了什么、说了什么。** 主人在哪只看「主人最近的动向」：他最后说在哪、之后没说离开，就当他还在那儿，她们可以待在他身边、在他旁边做自己的事；他说了出门、去上课、睡了这类，就照那个写，别写他在场。**主人眼下在船屋里且没到你们明确约好钟点的出发时刻前，严禁补写擅自写 `at_home=false` 且 `with` 里带上 `"master"` 强行把主人带出门**（想约主人出门请先在家提醒发消息，或用 `ask_master` 问准点，或自己单独去办不写 `master`）。只有两种例外：① 约好了具体钟点的约定/打算（如明确写着 14:00 一起出海），到点才写成和主人一起出门；② 主人已经自己出门在外头了，之后同一趟里接着往下的段才写 `"master"`。在家吃饭默认是三个人一起吃：饭点那段主人在船屋（「主人最近的动向」里没说他出门、去上课、睡了），就写成她们和主人一起吃，with 里写上 "master"；主人不在家，就她们俩吃，给主人留一份收好。除此之外 with 里不写 master。
    做给主人的、拿主人买回来的东西做的，那份是主人的：做好了端给主人或者给他留着，她们别再吃它、分它；主人吃没吃、剩下的给谁，后面聊天里定。
    「主人说过他要做的事」分两种：只是他自己去做的（上课、出门办事），那段时间他人不在，别把她们写成和他在一起；写着要她们做、或者和她们一起做的（比如晚上和亚托莉一起吃帝王蟹），就是交给她们的事，照着排进去，到时候写成和主人一起，with 写上 "master"——这是照主人说过的写，不算替他编。
 8. 约束优先级最高：写着不许出门的，这段时间就得在屋里。照主人的意思守，别钻字眼上的空子：「不许捞她上来」就别改成给她送饭、递东西，「不许出门」就别叫人把东西送进来。主人罚她的事（扔下水、关在外头、罚站这类），别人也别背着主人替她松；想替她求情的，填 ask_master 问主人一句，主人点头才做。
@@ -2316,29 +2316,48 @@ class LifeStep:
                         name, dec_id, clean_text(asked.get("text"), 60))
             return data, text
         said = "；".join("%s「%s」" % (x.get("time") or "", clean_text(x.get("text"), 200)) for x in replies)
-        note = ("%s %s 请示了当家主人：「%s」。主人当场拍板回了：%s。现在已获主人准许，请照主人定下的话把整份 JSON 重新写出来执行，ask_master 留空。"
-                % (name, asked.get("time") or "", clean_text(asked.get("text"), 200), said))
-        logger.info("[super_enhance/world] 主人当场拍板回话，照准话重写：%s", note[:200])
+        note = (
+            "%s %s 向当家主人请示了：「%s」。主人刚才回了：%s。\n"
+            "【严禁把反问、追问或拒绝曲解成同意！】请先如实判断主人这句回话的态度，在顶层 JSON 必填字段 `\"master_reply_verdict\"`（严格三选一）：\n"
+            "- `\"approved\"`：主人明确同意、拍板准许或定下怎么买/怎么干；照主人定下的话重新写出执行后的整份 JSON，`ask_master` 留空；\n"
+            "- `\"rejected\"`：主人明确拒绝、否决、叫停或改期（如不行/别买/太贵了/先不去）；照不买/不办重新写出改后的整份 JSON，`ask_master` 留空；\n"
+            "- `\"pending\"`：主人只是反问、追问情况（如「你还有多少钱」「什么时候」「怎么回事」）或还没给准话；保持待拍板，勿擅自执行原请示事项。"
+            % (name, asked.get("time") or "", clean_text(asked.get("text"), 200), said)
+        )
+        logger.info("[super_enhance/world] 收到主人 90s 内回话，交由补写判定态度：%s", said[:120])
         retry = prompt + "\n\n你上一次的输出：\n" + str(text or "").strip() + "\n\n" + note
         try:
             again, again_thought = await llm.text_chat(
                 self.context, retry, provider_id=str(self.cfg.get("llm_provider_id") or "").strip(),
                 timeout=self.timeout, session_id="super_enhance_lifestep", system_prompt=system_prompt,
-                attempts=2, log_label="补写照主人回话重写",
+                attempts=2, log_label="补写判定主人回话并重写",
             )
         except Exception as e:
-            logger.warning("[super_enhance/world] 补写照主人回话重写失败，保持请示挂起交由记录员接续：%s", e)
+            logger.warning("[super_enhance/world] 补写判定主人回话失败，保持请示挂起交由记录员接续：%s", e)
+            return data, text
+        parsed_again = llm.extract_json(again)
+        verdict = str((parsed_again or {}).get("master_reply_verdict") or "").strip().lower() if isinstance(parsed_again, dict) else ""
+        if verdict not in ("approved", "rejected"):
+            logger.info(
+                "[super_enhance/world] 主人回话「%s」判定为 %s（反问/未拍板），保持请示 %s 挂起，绝不擅自执行",
+                said[:80], verdict or "pending", dec_id,
+            )
             return data, text
         self._run_cache = {}
         val_moment = moment or self._now().replace(tzinfo=None)
-        fixed, again, _t, errs = await self._validate_with_retries(retry, again, again_thought, tasks, val_moment, "回话重写", master_replied=True, system_prompt=system_prompt)
+        is_approved = verdict == "approved"
+        fixed, again, _t, errs = await self._validate_with_retries(
+            retry, again, again_thought, tasks, val_moment,
+            "回话重写(准许)" if is_approved else "回话重写(否决)",
+            master_replied=is_approved, system_prompt=system_prompt,
+        )
         if fixed is None:
             logger.warning("[super_enhance/world] 补写照主人回话重写未通过结构化校验（%s），保持请示挂起交由记录员接续", "；".join(errs[:3]))
             return data, text
         if companion is not None and dec_id:
             for row in companion._data().get("decisions") or []:
                 if row.get("id") == dec_id:
-                    row["status"] = "resolved"
+                    row["status"] = "resolved" if is_approved else "rejected"
                     row["choice"] = said[:200]
                     row["resolved_at"] = fmt_time(self._now().replace(tzinfo=None))
                     row["fast_replied"] = True
@@ -2410,14 +2429,24 @@ class LifeStep:
             who_lbl = self.label(bot) or bot
             for idx, raw, seg_start, seg_end, _st_code in bot_kept:
                 partners = [str(x) for x in (raw.get("with") or []) if str(x) in bots and str(x) != bot]
+                has_master = "master" in [str(x) for x in (raw.get("with") or [])]
                 for partner in partners:
                     p_lbl = self.label(partner) or partner
                     matched = False
+                    master_mismatch = False
                     if partner in kept_by_bot:
                         for _p_idx, p_raw, p_start, p_end, _ in kept_by_bot[partner][0]:
-                            if p_start == seg_start and p_end == seg_end and bot in [str(x) for x in (p_raw.get("with") or [])]:
+                            p_with = [str(x) for x in (p_raw.get("with") or [])]
+                            if p_start == seg_start and p_end == seg_end and bot in p_with:
                                 matched = True
+                                if has_master != ("master" in p_with):
+                                    master_mismatch = True
                                 break
+                    if master_mismatch:
+                        errors.append(
+                            f"{who_lbl}第{idx}段（{fmt_time(seg_start)[11:16]}–{fmt_time(seg_end)[11:16]}）与 {p_lbl} 同行，"
+                            f"但两边 with 里是否含 \"master\" 不一致；同行的两段须保持一致（都在场就都写 master，都不在场就都不写）"
+                        )
                     if not matched:
                         win = batch_windows.get(partner)
                         if win is None or seg_end <= win[0] or seg_start >= win[1]:
@@ -2480,6 +2509,39 @@ class LifeStep:
             or "master" in (x.get("with") or [])
             or (comp_ref is not None and comp_ref.safe("is_protected_intent", str(x.get("id") or ""), default=False))
         }
+        # 校验主人当前是否已在外面、以及今天是否有明确带钟点的主人出行约定，防止补写擅自把在家的主人带出门
+        from . import view as view_mod
+        m_trail_now = [
+            x for x in self.world.master_trail(date_text)
+            if not real_stop(x) and (parse_time(x.get("start")) is not None) and parse_time(x.get("start")) <= flat
+        ]
+        m_latest = m_trail_now[-1] if m_trail_now else None
+        master_outside_now = (
+            view_mod._is_outside_place(m_latest.get("place"), m_latest.get("at_home"), self.home)
+            if m_latest is not None else False
+        )
+        timed_master_intent_ids: set[str] = set()
+        timed_master_minutes: list[int] = []
+        for it in (self.world.intentions() or []):
+            win_txt = str(it.get("window") or "").strip()
+            has_clock = bool(re.search(r"\d{1,2}:\d{2}|\d{1,2}\s*点|[一二两三四五六七八九十]+点", win_txt))
+            if has_clock and (str(it.get("who") or "") == "master" or "master" in (it.get("with") or [])):
+                if it.get("id"):
+                    timed_master_intent_ids.add(str(it["id"]))
+                for hm in re.findall(r"(\d{1,2}):(\d{2})", win_txt):
+                    timed_master_minutes.append(int(hm[0]) * 60 + int(hm[1]))
+        book = getattr(self, "promises", None)
+        if book is not None:
+            try:
+                for pr in (book.items() or []):
+                    if str(pr.get("status") or "") != "open" or str(pr.get("date") or "") != date_text:
+                        continue
+                    pt = str(pr.get("time") or "").strip()
+                    m_hm = re.search(r"(\d{1,2}):(\d{2})", pt)
+                    if m_hm:
+                        timed_master_minutes.append(int(m_hm.group(1)) * 60 + int(m_hm.group(2)))
+            except Exception:
+                pass
 
         def _valid_place_struct(val) -> bool:
             if isinstance(val, dict):
@@ -2716,6 +2778,28 @@ class LifeStep:
                     errors.append(f"{tag}：非做事段 meal 必须为 false")
                 if raw.get("with"):
                     bot_has_partner = True
+                # 防擅自把在家主人带出门校验（主人还在屋里且未到定好钟点的约定，补写严禁擅自写 at_home=false + with: master）
+                with_ids = [str(x) for x in (raw.get("with") or [])]
+                if (
+                    raw.get("at_home") is False
+                    and "master" in with_ids
+                    and not master_replied
+                    and not master_outside_now
+                ):
+                    raw_i = str(raw.get("intent") or "").strip()
+                    seg_min = seg_start.hour * 60 + seg_start.minute
+                    near_timed = any(abs(seg_min - tm) <= 20 for tm in timed_master_minutes)
+                    prior_master_out = any(
+                        p_raw.get("at_home") is False and "master" in [str(x) for x in (p_raw.get("with") or [])]
+                        for _, p_raw, p_s, _, _ in bot_kept
+                        if p_s < seg_start
+                    )
+                    if not (raw_i in timed_master_intent_ids or near_timed or prior_master_out):
+                        errors.append(
+                            f"{tag}：主人眼下还在住处里、也未到约好具体钟点的出发时刻，"
+                            f"补写严禁擅自写 at_home=false 且 with 含 \"master\" 强行把主人带出门！"
+                            f"请改写为在家准备并通知/用 ask_master 问主人几点出发，或自己去办（with 勿写 master）"
+                        )
                 if seaside and raw.get("lamp") is True:
                     if sleep:
                         errors.append(f"{tag}：睡觉段 lamp 必须为 false")

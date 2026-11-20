@@ -596,38 +596,94 @@ class ProactivePlanner:
             )
 
         scheduled = 0
+        home = str(self.cfg.get("world_home") or "").strip() if hasattr(self, "cfg") and isinstance(self.cfg, dict) else ""
+        if not home:
+            home = str(store.home_at(flat) or "").strip() if hasattr(store, "home_at") else ""
+        master_cur = store.current("master", flat)
+        master_sleeping = master_cur is not None and is_sleep(master_cur) and not master_cur.get("end")
+        from . import view as view_mod
+
+        items_by_bot = {b: store.activities(b, flat) for b in bot_list}
         for bot in bot_list:
             fired = store.fired_msgs(bot)
-            items = store.activities(bot, flat)
+            items = items_by_bot[bot]
+            prev_valid = None
             for index, item in enumerate(items):
                 if is_event(item) or real_stop(item):
                     continue
                 eid = str(item.get("id") or "").strip()
                 if not eid:
+                    prev_valid = item
                     continue
                 day = _entry_day(item, flat.date().isoformat())
                 start = parse_time(item.get("start"))
                 end = parse_time(item.get("end")) if item.get("end") else None
 
-                # 1. 检查 "start" 节点
-                if item.get("send_msg") and item.get("msg_at") == "start":
-                    if (
-                        start is not None
-                        and start <= flat
-                        and (flat - start).total_seconds() <= NODE_WINDOW_SECONDS
-                        and (end is None or flat < end)
+                # 1. 检查 "start" 节点（显式 send_msg=true，或在家↔外出切换硬触发）
+                in_start_win = (
+                    start is not None
+                    and start <= flat
+                    and (flat - start).total_seconds() <= NODE_WINDOW_SECONDS
+                    and (end is None or flat < end)
+                )
+                if in_start_win:
+                    start_kind = ""
+                    start_purpose = ""
+                    if item.get("send_msg") and item.get("msg_at") == "start":
+                        start_kind = "segment"
+                        start_purpose = clean_line(item.get("msg_purpose") or item.get("doing") or "", 140)
+                    elif (
+                        not master_sleeping
+                        and prev_valid is not None
+                        and str(item.get("tool") or "") != "start_doing"
+                        and str(item.get("source") or "") != "chat"
                     ):
+                        prev_out = view_mod._is_outside_place(prev_valid.get("place"), prev_valid.get("at_home"), home)
+                        cur_out = view_mod._is_outside_place(item.get("place"), item.get("at_home"), home)
+                        if prev_out != cur_out:
+                            # 两人同行同一时刻出门/回家时，只由一人代表发声防重复
+                            joint_partners = [
+                                str(x) for x in (item.get("with") or [])
+                                if str(x) in items_by_bot and str(x) != bot
+                            ]
+                            skip_joint = False
+                            for p_bot in joint_partners:
+                                for p_it in items_by_bot[p_bot]:
+                                    if is_event(p_it) or real_stop(p_it):
+                                        continue
+                                    if p_it.get("start") == item.get("start"):
+                                        if p_it.get("send_msg") and p_it.get("msg_at") == "start":
+                                            skip_joint = True
+                                        elif "napcat2" in (bot, p_bot):
+                                            if bot != "napcat2":
+                                                skip_joint = True
+                                        elif bot > p_bot:
+                                            skip_joint = True
+                                        break
+                                if skip_joint:
+                                    break
+                            if not skip_joint:
+                                place_txt = clean_line(item.get("place") or "", 40)
+                                doing_txt = clean_line(item.get("doing") or "", 80)
+                                if cur_out:
+                                    start_kind = "out"
+                                    start_purpose = f"准备出门去{place_txt}（{doing_txt}），临走前跟主人说一声"
+                                else:
+                                    prev_place = clean_line(prev_valid.get("place") or "外头", 30)
+                                    start_kind = "back"
+                                    start_purpose = f"刚从{prev_place}回到住处（{doing_txt}），跟主人报一声回来了"
+                    if start_kind:
                         start_key = f"{day}/{eid}:start"
                         if start_key not in fired:
                             store.mark_msg_fired(bot, start_key)
                             fired.add(start_key)
-                            purpose = clean_line(item.get("msg_purpose") or item.get("doing") or "", 140)
                             try:
                                 scheduled += await self.schedule_segment_msg(
-                                    bot, item, node="start", purpose=purpose, kind="segment", now=real_now
+                                    bot, item, node="start", purpose=start_purpose, kind=start_kind, now=real_now
                                 )
                             except Exception:
                                 logger.warning("[super_enhance/life] 排段头主动对话失败", exc_info=True)
+                prev_valid = item
 
                 # 2. 检查 "end" 节点与打算收尾
                 if start is None or end is None or end > flat:

@@ -588,6 +588,7 @@ class SuperEnhance(Star):
         lamp: bool = False,
         major_decision: bool = False,
         decision_or_intent_id: str = "",
+        with_who: str = "",
         place: str = "",
         result: str = "",
     ) -> str:
@@ -608,6 +609,7 @@ class SuperEnhance(Star):
             lamp (boolean): 是否点着家里那盏煤油灯（煤油见底时严禁填 true）。
             major_decision (boolean): 是否属于动用家底买大件（厚衣/棉被/修大设施）或接打捞委托单等须主人拍板的事。
             decision_or_intent_id (string): 若涉及已拍板或既定打算，填对应的 d 编号或 i 编号（例如 "d16" 或 "i297"）；没有填 ""。
+            with_who (string): 和谁一起做（逗号或顿号隔开，例如 "主人"、"丛雨"、"亚托莉"、"主人,丛雨"；独自做填 ""）。同行人会同步写进世界线避免两人时间线错开。
             place (string): 在哪做；空着就是你现在待的地方。
             result (string): 可选，这件事做完的结果（做完时你才看得到）。
 
@@ -627,6 +629,7 @@ class SuperEnhance(Star):
             lamp=lamp,
             major_decision=major_decision,
             decision_or_intent_id=decision_or_intent_id,
+            with_who=with_who,
         )
 
     @filter.llm_tool(name="recall")

@@ -71,6 +71,31 @@ def _check_major_decision(service, bot: str, ref_id: str, now: datetime.datetime
     )
 
 
+def _resolve_with_who(service, bot: str, with_who) -> list[str]:
+    """将 start_doing 传入的 with_who 规范成结构化 ID 列表（master / 其他 bot）。"""
+    if not with_who:
+        return []
+    if isinstance(with_who, (list, tuple, set)):
+        raw_parts = [str(x).strip() for x in with_who if str(x).strip()]
+    else:
+        txt = str(with_who).replace("、", ",").replace("，", ",").replace("和", ",").replace(" ", ",")
+        raw_parts = [p.strip() for p in txt.split(",") if p.strip()]
+    alias: dict[str, str] = {"master": "master", "主人": "master"}
+    for b in service.enabled_bots():
+        if b == bot:
+            continue
+        alias[b.lower()] = b
+        lbl = str(service.bots.label_for(b) or "").strip()
+        if lbl:
+            alias[lbl] = b
+    out: list[str] = []
+    for tok in raw_parts:
+        hit = alias.get(tok) or alias.get(tok.lower())
+        if hit and hit != bot and hit not in out:
+            out.append(hit)
+    return out
+
+
 def start_now(
     service,
     umo: str,
@@ -85,6 +110,7 @@ def start_now(
     lamp: bool = False,
     major_decision: bool = False,
     decision_or_intent_id: str = "",
+    with_who: str = "",
 ) -> str:
     """「现在去做」：纯结构化校验后写入世界线，绝不凭自由文本放行无柴生炉/越权交易。"""
     bot = platform_of(umo)
@@ -172,12 +198,14 @@ def start_now(
     same_place = not str(place or "").strip()
     at_home = kind_val not in ("go_out", "trade")
     ref_intent = str(decision_or_intent_id or "").strip()
+    with_list = _resolve_with_who(service, bot, with_who)
     record = service.world.add_entry(now.date().isoformat(), {
         "who": bot,
         "start": fmt_time(now),
         "end": fmt_time(end),
         "place": (current or {}).get("place", "") if same_place else place,
         "at_home": at_home,
+        "with": with_list,
         "stove": stove_val,
         "cook": cook_val,
         "lamp": bool(lamp),
@@ -194,7 +222,8 @@ def start_now(
         for item in removed:
             service.world.add_entry(str(item.get("start"))[:10], item)
         return "没写进去：这段时间世界线上是主人手动排的事，补写和对话都改不动。"
-    released = _release_partners(service, bot, now, what)
+    synced_bots = _sync_start_partners(service, bot, with_list, now, end, record, umo)
+    released = _release_partners(service, bot, now, what, skip_bots=set(synced_bots))
     money_hint = ""
     if kind_val == "trade" and home == "海边小镇" and getattr(service, "money", None) is not None:
         try:
@@ -220,13 +249,68 @@ def start_now(
         money_hint,
     )
 
-def _release_partners(service, bot: str, now: datetime.datetime, what: str = "") -> list:
+def _sync_start_partners(
+    service,
+    bot: str,
+    with_list: list[str],
+    now: datetime.datetime,
+    end: datetime.datetime,
+    record: dict,
+    umo: str,
+) -> list[str]:
+    """start_doing 指定了另一位 bot 同行时，同步写入对方对应的同行段，避免两人时间线劈叉。"""
+    synced = []
+    enabled = set(service.enabled_bots())
+    me_lbl = service.bots.label_for(bot) or bot
+    dates = sorted({now.date().isoformat(), end.date().isoformat()})
+    for partner in with_list:
+        if partner == bot or partner not in enabled:
+            continue
+        if service.world.sleep_at(partner, now) is not None:
+            continue
+        # 若对方该时段有手动排程，不硬覆盖
+        blocked = False
+        for d_txt in dates:
+            for item in service.world.entries(d_txt, partner):
+                st = parse_time(item.get("start"))
+                en = parse_time(item.get("end")) if item.get("end") else None
+                if item.get("source") == "manual" and not is_event(item) and st is not None and st < end and (en is None or en > now):
+                    blocked = True
+                    break
+            if blocked:
+                break
+        if blocked:
+            continue
+        service.world.clear_planned(partner, now)
+        p_lbl = service.bots.label_for(partner) or partner
+        p_with = [bot] + [x for x in with_list if x != partner]
+        base_doing = str(record.get("doing") or "")
+        p_doing = base_doing.replace(p_lbl, me_lbl) if (p_lbl and p_lbl in base_doing and me_lbl not in base_doing) else base_doing
+        twin = service.world.add_entry(now.date().isoformat(), {
+            "who": partner,
+            "start": fmt_time(now),
+            "end": fmt_time(end),
+            "place": record.get("place") or "",
+            "at_home": record.get("at_home"),
+            "with": p_with,
+            "doing": p_doing,
+            "source": "chat",
+            "src_umo": umo,
+            "tool": "start_doing",
+        })
+        if twin is not None:
+            synced.append(partner)
+    return synced
+
+
+def _release_partners(service, bot: str, now: datetime.datetime, what: str = "", *, skip_bots: set[str] | None = None) -> list:
     """她被叫去做别的：另一个人补写排的、写着和她一起的段对不上了。
     正在做的到此刻为止，还没开始的撤掉；空出来的由补写按现在的情况重排。只写自己的段、手动写的不动。"""
     out = []
+    skip = skip_bots or set()
     days = [now.date().isoformat(), (now.date() + datetime.timedelta(days=1)).isoformat()]
     for other in service.enabled_bots():
-        if other == bot:
+        if other == bot or other in skip:
             continue
         for date_text in days:
             for item in list(service.world.entries(date_text, other)):
