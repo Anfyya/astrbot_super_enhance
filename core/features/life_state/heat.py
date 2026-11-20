@@ -443,7 +443,8 @@ def _people_positions(life, now: datetime.datetime, th: dict, home: str) -> list
         meal = bool(cur.get("meal"))
         is_deck = bool(place) and "舱" not in place and any(k in place for k in ("甲板", "船头", "船顶", "船篷", "船舷"))
         pos = cur.get("pos") if isinstance(cur.get("pos"), dict) else None
-        if at_home is False:
+        is_out = view_mod._is_outside_place(place, at_home, home)
+        if is_out:
             zone = "outside"
             spot = "outside"
             local_t = th["outdoor"]
@@ -468,11 +469,11 @@ def _people_positions(life, now: datetime.datetime, th: dict, home: str) -> list
         rows.append({
             "who": who,
             "label": label,
-            "at_home": at_home is not False,
+            "at_home": not is_out,
             "zone": zone,
             "spot": spot,
             "pos": pos,
-            "place": place or ("船屋·船舱" if at_home is not False else "外头"),
+            "place": place or ("船屋·船舱" if not is_out else "外头"),
             "doing": str(cur.get("doing") or "")[:48],
             "sleeping": sleeping,
             "temp": round(float(local_t), 1),

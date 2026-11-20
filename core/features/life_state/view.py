@@ -415,6 +415,26 @@ def world_text(service, bot: str, now: datetime.datetime) -> str:
     static_text, dynamic_text = split_world_text(service, bot, now)
     return "\n".join(x for x in (static_text, dynamic_text) if x)
 
+_SEASIDE_HOME_TOKENS = (
+    "船屋", "船舱", "砖炕", "火炕", "矮桌", "柴炉", "炭炉",
+    "小灶台", "储物舱", "吊床", "地铺", "船头甲板", "舱门", "海图书桌", "靠海书桌",
+)
+
+
+def _is_outside_place(place: str, at_home, home: str) -> bool:
+    """优先读结构化 at_home；仅当历史/记录员遗漏 at_home=None 且在海边小镇时，按地点是否指向船屋判断外出。"""
+    if at_home is False:
+        return True
+    if at_home is True:
+        return False
+    p = str(place or "").strip()
+    if not p:
+        return False
+    if home == "海边小镇":
+        return not any(k in p for k in _SEASIDE_HOME_TOKENS)
+    return False
+
+
 def _cabin_zone_of(place: str, *, sleeping: bool = False) -> str:
     """根据当前地点判定船舱内四个热区之一：kang / near / far / mid。"""
     p = str(place or "")
@@ -493,7 +513,7 @@ def weather_now_text(service, now: datetime.datetime, bot: str = "") -> str:
 
     # 在外头或船屋室外（甲板/船头/船顶/船篷/船舷且不含「舱」）只给当前屋外温度
     is_deck_out = bool(place) and "舱" not in place and any(k in place for k in ("甲板", "船头", "船顶", "船篷", "船舷"))
-    outdoors = (at_home is False) or is_deck_out
+    outdoors = _is_outside_place(place, at_home, home) or is_deck_out
 
     sky_wind = weather_mod.sky_wind_text(flat, text_of, home)
     out_deg = weather_mod._deg(th["outdoor"])

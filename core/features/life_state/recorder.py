@@ -126,11 +126,12 @@ RECORDER_SYSTEM_TEMPLATE = """{base_system}
      · `debt_add`（向熟摊赊账、或寄卖/帮干活待后续结款）：填 `direction`（`"payable"` 欠对方 / `"receivable"` 对方待结给我们）、`counterparty`、`amount`、`what`、`at`、`quote`；
      · `debt_settle`（还清赊账或收到尾款）：填 `debt_id`（对照下面未结欠账编号）、`account`、`amount`、`what`、`at`、`quote`。
 {world_notes}
+注：`entries` 每条请顺手填 `"at_home"`（布尔值：在住处/船屋内、甲板、储物舱填 `true`；离开住处去码头、商店街、集市、打捞船、水下或走在路上填 `false`；聊天没提地点无法判断时填 `null`）。
 输出这个 JSON（没有的字段留空数组）：
 
 {{
   "entries": [
-    {{"who": "napcat", "kind": "activity", "start": "2026-10-11 09:00", "end": "2026-10-11 09:40", "place": "", "doing": "",
+    {{"who": "napcat", "kind": "activity", "start": "2026-10-11 09:00", "end": "2026-10-11 09:40", "place": "", "at_home": true, "doing": "",
       "public": "", "with": [], "training": "", "seen_by": [], "stove": "", "lamp": false, "kerosene": false, "asked": false, "upset": false, "quote": "摘一句原文"}}
   ],
   "constraints": [
@@ -865,6 +866,7 @@ class Recorder:
                 "start": start,
                 "end": end,
                 "place": raw.get("place"),
+                "at_home": raw.get("at_home"),
                 "doing": raw.get("doing"),
                 "public": raw.get("public"),
                 "with": raw.get("with") or [],
@@ -1146,7 +1148,7 @@ class Recorder:
                 seen = sorted((set(record.get("seen_by") or []) | {who}) - {other})
                 twin = self.world.add_entry(str(record.get("start"))[:10], {
                     "who": other, "kind": "activity", "start": record.get("start"), "end": record.get("end") or "",
-                    "place": record.get("place"), "doing": doing, "public": record.get("public"),
+                    "place": record.get("place"), "at_home": record.get("at_home"), "doing": doing, "public": record.get("public"),
                     "with": [who] + [x for x in (record.get("with") or []) if x == "master"], "seen_by": seen,
                     "source": "chat", "src_umo": umo, "src_quote": record.get("src_quote"), "created": fmt_time(now),
                 })
