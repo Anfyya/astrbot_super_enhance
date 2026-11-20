@@ -13,7 +13,7 @@ from . import view as view_mod
 from . import weather as weather_mod
 from . import weathering
 from .food import room_temp
-from .world import fmt_time, is_sleep, parse_time, stove_active_in_entry
+from .world import fmt_time, is_event, is_sleep, parse_time, real_stop, stove_active_in_entry
 
 # 与 things.py 保持一致的真实燃料消耗标准
 WOOD_PRESETS = (
@@ -285,21 +285,87 @@ def _fuel_batches(life, now: datetime.datetime) -> dict[str, Any]:
     return out
 
 
+def _cabin_spot_of(place: str, *, sleeping: bool = False, meal: bool = False) -> str:
+    """将船屋内具体地点映射到 blender_codex v6 家具级精准落位锚点。"""
+    p = str(place or "")
+    if any(k in p for k in ("储物", "船尾")):
+        return "storage"
+    if any(k in p for k in ("吊床", "顶梁", "横梁")):
+        return "hammock"
+    if any(k in p for k in ("地铺", "地板")):
+        return "floor_bed"
+    if (sleeping and not any(k in p for k in ("地铺", "地板", "吊床"))) or any(k in p for k in ("炕", "床上", "被窝", "褥子", "铺位")):
+        return "kang"
+    if any(k in p for k in ("灶台", "炭炉", "厨柜", "水桶")):
+        return "kitchen"
+    if any(k in p for k in ("柴炉", "火炉", "炉边", "炉旁", "柴架")):
+        return "stove"
+    if any(k in p for k in ("书桌", "海图")):
+        return "desk"
+    if meal or any(k in p for k in ("矮桌", "桌边")):
+        return "table"
+    if any(k in p for k in ("舱门", "门边", "门口")):
+        return "door"
+    return "cabin"
+
+
+def _master_entry_now(world, flat: datetime.datetime):
+    """与 view.py 保持 100% 同源的主人实时位置解析：未结束睡眠优先，否则取 master_trail 截至此刻最新有效段（含 with=['master']）。"""
+    master_cur = world.current("master", flat)
+    if master_cur is not None and is_sleep(master_cur) and not master_cur.get("end"):
+        return master_cur
+
+    today = flat.date().isoformat()
+    trail = list(world.master_trail(today))
+    active = []
+    past = []
+    for item in trail:
+        if real_stop(item):
+            continue
+        st = parse_time(item.get("start"))
+        if st is None or st > flat:
+            continue
+        en = parse_time(item.get("end")) if item.get("end") else None
+        is_ev = is_event(item)
+        if not is_ev and (en is None or flat < en):
+            active.append((st, item))
+        else:
+            past.append((en or st, st, item))
+
+    if active:
+        # 优先正在进行且已明确开始时间最晚、且有具体地点的段（例如 12:05 一起在矮桌吃午饭 > 11:25 开口记录）
+        active.sort(key=lambda row: (row[0], 1 if row[1].get("end") else 0, 1 if str(row[1].get("place") or "").strip() else 0))
+        return active[-1][1]
+    if past:
+        past.sort(key=lambda row: (row[0], row[1], 1 if str(row[2].get("place") or "").strip() else 0))
+        latest = past[-1][2]
+        if not str(latest.get("place") or "").strip():
+            placed = [row[2] for row in past if str(row[2].get("place") or "").strip()]
+            if placed:
+                merged = dict(latest)
+                merged["place"] = placed[-1].get("place")
+                merged["at_home"] = placed[-1].get("at_home")
+                return merged
+        return latest
+    return master_cur or world.last_activity("master", flat)
+
+
 def _people_positions(life, now: datetime.datetime, th: dict, home: str) -> list[dict]:
-    """计算家里各成员（亚托莉 / 丛雨 / 主人）此刻位置、所在热区与实际体感温度。"""
+    """计算家里各成员（亚托莉 / 丛雨 / 主人）此刻位置、精准家具锚点、所在热区与实际体感温度。"""
     flat = now.replace(tzinfo=None)
     world = life.world
     who_list = list(life.enabled_bots()) + ["master"]
     rows = []
     for who in who_list:
         label = "主人" if who == "master" else (life.bots.label_for(who) or who)
-        cur = world.current(who, flat) or world.last_activity(who, flat)
+        cur = _master_entry_now(world, flat) if who == "master" else (world.current(who, flat) or world.last_activity(who, flat))
         if cur is None:
             rows.append({
                 "who": who,
                 "label": label,
                 "at_home": None,
                 "zone": "unknown",
+                "spot": "unknown",
                 "place": "暂无行踪记录",
                 "doing": "",
                 "sleeping": False,
@@ -309,24 +375,30 @@ def _people_positions(life, now: datetime.datetime, th: dict, home: str) -> list
         place = str(cur.get("place") or "").strip()
         at_home = cur.get("at_home")
         sleeping = bool(is_sleep(cur))
+        meal = bool(cur.get("meal"))
         is_deck = bool(place) and "舱" not in place and any(k in place for k in ("甲板", "船头", "船顶", "船篷", "船舷"))
         if at_home is False:
             zone = "outside"
+            spot = "outside"
             local_t = th["outdoor"]
         elif is_deck:
             zone = "deck"
+            spot = "deck"
             local_t = th["outdoor"]
         elif home == "海边小镇":
             zone = view_mod._cabin_zone_of(place, sleeping=sleeping)
+            spot = _cabin_spot_of(place, sleeping=sleeping, meal=meal)
             local_t = th.get(zone, th["mid"])
         else:
             zone = "mid"
+            spot = "cabin"
             local_t = th["cabin"]
         rows.append({
             "who": who,
             "label": label,
             "at_home": at_home is not False,
             "zone": zone,
+            "spot": spot,
             "place": place or ("船屋·船舱" if at_home is not False else "外头"),
             "doing": str(cur.get("doing") or "")[:48],
             "sleeping": sleeping,

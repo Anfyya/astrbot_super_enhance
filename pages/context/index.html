@@ -5146,20 +5146,30 @@
     ctx.restore();
     caption(20, H - 14, "靠海侧（左舷）", "left");
 
-    // 6. 极简人物坐标点（精确映射到 v6 坐标，错开文字标签）
-    var zonePts = {
-      kang: [[toX(1.30), toY(0.95)], [toX(2.35), toY(0.95)], [toX(1.30), toY(1.95)]],
-      near: [[toX(-0.45), toY(0.92)], [toX(0.55), toY(-0.18)], [toX(-0.90), toY(0.52)]],
-      mid:  [[toX(-0.62), toY(-0.92)], [toX(1.12), toY(-0.32)], [toX(-1.75), toY(-0.30)]],
-      far:  [[toX(2.80), toY(-1.05)], [toX(-2.80), toY(0.20)], [toX(3.85), toY(0.70)]],
-      deck: [[toX(-4.00), toY(-0.95)], [toX(-4.20), toY(0.85)], [toX(-4.65), toY(0.0)]]
+    // 6. 极简人物坐标点（严格按后端 spot 家具锚点精确落位，同家具多人紧密围坐且文字互不碰撞）
+    // 每槽格式：[px, py, align]（align: "left"=字在点右侧，"right"=字在点左侧）
+    var spotPts = {
+      table:     [[toX(0.30), toY(-0.18), "left"],  [toX(-0.22), toY(-1.02), "left"],  [toX(0.84), toY(-1.02), "right"]],
+      kang:      [[toX(1.30), toY(0.95), "left"],   [toX(2.35), toY(0.95), "left"],    [toX(1.30), toY(1.95), "left"]],
+      stove:     [[toX(-0.35), toY(0.45), "left"],  [toX(0.06), toY(1.05), "left"],    [toX(0.06), toY(-0.15), "left"]],
+      kitchen:   [[toX(-1.65), toY(-1.02), "left"], [toX(-2.32), toY(-1.02), "left"],  [toX(-0.95), toY(-1.02), "left"]],
+      desk:      [[toX(1.34), toY(-1.28), "left"],  [toX(2.12), toY(-0.32), "left"],   [toX(2.75), toY(-1.28), "right"]],
+      hammock:   [[toX(-1.80), toY(0.70), "left"],  [toX(-1.25), toY(0.70), "left"]],
+      floor_bed: [[toX(-0.25), toY(1.45), "left"],  [toX(-0.85), toY(1.45), "left"]],
+      storage:   [[toX(3.96), toY(0.55), "left"],   [toX(3.96), toY(-0.55), "left"]],
+      door:      [[toX(-2.95), toY(-0.38), "right"],[toX(-2.95), toY(0.25), "right"]],
+      deck:      [[toX(-4.00), toY(-0.85), "left"], [toX(-4.00), toY(0.75), "left"],   [toX(-4.65), toY(0.0), "left"]],
+      cabin:     [[toX(-0.90), toY(0.05), "left"],  [toX(-0.90), toY(-0.55), "left"],  [toX(-0.90), toY(0.58), "left"]]
     };
+    var fallbackZone = { kang: "kang", near: "stove", mid: "cabin", far: "desk", deck: "deck" };
     var used = {}, outside = [];
     (d.people || []).forEach(function (p) {
-      if (p.zone === "outside" || p.zone === "unknown") { outside.push(p); return; }
-      var pts = zonePts[p.zone] || zonePts.mid;
-      var k = used[p.zone] || 0; used[p.zone] = k + 1;
+      var spKey = p.spot || fallbackZone[p.zone] || "unknown";
+      if (spKey === "outside" || spKey === "unknown") { outside.push(p); return; }
+      var pts = spotPts[spKey] || spotPts.cabin;
+      var k = used[spKey] || 0; used[spKey] = k + 1;
       var pt = pts[k % pts.length];
+      var align = pt[2] || "left";
       var col = p.who === "napcat2" ? "#60a5fa" : (p.who === "napcat" ? "#34d399" : "#c084fc");
       ctx.save();
       ctx.beginPath(); ctx.arc(pt[0], pt[1], 7.5, 0, Math.PI * 2);
@@ -5171,8 +5181,8 @@
       ctx.shadowColor = "rgba(6,10,20,0.95)"; ctx.shadowBlur = 6;
       ctx.fillStyle = "#ffffff";
       ctx.font = "600 11.5px -apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif";
-      ctx.textAlign = "left";
-      ctx.fillText(p.label + (p.sleeping ? " · 睡" : ""), pt[0] + 10, pt[1] + 4);
+      ctx.textAlign = align;
+      ctx.fillText(p.label + (p.sleeping ? " · 睡" : ""), align === "right" ? (pt[0] - 10) : (pt[0] + 10), pt[1] + 4);
       ctx.restore();
     });
 
