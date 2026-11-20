@@ -1200,7 +1200,7 @@
   @media (prefers-color-scheme: dark){
     :root:not([data-theme]) .hstage{box-shadow:0 12px 36px rgba(0,0,0,.45),0 0 0 1px rgba(255,255,255,.07)}
   }
-  .hcanvas{display:block;width:100%;height:auto;aspect-ratio:760 / 410;cursor:crosshair}
+  .hcanvas{display:block;width:100%;height:auto;aspect-ratio:760 / 420;cursor:crosshair}
   .hprobe{position:absolute;pointer-events:none;z-index:12;transform:translate(12px,-50%);padding:4px 9px;border-radius:8px;background:rgba(10,15,28,.84);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.16);color:#f8fafc;font:600 12px/1.3 var(--mono);white-space:nowrap;box-shadow:0 6px 16px rgba(0,0,0,.35)}
   .hprobe small{font:400 11px/1 var(--font);color:rgba(226,232,240,.75);margin-left:5px}
 
@@ -4607,7 +4607,25 @@
     return [94, 112, 92];
   }
 
-  // 船屋 760x410 几何与连续物理热场采样（画布渲染与鼠标测温探针 100% 共用）
+  // 船屋 1:1 真实建模坐标映射（严格对齐 blender_codex 海边小镇_船屋完整场景_v6.blend）
+  // 3D 世界坐标：Y ∈ [-5.35 船头, +6.10 船尾] → 画布右→左；X ∈ [-2.68 左舷靠海, +2.68 右舷靠码头] → 画布下→上（右手俯视，零镜像）
+  var CW = 760, CH = 420;
+  function toX(wy) { return 380 - (wy - 0.375) * 60.5; }
+  function toY(wx) { return 230 - wx * 56.0; }
+  function fromX(px) { return 0.375 + (380 - px) / 60.5; }
+  function fromY(py) { return (230 - py) / 56.0; }
+
+  // 与 build_cabin.py 完全一致的船壳半宽函数 hull_width(y)
+  function hullHalfW(wy) {
+    if (wy < -3.6) {
+      return 0.65 + 2.03 * Math.sin(Math.max(0, (wy + 5.35) / 1.75) * Math.PI / 2);
+    }
+    if (wy > 4.75) {
+      return 0.90 + 1.78 * Math.sin(Math.max(0, (6.10 - wy) / 1.35) * Math.PI / 2);
+    }
+    return 2.68;
+  }
+
   function distToSeg(px, py, x1, y1, x2, y2) {
     var dx = x2 - x1, dy = y2 - y1;
     var len2 = dx * dx + dy * dy;
@@ -4616,122 +4634,151 @@
     return Math.hypot(px - (x1 + u * dx), py - (y1 + u * dy));
   }
 
-  function inHullRegion(x, y) {
-    if (x < 34 || x > 724 || y < 60 || y > 350) { return "sea"; }
-    if (x >= 116 && x <= 584 && y >= 62 && y <= 348) { return "cabin"; }
-    if (x >= 34 && x < 116) {
-      var t = (x - 34) / 82;
-      var halfH = 112 + 31 * t;
-      return Math.abs(y - 205) <= halfH ? "stern" : "sea";
-    }
-    if (x > 584 && x <= 724) {
-      var u = (x - 584) / 140;
-      var halfD = 143 * Math.sqrt(Math.max(0, 1 - u * u * 0.96));
-      return Math.abs(y - 205) <= halfD ? "deck" : "sea";
-    }
-    return "sea";
+  function inHullRegion(px, py) {
+    var wy = fromX(px), wx = fromY(py);
+    if (wy < -5.35 || wy > 6.10) { return "sea"; }
+    var hw = hullHalfW(wy);
+    if (Math.abs(wx) > hw) { return "sea"; }
+    if (wy >= -3.36 && wy <= 3.24 && Math.abs(wx) <= 2.36) { return "cabin"; }
+    if (wy > 3.24 && wy <= 4.68 && Math.abs(wx) <= 2.36) { return "stern"; }
+    if (wy < -3.36) { return "deck"; }
+    return "aft_deck";
   }
 
   function makeThermalSampler(d) {
     var th = d.thermal || {};
-    var wx = d.weather || {};
+    var wxInfo = d.weather || {};
     var st = d.stoves || {};
     var nearT = Number(th.near != null ? th.near : 12);
     var midT = Number(th.mid != null ? th.mid : 12);
     var farT = Number(th.far != null ? th.far : 10);
     var kangT = Number(th.kang != null ? th.kang : 12);
-    var outT = Number(wx.outdoor != null ? wx.outdoor : 10);
+    var outT = Number(wxInfo.outdoor != null ? wxInfo.outdoor : 10);
     var woodLit = !!(st.wood && st.wood.burning);
     var charLit = !!(st.charcoal && st.charcoal.burning);
-    var pipeT = woodLit ? (nearT * 0.68 + kangT * 0.32) : Math.max(midT, kangT * 0.85 + midT * 0.15);
+    var pipeT = woodLit ? (nearT * 0.7 + kangT * 0.3) : Math.max(midT, kangT * 0.85 + midT * 0.15);
 
-    return function sample(x, y) {
-      var reg = inHullRegion(x, y);
+    // 关键世界坐标（v6.blend 精确值）
+    var wStoveX = 0.45, wStoveY = 0.06;     // 铁桶柴炉
+    var cStoveX = -1.64, cStoveY = -2.32;   // 灶台小炭炉
+    var doorX = -0.38, doorY = -3.36;       // 前舱门中心
+    // 5 个真实舷窗（左舷灶台 y=-2.05 已封闭无窗）
+    var windows = [[-2.36, 0.05], [-2.36, 2.05], [2.36, -2.05], [2.36, 0.05], [2.36, 2.05]];
+
+    return function sample(px, py) {
+      var reg = inHullRegion(px, py);
+      var wy = fromX(px), wx = fromY(py);
       if (reg === "sea") {
-        return { region: "sea", label: "防波堤港湾", temp: wx.sea_temp != null ? Number(wx.sea_temp) : outT };
+        if (wx > 2.85 && wy >= -5.6 && wy <= 6.2) {
+          return { region: "pier", label: "防波堤码头", temp: outT };
+        }
+        return { region: "sea", label: "防波堤港湾", temp: wxInfo.sea_temp != null ? Number(wxInfo.sea_temp) : outT };
       }
-      if (reg === "deck") {
-        var dDoor = Math.hypot(x - 584, y - 205);
-        var leak = Math.max(0, midT - outT) * 0.16 * Math.exp(-(dDoor * dDoor) / 1600);
-        return { region: "deck", label: "船头甲板", temp: outT + leak };
+      if (reg === "deck" || reg === "aft_deck") {
+        var dDoor = Math.hypot(wx - doorX, wy - doorY);
+        var leak = reg === "deck" ? Math.max(0, midT - outT) * 0.14 * Math.exp(-(dDoor * dDoor) / 0.6) : 0;
+        return { region: reg, label: reg === "deck" ? "船头前甲板" : "船尾小甲板", temp: outT + leak };
       }
       if (reg === "stern") {
-        var dWall = Math.max(0, 116 - x);
-        var tS = farT - Math.min(0.6, dWall / 120 * 0.6);
-        return { region: "stern", label: "船尾储物舱", temp: tS };
+        var dIn = Math.max(0, wy - 3.24);
+        return { region: "stern", label: "船尾储物舱", temp: farT - Math.min(0.5, dIn * 0.35) };
       }
 
-      // 主船舱连续热扩散场
+      // 主船舱连续物理热场（米制坐标）
       var t = midT;
-      var dLeft = Math.max(0, x - 116);
-      var dWin = distToSeg(x, y, 148, 348, 268, 348);
-      var dDoorIn = Math.hypot(x - 584, y - 205);
+
+      // 1) 冷边界：前舱门、前舱壁、5 个真实舷窗、储物舱门/隔墙
+      var dDoorIn = Math.hypot(wx - doorX, wy - doorY);
+      var dFront = Math.max(0, wy - (-3.36));
+      var dBack = Math.max(0, 3.24 - wy);
       var coldF = Math.max(
-        Math.exp(-(dLeft * dLeft) / 3800) * 0.92,
-        Math.exp(-(dWin * dWin) / 4800),
-        Math.exp(-(dDoorIn * dDoorIn) / 3400) * 0.92
+        Math.exp(-(dDoorIn * dDoorIn) / 1.45),
+        Math.exp(-(dFront * dFront) / 0.85) * 0.82,
+        (wx < 0.4 ? Math.exp(-(dBack * dBack) / 0.9) * 0.85 : 0)
       );
+      for (var wi = 0; wi < windows.length; wi++) {
+        var dw = Math.hypot(wx - windows[wi][0], wy - windows[wi][1]);
+        coldF = Math.max(coldF, Math.exp(-(dw * dw) / 0.95) * 0.88);
+      }
       t = t + (farT - t) * Math.min(1, coldF);
 
-      var dWood = Math.hypot(x - 292, y - 205);
-      var woodSpan = woodLit ? 128 : 98;
-      var wInfluence = Math.exp(-(dWood * dWood) / (2 * woodSpan * woodSpan * 0.42));
-      var woodPeak = (charLit && !woodLit && th.mode === "burning") ? midT + (nearT - midT) * 0.25 : nearT;
-      if (woodPeak > t) { t = t + (woodPeak - t) * wInfluence; }
+      // 2) 铁桶柴炉辐射热场 (x=0.45, y=0.06)
+      var dWood = Math.hypot(wx - wStoveX, wy - wStoveY);
+      var woodR = woodLit ? 1.75 : 1.30;
+      var wInf = Math.exp(-(dWood * dWood) / (2 * woodR * woodR * 0.44));
+      var woodPeak = (charLit && !woodLit && th.mode === "burning") ? midT + (nearT - midT) * 0.22 : nearT;
+      if (woodPeak > t) { t = t + (woodPeak - t) * wInf; }
 
+      // 3) 横向铁烟管热脊：(0.68,0.06)->(0.90,0.06)->(1.16,0.78) 及炕底斜通墙角烟道 (2.15,3.04)
       var dp = Math.min(
-        distToSeg(x, y, 312, 196, 364, 196),
-        distToSeg(x, y, 364, 196, 364, 144),
-        distToSeg(x, y, 364, 144, 396, 144)
+        distToSeg(wx, wy, 0.68, 0.06, 0.90, 0.06),
+        distToSeg(wx, wy, 0.90, 0.06, 1.16, 0.78)
       );
-      var pInf = Math.exp(-(dp * dp) / 480);
-      if (pipeT > t) { t = t + (pipeT - t) * pInf * 0.85; }
+      var pInf = Math.exp(-(dp * dp) / 0.14);
+      if (pipeT > t) { t = t + (pipeT - t) * pInf * 0.88; }
 
-      var kx = Math.max(398, Math.min(568, x));
-      var ky = Math.max(76, Math.min(200, y));
-      var dk = Math.hypot(x - kx, y - ky);
-      var kInf = Math.exp(-(dk * dk) / 1150);
+      // 4) 红砖火炕面蓄热场：x ∈ [0.47, 2.32], y ∈ [0.60, 3.20]
+      var kx = Math.max(0.50, Math.min(2.29, wx));
+      var ky = Math.max(0.64, Math.min(3.16, wy));
+      var dk = Math.hypot(wx - kx, wy - ky);
+      var kInf = Math.exp(-(dk * dk) / 0.28);
       if (kangT > t) {
-        var headBoost = Math.exp(-Math.hypot(x - 420, y - 144) / 90) * (woodLit ? 0.8 : 0.3);
-        t = t + (kangT + headBoost - t) * kInf;
+        // 靠进烟口炕尾与炕底烟道微热梯度
+        var flueD = distToSeg(wx, wy, 1.16, 0.78, 2.15, 3.04);
+        var boost = Math.exp(-(flueD * flueD) / 0.7) * (woodLit ? 0.85 : 0.35);
+        t = t + (kangT + boost - t) * kInf;
       }
 
+      // 5) 灶台小炭炉局部热晕 (-1.64, -2.32)
       if (charLit) {
-        var dChar = Math.hypot(x - 246, y - 97);
-        var cPeak = Math.max(nearT, 18.5);
-        var cInf = Math.exp(-(dChar * dChar) / 2200);
+        var dChar = Math.hypot(wx - cStoveX, wy - cStoveY);
+        var cPeak = Math.max(nearT, 18.8);
+        var cInf = Math.exp(-(dChar * dChar) / 0.72);
         if (cPeak > t) { t = t + (cPeak - t) * cInf; }
       }
 
-      var lbl = "矮桌中段";
-      if (x >= 394 && x <= 574 && y >= 70 && y <= 206) { lbl = "红砖火炕"; }
-      else if (dWood <= 58) { lbl = "柴炉烤火圈"; }
-      else if (x >= 130 && x <= 284 && y >= 68 && y <= 128) { lbl = "小灶台 · 炭炉"; }
-      else if (x >= 130 && x <= 278 && y >= 274 && y <= 346) { lbl = "海图书桌 · 舷窗"; }
-      else if (x >= 464 && x <= 574 && y >= 210 && y <= 262) { lbl = "炕边地铺"; }
-      else if (dDoorIn <= 52) { lbl = "舱门边"; }
-      else if (x < 170) { lbl = "舱尾角落"; }
+      // 语义区域名称（完全按 v6 坐标）
+      var lbl = "船舱过道";
+      if (wx >= 0.47 && wx <= 2.32 && wy >= 0.60 && wy <= 3.20) {
+        lbl = (wx >= 1.96 && wy >= 2.84) ? "墙角直角砖烟道" : "红砖火炕";
+      } else if (dWood <= 0.72) {
+        lbl = "铁桶柴炉烤火圈";
+      } else if (wx <= -1.25 && wy >= -2.78 && wy <= -0.55) {
+        lbl = Math.hypot(wx - cStoveX, wy - cStoveY) <= 0.42 ? "灶台小炭炉" : "炊事小灶台";
+      } else if (wx >= -1.72 && wx <= -0.32 && wy >= -0.12 && wy <= 0.72) {
+        lbl = "矮桌中段";
+      } else if (wx >= -2.10 && wx <= -0.48 && wy >= 1.65 && wy <= 2.55) {
+        lbl = "海图书桌";
+      } else if (wx >= 1.45 && wy >= -1.65 && wy <= -0.30) {
+        lbl = "小几 · 干柴架";
+      } else if (wx >= 1.30 && wy <= -1.85) {
+        lbl = "铺盖卷 · 右前角";
+      } else if (dDoorIn <= 0.85) {
+        lbl = "前舱门边";
+      }
       return { region: "cabin", label: lbl, temp: t };
     };
   }
 
   function traceHullPath(ctx) {
+    var N = 84;
     ctx.beginPath();
-    ctx.moveTo(64, 86);
-    ctx.quadraticCurveTo(34, 96, 34, 134);
-    ctx.lineTo(34, 276);
-    ctx.quadraticCurveTo(34, 314, 64, 324);
-    ctx.quadraticCurveTo(92, 344, 118, 348);
-    ctx.lineTo(584, 348);
-    ctx.bezierCurveTo(648, 348, 724, 290, 724, 205);
-    ctx.bezierCurveTo(724, 120, 648, 62, 584, 62);
-    ctx.lineTo(118, 62);
-    ctx.quadraticCurveTo(92, 66, 64, 86);
+    for (var i = 0; i <= N; i++) {
+      var wy = -5.35 + (i / N) * 11.45;
+      var hw = hullHalfW(wy);
+      var px = toX(wy), py = toY(hw);
+      if (i === 0) { ctx.moveTo(px, py); } else { ctx.lineTo(px, py); }
+    }
+    for (var j = N; j >= 0; j--) {
+      var wy2 = -5.35 + (j / N) * 11.45;
+      var hw2 = hullHalfW(wy2);
+      ctx.lineTo(toX(wy2), toY(-hw2));
+    }
     ctx.closePath();
   }
 
   function drawThermalCanvas(canvas, d, sample) {
-    var W = 760, H = 410;
+    var W = CW, H = CH;
     var dpr = Math.min(2, window.devicePixelRatio || 1);
     canvas.width = W * dpr;
     canvas.height = H * dpr;
@@ -4739,29 +4786,56 @@
     ctx.scale(dpr, dpr);
 
     var th = d.thermal || {};
-    var wx = d.weather || {};
+    var wxInfo = d.weather || {};
     var st = d.stoves || {};
     var woodLit = !!(st.wood && st.wood.burning);
     var charLit = !!(st.charcoal && st.charcoal.burning);
 
-    var bgGrad = ctx.createLinearGradient(0, 0, W, H);
-    bgGrad.addColorStop(0, "#091324");
-    bgGrad.addColorStop(1, "#0d1b30");
+    function rRect(x, y, w, h, r) {
+      ctx.beginPath();
+      if (ctx.roundRect) { ctx.roundRect(x, y, w, h, r); }
+      else { ctx.rect(x, y, w, h); }
+    }
+    // 方便按世界坐标画矩形：wRect(xMin, xMax, yMin, yMax)
+    function wRect(x0, x1, y0, y1, r) {
+      var px0 = toX(y1), px1 = toX(y0);
+      var py0 = toY(x1), py1 = toY(x0);
+      rRect(px0, py0, px1 - px0, py1 - py0, r || 4);
+    }
+
+    // 1. 深海港湾背景 + 上方防波堤石砌码头（右舷靠码头、左舷靠海！）
+    var bgGrad = ctx.createLinearGradient(0, 0, 0, H);
+    bgGrad.addColorStop(0, "#091426");
+    bgGrad.addColorStop(1, "#0d1f36");
     ctx.fillStyle = bgGrad;
     ctx.fillRect(0, 0, W, H);
 
-    ctx.strokeStyle = "rgba(125, 196, 232, 0.07)";
+    // 上方防波堤石码头条带 (wx > 2.85 -> py < 70)
+    ctx.fillStyle = "rgba(148, 163, 184, 0.14)";
+    ctx.fillRect(0, 0, W, 62);
+    ctx.strokeStyle = "rgba(203, 213, 225, 0.24)";
+    ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(0, 62); ctx.lineTo(W, 62); ctx.stroke();
+    // 两个系缆柱示意
+    [toX(4.2), toX(-4.0)].forEach(function (bx) {
+      ctx.beginPath(); ctx.arc(bx, 48, 4.5, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(203,213,225,0.38)"; ctx.fill();
+    });
+
+    // 下方靠海极细水波纹
+    ctx.strokeStyle = "rgba(125, 196, 232, 0.08)";
     ctx.lineWidth = 1;
-    for (var wy = 28; wy <= 390; wy += 38) {
+    for (var wyLine = 94; wyLine <= H - 14; wyLine += 36) {
       ctx.beginPath();
-      for (var wxp = 0; wxp <= W; wxp += 24) {
-        var py = wy + Math.sin(wxp * 0.025 + wy) * 2.5;
-        if (wxp === 0) { ctx.moveTo(wxp, py); } else { ctx.lineTo(wxp, py); }
+      for (var pxw = 0; pxw <= W; pxw += 24) {
+        var pyw = wyLine + Math.sin(pxw * 0.025 + wyLine) * 2.2;
+        if (pxw === 0) { ctx.moveTo(pxw, pyw); } else { ctx.lineTo(pxw, pyw); }
       }
       ctx.stroke();
     }
 
-    var gw = 190, gh = 102;
+    // 2. 离屏连续像素热场渲染（裁切在精确船壳轮廓内）
+    var gw = 190, gh = 105;
     var off = document.createElement("canvas");
     off.width = gw; off.height = gh;
     var octx = off.getContext("2d");
@@ -4775,14 +4849,14 @@
         var s = sample(sx, sy);
         field[gy * gw + gx] = s.temp;
         var idx = (gy * gw + gx) * 4;
-        if (s.region === "sea") {
+        if (s.region === "sea" || s.region === "pier") {
           buf[idx + 3] = 0;
         } else {
           var rgb = thermalColor(s.temp);
           buf[idx] = rgb[0];
           buf[idx + 1] = rgb[1];
           buf[idx + 2] = rgb[2];
-          buf[idx + 3] = s.region === "deck" ? 195 : 242;
+          buf[idx + 3] = (s.region === "deck" || s.region === "aft_deck") ? 190 : 242;
         }
       }
     }
@@ -4795,6 +4869,7 @@
     ctx.imageSmoothingQuality = "high";
     ctx.drawImage(off, 0, 0, W, H);
 
+    // 平滑 Marching Squares 等温线（每 3°C）
     ctx.strokeStyle = "rgba(255,255,255,0.13)";
     ctx.lineWidth = 0.9;
     var stepX = W / gw, stepY = H / gh;
@@ -4822,183 +4897,246 @@
     }
     ctx.stroke();
 
+    // 前甲板微弱木板线
     ctx.strokeStyle = "rgba(255,255,255,0.06)";
     ctx.lineWidth = 1;
-    for (var dy = 80; dy <= 330; dy += 16) {
+    for (var dpy = 90; dpy <= 370; dpy += 16) {
       ctx.beginPath();
-      ctx.moveTo(584, dy);
-      ctx.lineTo(724, dy);
+      ctx.moveTo(toX(-3.36), dpy);
+      ctx.lineTo(toX(-5.35), dpy);
       ctx.stroke();
     }
     ctx.restore();
 
+    // 3. 精细 1:1 建筑蓝图白线稿（全部基于 v6.blend 精确坐标）
+    // 船体金属外壳
     traceHullPath(ctx);
-    ctx.strokeStyle = "rgba(255,255,255,0.42)";
+    ctx.strokeStyle = "rgba(255,255,255,0.44)";
     ctx.lineWidth = 2;
     ctx.stroke();
 
-    ctx.strokeStyle = "rgba(255,255,255,0.34)";
-    ctx.lineWidth = 1.5;
+    // 左右舷主舱壁 (x = ±2.36, y ∈ [-3.36, +4.68])
+    ctx.strokeStyle = "rgba(255,255,255,0.38)";
+    ctx.lineWidth = 1.6;
     ctx.beginPath();
-    ctx.moveTo(116, 62); ctx.lineTo(116, 348);
-    ctx.moveTo(584, 62); ctx.lineTo(584, 182);
-    ctx.moveTo(584, 228); ctx.lineTo(584, 348);
+    ctx.moveTo(toX(4.68), toY(2.36)); ctx.lineTo(toX(-3.36), toY(2.36));
+    ctx.moveTo(toX(4.68), toY(-2.36)); ctx.lineTo(toX(-3.36), toY(-2.36));
+    // 船尾端壁 y=4.68
+    ctx.moveTo(toX(4.68), toY(2.36)); ctx.lineTo(toX(4.68), toY(-2.36));
+    // 储物舱隔墙 y=3.24（居中门洞 x ∈ [-0.49, +0.49]）
+    ctx.moveTo(toX(3.24), toY(2.36)); ctx.lineTo(toX(3.24), toY(0.49));
+    ctx.moveTo(toX(3.24), toY(-0.49)); ctx.lineTo(toX(3.24), toY(-2.36));
+    // 前舱壁 y=-3.36（前舱门洞 x ∈ [-0.89, +0.13]）
+    ctx.moveTo(toX(-3.36), toY(2.36)); ctx.lineTo(toX(-3.36), toY(0.13));
+    ctx.moveTo(toX(-3.36), toY(-0.89)); ctx.lineTo(toX(-3.36), toY(-2.36));
     ctx.stroke();
 
-    ctx.strokeStyle = "rgba(255,255,255,0.72)";
+    // 打开的前舱门（朝甲板外开）
+    ctx.strokeStyle = "rgba(255,255,255,0.78)";
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(584, 182); ctx.lineTo(564, 218);
+    ctx.moveTo(toX(-3.36), toY(-0.89));
+    ctx.lineTo(toX(-3.36 - 0.72), toY(-0.89 + 0.56));
     ctx.stroke();
 
-    function roundRect(x, y, w, h, r) {
+    // 5 个真实舷窗（右舷3个 + 左舷2个，左舷灶台 y=-2.05 无窗！）
+    ctx.strokeStyle = "rgba(125,211,252,0.88)";
+    ctx.lineWidth = 3.2;
+    ctx.lineCap = "round";
+    [[2.36, 2.05], [2.36, 0.05], [2.36, -2.05], [-2.36, 2.05], [-2.36, 0.05]].forEach(function (w) {
       ctx.beginPath();
-      if (ctx.roundRect) { ctx.roundRect(x, y, w, h, r); }
-      else { ctx.rect(x, y, w, h); }
-    }
-    ctx.strokeStyle = "rgba(255,255,255,0.28)";
-    ctx.fillStyle = "rgba(10,16,30,0.24)";
-    ctx.lineWidth = 1.2;
-    roundRect(132, 70, 148, 52, 6);
-    ctx.fill(); ctx.stroke();
-    ctx.beginPath(); ctx.arc(154, 96, 11, 0, Math.PI * 2); ctx.stroke();
+      ctx.moveTo(toX(w[1] + 0.44), toY(w[0]));
+      ctx.lineTo(toX(w[1] - 0.44), toY(w[0]));
+      ctx.stroke();
+    });
 
-    ctx.strokeStyle = Number(th.kang_delta || 0) >= 2 ? "rgba(255,220,160,0.62)" : "rgba(255,255,255,0.34)";
+    // 船尾储物舱左右货架 & 工具挂板
+    ctx.strokeStyle = "rgba(255,255,255,0.24)";
+    ctx.fillStyle = "rgba(10,16,30,0.22)";
+    ctx.lineWidth = 1.1;
+    wRect(1.67, 2.29, 3.35, 4.49, 3); ctx.fill(); ctx.stroke();
+    wRect(-2.29, -1.67, 3.35, 4.49, 3); ctx.fill(); ctx.stroke();
+    // 工具木挂板在船尾端壁 y=4.60
+    ctx.strokeStyle = "rgba(255,255,255,0.4)";
+    ctx.beginPath();
+    ctx.moveTo(toX(4.60), toY(1.2)); ctx.lineTo(toX(4.60), toY(-1.2));
+    ctx.stroke();
+
+    // === 1) 红砖火炕：x ∈ [0.47, 2.32], y ∈ [0.60, 3.20] ===
+    ctx.strokeStyle = Number(th.kang_delta || 0) >= 2 ? "rgba(255,220,160,0.68)" : "rgba(255,255,255,0.38)";
     ctx.fillStyle = "rgba(255,255,255,0.04)";
     ctx.lineWidth = 1.5;
-    roundRect(396, 72, 174, 130, 8);
-    ctx.fill(); ctx.stroke();
+    wRect(0.47, 2.32, 0.60, 3.20, 6); ctx.fill(); ctx.stroke();
+    // 蓝花棉被与枕头轮廓（枕头靠储物隔墙床头 y=2.85）
     ctx.strokeStyle = "rgba(255,255,255,0.18)";
     ctx.lineWidth = 1;
-    roundRect(408, 84, 122, 106, 5); ctx.stroke();
-    roundRect(415, 92, 22, 34, 4); ctx.stroke();
-    ctx.fillStyle = woodLit ? "rgba(255,150,70,0.45)" : "rgba(255,255,255,0.14)";
-    ctx.strokeStyle = "rgba(255,255,255,0.45)";
-    roundRect(542, 78, 22, 22, 3); ctx.fill(); ctx.stroke();
-
+    wRect(0.58, 2.22, 0.72, 2.65, 4); ctx.stroke();
+    wRect(1.05, 1.72, 2.74, 3.06, 4); ctx.stroke();
+    // 炕底隐蔽烟道虚线路径（进烟口 → 墙角直角砖烟道）
     ctx.save();
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    ctx.strokeStyle = woodLit ? "rgba(255,205,115,0.9)" : "rgba(255,255,255,0.38)";
-    ctx.lineWidth = 6;
+    ctx.strokeStyle = woodLit ? "rgba(255,220,140,0.45)" : "rgba(255,255,255,0.15)";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([4, 4]);
     ctx.beginPath();
-    ctx.moveTo(312, 196); ctx.lineTo(364, 196); ctx.lineTo(364, 144); ctx.lineTo(396, 144);
+    ctx.moveTo(toX(0.78), toY(1.16));
+    ctx.lineTo(toX(2.90), toY(1.30));
+    ctx.lineTo(toX(3.04), toY(2.15));
     ctx.stroke();
-    if (woodLit) {
-      ctx.strokeStyle = "rgba(255,248,210,0.75)";
-      ctx.lineWidth = 1.6;
-      ctx.setLineDash([5, 5]);
-      ctx.stroke();
-    }
+    ctx.restore();
+    // 墙角直角砖烟道：(2.15, 3.04), 0.32×0.32m
+    ctx.fillStyle = woodLit ? "rgba(255,150,70,0.52)" : "rgba(255,255,255,0.18)";
+    ctx.strokeStyle = "rgba(255,255,255,0.58)";
+    ctx.lineWidth = 1.2;
+    wRect(1.99, 2.31, 2.88, 3.20, 2); ctx.fill(); ctx.stroke();
+
+    // === 2) 铁桶柴炉隔热底座 & 横向铁烟管 ===
+    ctx.strokeStyle = "rgba(255,255,255,0.28)";
+    ctx.fillStyle = "rgba(10,16,30,0.25)";
+    ctx.lineWidth = 1.1;
+    wRect(0.02, 0.88, -0.39, 0.51, 4); ctx.fill(); ctx.stroke();
+
+    // 横向铁烟管：(0.68, 0.06) -> (0.90, 0.06) -> (1.16, 0.78)
+    ctx.save();
+    ctx.lineCap = "round"; ctx.lineJoin = "round";
+    ctx.strokeStyle = woodLit ? "rgba(255,205,115,0.92)" : "rgba(255,255,255,0.44)";
+    ctx.lineWidth = 5.5;
+    ctx.beginPath();
+    ctx.moveTo(toX(0.06), toY(0.68));
+    ctx.lineTo(toX(0.06), toY(0.90));
+    ctx.lineTo(toX(0.78), toY(1.16));
+    ctx.stroke();
     ctx.restore();
 
+    // === 3) 右舷前侧：床边小几、干柴架、两卷铺盖、收拢吊床 ===
+    ctx.strokeStyle = "rgba(255,255,255,0.24)";
+    ctx.fillStyle = "rgba(10,16,30,0.18)";
+    ctx.lineWidth = 1.1;
+    wRect(1.72, 2.08, -0.73, -0.37, 3); ctx.fill(); ctx.stroke(); // 小几
+    wRect(1.70, 2.10, -1.55, -0.95, 3); ctx.fill(); ctx.stroke(); // 干柴分隔架
+    // 卷好的两卷铺盖 (1.72, -2.53 / -2.15)
+    wRect(1.40, 2.04, -2.68, -2.38, 5); ctx.stroke();
+    wRect(1.40, 2.04, -2.30, -2.00, 5); ctx.stroke();
+    // 横梁收拢吊床虚线 (x=0.70, y ∈ [-2.77, -0.88])
     ctx.save();
     ctx.strokeStyle = "rgba(255,255,255,0.22)";
-    ctx.lineWidth = 1;
     ctx.setLineDash([4, 4]);
-    roundRect(468, 214, 102, 42, 5); ctx.stroke();
+    ctx.lineWidth = 1.2;
+    wRect(0.56, 0.84, -2.77, -0.88, 6); ctx.stroke();
     ctx.restore();
 
-    ctx.strokeStyle = "rgba(255,255,255,0.28)";
-    ctx.fillStyle = "rgba(10,16,30,0.2)";
+    // === 4) 左后：海图书桌 (-1.28, 2.12) 宽1.55 深0.76 + 旧椅 ===
+    ctx.strokeStyle = "rgba(255,255,255,0.32)";
+    ctx.fillStyle = "rgba(10,16,30,0.24)";
     ctx.lineWidth = 1.2;
-    roundRect(354, 268, 98, 56, 7); ctx.fill(); ctx.stroke();
+    wRect(-2.06, -0.50, 1.74, 2.50, 4); ctx.fill(); ctx.stroke();
+    wRect(-1.49, -1.07, 1.14, 1.54, 3); ctx.stroke(); // 旧椅
 
-    roundRect(134, 282, 138, 52, 6); ctx.fill(); ctx.stroke();
-    ctx.strokeStyle = "rgba(125,211,252,0.85)";
-    ctx.lineWidth = 3.5;
-    ctx.lineCap = "round";
-    ctx.beginPath(); ctx.moveTo(164, 348); ctx.lineTo(244, 348); ctx.stroke();
+    // === 5) 左中：矮桌 (-1.02, 0.30) 宽1.35 深0.78 ===
+    wRect(-1.70, -0.34, -0.09, 0.69, 4); ctx.fill(); ctx.stroke();
 
+    // === 6) 左前无窗墙：深 1.05m 炊事小灶台 x ∈ [-2.32, -1.27], y ∈ [-2.75, -0.57] ===
+    wRect(-2.32, -1.27, -2.75, -0.57, 4); ctx.fill(); ctx.stroke();
+    // 案板 (-1.65, -1.28)
+    ctx.strokeStyle = "rgba(255,255,255,0.2)";
+    wRect(-1.96, -1.34, -1.63, -0.93, 2); ctx.stroke();
+    // 饮用淡水桶 (-1.60, -3.05) & 洗涤盆 (-1.06, -2.75)
     ctx.strokeStyle = "rgba(255,255,255,0.3)";
-    ctx.lineWidth = 1.2;
-    ctx.beginPath(); ctx.arc(630, 268, 10, 0, Math.PI * 2); ctx.stroke();
-    ctx.beginPath(); ctx.arc(656, 276, 9, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(toX(-3.05), toY(-1.60), 8, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(toX(-2.75), toY(-1.06), 8, 0, Math.PI * 2); ctx.stroke();
+
+    // === 7) 前甲板：接雨水桶 & 晾衣绳 ===
+    ctx.strokeStyle = "rgba(255,255,255,0.32)";
+    ctx.beginPath(); ctx.arc(toX(-4.00), toY(1.48), 9, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(toX(-3.95), toY(2.08), 9, 0, Math.PI * 2); ctx.stroke();
     ctx.save();
     ctx.setLineDash([3, 3]);
-    ctx.beginPath(); ctx.moveTo(604, 148); ctx.lineTo(680, 148); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(toX(-4.30), toY(2.15)); ctx.lineTo(toX(-4.30), toY(-2.15)); ctx.stroke();
     ctx.restore();
 
-    // 铁桶柴炉 (292, 205)
+    // 4. 两个核心热源（精确坐标！）
+    // 铁桶柴炉 (x=0.45, y=0.06)
+    var wsx = toX(0.06), wsy = toY(0.45);
     ctx.beginPath();
-    ctx.arc(292, 205, 19, 0, Math.PI * 2);
-    ctx.fillStyle = woodLit ? "#f97316" : "rgba(15,23,42,0.72)";
+    ctx.arc(wsx, wsy, 17, 0, Math.PI * 2);
+    ctx.fillStyle = woodLit ? "#f97316" : "rgba(15,23,42,0.75)";
     ctx.fill();
     ctx.lineWidth = 2;
-    ctx.strokeStyle = woodLit ? "#fef08a" : "rgba(255,255,255,0.65)";
+    ctx.strokeStyle = woodLit ? "#fef08a" : "rgba(255,255,255,0.72)";
     ctx.stroke();
-    if (woodLit) {
-      ctx.beginPath(); ctx.arc(292, 205, 8, 0, Math.PI * 2);
-      ctx.fillStyle = "#fff7c2"; ctx.fill();
-    } else {
-      ctx.beginPath(); ctx.arc(292, 205, 5, 0, Math.PI * 2);
-      ctx.fillStyle = th.mode === "cooling" ? "rgba(251,146,60,0.65)" : "rgba(255,255,255,0.28)";
-      ctx.fill();
-    }
+    ctx.beginPath(); ctx.arc(wsx, wsy, woodLit ? 7 : 4.5, 0, Math.PI * 2);
+    ctx.fillStyle = woodLit ? "#fff7c2" : (th.mode === "cooling" ? "rgba(251,146,60,0.7)" : "rgba(255,255,255,0.3)");
+    ctx.fill();
 
-    // 小炭炉 (246, 97)
+    // 小炭炉 (x=-1.64, y=-2.32)
+    var csx = toX(-2.32), csy = toY(-1.64);
     ctx.beginPath();
-    ctx.arc(246, 97, 13, 0, Math.PI * 2);
-    ctx.fillStyle = charLit ? "#ea580c" : "rgba(15,23,42,0.72)";
+    ctx.arc(csx, csy, 11.5, 0, Math.PI * 2);
+    ctx.fillStyle = charLit ? "#ea580c" : "rgba(15,23,42,0.75)";
     ctx.fill();
     ctx.lineWidth = 1.6;
-    ctx.strokeStyle = charLit ? "#fde047" : "rgba(255,255,255,0.55)";
+    ctx.strokeStyle = charLit ? "#fde047" : "rgba(255,255,255,0.62)";
     ctx.stroke();
     if (charLit) {
-      ctx.beginPath(); ctx.arc(246, 97, 5, 0, Math.PI * 2);
+      ctx.beginPath(); ctx.arc(csx, csy, 4.5, 0, Math.PI * 2);
       ctx.fillStyle = "#fef08a"; ctx.fill();
     }
 
-    function labelBlock(x, y, temp, title, align, big) {
+    // 5. 极简温区读数与空间标注（精确对齐 v6 位置）
+    function labelBlock(px, py, temp, title, big) {
       ctx.save();
-      ctx.textAlign = align || "center";
-      ctx.shadowColor = "rgba(6,10,20,0.85)";
+      ctx.textAlign = "center";
+      ctx.shadowColor = "rgba(6,10,20,0.88)";
       ctx.shadowBlur = 8;
       ctx.fillStyle = "#ffffff";
-      ctx.font = (big ? "700 20px " : "700 16px ") + "ui-monospace,SFMono-Regular,Menlo,Consolas,monospace";
-      ctx.fillText(fmtTemp(temp), x, y);
-      ctx.fillStyle = "rgba(241,245,249,0.78)";
-      ctx.font = "500 11px -apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif";
-      ctx.fillText(title, x, y + 15);
+      ctx.font = (big ? "700 19px " : "700 15px ") + "ui-monospace,SFMono-Regular,Menlo,Consolas,monospace";
+      ctx.fillText(fmtTemp(temp), px, py);
+      ctx.fillStyle = "rgba(241,245,249,0.8)";
+      ctx.font = "500 10.5px -apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif";
+      ctx.fillText(title, px, py + 14);
       ctx.restore();
     }
 
-    function caption(x, y, text, align) {
+    function caption(px, py, text, align) {
       ctx.save();
       ctx.textAlign = align || "center";
-      ctx.shadowColor = "rgba(6,10,20,0.85)";
+      ctx.shadowColor = "rgba(6,10,20,0.88)";
       ctx.shadowBlur = 6;
-      ctx.fillStyle = "rgba(226,232,240,0.62)";
-      ctx.font = "500 10.5px -apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif";
-      ctx.fillText(text, x, y);
+      ctx.fillStyle = "rgba(226,232,240,0.66)";
+      ctx.font = "500 10px -apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif";
+      ctx.fillText(text, px, py);
       ctx.restore();
     }
 
-    labelBlock(476, 134, th.kang, "红砖火炕", "center", true);
-    labelBlock(292, 248, th.near, woodLit ? "柴炉 · 燃烧中" : "铁桶柴炉", "center", true);
-    labelBlock(403, 297, th.mid, "矮桌中段", "center", false);
-    labelBlock(203, 307, th.far, "书桌 · 舷窗", "center", false);
-    labelBlock(76, 204, th.far, "储物舱", "center", false);
-    labelBlock(644, 204, wx.outdoor, "船头甲板", "center", false);
+    // 各区域温度（直接落在对应真实家具上，互不遮挡）
+    labelBlock(toX(1.85), toY(1.48), th.kang, "红砖火炕", true);
+    labelBlock(wsx + 56, wsy + 3, th.near, woodLit ? "柴炉 · 燃烧中" : "铁桶柴炉", true);
+    labelBlock(toX(0.30), toY(-1.02), th.mid, "矮桌", false);
+    labelBlock(toX(2.12), toY(-1.28), th.far, "海图书桌", false);
+    labelBlock(toX(3.96), toY(0.0), th.far, "储物舱", false);
+    labelBlock(toX(-4.35), toY(0.0), wxInfo.outdoor, "船头甲板", false);
 
-    caption(192, 92, "小灶台", "center");
-    caption(246, 136, charLit ? "小炭炉 · 燃" : "小炭炉", "center");
-    caption(519, 239, "炕边地铺", "center");
-    caption(204, 366, "望海舷窗", "center");
-    caption(553, 114, "烟道", "center");
+    caption(toX(-1.35), toY(-1.75), "小灶台（无窗）", "center");
+    caption(csx, csy + 23, charLit ? "小炭炉 · 燃" : "小炭炉", "center");
+    caption(toX(-1.25), toY(1.90) + 4, "柴架", "center");
+    caption(toX(-1.82), toY(0.70) + 3, "吊床（梁上）", "center");
+    caption(toX(-3.36) - 4, toY(-0.38) + 4, "前舱门", "right");
+    caption(toX(2.84) + 5, toY(2.14) + 4, "烟道", "left");
 
+    // 上方码头 & 左上/右上环境角标
     ctx.save();
-    ctx.fillStyle = "rgba(226,232,240,0.74)";
+    ctx.fillStyle = "rgba(226,232,240,0.78)";
     ctx.font = "500 11.5px -apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif";
-    ctx.fillText("屋外 " + fmtTemp(wx.outdoor) + " · " + (wx.sky_wind || "") + (wx.sea_temp != null ? (" · 海水 " + fmtTemp(wx.sea_temp)) : ""), 18, 26);
+    ctx.fillText("防波堤码头 · 屋外 " + fmtTemp(wxInfo.outdoor) + " · " + (wxInfo.sky_wind || "") + (wxInfo.sea_temp != null ? (" · 海水 " + fmtTemp(wxInfo.sea_temp)) : ""), 18, 26);
     ctx.restore();
+    caption(20, H - 14, "靠海侧（左舷）", "left");
 
+    // 6. 极简人物坐标点（精确映射到 v6 坐标，错开文字标签）
     var zonePts = {
-      kang: [[476, 174], [432, 174], [520, 174]],
-      near: [[236, 205], [344, 224], [244, 174]],
-      mid:  [[403, 250], [346, 252], [448, 250]],
-      far:  [[162, 246], [546, 292], [162, 166]],
-      deck: [[644, 166], [644, 242], [676, 204]]
+      kang: [[toX(1.30), toY(0.95)], [toX(2.35), toY(0.95)], [toX(1.30), toY(1.95)]],
+      near: [[toX(-0.45), toY(0.92)], [toX(0.55), toY(-0.18)], [toX(-0.90), toY(0.52)]],
+      mid:  [[toX(-0.62), toY(-0.92)], [toX(1.12), toY(-0.32)], [toX(-1.75), toY(-0.30)]],
+      far:  [[toX(2.80), toY(-1.05)], [toX(-2.80), toY(0.20)], [toX(3.85), toY(0.70)]],
+      deck: [[toX(-4.00), toY(-0.95)], [toX(-4.20), toY(0.85)], [toX(-4.65), toY(0.0)]]
     };
     var used = {}, outside = [];
     (d.people || []).forEach(function (p) {
@@ -5009,7 +5147,7 @@
       var col = p.who === "napcat2" ? "#60a5fa" : (p.who === "napcat" ? "#34d399" : "#c084fc");
       ctx.save();
       ctx.beginPath(); ctx.arc(pt[0], pt[1], 7.5, 0, Math.PI * 2);
-      ctx.fillStyle = "rgba(8,14,26,0.75)"; ctx.fill();
+      ctx.fillStyle = "rgba(8,14,26,0.78)"; ctx.fill();
       ctx.beginPath(); ctx.arc(pt[0], pt[1], 4.5, 0, Math.PI * 2);
       ctx.fillStyle = col; ctx.fill();
       ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 1.5; ctx.stroke();
@@ -5028,7 +5166,7 @@
       }).join(" · ");
       ctx.save();
       ctx.textAlign = "right";
-      ctx.fillStyle = "rgba(226,232,240,0.72)";
+      ctx.fillStyle = "rgba(226,232,240,0.78)";
       ctx.font = "500 11.5px -apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif";
       ctx.fillText(outText, W - 18, 26);
       ctx.restore();
@@ -5036,7 +5174,7 @@
 
     ctx.save();
     ctx.textAlign = "right";
-    ctx.fillStyle = "rgba(226,232,240,0.44)";
+    ctx.fillStyle = "rgba(226,232,240,0.46)";
     ctx.font = "400 11px -apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif";
     ctx.fillText("滑动测温 · 点击炉具直接点火", W - 18, H - 14);
     ctx.restore();
@@ -5062,8 +5200,8 @@
     function moveProbe(ev) {
       var rect = canvas.getBoundingClientRect();
       if (!rect.width || !rect.height) { return; }
-      var x = (ev.clientX - rect.left) / rect.width * 760;
-      var y = (ev.clientY - rect.top) / rect.height * 410;
+      var x = (ev.clientX - rect.left) / rect.width * CW;
+      var y = (ev.clientY - rect.top) / rect.height * CH;
       var info = sample(x, y);
       probe.hidden = false;
       probe.textContent = "";
@@ -5087,7 +5225,7 @@
         type: "button",
         class: "hspot" + (lit ? " lit" : "") + (S.heatPop === kind ? " on" : ""),
         title: title,
-        style: "left:" + (cx / 760 * 100).toFixed(2) + "%;top:" + (cy / 410 * 100).toFixed(2) + "%;width:" + sizePct + "%;aspect-ratio:1/1",
+        style: "left:" + (cx / CW * 100).toFixed(2) + "%;top:" + (cy / CH * 100).toFixed(2) + "%;width:" + sizePct + "%;aspect-ratio:1/1",
         onclick: function (ev) {
           ev.stopPropagation();
           S.heatPop = S.heatPop === kind ? "" : kind;
@@ -5096,8 +5234,8 @@
       }, h("span", { class: "hspot-ring" }));
       stage.appendChild(btn);
     }
-    addSpot("wood", 292, 205, 6.2, woodLit, "点击控制铁桶柴炉");
-    addSpot("charcoal", 246, 97, 4.6, charLit, "点击控制小炭炉");
+    addSpot("wood", toX(0.06), toY(0.45), 5.8, woodLit, "点击控制铁桶柴炉");
+    addSpot("charcoal", toX(-2.32), toY(-1.64), 4.2, charLit, "点击控制灶台小炭炉");
 
     if (S.heatPop === "wood" || S.heatPop === "charcoal") {
       var isW = S.heatPop === "wood";
@@ -5105,7 +5243,7 @@
       var availText = isW ? ("可用干柴 " + Number(fuel.wood_total_bundles || 0) + " 捆") : ("可用闷炭 " + Number(fuel.charcoal_total_g || 0) + " 克");
       var pop = h("div", {
         class: "hpop",
-        style: isW ? "left:4%;top:22%" : "left:36%;top:10%",
+        style: isW ? "left:58%;top:18%" : "left:34%;top:36%",
         onclick: function (ev) { ev.stopPropagation(); }
       },
         h("div", { class: "hpop-h" },
@@ -5162,7 +5300,6 @@
 
     return stage;
   }
-
   function buildTempCurveSVG(points) {
     if (!points || points.length < 2) { return h("div", { class: "hint", text: "暂无曲线数据" }); }
     var W = 760, H = 176, padL = 34, padR = 14, padT = 18, padB = 26;
