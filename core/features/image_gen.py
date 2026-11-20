@@ -303,14 +303,17 @@ class ImageGenFeature:
             variant = item[3] if len(item) > 3 else "常服"
             worn = item[4] if len(item) > 4 else ""
             if variant == "冬装":
-                parts.append("第%d张参考图是「%s」的冬装立绘（全扣高领厚棉衣、深灰针织打底裤与毛线袜冬靴）" % (i + 1, name))
+                if name == "丛雨":
+                    parts.append("第%d张参考图是「%s」的冬装立绘（藏青色绒领全扣高领厚棉衣、深灰竖纹针织打底裤、米白毛线袜边与棕冬靴；棉衣前襟严实扣好，不敞怀露内搭）" % (i + 1, name))
+                else:
+                    parts.append("第%d张参考图是「%s」的冬装立绘（全扣高领藏青厚棉衣、深灰针织打底裤与毛线袜冬靴；棉衣前襟严实扣好）" % (i + 1, name))
             elif variant == "睡衣":
                 parts.append("第%d张参考图是「%s」的睡衣立绘（奶白微偏奶黄的蕾丝花边吊带睡裙，胸前小黑蝴蝶结，下身配白色蓬松荷叶边灯笼短裤）" % (i + 1, name))
             elif variant == "粉白常服":
                 parts.append("第%d张参考图是「%s」的粉白和式常服立绘（紫色大缎带高单马尾、白底花边肩披、樱花粉宽袖、浅金大蝴蝶结腰带、白粉百褶裙、白色过膝袜与红鞋）" % (i + 1, name))
             else:
                 parts.append("第%d张参考图是「%s」的官方立绘" % (i + 1, name))
-            if worn:
+            if worn and variant not in ("冬装", "睡衣"):
                 outfits.append("「%s」此刻穿着：%s" % (name, worn))
         text = "；".join(parts) + "。画里的%s照着立绘画（脸、发型、发色、瞳色、身材都严格照图）" % (
             "、".join("「%s」" % item[0] for item in chars))
