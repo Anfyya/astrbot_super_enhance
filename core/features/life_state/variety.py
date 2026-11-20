@@ -51,6 +51,7 @@ def _e(
     link: str = "",
     outdoor: bool = False,
     short: bool = False,
+    big: bool = False,
     min_temp: float | None = None,
     min_water: float | None = None,
     when: str = "",
@@ -64,7 +65,8 @@ def _e(
         "wx": wx,
         "link": link,
         "outdoor": bool(outdoor),
-        "short": bool(short),
+        "short": bool(short) and not bool(big),
+        "big": bool(big),
         "min_temp": min_temp,
         "min_water": min_water,
         "when": when,
@@ -82,6 +84,7 @@ def _t(
     link: str = "",
     outdoor: bool = False,
     short: bool = False,
+    big: bool = False,
     min_temp: float | None = None,
     min_water: float | None = None,
     when: str = "",
@@ -95,7 +98,8 @@ def _t(
         "wx": wx,
         "link": link,
         "outdoor": bool(outdoor),
-        "short": bool(short),
+        "short": bool(short) and not bool(big),
+        "big": bool(big),
         "min_temp": min_temp,
         "min_water": min_water,
         "when": when,
@@ -198,12 +202,23 @@ _DEFAULT_POOLS_RAW: dict[str, tuple[dict, ...]] = {
         _e("丛雨仗着没人看得见，在集市热吃食摊和镇民闲聊堆里听来一肚子趣事，憋着一路回来讲给主人听", 0.95, 0, group="码头见闻", bucket="观察闲逛", where="海边小镇", wx="dry", outdoor=True),
         _e("海上起了白茫茫的大雾，总觉得雾里有什么东西在动，缩在船舱避风处不敢往窗外看", 0.9, 0, group="怪声", bucket="天候应对", where="海边小镇", wx="fog"),
         _e("海上起大雾出不了船，码头边的渔民聚在棚子底下补网闲聊，凑过去听了一耳朵", 0.5, 0.7, group="码头见闻", bucket="观察闲逛", where="海边小镇", wx="fog", outdoor=True),
-        _e("去码头布告板接了一张镇民家屋后倒树或风断枝清理短工，帮着锯断劈开后分走一捆硬木劈柴", 0.15, 0.65, group="弄柴·清树", bucket="镇上谋生", where="海边小镇", wx="dry", outdoor=True),
-        _e("去坡上菜地帮菜农清理老果木修剪下来的硬枝和旧木架，顺手捆一捆硬木柴回船屋", 0.25, 0.6, group="弄柴·菜地", bucket="镇上谋生", where="海边小镇", wx="dry", outdoor=True),
-        _e("去船坞帮老船匠打下手修旧木件，顺手学了一手修船木工窍门还换回一抱干硬木边料", 0.25, 0.7, group="弄柴·船坞", bucket="镇上谋生", where="海边小镇", wx="dry", outdoor=True),
-        _e("走上山丘灯塔和旧观景台那边的山路散步，顺路拾一捆风刮落的干松枝与硬木断枝带回", 0.55, 0.45, group="弄柴·山路", bucket="出门走走", where="海边小镇", wx="dry", outdoor=True),
-        _e("去坡上柴料场挑一捆便宜半湿硬木柴或带湿原段，扛回仓棚劈开码在通风干燥架上晾着", 0.15, 0.5, group="弄柴·柴场", bucket="镇上谋生", where="海边小镇", wx="dry", outdoor=True),
-        _e("退潮后去漂流物小湾高潮线以上拾雨水冲刷晒透的干陆枝，或挑根结实浮木带去船坞换干柴", 0.25, 0.55, group="弄柴·岸边", bucket="水域探索", where="海边小镇", wx="dry", outdoor=True, min_temp=4.0),
+        _e("去码头布告板接了一张镇民家屋后倒树或风断枝清理短工，帮着锯断劈开后分走一捆硬木劈柴", 0.15, 0.65, group="弄柴·清树", bucket="镇上谋生", where="海边小镇", wx="dry", link="get_wood", outdoor=True),
+        _e("去坡上菜地帮菜农清理老果木修剪下来的硬枝和旧木架，顺手捆一捆硬木柴回船屋", 0.25, 0.6, group="弄柴·菜地", bucket="镇上谋生", where="海边小镇", wx="dry", link="get_wood", outdoor=True),
+        _e("去船坞帮老船匠打下手修旧木件，顺手学了一手修船木工窍门还换回一抱干硬木边料", 0.25, 0.7, group="弄柴·船坞", bucket="镇上谋生", where="海边小镇", wx="dry", link="get_wood", outdoor=True),
+        _e("走上山丘灯塔和旧观景台那边的山路散步，顺路拾一捆风刮落的干松枝与硬木断枝带回", 0.55, 0.45, group="弄柴·山路", bucket="出门走走", where="海边小镇", wx="dry", link="get_wood", outdoor=True),
+        _e("去坡上柴料场挑一捆便宜半湿硬木柴或带湿原段，扛回仓棚劈开码在通风干燥架上晾着", 0.15, 0.5, group="弄柴·柴场", bucket="镇上谋生", where="海边小镇", wx="dry", link="get_wood", outdoor=True),
+        _e("退潮后去漂流物小湾高潮线以上拾雨水冲刷晒透的干陆枝，或挑根结实浮木带去船坞换干柴", 0.25, 0.55, group="弄柴·岸边", bucket="水域探索", where="海边小镇", wx="dry", link="get_wood", outdoor=True, min_temp=4.0),
+
+        # ---------- 海边小镇：重头大活（big=True，可干半天~一整天，中间正常吃饭歇息后接着干透） ----------
+        _e("趁好天去坡上柴料场、船坞或林边拉回成批大圆木和粗硬木，花大半天锯劈并码满棚下柴垛", 0.25, 0.9, group="囤柴大活", bucket="船舶整备", where="海边小镇", wx="dry", link="get_wood", outdoor=True, big=True),
+        _e("趁白天把船屋和仓棚里堆着的未劈大圆木一口气锯断劈成硬木柴垛码满棚下，顺手烧炉夹炭", 0.3, 0.85, group="劈柴大活", bucket="船舶整备", where="海边小镇", wx="dry", link="split_wood", outdoor=True, big=True),
+        _e("去煮盐棚扎扎实实帮大半天大工挑海水添柴，一口气换回一大罐闷炭和工钱扛回船屋", 0.1, 0.85, group="帮工换炭", bucket="镇上谋生", where="海边小镇", wx="dry", link="get_charcoal", outdoor=True, big=True),
+        _e("划小船把沉没旧街或半沉大楼一整片仔细扫透打捞，满载废铜铁件和旧物拖回仓棚分类归置", 0, 0.85, group="下水打捞", bucket="水域探索", where="海边小镇", wx="dive", link="salvage", outdoor=True, min_water=4.0, big=True),
+        _e("花大半天把仓棚攒的废铜废铁全拆解捆好过秤卖钱，顺路把家里米面油盐和耐放菜一次买齐", 0.2, 0.85, group="卖废铜", bucket="镇上谋生", where="海边小镇", wx="dry", link="scrap_sell", outdoor=True, big=True),
+        _e("趁无风大晴天把船屋里外彻底大扫除，全套铺盖海图衣物搬上甲板洗晒透、储物舱仓棚全归置", 0.55, 0.75, group="全屋大扫除", bucket="船舶整备", where="海边小镇", wx="sunny", outdoor=True, min_temp=3.0, big=True),
+        _e("花大半天给船屋和打捞船集中检修过冬：塞紧漏风板缝、加固船篷帆布、绞盘除锈上油并做木工修补", 0.35, 0.8, group="船屋检修", bucket="船舶整备", where="海边小镇", wx="dry", outdoor=True, big=True),
+        _e("趁便宜鲜货多，花大半天集中剖洗腌渍一大批海鱼晒成鱼干熏鱼，或腌满一大坛过冬咸菜存好", 0.5, 0.75, group="囤粮晒腌", bucket="船舶整备", where="海边小镇", wx="dry", outdoor=True, big=True),
+        _e("去船坞或码头接大半天重头短工，帮老船匠修大木船或帮渔民集中补网卸货，挣笔大工钱或换批硬木料", 0, 0.8, group="大短工", bucket="镇上谋生", where="海边小镇", wx="dry", link="get_wood", outdoor=True, big=True),
 
         # ---------- 海边小镇：全气象专属事件（中雨扛雨/暴雨十万火急/雪天/大风台风/浓雾/严寒/酷暑/风雨后黄金捡漏） ----------
         _e("下了一场雨，把船上能接水的桶盆都摆出来接雨水，看雨点落进水里", 0.6, 0.6, group="存雨水", bucket="天候应对", where="海边小镇", wx="rain", short=True),
@@ -276,7 +291,9 @@ _DEFAULT_POOLS_RAW: dict[str, tuple[dict, ...]] = {
         _t("两人一起洗衣服、晒被子", 0.5, bucket="船舶整备", where="穗织", wx="sunny", outdoor=True),
 
         # ---------- 海边小镇 ----------
-        _t("跟船长一起开打捞船或小潜艇出海深潜打捞", 1.2, group="深潜打捞", bucket="水域探索", where="海边小镇", wx="dive", link="captain_salvage", outdoor=True, min_water=4.0),
+        _t("跟船长一起开打捞船或小潜艇出海深潜打捞", 1.2, group="深潜打捞", bucket="水域探索", where="海边小镇", wx="dive", link="captain_salvage", outdoor=True, min_water=4.0, big=True),
+        _t("两人结伴拉回一批大圆木和粗硬木，花大半天齐心锯劈、把棚下过冬大柴垛码得满满当当", 0.9, group="囤柴大活", bucket="船舶整备", where="海边小镇", wx="dry", link="get_wood", outdoor=True, big=True),
+        _t("趁好天气带上干粮水壶远足野餐一整天，把山丘灯塔、旧信号塔、海鸥岩或海上鸟居一路逛透", 0.75, group="一整天远足", bucket="出门走走", where="海边小镇", wx="sunny", outdoor=True, min_temp=5.0, big=True),
         _t("两人一起去打捞船清点船缆、试绞盘和吊钩，顺手商量下一趟拉船长去哪片沉屋探探", 0.85, group="收拾打捞船", bucket="船舶整备", where="海边小镇", wx="dry", outdoor=True),
         _t("退潮时两人结伴下浅滩或礁石滩，一边抓小蟹海螺一边比谁翻出的废铁或怪石头多", 0.9, group="赶海", bucket="水域探索", where="海边小镇", wx="dry", outdoor=True),
         _t("两人划小船逛水下旧街或海上鸟居，一个掌桨一个趴船边指认水底下的旧招牌和红绿灯", 0.85, group="划船看海", bucket="水域探索", where="海边小镇", wx="calm", outdoor=True, min_temp=5.0),
@@ -653,6 +670,9 @@ WX_LABELS = {
 LINK_LABELS = {
     "": "无特殊联动",
     "wood_stove": "烧柴炉时（有干柴且天凉/阴雨）",
+    "get_wood": "干柴低于2捆安全线时提权（满5捆降权）",
+    "split_wood": "家里有未劈原木/大木头时触发（缺柴提权）",
+    "get_charcoal": "闷炭低于500克安全线时提权（满1000克降权）",
     "laundry": "近36h未洗衣且无湿衣时",
     "salvage": "缺零钱或距上次打捞≥3天时提高权重",
     "scrap_sell": "家里有废铜/废铁待卖库存时",
@@ -670,6 +690,17 @@ _NEW_DEFAULT_TEXTS = frozenset((
     "潜到沉了的旧超市、车站或渔具仓外沿，捞回一批废铜缆线、铅坠或未开封旧铁盒带回船屋给船长瞧",
     "去港边检修系留的小潜艇舱盖与电量，看看海况顺便盘算拉船长挑个点开出去探一趟深水区",
     "跟船长一起开打捞船或小潜艇出海深潜打捞",
+    "趁好天去坡上柴料场、船坞或林边拉回成批大圆木和粗硬木，花大半天锯劈并码满棚下柴垛",
+    "趁白天把船屋和仓棚里堆着的未劈大圆木一口气锯断劈成硬木柴垛码满棚下，顺手烧炉夹炭",
+    "去煮盐棚扎扎实实帮大半天大工挑海水添柴，一口气换回一大罐闷炭和工钱扛回船屋",
+    "划小船把沉没旧街或半沉大楼一整片仔细扫透打捞，满载废铜铁件和旧物拖回仓棚分类归置",
+    "花大半天把仓棚攒的废铜废铁全拆解捆好过秤卖钱，顺路把家里米面油盐和耐放菜一次买齐",
+    "趁无风大晴天把船屋里外彻底大扫除，全套铺盖海图衣物搬上甲板洗晒透、储物舱仓棚全归置",
+    "花大半天给船屋和打捞船集中检修过冬：塞紧漏风板缝、加固船篷帆布、绞盘除锈上油并做木工修补",
+    "趁便宜鲜货多，花大半天集中剖洗腌渍一大批海鱼晒成鱼干熏鱼，或腌满一大坛过冬咸菜存好",
+    "去船坞或码头接大半天重头短工，帮老船匠修大木船或帮渔民集中补网卸货，挣笔大工钱或换批硬木料",
+    "两人结伴拉回一批大圆木和粗硬木，花大半天齐心锯劈、把棚下过冬大柴垛码得满满当当",
+    "趁好天气带上干粮水壶远足野餐一整天，把山丘灯塔、旧信号塔、海鸥岩或海上鸟居一路逛透",
 ))
 _OBSOLETE_LINKS = frozenset((
     "ship_day", "charcoal", "charcoal_stove", "kerosene", "winter_gear",
@@ -695,7 +726,8 @@ for _pool_kind, _rows in _DEFAULT_POOLS_RAW.items():
             "link": _row.get("link") or "",
             "work": False,
             "outdoor": bool(_row.get("outdoor")),
-            "short": bool(_row.get("short")),
+            "short": bool(_row.get("short")) and not bool(_row.get("big")),
+            "big": bool(_row.get("big")),
             "min_temp": _row.get("min_temp"),
             "min_water": _row.get("min_water"),
         }
@@ -715,6 +747,7 @@ def _default_meta(text: str) -> dict:
         "work": False,
         "outdoor": False,
         "short": False,
+        "big": False,
         "min_temp": None,
         "min_water": None,
     }
@@ -734,7 +767,8 @@ def default_pools() -> dict:
                 "link": row.get("link") or "",
                 "work": False,
                 "outdoor": bool(row.get("outdoor")),
-                "short": bool(row.get("short")),
+                "short": bool(row.get("short")) and not bool(row.get("big")),
+                "big": bool(row.get("big")),
                 "min_temp": row.get("min_temp"),
                 "min_water": row.get("min_water"),
             }
@@ -810,7 +844,8 @@ def clean_pool_item(kind: str, item: dict) -> dict:
         raise ValueError("联动条件不支持：%s" % link)
     work = bool(item["work"]) if "work" in item and item.get("work") is not None else bool(defaults["work"])
     outdoor = bool(item["outdoor"]) if "outdoor" in item and item.get("outdoor") is not None else bool(defaults["outdoor"])
-    short = bool(item["short"]) if "short" in item and item.get("short") is not None else bool(defaults["short"])
+    big = bool(item["big"]) if "big" in item and item.get("big") is not None else bool(defaults["big"])
+    short = (bool(item["short"]) if "short" in item and item.get("short") is not None else bool(defaults["short"])) and not big
     min_temp = _clean_min_temp(item["min_temp"] if "min_temp" in item else defaults["min_temp"])
     min_water = _clean_min_temp(
         item["min_water"] if "min_water" in item else defaults["min_water"],
@@ -828,6 +863,7 @@ def clean_pool_item(kind: str, item: dict) -> dict:
         "work": work,
         "outdoor": outdoor,
         "short": short,
+        "big": big,
         "min_temp": min_temp,
         "min_water": min_water,
     }
@@ -881,9 +917,15 @@ def bucket_map(pools: dict) -> dict:
 
 
 def short_set(pools: dict | None = None) -> set[str]:
-    """池子里标为短事（5~10分钟、1~2步写完）的条目集合。"""
+    """池子里标为短事（5~15分钟、1~2步写完）的条目集合。"""
     src = pools if pools is not None else default_pools()
-    return {item["text"] for kind in POOL_KINDS for item in (src.get(kind) or []) if item.get("short")}
+    return {item["text"] for kind in POOL_KINDS for item in (src.get(kind) or []) if item.get("short") and not item.get("big")}
+
+
+def big_set(pools: dict | None = None) -> set[str]:
+    """池子里标为大活（可干半天~一整天、允许跨多段接着干透）的条目集合。"""
+    src = pools if pools is not None else default_pools()
+    return {item["text"] for kind in POOL_KINDS for item in (src.get(kind) or []) if item.get("big")}
 
 
 def _base_weight(item: dict, name: str) -> float:
@@ -1007,6 +1049,7 @@ def build_live_context(
             wood_bundles = 0.0
             hardwood_bundles = 0.0
             kindling_bundles = 0.0
+            has_unsplit_wood = False
             oil_ml = 0.0
             salt_g = 0.0
             sugar_g = 0.0
@@ -1044,6 +1087,11 @@ def build_live_context(
                     else:
                         kindling_bundles += qty
                     continue
+                if things_mod.cat_of(item) == things_mod.CAT_ITEM and (
+                    weathering.fuel_item(item) or str(item.get("kind") or "") in ("燃柴", "薪柴", "漂流木料")
+                ):
+                    if weathering.wood_fuel_meta(item, flat_start).get("tier") == "unsplit_log":
+                        has_unsplit_wood = True
                 if things_mod.cat_of(item) == things_mod.CAT_FOOD:
                     info = things_mod.measure(item)
                     left_val = float((info or {}).get("left") or 0.0)
@@ -1100,6 +1148,7 @@ def build_live_context(
                 "wood_bundles": wood_bundles,
                 "hardwood_bundles": hardwood_bundles,
                 "kindling_bundles": kindling_bundles,
+                "has_unsplit_wood": has_unsplit_wood,
                 "oil_ml": oil_ml,
                 "salt_g": salt_g,
                 "sugar_g": sugar_g,
@@ -1391,6 +1440,42 @@ def _eval_gates(
                 elif mt <= 11.0:
                     mult *= 1.25
                     notes.append("天凉围炉 ×1.25")
+        elif link == "get_wood":
+            hard_b = float(ctx.get("hardwood_bundles") or 0.0)
+            if wood_b < 1.0:
+                mult *= 3.0
+                notes.append("干柴告急(<1捆) ×3.0")
+            elif wood_b < 2.0:
+                mult *= 2.0
+                notes.append("干柴低于2捆安全线 ×2.0")
+            elif wood_b >= 5.0:
+                mult *= 0.25
+                notes.append("柴垛充足(≥5捆) ×0.25")
+            if hard_b <= 0 and wood_b < 4.0:
+                mult *= 1.35
+                notes.append("缺硬木粗柴 ×1.35")
+        elif link == "split_wood":
+            if not ctx.get("has_unsplit_wood"):
+                gates.append(("no_unsplit_wood", "hard", "家里眼下没有未劈的大木头/原木"))
+            else:
+                hard_b = float(ctx.get("hardwood_bundles") or 0.0)
+                if wood_b < 2.0 or hard_b <= 0:
+                    mult *= 2.8
+                    notes.append("急需劈现存大木头备硬柴 ×2.8")
+                else:
+                    mult *= 1.3
+                    notes.append("有未劈原木待整理 ×1.3")
+        elif link == "get_charcoal":
+            char_g = float(ctx.get("charcoal_g") or 0.0)
+            if char_g < 250.0:
+                mult *= 3.0
+                notes.append("闷炭告急(<250g) ×3.0")
+            elif char_g < 500.0:
+                mult *= 2.0
+                notes.append("闷炭低于500g安全线 ×2.0")
+            elif char_g >= 1000.0:
+                mult *= 0.35
+                notes.append("闷炭充足(≥1000g) ×0.35")
         elif link == "laundry":
             if ctx.get("has_wet_laundry"):
                 gates.append(("wet_laundry", "hard", "刚洗过或还有湿衣晾着"))

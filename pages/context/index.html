@@ -3675,6 +3675,7 @@
       bucket: it ? (it.bucket || "") : "",
       min_temp: (it && it.min_temp !== null && it.min_temp !== undefined) ? String(it.min_temp) : "",
       outdoor: !!(it && it.outdoor),
+      size: (it && it.big) ? "big" : ((it && it.short) ? "short" : "normal"),
       to: kind
     };
   }
@@ -3844,6 +3845,11 @@
     if (it.where) {
       meta.appendChild(h("span", { class: "tag", title: "只在住在「" + it.where + "」时才抽得到", text: "只在" + it.where }));
     }
+    if (it.big) {
+      meta.appendChild(h("span", { class: "tag up", title: "大活：可干半天~一整天，允许跨多段接着干透", text: "大活 · 半天~整天" }));
+    } else if (it.short) {
+      meta.appendChild(h("span", { class: "tag", title: "短事：5~15分钟一两步利索干完", text: "短事 · 5~15m" }));
+    }
     if (it.bucket) {
       meta.appendChild(h("span", { class: "tag", title: "同一大类桶同窗降权分散", text: "桶：" + it.bucket }));
     }
@@ -3973,6 +3979,13 @@
     });
     outSel.addEventListener("change", function () { f.outdoor = outSel.value === "true"; });
     condCols.appendChild(h("div", { class: "wfld" }, h("div", { class: "wfld-l", text: "场所" }), outSel));
+
+    var sizeSel = h("select", { class: "inp" });
+    [["normal", "正常事（15~60分钟）"], ["short", "短事（5~15分钟）"], ["big", "大活（半天~一整天）"]].forEach(function (pair) {
+      sizeSel.appendChild(h("option", { value: pair[0], text: pair[1], selected: (f.size || "normal") === pair[0] }));
+    });
+    sizeSel.addEventListener("change", function () { f.size = sizeSel.value; });
+    condCols.appendChild(h("div", { class: "wfld" }, h("div", { class: "wfld-l" }, "时长档位", h("span", { class: "n", text: "明确告知补写干多久" })), sizeSel));
     form.appendChild(condCols);
 
     if (it) {
@@ -4005,7 +4018,9 @@
         min_temp: mtVal,
         wx: String(f.wx || ""),
         link: String(f.link || ""),
-        outdoor: !!f.outdoor
+        outdoor: !!f.outdoor,
+        short: f.size === "short",
+        big: f.size === "big"
       };
       save.disabled = true;
       var p;
@@ -4016,6 +4031,7 @@
         var changed = t !== it.text || item.group !== orig.group || item.wx !== orig.wx ||
           item.link !== orig.link || item.bucket !== orig.bucket ||
           String(mtVal === null ? "" : mtVal) !== String(orig.min_temp || "") || item.outdoor !== orig.outdoor ||
+          (f.size || "normal") !== (orig.size || "normal") ||
           JSON.stringify(w) !== JSON.stringify(kind === "together" ? orig.w[""] : orig.w);
         var first = changed ? post("ctx/pools/edit", { action: "update", kind: kind, index: i, text: it.text, item: item }) : Promise.resolve();
         p = first.then(function () {
