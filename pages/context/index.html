@@ -7193,8 +7193,30 @@
   function worldTimelineSection(d, who) {
     var day = (d.days || [])[0] || { date: d.date, entries: [] };
     var list = (day.entries || []).filter(function (e) { return e.who === who; });
+    if (who === "master") {
+      // 主人页同步并入她们写着「和主人一起（with 含 master）」的同行段（同起止同地点合并为一条，避免把旧出门段一直标成「现在」）
+      var jointMap = {}, jointList = [];
+      (day.entries || []).forEach(function (e) {
+        if (e.who === "master" || e.kind === "event" || e.stop_shown || e.stopped) { return; }
+        if ((e["with"] || []).indexOf("master") < 0) { return; }
+        var key = String(e.start || "") + "|" + String(e.end || "") + "|" + String(e.place || "");
+        var lbl = e.who_label || worldLabel(d, e.who);
+        if (jointMap[key]) {
+          if (jointMap[key]._jointBots.indexOf(lbl) < 0) { jointMap[key]._jointBots.push(lbl); }
+          return;
+        }
+        var copy = Object.assign({}, e, {
+          _joint: true,
+          _jointBots: [lbl],
+          "with": [e.who].concat((e["with"] || []).filter(function (x) { return x !== "master" && x !== e.who; }))
+        });
+        jointMap[key] = copy;
+        jointList.push(copy);
+      });
+      list = list.concat(jointList);
+    }
     var sub = who === "master"
-      ? "主人自己说过的去向和在做的事，只从对话里记，补写不会替主人编"
+      ? "包含主人自己说过的去向，以及和她们同行（with 含主人）的时段，与对话注入及船屋位置完全一致"
       : "对话 = 记录员从聊天里记的，补写 = 没人聊天时补的，手动 = 在这里写的；同一时间撞上时 手动 > 对话 > 补写";
     var sec = h("div", { class: "lsec" }, lsecHead(day.date === d.today ? "今天发生的事" : String(day.date).slice(5) + " 发生的事", sub));
     var card = h("div", { class: "pc" });
@@ -7419,7 +7441,8 @@
         e.sleep ? h("span", { class: "tag", text: "睡觉" }) : null,
         e.at_home === false ? h("span", { class: "tag", text: "在外面" }) : null,
         e.meal ? h("span", { class: "tag", text: "吃饭" }) : null,
-        e.source !== "step" ? srcTag : null,
+        e._joint ? h("span", { class: "tag acc", text: "同行 · " + (e._jointBots || []).join("、") }) : null,
+        !e._joint && e.source !== "step" ? srcTag : null,
         e.send_msg ? msgTag : null,
         e.mood ? h("span", { class: "wmood", text: "心情：" + e.mood }) : null),
       worldSteps(e, pct),
@@ -7438,6 +7461,7 @@
       where === "now" && !going && e.end ? h("div", { class: "wgap",
         text: next ? "这会儿空着，下一段 " + String(next.start || "").slice(11, 16) + " 开始" : "这段做完了，接下来的还没排" }) : null);
     row.appendChild(lt);
+    if (e._joint) { return row; }
     var acts = h("div", { class: "la" });
     var edit = h("button", { class: "btn quiet sm", type: "button", title: "编辑" }, icon("edit"));
     edit.addEventListener("click", function () {

@@ -104,7 +104,7 @@ STEP_SYSTEM_TEMPLATE = """{base_system}
 4. 每段写 at_home 和 meal：at_home 是这段她人在不在宿舍（屋里、院子、廊下、门口、后头小屋都算 true；出了宿舍去别处、走在路上都算 false）；meal 是这段是不是正在吃饭（吃早饭午饭晚饭、夜宵算 true；做饭、摆碗筷、洗碗都不算）。
 5. 睡觉也是一段：到了她今天定的入睡时刻，就写一段睡觉，state 填「睡觉」，从入睡时刻一直写到第二天定的起床时刻；睡前那段要在入睡时刻结束。过了入睡时刻还醒着的（比如答应了陪主人熬夜），那件事做完就接着写睡觉，睡到起床时刻。睡觉这段的 place 三选一：「船屋·船舱地铺」「船屋·船舱吊床」「船屋·船舱主人的床上」，doing 跟着写（铺盖/吊床/床），别写别的睡法；吊床只睡得下一个人，主人的床睡得下两个人（主人加一个），地铺能睡两个人。
 6. 下面「还没做的约定」里有钟点的：到那个钟点她要已经在约定的地方、和约定的人在一起。要换地方的，在那之前写一段赶过去，留足路上的工夫；约定那件事从约定的钟点开始写。
-7. **不许生成主人的条目，也不许替主人编他做了什么、说了什么。** 主人在哪只看「主人最近的动向」：他最后说在哪、之后没说离开，就当他还在那儿，她们可以待在他身边、在他旁边做自己的事；他说了出门、去上课、睡了这类，就照那个写，别写他在场。**主人眼下在船屋里且没到你们明确约好钟点的出发时刻前，严禁补写擅自写 `at_home=false` 且 `with` 里带上 `"master"` 强行把主人带出门**（想约主人出门请先在家提醒发消息，或用 `ask_master` 问准点，或自己单独去办不写 `master`）。只有两种例外：① 约好了具体钟点的约定/打算（如明确写着 14:00 一起出海），到点才写成和主人一起出门；② 主人已经自己出门在外头了，之后同一趟里接着往下的段才写 `"master"`。在家吃饭默认是三个人一起吃：饭点那段主人在船屋（「主人最近的动向」里没说他出门、去上课、睡了），就写成她们和主人一起吃，with 里写上 "master"；主人不在家，就她们俩吃，给主人留一份收好。除此之外 with 里不写 master。
+7. **不许生成主人的条目，也不许替主人编他做了什么、说了什么。** 主人在哪只看「主人最近的动向」：他最后说在哪、之后没说离开，就当他还在那儿，她们可以待在他身边、在他旁边做自己的事；他说了出门、去上课、睡了这类，就照那个写，别写他在场。**主人眼下在船屋里且没到你们明确约好钟点的出发时刻前，严禁补写擅自写 `at_home=false` 且 `with` 里带上 `"master"` 强行把主人带出门**（想约主人出门请先在家提醒发消息，或用 `ask_master` 问准点，或自己单独去办不写 `master`）。只有两种例外：① 约好了具体钟点的约定/打算（如明确写着 14:00 一起出海），到点才写成和主人一起出门；② 主人已经自己出门在外头了，之后同一趟里接着往下的段才写 `"master"`。**只要带主人一起出了门（`at_home=false` 且 `with` 含 `"master"`），同一趟回程与刚回到船屋的那段也必须把 `"master"` 写进 `with` 一起带回来，严禁中途把主人丢在外面自己回家。** 在家吃饭默认是三个人一起吃：饭点那段主人在船屋（「主人最近的动向」里没说他出门、去上课、睡了），就写成她们和主人一起吃，with 里写上 "master"；主人不在家，就她们俩吃，给主人留一份收好。除此之外 with 里不写 master。
    做给主人的、拿主人买回来的东西做的，那份是主人的：做好了端给主人或者给他留着，她们别再吃它、分它；主人吃没吃、剩下的给谁，后面聊天里定。
    「主人说过他要做的事」分两种：只是他自己去做的（上课、出门办事），那段时间他人不在，别把她们写成和他在一起；写着要她们做、或者和她们一起做的（比如晚上和亚托莉一起吃帝王蟹），就是交给她们的事，照着排进去，到时候写成和主人一起，with 写上 "master"——这是照主人说过的写，不算替他编。
 8. 约束优先级最高：写着不许出门的，这段时间就得在屋里。照主人的意思守，别钻字眼上的空子：「不许捞她上来」就别改成给她送饭、递东西，「不许出门」就别叫人把东西送进来。主人罚她的事（扔下水、关在外头、罚站这类），别人也别背着主人替她松；想替她求情的，填 ask_master 问主人一句，主人点头才做。
@@ -2728,6 +2728,20 @@ class LifeStep:
             bot_has_new_item = False
             bot_has_used_item = False
             bot_has_new_food = False
+            # 检查本轮开始前，这位 bot 是否刚和主人一起在外头（with 含 master 且 at_home=false）
+            bot_master_out_with_me = False
+            if bot_kept and master_outside_now:
+                prev_bot_acts = [
+                    x for x in self.world.activities(bot, bot_kept[0][2])
+                    if not real_stop(x) and (parse_time(x.get("start")) is not None) and parse_time(x.get("start")) < bot_kept[0][2]
+                ]
+                if prev_bot_acts:
+                    last_b = prev_bot_acts[-1]
+                    if (
+                        view_mod._is_outside_place(last_b.get("place"), last_b.get("at_home"), self.home)
+                        and "master" in [str(x) for x in (last_b.get("with") or [])]
+                    ):
+                        bot_master_out_with_me = True
             bot_has_food_step = False
             bot_used_cands: set[str] = set()
             bot_has_wood_stove = False
@@ -2800,6 +2814,17 @@ class LifeStep:
                             f"补写严禁擅自写 at_home=false 且 with 含 \"master\" 强行把主人带出门！"
                             f"请改写为在家准备并通知/用 ask_master 问主人几点出发，或自己去办（with 勿写 master）"
                         )
+                # 带主人出门必须带回来：刚和主人一起在外头，回到住处时严禁把 master 丢在外面
+                if raw.get("at_home") is False and "master" in with_ids:
+                    bot_master_out_with_me = True
+                elif bot_master_out_with_me and raw.get("at_home") is True:
+                    if "master" not in with_ids:
+                        errors.append(
+                            f"{tag}：前面刚和主人（with 含 \"master\"）一起在外头，这段回到住处（at_home=true）却没把 \"master\" 写进 with 一起带回来！"
+                            f"with 出去也得 with 回来，严禁把主人丢在外面自己回家"
+                        )
+                    else:
+                        bot_master_out_with_me = False
                 if seaside and raw.get("lamp") is True:
                     if sleep:
                         errors.append(f"{tag}：睡觉段 lamp 必须为 false")
