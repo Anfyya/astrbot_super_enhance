@@ -194,36 +194,33 @@ def start_now(
                     str(item.get("start"))[11:16], str(item.get("end") or "")[11:16] or "…",
                     str(item.get("doing") or item.get("place") or "")[:30],
                 )
-    removed = service.world.clear_planned(bot, now)
     same_place = not str(place or "").strip()
     at_home = kind_val not in ("go_out", "trade")
     ref_intent = str(decision_or_intent_id or "").strip()
     with_list = _resolve_with_who(service, bot, with_who)
-    record = service.world.add_entry(now.date().isoformat(), {
-        "who": bot,
-        "start": fmt_time(now),
+    target_place = (current or {}).get("place", "") if same_place else place
+
+    # start_doing 不再直接写入或清空世界线，而是暂存意向、1 分钟后由记录员结合完整对话与已有排程裁定是否落盘
+    proposal = {
+        "bot": bot,
+        "umo": umo,
+        "at": fmt_time(now),
         "end": fmt_time(end),
-        "place": (current or {}).get("place", "") if same_place else place,
+        "minutes": minutes,
+        "what": what,
+        "place": target_place,
         "at_home": at_home,
         "with": with_list,
+        "action_kind": kind_val,
         "stove": stove_val,
         "cook": cook_val,
         "lamp": bool(lamp),
-        "action_kind": kind_val,
         "intent": ref_intent if ref_intent.startswith("i") else "",
-        "doing": what,
         "result": result,
-        "source": "chat",
-        "src_umo": umo,
-        "asked": True,
-        "tool": "start_doing",
-    })
-    if record is None:
-        for item in removed:
-            service.world.add_entry(str(item.get("start"))[:10], item)
-        return "没写进去：这段时间世界线上是主人手动排的事，补写和对话都改不动。"
-    synced_bots = _sync_start_partners(service, bot, with_list, now, end, record, umo)
-    released = _release_partners(service, bot, now, what, skip_bots=set(synced_bots))
+    }
+    recorder = getattr(service, "recorder", None)
+    if recorder is not None and hasattr(recorder, "queue_start_proposal"):
+        recorder.queue_start_proposal(umo, proposal, delay=60.0)
     money_hint = ""
     if kind_val == "trade" and home == "海边小镇" and getattr(service, "money", None) is not None:
         try:
@@ -238,14 +235,12 @@ def start_now(
         except Exception:
             pass
     logger.info(
-        "[super_enhance/world] [%s] 现在去做：%s %s–%s%s%s",
+        "[super_enhance/world] [%s] start_doing 已暂存意向（不直接改世界线，1 分钟后交记录员裁定）：%s %s–%s",
         bot, what[:30], fmt_time(now)[11:], fmt_time(end)[11:],
-        "（撤掉补写排的 %d 段）" % len(removed) if removed else "",
-        "（对方和她一起的：%s）" % "、".join(released) if released else "",
     )
-    return "已写进世界线：%s–%s %s%s。做完时系统会叫你一次。%s" % (
+    return "条件校验通过，已记下你的动作意向：%s–%s %s%s（1 分钟后由后台结合完整对话与排程统一决定是否落盘；如原排程马上就到或无需改排会自动忽略）。%s" % (
         fmt_time(now)[11:], fmt_time(end)[11:], what,
-        "（地点：%s）" % record.get("place") if record.get("place") else "",
+        "（地点：%s）" % target_place if target_place else "",
         money_hint,
     )
 

@@ -6,10 +6,12 @@
 - 失败：游标不前进，写错误记录，下次重试。
 """
 
+import asyncio
 import copy
 import datetime
 import hashlib
 import re
+import time
 from dataclasses import dataclass, field
 
 from astrbot.api import logger
@@ -283,6 +285,71 @@ class Recorder:
         self._now = now_fn
         self.tz = tz
         self._running: set[str] = set()
+        self._start_proposals: dict[str, list[dict]] = {}
+        self._proposal_tasks: dict[str, asyncio.Task] = {}
+
+    # ---------- start_doing 1 分钟延迟裁定队列 ----------
+
+    def _prune_proposals(self, umo: str) -> list[dict]:
+        now_ts = time.time()
+        lst = [
+            p for p in (self._start_proposals.get(umo) or [])
+            if (now_ts - float(p.get("ts") or 0)) <= 600.0
+        ]
+        if lst:
+            self._start_proposals[umo] = lst[-5:]
+        else:
+            self._start_proposals.pop(umo, None)
+        return self._start_proposals.get(umo) or []
+
+    def peek_proposals(self, umo: str) -> list[dict]:
+        return list(self._prune_proposals(umo))
+
+    def due_proposals(self, umo: str) -> list[dict]:
+        now_ts = time.time()
+        return [p for p in self._prune_proposals(umo) if now_ts >= float(p.get("due_ts") or 0)]
+
+    def consume_proposals(self, umo: str, pids: set[str]) -> None:
+        if not pids or umo not in self._start_proposals:
+            return
+        left = [p for p in self._start_proposals[umo] if str(p.get("pid") or "") not in pids]
+        if left:
+            self._start_proposals[umo] = left
+        else:
+            self._start_proposals.pop(umo, None)
+
+    def queue_start_proposal(self, umo: str, proposal: dict, delay: float = 60.0) -> None:
+        """暂存 start_doing 提议，不直接改世界线；delay 秒后自动唤醒记录员结合对话与排程裁定。"""
+        now_ts = time.time()
+        row = dict(proposal)
+        row.setdefault("pid", "sp_%d_%d" % (int(now_ts * 1000), len(self._start_proposals.get(umo) or [])))
+        row["ts"] = float(row.get("ts") or now_ts)
+        row["due_ts"] = now_ts + max(1.0, float(delay))
+        lst = self._prune_proposals(umo)
+        lst.append(row)
+        self._start_proposals[umo] = lst[-5:]
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        old = self._proposal_tasks.get(umo)
+        if old is not None and not old.done():
+            old.cancel()
+        self._proposal_tasks[umo] = loop.create_task(self._delayed_proposal_run(umo, max(1.0, float(delay))))
+
+    async def _delayed_proposal_run(self, umo: str, delay: float) -> None:
+        try:
+            await asyncio.sleep(delay)
+            if not bool(self.cfg.get("recorder_enable", True)):
+                return
+            if umo in self._running or not self.peek_proposals(umo):
+                return
+            logger.info("[super_enhance/world] start_doing 1 分钟定时到点，唤醒记录员裁定（%s）", umo)
+            await self.run(umo, self._now(), force_proposal=True)
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            logger.warning("[super_enhance/world] start_doing 延迟唤醒记录员出错", exc_info=True)
 
     # ---------- 配置 ----------
 
@@ -362,9 +429,11 @@ class Recorder:
         return out
 
     def ready(self, umo: str, now: datetime.datetime) -> bool:
-        """最后一条消息已经安静够久了，且有没处理的。"""
+        """最后一条消息已经安静够久了，或有到点的 start_doing 提议待裁定。"""
         if umo in self._running:
             return False
+        if self.due_proposals(umo):
+            return True
         items = self.pending(umo, now)
         if not items:
             return False
@@ -568,7 +637,40 @@ class Recorder:
             recorder_note=RECORDER_NOTE,
         ), home)
 
-    def build_prompt(self, umo: str, items: list[dict], now: datetime.datetime) -> str:
+    def _format_proposals(self, proposals: list[dict]) -> str:
+        if not proposals:
+            return ""
+        lines = [
+            "【待你裁定的「现在去做(start_doing)」提议（尚未写入世界线，也未撤掉原有排程）】：",
+            "请结合上方完整对话、主人后续回话和「今天已记下的世界线」，逐条判断是否真要落盘：",
+            "1) 若世界线上马上（如 15 分钟内）本来就排好了同一件事，或只是顺手一两分钟的小动作（折图/起身/拿东西），直接丢弃忽略、别打断原排程；",
+            "2) 若对话里主人没同意、改口、叫停，或提议与实际对话对不上，直接丢弃忽略；",
+            "3) 若确属主人临时改主意或确实需要此刻新开一段，再照常写进 entries（填清 at_home / with / stove / same_as / stale，不要重复记同一件事）。",
+        ]
+        for p in proposals:
+            who_lbl = self.label(p.get("bot")) or p.get("bot") or ""
+            with_lbls = [
+                "主人" if x == "master" else (self.label(x) or x)
+                for x in (p.get("with") or [])
+            ]
+            bits = [
+                "%s–%s %s提议：%s" % (str(p.get("at") or "")[11:16], str(p.get("end") or "")[11:16], who_lbl, p.get("what") or ""),
+            ]
+            if p.get("place"):
+                bits.append("地点=%s" % p["place"])
+            bits.append("at_home=%s" % ("true" if p.get("at_home") else "false"))
+            if with_lbls:
+                bits.append("同行=%s" % "、".join(with_lbls))
+            if p.get("stove"):
+                bits.append("stove=%s" % p["stove"])
+            if p.get("intent"):
+                bits.append("intent=%s" % p["intent"])
+            lines.append("- " + "，".join(bits))
+        return "\n".join(lines)
+
+    def build_prompt(
+        self, umo: str, items: list[dict], now: datetime.datetime, proposals: list[dict] | None = None
+    ) -> str:
         labels = "、".join(
             "%s=%s" % (bot, self.label(bot) or bot) for bot in self.raw_log.enabled_bots()
         )
@@ -576,28 +678,32 @@ class Recorder:
         interaction = (companion.safe("render", bot_of_umo(umo), now, recorder=True, default="")
                        if companion is not None else "")
         previous = companion.safe("reply_context", umo, items, now, default=[]) if companion is not None else []
-        transcript = self._transcript(items, umo)
+        transcript = self._transcript(items, umo) if items else "（本批暂无新增聊天消息，请直接裁定下方提议）"
         if previous:
             transcript = ("此前实际发出的两句话（只用来理解本批回应，不重复记成新发生的事实）：\n"
                           + self._transcript(previous, umo) + "\n\n本批待记录消息：\n" + transcript)
+        prop_block = self._format_proposals(proposals or [])
+        if prop_block:
+            transcript = transcript + "\n\n" + prop_block
         return localize(RECORDER_TEMPLATE.format(
             now=fmt_time(now),
             where=self._where_text(umo),
             labels=labels or "（未配置）",
             transcript=transcript,
-            today_block=self._today_block(now, since=self._since(items, now)),
+            today_block=self._today_block(now, since=self._since(items, now) if items else now - datetime.timedelta(minutes=30)),
             things_block=self._things_block(now),
             interaction=interaction,
         ), str(self.cfg.get("world_home") or ""))
 
     # ---------- 执行 ----------
 
-    async def run(self, umo: str, now: datetime.datetime | None = None) -> bool:
+    async def run(self, umo: str, now: datetime.datetime | None = None, *, force_proposal: bool = False) -> bool:
         moment = now or self._now()
         items = self.pending(umo, moment)
-        if not items:
+        proposals = self.peek_proposals(umo) if (force_proposal or self.due_proposals(umo) or items) else []
+        if not items and not (force_proposal and proposals):
             return False
-        if all(str(x.get("src") or "") == "proactive" for x in items):
+        if items and not proposals and all(str(x.get("src") or "") == "proactive" for x in items):
             # 单纯主动消息先轻量登记邀请，不额外调用模型或让她自己的话改写事实。
             companion = getattr(self, "companionship", None)
             if companion is not None:
@@ -621,8 +727,9 @@ class Recorder:
             self.world.note_error("recorder", "没有可用的模型")
             return False
         self._running.add(umo)
+        prop_ids = {str(p.get("pid") or "") for p in proposals if p.get("pid")}
         try:
-            prompt = self.build_prompt(umo, items, moment)
+            prompt = self.build_prompt(umo, items, moment, proposals=proposals)
             text, _thought = await llm.text_chat(
                 self.context,
                 prompt,
@@ -631,7 +738,7 @@ class Recorder:
                 session_id="super_enhance_recorder",
                 system_prompt=self.build_system_prompt(),
                 attempts=2,
-                log_label="记录员",
+                log_label="记录员(含start_doing裁定)" if proposals else "记录员",
             )
             data = llm.extract_json(text)
             if data is None:
@@ -639,11 +746,18 @@ class Recorder:
                 return False
             with fact_batch(self):
                 self.apply(umo, data, moment, items)
-                last = items[-1]
-                last_ts = float(last.get("ts") or moment.timestamp())
-                self.world.set_cursor(umo, last_ts, _digest(last.get("text")))
+                if items:
+                    last = items[-1]
+                    last_ts = float(last.get("ts") or moment.timestamp())
+                    self.world.set_cursor(umo, last_ts, _digest(last.get("text")))
+            self.consume_proposals(umo, prop_ids)
             self.world.clear_error("recorder")
-            logger.info("[super_enhance/world] 记录员处理了 %d 条（%s）", len(items), umo)
+            logger.info(
+                "[super_enhance/world] 记录员处理了 %d 条%s（%s）",
+                len(items),
+                (" + 裁定 %d 条 start_doing 提议" % len(proposals)) if proposals else "",
+                umo,
+            )
             return True
         except Exception as e:
             logger.error("[super_enhance/world] 记录员失败：%s", e)
