@@ -104,21 +104,21 @@ STEP_SYSTEM_TEMPLATE = """{base_system}
 4. 每段写 at_home 和 meal：at_home 是这段她人在不在宿舍（屋里、院子、廊下、门口、后头小屋都算 true；出了宿舍去别处、走在路上都算 false）；meal 是这段是不是正在吃饭（吃早饭午饭晚饭、夜宵算 true；做饭、摆碗筷、洗碗都不算）。
 5. 睡觉也是一段：到了她今天定的入睡时刻，就写一段睡觉，state 填「睡觉」，从入睡时刻一直写到第二天定的起床时刻；睡前那段要在入睡时刻结束。过了入睡时刻还醒着的（比如答应了陪主人熬夜），那件事做完就接着写睡觉，睡到起床时刻。睡觉这段的 place 三选一：「船屋·船舱地铺」「船屋·船舱吊床」「船屋·船舱主人的床上」，doing 跟着写（铺盖/吊床/床），别写别的睡法；吊床只睡得下一个人，主人的床睡得下两个人（主人加一个），地铺能睡两个人。
 6. 下面「还没做的约定」里有钟点的：到那个钟点她要已经在约定的地方、和约定的人在一起。要换地方的，在那之前写一段赶过去，留足路上的工夫；约定那件事从约定的钟点开始写。
-7. **不许生成主人的条目，也不许替主人编他做了什么、说了什么。** 主人在哪只看「主人最近的动向」：他最后说在哪、之后没说离开，就当他还在那儿，她们可以待在他身边、在他旁边做自己的事；他说了出门、去上课、睡了这类，就照那个写，别写他在场。**未来数小时的预排段（非当下刚发生的约定）严禁把「亲手递到主人跟前」「挨着主人聊天搭话」写成既定结果**（万一主人临时出门或去睡就会穿帮；做好的小物或饭菜只写「搁在矮桌上留给主人 / 等主人方便再递给他」，不预设主人一直坐着不动）。**主人眼下在船屋里且没到你们明确约好钟点的出发时刻前，严禁补写擅自写 `at_home=false` 且 `with` 里带上 `"master"` 强行把主人带出门**（想约主人出门请先在家提醒发消息，或用 `ask_master` 问准点，或自己单独去办不写 `master`）。只有两种例外：① 约好了具体钟点的约定/打算（如明确写着 14:00 一起出海），到点才写成和主人一起出门；② 主人已经自己出门在外头了，之后同一趟里接着往下的段才写 `"master"`。**只要带主人一起出了门（`at_home=false` 且 `with` 含 `"master"`），回家的路途段也必须把 `"master"` 写进 `with` 一起带回来，严禁中途把主人丢在外面自己回家；带回到家就为止，到家之后（`at_home=true` 的段）她们各做各的事，不必也不该再把 `"master"` 写进 with。** 在家吃饭默认是三个人一起吃：饭点那段主人在船屋（「主人最近的动向」里没说他出门、去上课、睡了），就写成她们和主人一起吃，with 里写上 "master"；主人不在家，就她们俩吃，给主人留一份收好。除此之外 with 里不写 master。
+7. **不许生成主人的条目，也不许替主人编他做了什么、说了什么、吃了什么、听了什么或怎么回应。** 不仅禁止替主人编台词，也**严禁在 `doing`/`steps`/`result`/`mood` 里把主人的任何动作、在场反应或互动结果写成既定事实**（比如「主人热乎乎吃上了三只汉堡」「新发现说给主人了」「跟主人一起摊开海图圈完位置」「挨着主人聊天搭话」——哪怕没写主人说话也不行！）。主人在哪只看「主人最近的动向」：他最后说在哪、之后没说离开，她们可以在同屋安静做自己的事；他说了出门、去上课、睡了这类，就照那个写，别写他在场。**凡是想找主人互动的事（叫主人开饭、把刚发现的旧铺面或趣事讲给主人听、拿海图或物件找主人商量），补写里只写到她这边做好准备这一步**（例如做好饭菜摆上桌给主人留出热份、自己吃自己的；或回船屋摊开旧海图先把发现的位置圈好记牢），并把真正开口讲给主人听、叫主人吃饭或问主人拿主意交给对应段的 `send_msg: true` 或 `ask_master`（到点触发实际对话），**严禁把「讲给主人听、一起商量完、主人吃上了」直接静音演进段里跳过实际对话**。**主人眼下在船屋里且没到你们明确约好钟点的出发时刻前，严禁补写擅自写 `at_home=false` 且 `with` 里带上 `"master"` 强行把主人带出门**（想约主人出门请先在家标 `send_msg: true` 开口喊他，或用 `ask_master` 问准点，或自己单独去办不写 `master`）。只有两种例外：① 约好了具体钟点的约定/打算（如明确写着 14:00 一起出海），到点才写成和主人一起出门；② 主人已经自己出门在外头了，之后同一趟里接着往下的段才写 `"master"`。**只要带主人一起出了门（`at_home=false` 且 `with` 含 `"master"`），回家的路途段也必须把 `"master"` 写进 `with` 一起带回来，严禁中途把主人丢在外面自己回家；带回到家就为止，到家之后（`at_home=true` 的段）她们各做各的事，不再把 `"master"` 写进 with。** 在家吃饭时，做好摆桌并给主人盛好或留好温着，她俩自己吃自己的，标 `send_msg: true` 叫主人开饭（主人吃没吃、吃多少、怎么聊都留给实际对话，不要替主人写进 `with` 或替他吃完）；主人明确约好钟点一起办的事才在 `with` 里写 `"master"`，除此之外 `with` 里一律不写 `"master"`。
    做给主人的、拿主人买回来的东西做的，那份是主人的：做好了端给主人或者给他留着，她们别再吃它、分它；主人吃没吃、剩下的给谁，后面聊天里定。
    「主人说过他要做的事」分两种：只是他自己去做的（上课、出门办事），那段时间他人不在，别把她们写成和他在一起；写着要她们做、或者和她们一起做的（比如晚上和亚托莉一起吃帝王蟹），就是交给她们的事，照着排进去，到时候写成和主人一起，with 写上 "master"——这是照主人说过的写，不算替他编。
 8. 约束优先级最高：写着不许出门的，这段时间就得在屋里。照主人的意思守，别钻字眼上的空子：「不许捞她上来」就别改成给她送饭、递东西，「不许出门」就别叫人把东西送进来。主人罚她的事（扔下水、关在外头、罚站这类），别人也别背着主人替她松；想替她求情的，填 ask_master 问主人一句，主人点头才做。
 9. public 是住在一起的人自然会知道的粗粒度信息（人在哪、大概在干哪类事），可以为空。doing 是细节。
    两人在一起的时段，两边的 start/end 和共同的事要一致，with 互相写上对方的 key；对方手上的事还没做完的，别写成和她在一起。对方不在「这次要你写的」里时，她那段时间做什么以「她们此刻手上的事」和「已经排好、这次不改的」为准，你改不了：只有她那边写的也是这件事、也在这个地方，才能写成和她一起；不然就别把她写进来。
    丛雨一般人看不见：她一个人在外面时，店家、摊主、路人都看不见她，不会跟她说话、招呼她、夸她、把东西递给她；买东西照常把钱搁在柜台上、自己拿。
-10. **每段自主决定要不要给主人发消息**：每段写 `send_msg`（true/false）、`msg_at`（`"start"` 段刚开始时发，或 `"end"` 段刚做完时发；不发填 `""`）、`msg_purpose`（一句话写清楚这会儿想跟主人说什么事，不发填 `""`）。
-   - **日常固定会说一声的 5 个节点**（只要当时主人没和她待在一块即 `with` 里没写 `"master"`，且主人没在睡觉）：
+10. **每段自主决定要不要开口找主人说话**：每段写 `send_msg`（true/false）、`msg_at`（`"start"` 段刚开始时开口，或 `"end"` 段刚做完时开口；不开口填 `""`）、`msg_purpose`（一句话自然写清楚这会儿想跟主人说什么事，不开口填 `""`）。
+   - **日常固定会开口跟主人说一声的 5 个节点**（只要主人没在睡觉；就算主人就在船屋里，叫他吃饭、跟他搭话也必须标 `send_msg: true` 才会真的开口）：
      1) **早安**：睡醒起床后的第一段（`msg_at: "start"`，或跨夜睡觉那段的 `"end"`，二选一别重复），跟主人道早安；
      2) **晚安**：晚上入睡那一段（`state: "睡觉"` **必须填 `msg_at: "start"`**，入睡前说晚安，严禁填 `"end"`）；
-     3) **叫主人吃饭**：早饭、午饭、晚饭或夜宵做好开饭时（主人醒着且没一块做饭），在做饭段的 `"end"` **或** 吃饭段的 `"start"` 挑一处叫主人吃饭（二选一，严禁两段连着标）；
+     3) **叫主人吃饭**：早饭、午饭、晚饭或夜宵做好开饭时（只要主人醒着），在做饭段的 `"end"` **或** 吃饭段的 `"start"` 挑一处标 `send_msg: true` 叫主人吃饭（二选一，严禁两段连着标）；
      4) **出门**：离开宿舍往外走那一段（`at_home` 从 true 变成 false，去码头、镇上、集市、海边、打捞船等，`msg_at: "start"`；只在院子廊下走动或门口几步路丢个东西不算正式出门）；
      5) **回来**：从外头回到宿舍时（回程段 `"end"` 或到家第一段 `"start"` 二选一），跟主人说一声回来了（买了或捡了什么顺嘴提一句）。
-   - **其余时候由她按性子和眼下境况随心决定**：捞到或捡到好玩的东西、做菜成了或翻车了、修好了某样物件、看到好看的海景天气、突然惦记主人想撒个娇或问句闲话，都可以标 `send_msg: true`；安安静静看书、洗碗、擦桌子、打盹这些平淡日常填 `false`。不设死板条数上限，但先看一眼上面「今天已发过的主动消息」——同一件事别反复说，如果前面连发了好几条主人一直没回，后面除非固定节点就少发一点。
+   - **想跟主人讲/分享/搭话时必须标 `send_msg: true`**：探路瞧见新露出的旧铺面或铁箱、捞到或捡到好玩的东西、做菜成了或翻车了、修好了某样物件、看到好看的海景天气、突然惦记主人想撒个娇或闲聊，想跟主人说就标 `send_msg: true`（若需要主人拍板定夺则填 `ask_master` 并把 `at` 填在回屋开口那一刻；同一件事已填 `ask_master` 的，对应段不再重复标 `send_msg: true`，以免同一分钟说两遍），**绝不把“讲给主人听”闷在段里演完却填 `send_msg: false`**；安安静静看书、洗碗、擦桌子、打盹这些不找主人的平淡日常填 `false`。不设死板条数上限，但先看一眼上面「今天已发过的主动消息」——同一件事别反复说，如果前面连发了好几条主人一直没回，后面除非固定节点就少发一点。
    - **两人同行防撞车**：两人一块做饭开饭、一块出门、一块回来（`with` 里有对方）时，这类例行节点**只由其中一个人**标 `send_msg: true`（谁掌勺、谁领头办事就谁去说，拿不准就轮流），另一个人同段填 `false`，别同一分钟两个人排队报同一件事；早安、晚安，或者两个人各自碰到不同趣事想分开聊的，各发各的不受限。
    - **主人睡觉时不吵醒**：只要「主人最近的动向」标着主人在睡觉，例行节点和日常闲聊一律填 `send_msg: false`（不叫醒他吃饭、不报进出）；若两人都要出门不在家，把早饭盖好温着，再在 `items` 里写一张留给主人的字条压在堂屋矮桌上。
 11. 段里是在练「在练的事」里的某件，training 填它的编号（例如 "#2"）；不是在练就留空，不要往里写别的。
@@ -169,7 +169,7 @@ STEP_SYSTEM_TEMPLATE = """{base_system}
      · **A 类自主**：港内熟悉的浅水开放点（旧街露门脸的铺子、半沉超市外廊、水下车站站台外沿、沉没图书馆窗外等，**不进封闭沉船或旧公寓内舱**）下水打捞废铜旧铁/小零碎、观赏潜水、退潮浅滩捡废；把家里**真有库存**的废铜旧铁（`items` 同步消耗真实 `id`）扛去收购站过秤卖钱，单笔 `<= {sell_limit}` 元直接自主结现（`reason="sell"`）。
      · **B 类必须 `ask_master`（`kind="decision"`）请船长拍板**：① 买过冬厚衣/棉袄、换厚棉被、修船屋大件设施；② 镇上外人来下打捞委托单；③ 进封闭沉船或旧公寓内舱深潜摸货；④ 出动港边小潜艇下海；⑤ 拆看捞上来的上锁铁盒或封口旧物（`weather.sealed=true`）；⑥ 寄卖 200~800 元完好遗物或单笔卖货超过 `{sell_limit}` 元。若上方「各自的打算 / 主人说过他要做的事」里**还没有**主人明确准话，最多只写打听行情、记下来客口信或把封口旧物搁在 `船舱·矮桌`（`weather: {{"sealed": true}}`），**在主人回话拍板之前，本轮及后续所有段严禁擅自买定大件、接单、进封闭沉船、开小潜艇或撬开封口旧物！** 主人批准生成 `intent` 后可按打算分步执行（`from: "intent"` 且 `intent` 填 `i` 编号，或与 `master` 同行 `with: ["master"]`），不必反复请示。
    - **伙食分「凑合糊口」与「主人在家/点菜开火」**：若主人没点菜、也没约好这顿一起吃，她俩自己只熬碗白粥配咸菜、烤块番薯或热口剩菜简单对付（省柴省炭省油盐，不做一荤一素一汤的大菜）；快到晚饭点想做上方参考菜单里的正经热菜锅物时，先填 `ask_master`（`kind: "decision"`, `topic: "meal"`）问主人今晚想吃哪样、回不回来吃。
-   - **禁止纯日报式 `send_msg`**：严禁干完活发“废铁搬完啦跟主人汇报一声”“配给领回来啦通知一声”这种不需要主人参与的事后工作简报！联系主人优先用 `ask_master`（事前请主人拿主意 `decision`），段内 `send_msg` 只在早晚问候或真有急事喊主人时用。
+   - **禁止纯日报式 `send_msg`**：严禁干完杂活发“废铁搬完啦跟主人汇报一声”“配给领回来啦通知一声”这种不需要主人参与的事后工作简报；需要主人拍板定夺的事（出船、接单、拆封箱、买大件、晚饭吃什么等）走 `ask_master`（事前请主人拿主意 `decision`）；早晚安、出门/回家、叫主人吃饭，以及真想讲给主人的新发现或闲聊撒娇，按规则 10 标 `send_msg: true`。
 26. **船屋用钱、出门带钱与赚钱规矩（人民币，全写进段内 `money` 数组）**：
    - 分四处保管：`master`（主人钱包，大头由主人自己拿着；未经主人聊天里发话或同行付现，补写里**严禁**从 `master` 扣钱或拨钱）、`tin_box`（船舱矮桌抽屉里 `p157` 公用铁盒）、`napcat2`（亚托莉口袋）、`napcat`（丛雨零花；丛雨外人看不见，不能独自在镇上花钱或收钱）。
    - **人在外面动不了屋里的铁盒**：去集市/杂货铺/旧衣铺买东西时，若 `at_home=false` 则**严禁**填 `account="tin_box"` 隔空付钱！要么在出门前的船屋段先做一笔 `transfer(from_account="tin_box", to_account="napcat2")` 取现揣身上，要么只花 `napcat2` 口袋里本就揣着的零钱；回到船屋后再把找零/多余现金放回 `tin_box` 或上交 `master`。手头钱不够时按实际少买一点、回船屋拿钱、以物易物，或向熟摊主记赊账（`debt_add`，direction=`"payable"`）。
@@ -3514,6 +3514,16 @@ class LifeStep:
             if m_where_apply is not None else False
         )
 
+        ask_raw = data.get("ask_master") if isinstance(data.get("ask_master"), dict) else {}
+        ask_q = clean_text(ask_raw.get("question"), 160) if ask_raw else ""
+        ask_who = str(ask_raw.get("who") or "").strip() if ask_q else ""
+        if ask_q and ask_who not in bots:
+            ask_who = next((b for b in tasks if b in bots), bots[0] if bots else "")
+        ask_at_dt = (
+            parse_time(norm_time(str(ask_raw.get("at") or "").strip(), date_text))
+            if ask_q and str(ask_raw.get("at") or "").strip() else None
+        )
+
         # 第一遍：先按每人 MAX_SEGMENTS / horizon / until 截断保留段，杜绝截断段提前预占 ID
         kept_plans: dict[str, tuple[list, datetime.datetime, datetime.datetime | None]] = {}
         for bot, info in tasks.items():
@@ -3609,9 +3619,8 @@ class LifeStep:
                 training = self.training_id(raw.get("training"), bot)
                 prev = staged_entries[-1] if staged_entries else self.world.latest_for(bot, before=fmt_time(seg_start))
                 prev_with_master = bool(prev) and "master" in (prev.get("with") or []) and not prev.get("sleep")
-                at_meal = bool(raw.get("meal")) and raw.get("at_home") is not False and not master_sleeping and not master_outside_apply
                 if not master_sleeping and not idle and not sleep and "master" in raw_with and (
-                    self._intent_with_master(intent) or prev_with_master or at_meal
+                    self._intent_with_master(intent) or prev_with_master
                 ):
                     with_list.append("master")
                 msg_copy = {
@@ -3627,14 +3636,6 @@ class LifeStep:
                     "meal": raw.get("meal"),
                 }
                 _normalize_proactive_fields(msg_copy, prev_entry=prev)
-                if "master" in with_list:
-                    allow_meal_call = bool(
-                        at_meal and not prev_with_master and msg_copy.get("msg_at") == "start"
-                    )
-                    if not allow_meal_call:
-                        msg_copy["send_msg"] = False
-                        msg_copy["msg_at"] = ""
-                        msg_copy["msg_purpose"] = ""
                 things_list = (
                     self._thing_steps(raw.get("things"), thing_keys, shelf, bot)
                     + self._item_steps(raw.get("items"), item_keys, shelf, bot, seg_place=str(raw.get("place") or ""))
@@ -3692,6 +3693,15 @@ class LifeStep:
                 staged_entries.append(entry)
 
             _sanitize_proactive_nodes(staged_entries)
+            if ask_q and ask_who == bot and ask_at_dt is not None:
+                for entry in staged_entries:
+                    if not entry.get("send_msg"):
+                        continue
+                    trig = _trigger_time_of(entry)
+                    if trig is not None and abs((trig - ask_at_dt).total_seconds()) <= 600:
+                        entry["send_msg"] = False
+                        entry["msg_at"] = ""
+                        entry["msg_purpose"] = ""
             rows = []
             cursor = tasks[bot]["start"] if not bot_plan else final_cursor
             last_ok_end = tasks[bot]["start"]
