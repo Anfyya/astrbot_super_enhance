@@ -215,7 +215,8 @@ _DEFAULT_POOLS_RAW: dict[str, tuple[dict, ...]] = {
         _e("去煮盐棚扎扎实实帮大半天大工挑海水添柴，一口气换回一大罐闷炭和工钱扛回船屋", 0.1, 0.85, group="帮工换炭", bucket="镇上谋生", where="海边小镇", wx="dry", link="get_charcoal", outdoor=True, big=True),
         _e("划小船把沉没旧街或半沉大楼一整片仔细扫透打捞，满载废铜铁件和旧物拖回仓棚分类归置", 0, 0.85, group="下水打捞", bucket="水域探索", where="海边小镇", wx="dive", link="salvage", outdoor=True, min_water=4.0, big=True),
         _e("花大半天把仓棚攒的废铜废铁全拆解捆好过秤卖钱，顺路把家里米面油盐和耐放菜一次买齐", 0.2, 0.85, group="卖废铜", bucket="镇上谋生", where="海边小镇", wx="dry", link="scrap_sell", outdoor=True, big=True),
-        _e("趁无风大晴天把船屋里外彻底大扫除，全套铺盖海图衣物搬上甲板洗晒透、储物舱仓棚全归置", 0.55, 0.75, group="全屋大扫除", bucket="船舶整备", where="海边小镇", wx="sunny", outdoor=True, min_temp=3.0, big=True),
+        _e("趁无风大晴天把船屋里外彻底大扫除，全套铺盖海图衣物搬上甲板洗晒透、储物舱仓棚全归置", 0.55, 0.75, group="全屋大扫除", bucket="船舶整备", where="海边小镇", wx="sunny", link="cleanup", outdoor=True, min_temp=3.0, big=True),
+        _e("把船舱矮桌、灶台和储物舱彻底翻一遍，倒掉放馊变质的剩菜坏食，把空脏竹筐、旧传单、烂报纸和用不上的破烂分拣扔掉或归置利索", 0.5, 0.75, group="清屋倒垃圾", bucket="船舶整备", where="海边小镇", link="cleanup"),
         _e("花大半天给船屋和打捞船集中检修过冬：塞紧漏风板缝、加固船篷帆布、绞盘除锈上油并做木工修补", 0.35, 0.8, group="船屋检修", bucket="船舶整备", where="海边小镇", wx="dry", outdoor=True, big=True),
         _e("趁便宜鲜货多，花大半天集中剖洗腌渍一大批海鱼晒成鱼干熏鱼，或腌满一大坛过冬咸菜存好", 0.5, 0.75, group="囤粮晒腌", bucket="船舶整备", where="海边小镇", wx="dry", outdoor=True, big=True),
         _e("去船坞或码头接大半天重头短工，帮老船匠修大木船或帮渔民集中补网卸货，挣笔大工钱或换批硬木料", 0, 0.8, group="大短工", bucket="镇上谋生", where="海边小镇", wx="dry", link="get_wood", outdoor=True, big=True),
@@ -677,6 +678,7 @@ LINK_LABELS = {
     "salvage": "缺零钱或距上次打捞≥3天时提高权重",
     "scrap_sell": "家里有废铜/废铁待卖库存时",
     "captain_salvage": "有船长同意的出海打捞打算、主人醒着且白天时",
+    "cleanup": "屋里坏食物或积压旧杂物较多时提权（干净无坏菜时降权）",
 }
 _SALVAGE_GROUPS = frozenset(("下水打捞", "浅滩捡废", "深潜打捞"))
 # 此次重构新增默认条目白名单：合并自定义 pools.json 时只补入白名单新条，不复活用户主动删掉的旧默认条
@@ -696,6 +698,7 @@ _NEW_DEFAULT_TEXTS = frozenset((
     "划小船把沉没旧街或半沉大楼一整片仔细扫透打捞，满载废铜铁件和旧物拖回仓棚分类归置",
     "花大半天把仓棚攒的废铜废铁全拆解捆好过秤卖钱，顺路把家里米面油盐和耐放菜一次买齐",
     "趁无风大晴天把船屋里外彻底大扫除，全套铺盖海图衣物搬上甲板洗晒透、储物舱仓棚全归置",
+    "把船舱矮桌、灶台和储物舱彻底翻一遍，倒掉放馊变质的剩菜坏食，把空脏竹筐、旧传单、烂报纸和用不上的破烂分拣扔掉或归置利索",
     "花大半天给船屋和打捞船集中检修过冬：塞紧漏风板缝、加固船篷帆布、绞盘除锈上油并做木工修补",
     "趁便宜鲜货多，花大半天集中剖洗腌渍一大批海鱼晒成鱼干熏鱼，或腌满一大坛过冬咸菜存好",
     "去船坞或码头接大半天重头短工，帮老船匠修大木船或帮渔民集中补网卸货，挣笔大工钱或换批硬木料",
@@ -712,6 +715,7 @@ _OBSOLETE_LINKS = frozenset((
 SHARED_GROUPS = frozenset((
     "洗衣裳", "晒铺盖", "存雨水", "修东西", "摆弄旧零碎",
     "伺候油灯", "船屋防风", "烘潮气", "盘家当", "收拾打捞船", "打捞所",
+    "清屋倒垃圾", "全屋大扫除",
 ))
 
 _BUILTIN_META: dict[str, dict] = {}
@@ -1061,6 +1065,8 @@ def build_live_context(
             has_thick_quilt = False
             scrap_stock = 0
             sealed_loot_count = 0
+            spoiled_food_count = 0
+            cabin_item_count = 0
             day_text_fn = weather_of if weather_of is not None else (lambda _d: "多云")
             home_at_fn = world.home_at if world is not None else (lambda _m: ctx["home"])
 
@@ -1074,6 +1080,10 @@ def build_live_context(
                         sc_info = things_mod.stock(item)
                         if sc_info is None or float(sc_info.get("left") or 0.0) > 0:
                             scrap_stock += 1
+                    if not things_mod.is_charcoal(item) and not weathering.fuel_item(item):
+                        _plc_now = str(((item.get("stages") or [{}])[-1]).get("place") or "")
+                        if "身上" not in _plc_now:
+                            cabin_item_count += 1
                 if things_mod.is_charcoal(item):
                     info = things_mod.measure(item)
                     charcoal_g += float((info or {}).get("left") or 0.0)
@@ -1093,6 +1103,11 @@ def build_live_context(
                     if weathering.wood_fuel_meta(item, flat_start).get("tier") == "unsplit_log":
                         has_unsplit_wood = True
                 if things_mod.cat_of(item) == things_mod.CAT_FOOD:
+                    try:
+                        if store.profile(item, flat_start, shelf)["fresh"]["level"] == "坏了":
+                            spoiled_food_count += 1
+                    except Exception:
+                        pass
                     info = things_mod.measure(item)
                     left_val = float((info or {}).get("left") or 0.0)
                     if store._is_edible_oil(item):
@@ -1165,6 +1180,8 @@ def build_live_context(
                 "has_winter_gear": has_winter_coat and has_thick_quilt,
                 "scrap_stock": scrap_stock,
                 "sealed_loot_count": sealed_loot_count,
+                "spoiled_food_count": spoiled_food_count,
+                "cabin_item_count": cabin_item_count,
             })
         except Exception:
             pass
@@ -1507,6 +1524,24 @@ def _eval_gates(
         else:
             mult *= 3.0
             notes.append("船长已拍板出船 ×3.0")
+    elif link == "cleanup":
+        spoiled = int(ctx.get("spoiled_food_count") or 0)
+        clutter = int(ctx.get("cabin_item_count") or 0)
+        if spoiled >= 4:
+            mult *= 3.0
+            notes.append(f"屋里积压{spoiled}件坏食物 ×3.0")
+        elif spoiled >= 2:
+            mult *= 2.0
+            notes.append(f"屋里有{spoiled}件坏食物待倒 ×2.0")
+        elif spoiled >= 1:
+            mult *= 1.4
+            notes.append(f"屋里有{spoiled}件坏食物 ×1.4")
+        if clutter >= 70:
+            mult *= 1.5
+            notes.append(f"屋里杂物偏多({clutter}件) ×1.5")
+        elif spoiled == 0 and clutter < 35:
+            mult *= 0.4
+            notes.append("屋里整洁无坏菜 ×0.4")
 
     if gates:
         return base, 0.0, gates, notes

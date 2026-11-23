@@ -29,7 +29,7 @@ from .companionship import (DECISION_TOPICS, DECISION_TOPIC_LABELS, GLOBAL_DAILY
 from .living_rules import STEP_LIFECYCLE_RULES
 from .money import AUTONOMOUS_SELL_LIMIT, SEASIDE_PRICE_GUIDE, fmt_yuan, normalize_step_money_list, validate_step_segments_money
 from .things import FactConflict
-from .things import (CAT_FOOD, CAT_ITEM, END_STEPS, ITEM_END_STEPS, ITEM_MID_STEPS, ITEM_START_STEPS, KEEPS, KINDS, MEASURED_KINDS, MID_STEPS,
+from .things import (CAT_FOOD, CAT_ITEM, END_STEPS, HOT_MEAL_KINDS, ITEM_END_STEPS, ITEM_MID_STEPS, ITEM_START_STEPS, KEEPS, KINDS, MEASURED_KINDS, MID_STEPS,
                      SPOTS, START_STEPS, _same_name, cat_of, checked_place, had_before, is_charcoal, is_ended, is_sealed, is_strict_qty,
                      norm_kind, norm_state, parse_amount, spots_for, staple_of, norm_step, split_keep, step_no, MAX_INSIDE)
 from . import weather as weather_mod
@@ -142,16 +142,18 @@ STEP_SYSTEM_TEMPLATE = """{base_system}
    - 做出来的菜、买回来的、别人给的：写 new（临时代号 n1、n2……，这一次里每件一个，两个人、几段之间也不重复；编号由程序发）、name、kind、what（做好了 / 买回来 / 收到）、left、place、keep、spot；自己做出来的熟食（what 填「做好了」）加上 cook（五选一：`"boil"` 水煮熬粥炖汤 / `"fry"` 油煎爆炒油焖 / `"steam"` 清蒸 / `"roast"` 炭烤烘煨 / `"cold"` 凉拌冷食；买来的或生鲜不填）；做的菜 from 写用了哪几件（编号或这一次的临时代号），买来的 origin 写在哪买的。做菜用油、糖、醋、酱油、盐做 `油封`、`糖渍`、`醋泡`、`酱渍`、`轻腌/重盐腌` 时要看家里有没有够量库存——**家里食用油已用光时，`cook` 严禁填 `"fry"`（改选 boil/steam/roast/cold），也不许做 `"油封"`**。
    - place 拆开写，别连成一句：area 是在哪间屋、哪个地方（不在宿舍的写那个地方，例如「镇外梯田的农家灶房」）；at 是搁在那儿的什么上、什么里（矮桌、柜格、案上、灶上、水盆、书架、窗台……）；detail 是再细一点的哪一格、哪个容器里（桌角、第二格、竹筛里、锅里），说不上来就空着。area 和 at 都得有，光写一间屋不算。例如 {{"area": "堂屋", "at": "矮桌", "detail": "桌角"}}、{{"area": "灶房", "at": "案上", "detail": "竹筛里"}}、{{"area": "灶房", "at": "柜格", "detail": ""}}。拿在手上、揣在身上的：area 写谁，at 写手上、袖子里、菜篮里，例如 {{"area": "亚托莉", "at": "手上", "detail": ""}}。这是东西搁在哪，不是人在哪，别照抄这段的 place；挑的时候照常理（剩菜盖好搁灶上或柜格，点心、糖搁堂屋柜里或盒子里，米面调料在灶房柜格）；没挪地方的不写 place。
    - 每一步都写 step：这件事发生在这段分步里的第几步（从 1 数，例如第 2 步「下锅炒」用掉鸡蛋、做好蛋炒饭就写 2，第 3 步吃完就写 3）。这段要是中途被打断，只有做到了的那几步才算数。
-   - 这一次里先做好、后面又吃掉的菜，吃饭那段也要写一步：id 填它的临时代号（n1 这种），what 写吃完了或吃了一部分，left 写还剩多少（比如给主人留的那份）。
+   - 这一次里先做好、后面又吃掉的菜，以及平时在家里吃饭（`meal: true`）吃掉的桌上/锅里已有熟食，**吃饭那段必须在 `things` 里写一步**（两人同吃写在其中一人那段即可）：id 填对应编号或临时代号，what 写 `吃完了` 或 `吃了一部分`，left 写还剩多少（吃完填 `""`），严禁吃完却把 `things` 留空导致剩菜锅一直挂在清单上发馊。
+   - **新菜写了 `from` 必须同步消耗原料**：凡新做的菜在 `from` 里填了用到的已有食材/剩菜编号（例如 `from: ["w480", "w433"]`），同段（或前序备菜段）`things` 里必须给 `from` 中每个编号写一条消耗动作（`用掉一部分` 或 `用完了`），严禁只填 `from` 却不扣减原料导致生鱼/剩菜继续留在清单上发臭。
    - 端给主人的（送到主人跟前、递到他手上的那一份）：那一步的 place 写 {{"area": "主人", "at": "跟前", "detail": ""}}（at 一律写「跟前」，递到手上、搁在手边也写跟前；新做好直接端上去的，做好那步就这么写；已有的写一步「挪地方」）。程序见到放在主人跟前的，一个小时后当主人吃完了，所以只端了一部分上去、剩下的还在原处的，端上去的那份别写在原来那件上；摆在桌上大家一起吃的、留给主人温着还没端过去的，area 照常写屋子。
    - 做饭用料先用家里有的，先用快不行了的；新鲜的料（豆腐、菜、鱼肉、蛋、水果）家里没有，就在做饭之前排一段去买回来。米面油盐、调料干货、腌菜这些按量记的（清单里写着「还剩多少克 / 毫升」），用到的也要写：写进那盘菜的 from，再各写一步「用掉一部分」，used 必须填阿拉伯数字+单位（如 `"250克"`、`"3克"`、`"15毫升"`，严禁写 `"少许"`、`"约五分之一"`、`"小半"` 等模糊词）；标着「快用完了」的，排一段去买（买回来的 amount 与 left 也必须填数字+单位，如 `"5斤"`、`"500毫升"`）。海边船屋的食材和常备调料已在清单里列明，严禁填「原来就有」；家里没有的调料食材须先排一段去集市或杂货铺买回来入库（非海边住处若头一回用到常备调料才可记「原来就有」）。两人一起做的饭、一起吃的饭，things 写在其中一个人那段里。
-   - 清单里写了口感和保鲜的：凡落在「按时间算已经坏了、还没说扔的」里的（馊掉/长毛/发臭），以及已经反复回锅两三回、标着「熬咸了/又咸又浓/没什么味了/菜都黄烂了」的剩菜，**不要再回锅热去给人吃，更绝不可端到主人跟前，发现坏了或难吃到没法吃就该写「坏了扔了」扔掉，给主人吃就现做一碗新的**；还没坏、只是凉了的剩菜才热一热（写一步「热了一下」），发硬的饭炒成炒饭，蔫了的菜泡会儿冷水，熟过头的香蕉做成饼，串了味的拿去做红烧、麻辣这种重口的菜；标着有毒的（土豆发芽发绿）扔掉。放东西也照常理：剩菜盖好收着，挪到矮桌/跟前就别再挂着「灶上温着」；气味冲的（葱蒜、卤味、鱼）跟豆腐、米饭、点心分开放或者都盖好；生肉包好，跟熟食分开放；炸的晾凉了再盖。
+   - 清单里写了口感和保鲜的：凡落在「按时间算已经坏了、还没说扔的」里的（馊掉/长毛/发臭），以及已经反复回锅两三回、标着「熬咸了/又咸又浓/没什么味了/菜都黄烂了」的剩菜，**不要再回锅热去给人吃，更绝不可端到主人跟前，发现坏了或难吃到没法吃就该写「坏了扔了」扔掉，给主人吃就现做一碗新的（清理坏菜不必单开水段，早起、做饭或饭后收尾 `routine` 里顺手一并写 `what: "坏了扔了"` 倒掉洗锅即可）**；还没坏、只是凉了的剩菜才热一热（写一步「热了一下」），发硬的饭炒成炒饭，蔫了的菜泡会儿冷水，熟过头的香蕉做成饼，串了味的拿去做红烧、麻辣这种重口的菜；标着有毒的（土豆发芽发绿）扔掉。放东西也照常理：剩菜盖好收着，挪到矮桌/跟前就别再挂着「灶上温着」；气味冲的（葱蒜、卤味、鱼）跟豆腐、米饭、点心分开放或者都盖好；生肉包好，跟熟食分开放；炸的晾凉了再盖。
    - 段内是否开火（stove，三选一）：每段填 `"stove": ""`（没点火：备菜、洗碗、吃饭、聊天、外出、睡觉填 `""`；仅站在灶边商量菜单也没点火）、`"charcoal"`（船屋灶台小炭炉真点着开火做饭、烧水、热菜、煎蛋）或 `"wood"`（船屋柴炉真点着烧柴取暖、烘烤衣物/鱼干或烟熏；穗织住处统一填 `""`）。小炭炉烧闷炭/木炭由程序按顿自动从家里闷炭库存扣减，不用在 items 里手写扣炭；若闷炭已用光为 0，在弄回新炭之前小炭炉点不着火（`stove` 不能填 `"charcoal"`）。**闷炭金贵稀缺，取得全看运气与时机、绝不会烧柴炉就自动产炭**：光烧普通细枯枝（`kindling`）只会化成白灰；煮盐棚并非天天生火开锅，就算开锅那点锅底余炭也多半自留或早被镇上别人家挑水换光，跑一趟可能吃闭门羹/扑空，真碰巧赶上缺人手挑海水添柴累半天也至多换回一小捧到半小罐（约 `300~500 克`）；澡堂隔几天才烧一回且多杂枝，去搭把手未必有余炭、偶有剩也只换一小把（约 `150~250 克`）；柴料场买炭也可能遇上紧俏卖空；**自家柴炉只有专门烧粗硬木劈柴（清单标着「硬木粗柴·可夹闷炭」、`weather.fuel_size="split"`）、在火旺未化灰时动手拿火钳把红炭夹进陶罐闷灭才能产出零星闷炭（约 `100~200 克`，须同段 `stove="wood"`、steps 写明夹炭闷灭、items 写 `what="做好了"`、`new` 闷炭并在 `from` 填所烧硬柴编号；拿细枯枝或未标硬木柴填进 `from` 一律打回）**。因炭来之不易，留给灶台做饭烧水用，非万不得已不拿小炭炉干烧取暖。点柴炉（`stove="wood"`）时记得消耗干柴（items 记用了哪捆柴），冷柴炉烘不干鱼也熏不熟东西。给还在睡或不在家的主人留饭时，必须盖好保温（熬粥、饭团盖在锅里温着，汤面只留汤头等主人醒了现下面条，绝不把煮好的汤面敞口摆在矮桌上泡几个钟头）。
    - kind 从这几类里挑：{kinds}；keep（怎么放）从这几样里挑：{keeps}；spot（放在哪，管冷热）从这几样里挑：{spots}。
 19. **被打断的事后来怎么样了**：上面「被打断、还没交代后来怎么样的事」里每一件，在 stopped_results 里用编号写一句后来怎么样了：撂下不做了、交给谁接着做完了、等手上的事忙完回头接着做完了、或者赶紧几下做完了，挑合情理的写。只写这个人自己怎么处理这件事，不替别人定事实：别人那件做没做完、做出了什么，以世界线上别人那段写的为准（标着「做到……先放下了」的就是没做完），拿不准就写撂下了或者等回头再说。要和你这次排的段对得上：写了回头接着做，就把接着做的那段排上；写了交给对方，对方那段就是接着做这件事。没列出来的不写。
 20. **家里的东西**（吃的以外）：上面「家里的东西」是此刻家里有的（编号、样子、在哪、在谁手上）。段里做了、用了、挪了、交给别人了、接着做了一截的东西，写进这段的 items（没动到就是空数组）：
    只是拿来读、翻看、摊开看一眼，之后原样放回去，地方、样子、数量都没变的，不算动到它，不写 items；别为了让校验通过硬编一条物品变化。船屋里隔音有限，主人睡觉时严禁在船舱里或头顶甲板上敲铁、凿木头、叮当拆修铁器。
-   - 已有的写 id、what（挪地方 / 交给 / 用了 / 清点 / 做了一截 / 做好了 / 变了样 / 送人了 / 丢了 / 坏了扔了 / 用完了）、place、holder（交到谁手上）、owner（仅在交给别人或改变归属时填新拥有者，如 "master" / "napcat" / "napcat2" / "共用"）、state（这段做完它什么样，比如「织到两尺长」）；消耗品可顺带写 amount（清点数量）/ used（本次用量）/ left（剩余数量）。接着做没做完的那件（比如接着织那条围巾），就是清单里那一件，写「做了一截」或「做好了」，不要另建一件。清单里标着「已做好」的已经做完了，不要再排接着做它，也别给它写「做了一截」「做好了」；想再做一样的，就另起一件新的。
+   - 已有的写 id、what（挪地方 / 交给 / 用了 / 清点 / 做了一截 / 做好了 / 变了样 / 送人了 / 丢了 / 坏了扔了 / 用完了）、place、holder（交到谁手上）、owner（仅在交给别人或改变归属时填新拥有者，如 "master" / "napcat" / "napcat2" / "共用"）、state（这段做完它什么样，比如「织到两尺长」）；消耗品可顺带写 amount（清点数量）/ used（本次用量）/ left（剩余数量）。接着做没做完的那件（比如接着织那条围巾），就是清单里那一件，写「做了一截」或「做好了」，不要另建一件。清单里标着「已做好」的已经做完了，不要再排接着做它，也别给它写「做了一截」「做好了」；想再做一样的，就另起一件新的。**寄出寄卖或彻底交给外人带走的物件，what 请直接填「送人了」结单**（勿只填「交给」让它一直挂在家里）；**卖空后的脏空筐、看完的广告传单、用烂的旧报纸、彻底修不好的坏件等无用杂物**，日常收拾或大扫除时直接写「丢了」或「坏了扔了」清掉，不必样样供在桌上。
+   - **新物件写了 `from` 必须同步消耗旧料**：凡用已有旧物拼装/改造成新成品（`new` 填了 `from` 如 `from: ["p118", "p119"]`），同段（或前序段）`items` 里必须对 `from` 中每个编号写一条消耗动作——整件合入成品或用光的填 `what: "用完了"`，只取走一部分材料的填 `what: "用了"`，严禁只建新成品却把原铁罐/碎料留在桌上重复占位。
    - 新做出来的、买回来的、捡到的写 new（临时代号 x1、x2……，这一次里每件一个，两个人、几段之间也不重复：丛雨那段用了 x1，亚托莉那段的新东西就从 x2 起）、name（叫得出区别的名字，例如「兔子窗花」）、kind（它是什么，一个词：窗花、围巾、鱼漂……；捡/劈来烧柴炉的木柴 kind 必须填 `"燃柴"` / `"薪柴"` / `"引火料"`，修船/手工木料填 `"漂流木料"` / `"木料"`，仅闷炭/木炭填 `"燃料"`，严禁把木柴写成模糊的 `"燃料"`；打捞或捡来准备过秤卖钱的废金属 kind 填 `"废铜"` / `"废铁"` / `"废金属"` 并可附 `"purpose": "scrap"`，铜顶针/怀表等旧物纪念品勿写废金属；现金收支一律记在 `money` 里，严禁把钱当成新 `items`（`kind="钱"`）新建）、look（样子）、owner（最终归谁所有/谁穿谁用：填 "master" / "napcat" / "napcat2" / "共用"；替主人或别人买回来、做给谁穿用的衣物或物品，owner 一律填实际拥有者或受赠人如 "master"，严禁只因是谁跑腿买回或暂时拿着就误填成跑腿人）、origin（哪来的，如「杂货铺」「废铁站」「海滩漂流物」）、from（用哪几件原料做的，没有留空）、what（开始做 / 做好了 / 买回来 / 收到 / 捡到）、amount（凡燃柴/闷炭等燃料必填数字+单位如 `"1捆"`、`"400克"`，严禁写 `"两捆"`、`"一抱"`、`"约五分之一捆"` 等中文数字或模糊词）、place、state。严禁凭空编造旧东西或写「原来就有」。
    - 已有燃柴/闷炭消耗或清点时，填的 `used` / `left` / `amount` 同样必须为阿拉伯数字+单位（如 `"0.25捆"`、`"1.1捆"`、`"200克"`；`"用完了"` 时 `left` 填 `""`），严禁写 `"小半捆"`、`"约五分之一捆"`、`"1捆半"` 等中文分数或模糊说法。
    - 上面写了字、画了东西的（给主人留的纸条、信、便笺、清单、贺卡、画）：look 里把上面写的原话一字不差地写出来，用「」括起来；画的写清楚画了什么。例如 look 写「黄纸条，铅笔写的：『主人，粥在灶上温着，亚托莉去码头了，中午前回来』」，别只写「一张写给主人的纸条」。这段的 steps 里写到她写纸条时也用这句原话。后来谁拿起来看、念给主人听，都照这句说，不能另编。
@@ -2951,18 +2953,40 @@ class LifeStep:
                 bot_shelves[b_key] = shelf
         existing_meals_by_bot = self._today_meals_by_bot(list(tasks.keys()), flat)
         batch_food_ended_at: dict[str, datetime.datetime] = {}
+        batch_consumed_at: dict[str, datetime.datetime] = {}
+        batch_new_ready_meal_at: list[datetime.datetime] = []
+        batch_meal_food_windows: list[tuple[str, datetime.datetime, datetime.datetime]] = []
         for _b_key, (b_kept, _, _) in kept_by_bot.items():
             for _idx, _raw, _ss, _se, _sc in b_kept:
                 if _sc != "do":
                     continue
-                for _eff in (_raw.get("things") or []):
-                    if not isinstance(_eff, dict) or _eff.get("new"):
+                _th_list = _raw.get("things") or []
+                _it_list = _raw.get("items") or []
+                if _raw.get("meal") is True and _th_list:
+                    batch_meal_food_windows.append((_b_key, _ss, _se))
+                for _eff in _th_list:
+                    if not isinstance(_eff, dict):
+                        continue
+                    _w = norm_step(_eff.get("what"), CAT_FOOD)
+                    if _eff.get("new"):
+                        if str(_eff.get("kind") or "").strip() in HOT_MEAL_KINDS:
+                            batch_new_ready_meal_at.append(_se)
                         continue
                     _tid = str(_eff.get("id") or "").strip()
-                    _w = norm_step(_eff.get("what"), CAT_FOOD)
                     if _tid and _w in END_STEPS:
                         if _tid not in batch_food_ended_at or _se < batch_food_ended_at[_tid]:
                             batch_food_ended_at[_tid] = _se
+                    if _tid and _w in ("用掉一部分", "用完了", "吃了一部分", "吃完了", "丢了", "坏了扔了"):
+                        if _tid not in batch_consumed_at or _ss < batch_consumed_at[_tid]:
+                            batch_consumed_at[_tid] = _ss
+                for _eff in _it_list:
+                    if not isinstance(_eff, dict) or _eff.get("new"):
+                        continue
+                    _tid = str(_eff.get("id") or "").strip()
+                    _w = norm_step(_eff.get("what"), CAT_ITEM)
+                    if _tid and _w in ("用了", "用完了", "丢了", "坏了扔了", "送人了"):
+                        if _tid not in batch_consumed_at or _ss < batch_consumed_at[_tid]:
+                            batch_consumed_at[_tid] = _ss
 
         # 逐人逐段做纯结构化校验
         for bot, (bot_kept, final_cursor, until) in kept_by_bot.items():
@@ -3211,7 +3235,10 @@ class LifeStep:
                         and raw.get("kerosene") is not True
                         and not (raw.get("things") or [])
                         and not (raw.get("money") or [])
-                        and not any(isinstance(e, dict) and e.get("new") for e in (raw.get("items") or []))
+                        and not any(
+                            isinstance(e, dict) and (e.get("new") or norm_step(e.get("what"), CAT_ITEM) in ITEM_END_STEPS)
+                            for e in (raw.get("items") or [])
+                        )
                     ):
                         bot_self_filler_cnt += 1
 
@@ -3416,6 +3443,70 @@ class LifeStep:
                                     qv = str(eff.get(qk) or "").strip()
                                     if qv and not is_strict_qty(qv):
                                         errors.append(f"{tag} items[{i_i}]（{tid}）：燃料 {qk}={qv!r} 必须为纯数字+单位（如 \"0.75捆\"、\"200克\"），严禁模糊中文或分数")
+
+                # 校验 1：新做食物/新做物品填了 from 时，对应原料必须在本轮同段或前序段写明消耗动作（防止原料不销造成裂变/发臭）
+                for t_i, eff in enumerate(raw.get("things") or [], 1):
+                    if not isinstance(eff, dict) or not eff.get("new"):
+                        continue
+                    what = norm_step(eff.get("what"))
+                    if what != "做好了":
+                        continue
+                    from_list = [str(x).strip() for x in (eff.get("from") or []) if str(x).strip()]
+                    for tok in from_list:
+                        c_at = batch_consumed_at.get(tok)
+                        if c_at is None or c_at > seg_end:
+                            nm = clean_text(eff.get("name"), 30)
+                            errors.append(
+                                f"{tag} things[{t_i}]（{nm}）：from 里写了原料 {tok!r}，但本段或前序段未对 {tok!r} 写消耗动作；"
+                                f"请在 things/items 中为 {tok!r} 补写 what=\"用掉一部分\" 或 \"用完了\"，避免已下锅原料继续滞留清单发臭"
+                            )
+                for i_i, eff in enumerate(raw.get("items") or [], 1):
+                    if not isinstance(eff, dict) or not eff.get("new"):
+                        continue
+                    what = norm_step(eff.get("what"), CAT_ITEM)
+                    if what not in ("开始做", "做好了"):
+                        continue
+                    from_list = [str(x).strip() for x in (eff.get("from") or []) if str(x).strip()]
+                    for tok in from_list:
+                        c_at = batch_consumed_at.get(tok)
+                        if c_at is None or c_at > seg_end:
+                            nm = clean_text(eff.get("name"), 30)
+                            errors.append(
+                                f"{tag} items[{i_i}]（{nm}）：from 里写了旧料 {tok!r}，但本段或前序段未对 {tok!r} 写消耗动作；"
+                                f"请在 items 中为 {tok!r} 补写 what=\"用完了\"（整件合入成品）或 \"用了\"（仅取一部分），避免同一件旧物重复占位"
+                            )
+
+                # 校验 2：在家吃饭（meal=true）且家里有现成未坏熟食时，本人或同行同伴须记录吃了哪几件（防止剩菜锅永生发馊）
+                if raw.get("meal") is True and raw.get("at_home") is True and not (raw.get("things") or []):
+                    with_bots = {str(x).strip() for x in (raw.get("with") or []) if str(x).strip() in self.bots and str(x).strip() != bot}
+                    partner_logged = any(
+                        (_mb in with_bots) and (_ms < seg_end) and (_me > seg_start)
+                        for _mb, _ms, _me in batch_meal_food_windows
+                    )
+                    if not partner_logged:
+                        cur_shelf = bot_shelves.get(bot, shelf)
+                        has_ready_food = any(t <= seg_end for t in batch_new_ready_meal_at)
+                        if not has_ready_food and cur_shelf is not None and store is not None:
+                            for _fit in store._local_items(cur_shelf.values(), seg_start):
+                                if cat_of(_fit) != CAT_FOOD or is_ended(_fit) is not None:
+                                    continue
+                                if str(_fit.get("kind") or "") not in HOT_MEAL_KINDS:
+                                    continue
+                                _last_st = (_fit.get("stages") or [{}])[-1]
+                                if str(_last_st.get("place") or "").startswith("主人·跟前"):
+                                    continue
+                                try:
+                                    if store.profile(_fit, seg_start, cur_shelf)["fresh"]["level"] == "坏了":
+                                        continue
+                                except Exception:
+                                    pass
+                                has_ready_food = True
+                                break
+                        if has_ready_food:
+                            errors.append(
+                                f"{tag}：在家里吃饭（meal=true）且家里有现成熟食，却把 things 留空；"
+                                f"请在吃饭人（两人同吃任选其一）的 things 中写出吃了哪几件（what=\"吃了一部分\" 或 \"吃完了\"），避免吃过的锅一直挂在清单上发馊"
+                            )
 
             # 强制采纳插曲池校验：本轮给了可用插曲/双人候选时，严禁全靠纯自拟 from="self" 水段跳过池子
             if isinstance(cand_map, dict) and bot_self_filler_cnt >= 1:

@@ -3079,7 +3079,7 @@ class ThingStore:
                   limit: int = ITEM_LIST_MAX) -> str:
         flat = now.replace(tzinfo=None)
         current, gone = [], []
-        for item in view.values():
+        for item in self._local_items(view.values(), flat):
             if cat_of(item) != CAT_ITEM:
                 continue
             end = is_ended(item)
@@ -3122,9 +3122,9 @@ class ThingStore:
         return text
 
     def food_list(self, now: datetime.datetime, view: View, label_fn=None, gone_hours: int = 24, gone_max: int = 8,
-                  bad_max: int = 10) -> str:
+                  bad_max: int = 20) -> str:
         flat = now.replace(tzinfo=None)
-        foods = sorted((x for x in view.values() if cat_of(x) == CAT_FOOD),
+        foods = sorted((x for x in self._local_items(view.values(), flat) if cat_of(x) == CAT_FOOD),
                        key=lambda x: str(x.get("created") or ""))
         rows, bad, gone = [], [], []
         for item in foods:
@@ -3141,7 +3141,7 @@ class ThingStore:
         gone.sort(key=lambda x: x[0])
         text = "\n".join("- " + x for x in rows) if rows else "（家里现在没有记着的吃的）"
         if bad:
-            text += "\n按时间算已经坏了、还没说扔的：\n" + "\n".join("- " + x for x in bad[-bad_max:])
+            text += "\n按时间算已经坏了、还没说扔的（共 %d 件；不可端给人吃，可在早起/做饭/饭后收尾顺手写 what=\"坏了扔了\" 倒掉）：\n" % len(bad) + "\n".join("- " + x for x in bad[-bad_max:])
             if len(bad) > bad_max:
                 text += "\n（更早的还有 %d 件，填编号能看）" % (len(bad) - bad_max)
         if gone:
@@ -3169,7 +3169,7 @@ class ThingStore:
 
         active: list[tuple[dict, dict | None]] = []
         spoiled: list[tuple[dict, dict]] = []
-        for it in view.values():
+        for it in self._local_items(view.values(), flat):
             if is_ended(it) is not None:
                 continue
             if cat_of(it) == CAT_FOOD:
