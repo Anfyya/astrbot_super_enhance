@@ -177,7 +177,7 @@ STEP_SYSTEM_TEMPLATE = """{base_system}
 {money_guide}
 {world_notes}
 {step_notes}
-要问主人的（ask_master，必填拿主意入口）：who 写谁来问（`"napcat"` 或 `"napcat2"`），question 写发给主人的那句自然口语问话（**凡涉及带船长出船/打捞接单/卖货/出门玩而主人未定具体时刻的，直接抛一个当天具体时间供主人拍板，例如「主人，那 1 个小时之后出发可以嘛？」或「那两点出船成不成？」，严禁自作主张定出发点或习惯性推到模糊的「明天」**），kind 写 `"decision"`，**`topic` 必填六选一枚举**：`"meal"`（晚饭吃什么/回不回来吃）、`"winter_gear"`（冬衣/棉被行情与先买哪样）、`"salvage_order"`（外人打捞委托/大宗超 {sell_limit} 元变卖或寄卖遗物）、`"sealed_loot"`（拆看封口旧物/上锁铁盒）、`"dive_outing"`（出动小潜艇/约船长出船深潜）、`"other"`（其他待拍板事项）。**铁律：凡填了 `ask_master` 请主人拍板的事，本轮 `segments` 里只排「打听行情 / 备好手头杂活 / 等主人准话」，绝不许在本轮 `segments` 里提前把那件待拍板的事直接做完！** 程序会按 `topic` 挂起该事项（超 24 小时未回会自动解除阻塞，但未获准许前仍不可擅自替主人做主）。只有主人正在睡觉、或者**该 `topic` 下**已经挂着待主人拍板的 `d` 事项尚未回复时，该 `topic` 的 `ask_master` 才留空（不同 `topic` 互不阻塞）。
+要问主人的（ask_master，必填拿主意入口）：who 写谁来问（`"napcat"` 或 `"napcat2"`），question 写发给主人的那句自然口语问话（**凡涉及带船长出船/打捞接单/卖货/出门玩而主人未定具体时刻的，直接抛一个当天具体时间供主人拍板，例如「主人，那 1 个小时之后出发可以嘛？」或「那两点出船成不成？」，严禁自作主张定出发点或习惯性推到模糊的「明天」**），kind 写 `"decision"`，**`topic` 必填六选一枚举**：`"meal"`（晚饭吃什么/回不回来吃）、`"winter_gear"`（冬衣/棉被行情与先买哪样）、`"salvage_order"`（外人打捞委托/大宗超 {sell_limit} 元变卖或寄卖遗物）、`"sealed_loot"`（拆看封口旧物/上锁铁盒）、`"dive_outing"`（出动小潜艇/约船长出船深潜）、`"other"`（其他待拍板事项），**`at` 必填触发时刻 `"YYYY-MM-DD HH:MM"`**（写清这件事在世界线上是**几点**开口问主人：此刻刚碰上/马上等拍板的事填现在时刻；如果是「去集市问完/办完/回到船屋后再跟主人商量」，`at` **必须填办完或回到船屋的那一刻，严禁提前填成现在剧透未来结果**——程序会真正等到 `at` 到点才发 QQ，中途改排自动取消）。**铁律：凡填了 `ask_master` 请主人拍板的事，本轮 `segments` 里只排「打听行情 / 备好手头杂活 / 等主人准话」，绝不许在本轮 `segments` 里提前把那件待拍板的事直接做完！** 程序会按 `topic` 挂起该事项（超 24 小时未回会自动解除阻塞，但未获准许前仍不可擅自替主人做主）。只有主人正在睡觉、或者**该 `topic` 下**已经挂着待主人拍板的 `d` 事项尚未回复时，该 `topic` 的 `ask_master` 才留空（不同 `topic` 互不阻塞）。
 
 注意：**不要输出 intentions，也不要写任何「接下来打算」**。上面「各自的打算」里如果有，是之前说好要做的，照着走就行；标着「挂了几天了」的，只在 intent_moves 里写它后来怎样（第 12 条）。
 
@@ -220,7 +220,7 @@ STEP_SYSTEM_TEMPLATE = """{base_system}
 
 {{
   "end_current": {{"napcat": "2026-10-12 08:25"}},
-  "ask_master": {{"who": "", "question": "", "kind": "", "topic": ""}},
+  "ask_master": {{"who": "", "question": "", "kind": "", "topic": "", "at": ""}},
   "stopped_results": {{}},
   "intent_moves": {{}},
   "segments": {{
@@ -2290,24 +2290,44 @@ class LifeStep:
         return (data if not errors else None), cur_text, cur_thought, errors
 
     async def _flush_idea_decisions(self, moment: datetime.datetime) -> None:
-        """主人醒着且白天时，按 topic 互不阻塞地把夜间暂存的 idea 状态待拍板 d 事项发出去请示。"""
+        """检查暂存的 idea 请示：先作废绑定世界线段已撤排/打断的过期单；到点（moment >= ask_after）且主人醒着时发出。"""
         companion = getattr(self, "companionship", None)
         planner = getattr(self, "planner", None)
-        if companion is None or planner is None or not planner.enabled:
+        if companion is None:
+            return
+        pend = companion.safe("pending_decisions", moment, default=[]) or []
+        alive_ideas = []
+        for dec in pend:
+            if dec.get("status") != "idea":
+                continue
+            dec_id = str(dec.get("id") or "")
+            bot = str(dec.get("bot") or "")
+            b_date = str(dec.get("bound_date") or "").strip()
+            b_eid = str(dec.get("bound_entry_id") or "").strip()
+            if b_date and b_eid:
+                hit = next((x for x in self.world.entries(b_date, bot) if str(x.get("id") or "") == b_eid), None)
+                if hit is None or real_stop(hit):
+                    companion.safe("cancel_decision", dec_id, "绑定世界线段已撤排或打断")
+                    logger.info("[super_enhance/world] 定时请示 %s 绑定的 %s/%s 已撤排或打断，自动作废", dec_id, b_date, b_eid)
+                    continue
+            alive_ideas.append(dec)
+        if planner is None or not planner.enabled:
             return
         if not (8 <= moment.hour <= 22) or companion.safe("resting", moment, default=False):
             return
         if int(companion.safe("today_ask_count", moment, default=0) or 0) >= GLOBAL_DAILY_ASK_LIMIT:
             return
-        pend = companion.safe("pending_decisions", moment, default=[]) or []
         pending_topics = {
             normalize_decision_topic(d.get("topic"))
             for d in pend
             if d.get("status") == "pending"
         }
-        for dec in pend:
-            if dec.get("status") != "idea":
-                continue
+        for dec in alive_ideas:
+            ask_after_s = str(dec.get("ask_after") or "").strip()
+            if ask_after_s:
+                ask_after_dt = parse_time(ask_after_s)
+                if ask_after_dt is not None and moment < ask_after_dt:
+                    continue
             topic = normalize_decision_topic(dec.get("topic"))
             if topic in pending_topics:
                 continue
@@ -2318,7 +2338,7 @@ class LifeStep:
             dec_id = str(dec.get("id") or "")
             if bot and q and dec_id and await planner.ask_now(bot, q, invitation_id=dec_id):
                 companion.safe("mark_decision_asked", dec_id, moment)
-                logger.info("[super_enhance/world] 主人已醒，发出此前暂存的待拍板请示 %s [%s]：%s", dec_id, topic, q[:40])
+                logger.info("[super_enhance/world] 到点发出暂存的待拍板请示 %s [%s]：%s", dec_id, topic, q[:40])
                 break
 
     async def run(self, now: datetime.datetime | None = None, force: bool = False) -> bool:
@@ -2360,8 +2380,10 @@ class LifeStep:
                 self.world.set_last_step_attempt(fmt_time(moment))
                 return False
             self._save_thought(moment, thought, True)
+            self._deferred_decision = None
             data, text = await self._ask_master(data, prompt, text, tasks, moment, system_prompt=system_prompt)
             written, missed = self.apply(data, tasks, moment)
+            self._bind_deferred_decision(written)
             total_written = sum(len(x) for x in written.values())
             if missed and total_written == 0:
                 self.world.note_error("step", "%s 没写到此刻之后" % "、".join(missed))
@@ -2390,10 +2412,44 @@ class LifeStep:
             self._last_window_seed = None
             self._last_live_ctx = None
             self._last_cand_map = None
+            self._deferred_decision = None
+
+    def _bind_deferred_decision(self, written: dict) -> None:
+        """将延迟到未来时刻才发的 ask_master 绑定到本次刚落盘的对应世界线段上。"""
+        info = getattr(self, "_deferred_decision", None)
+        self._deferred_decision = None
+        if not info:
+            return
+        dec_id, who, ask_at = info
+        companion = getattr(self, "companionship", None)
+        if companion is None or not dec_id:
+            return
+        rows = list((written or {}).get(who) or [])
+        if not rows:
+            return
+        chosen = None
+        for r in rows:
+            st = parse_time(r.get("start"))
+            en = parse_time(r.get("end"))
+            if st is not None and en is not None and st <= ask_at <= en:
+                chosen = r
+                break
+        if chosen is None:
+            chosen = min(
+                rows,
+                key=lambda r: abs(((parse_time(r.get("start")) or ask_at) - ask_at).total_seconds()),
+            )
+        eid = str(chosen.get("id") or "").strip()
+        b_date = str(chosen.get("start") or "")[:10]
+        if eid and len(b_date) == 10:
+            companion.safe("bind_decision_entry", dec_id, b_date, eid)
+            logger.info("[super_enhance/world] 定时请示 %s 已绑定世界线段 %s/%s（将在 %s 到点发出）",
+                        dec_id, b_date, eid, fmt_time(ask_at)[11:16])
 
     async def _ask_master(self, data: dict, prompt: str, text: str, tasks: dict, moment: datetime.datetime | None = None, *, system_prompt: str = SYSTEM_PROMPT):
-        """补写填了 ask_master：登记当家待拍板事项（d 编号）并发出；若主人 90 秒内秒回则当场按主人准话重排，
-        若主人暂未回话则持久挂起该 d 事项（绝不“超时就替主人自作主张干掉”！等主人几小时后在聊天回话时再由记录员解锁推进）。"""
+        """补写填了 ask_master：登记当家待拍板事项（d 编号）。
+        若 ask_master.at 在当下（<= now + 10 分钟），立刻发 QQ 并等 90 秒秒回重写；
+        若 at 在未来（> now + 10 分钟），暂存为定时 idea 并绑定对应世界线段，真正到点才发（中途撤排自动取消），绝不提前剧透。"""
         ask = data.get("ask_master")
         question = clean_text(ask.get("question"), 160) if isinstance(ask, dict) else ""
         if not question:
@@ -2405,14 +2461,27 @@ class LifeStep:
         planner = getattr(self, "planner", None)
         companion = getattr(self, "companionship", None)
         now = self._now().replace(tzinfo=None)
+        date_text = (moment or now).replace(tzinfo=None).date().isoformat()
+        ask_at_raw = str(ask.get("at") or "").strip() if isinstance(ask, dict) else ""
+        ask_at = parse_time(norm_time(ask_at_raw, date_text)) if ask_at_raw else None
         starts = [x.get("start") for x in tasks.values() if isinstance(x.get("start"), datetime.datetime)]
-        when = max(now, min(starts)) if starts else now
+        when = ask_at or (max(now, min(starts)) if starts else now)
+        is_future_ask = ask_at is not None and ask_at > now + datetime.timedelta(minutes=10)
         is_resting = bool(companion is not None and companion.safe("resting", now, default=False))
 
-        # decision（请当家主人拍板）：按 topic 分栏登记，主人睡着时先存为 idea 等醒后再问；醒着时立即发消息并挂起 d 事项
+        # decision（请当家主人拍板）：按 topic 分栏登记；未来时刻或主人睡着时先存为 idea，当下且醒着时立即发消息
         topic = normalize_decision_topic(ask.get("topic") if isinstance(ask, dict) else "")
-        dec = companion.safe("open_decision", who, question, when, sent=False, topic=topic) if companion is not None else None
+        dec = companion.safe(
+            "open_decision", who, question, when, sent=False, topic=topic,
+            ask_after=fmt_time(ask_at) if is_future_ask else "",
+        ) if companion is not None else None
         dec_id = str((dec or {}).get("id") or "")
+        if is_future_ask:
+            if dec_id:
+                self._deferred_decision = (dec_id, who, ask_at)
+            logger.info("[super_enhance/world] 请示 %s 排在未来 %s（%s），先暂存为定时 idea 到点再发，绝不提前剧透",
+                        dec_id, fmt_time(ask_at)[11:16], question[:50])
+            return data, text
         if is_resting:
             logger.info("[super_enhance/world] 主人正在休息，待拍板事项 %s（%s）先挂起等醒后再问", dec_id, question[:50])
             return data, text
@@ -2700,15 +2769,27 @@ class LifeStep:
 
         errors: list[str] = []
         ask_obj = data.get("ask_master")
+        ask_at_dt: datetime.datetime | None = None
         if isinstance(ask_obj, dict) and clean_text(ask_obj.get("question"), 160):
             raw_topic = str(ask_obj.get("topic") or "").strip().lower()
+            raw_at = str(ask_obj.get("at") or "").strip()
+            ask_at_dt = parse_time(norm_time(raw_at, date_text)) if raw_at else None
+            if ask_at_dt is None:
+                errors.append(
+                    "ask_master 必填触发时刻 at（格式 \"YYYY-MM-DD HH:MM\"，写清世界线上几点开口问主人；办完/回来才问的事须填对应时刻，勿留空）"
+                )
+            elif ask_at_dt < flat - datetime.timedelta(minutes=10):
+                errors.append(
+                    f"ask_master.at={fmt_time(ask_at_dt)} 不能早于当前时刻（{fmt_time(flat)}）超过 10 分钟"
+                )
             if raw_topic not in DECISION_TOPICS:
                 errors.append(
                     f"ask_master.topic={ask_obj.get('topic')!r} 非法（必须填 {' / '.join(DECISION_TOPICS)} 六选一）"
                 )
-            elif raw_topic == "meal" and flat.hour not in (10, 11, 16, 17, 18):
+            elif raw_topic == "meal" and (ask_at_dt or flat).hour not in (10, 11, 16, 17, 18):
+                chk_t = ask_at_dt or flat
                 errors.append(
-                    f"ask_master.topic='meal' 仅在临近午饭（10:00–12:00）或晚饭（16:00–19:00）时请示，当前时刻（{fmt_time(flat)[11:16]}）不在饭前请示时段，请把 ask_master 留空"
+                    f"ask_master.topic='meal' 仅在临近午饭（10:00–12:00）或晚饭（16:00–19:00）时请示，提问时刻（{fmt_time(chk_t)[11:16]}）不在饭前请示时段，请把 ask_master 留空或把 at 调到对应饭前时刻"
                 )
             elif comp_ref is not None:
                 topic_pend = comp_ref.safe("pending_decisions", flat, topic=raw_topic, default=[]) or []
@@ -2849,6 +2930,13 @@ class LifeStep:
                                         first_wood_at = seg_end
                 cursor = seg_end
             kept_by_bot[bot] = (bot_kept, cursor, until)
+
+        if ask_at_dt is not None and kept_by_bot:
+            max_batch_end = max((fc for _, fc, _ in kept_by_bot.values()), default=flat)
+            if ask_at_dt > max_batch_end + datetime.timedelta(minutes=5):
+                errors.append(
+                    f"ask_master.at={fmt_time(ask_at_dt)} 晚于本批最后一段结束时刻（{fmt_time(max_batch_end)}），请填在本批排程时间范围内"
+                )
 
         # 每位 bot 在自己接续起点的库存视角 + 本批内按时间追踪已消耗完的食物 ID（防同批后段误扣已用完生料）
         bot_shelves: dict[str, object] = {}

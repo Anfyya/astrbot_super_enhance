@@ -409,6 +409,9 @@ class Companionship:
         *,
         sent: bool = False,
         topic: str = "other",
+        ask_after: str = "",
+        bound_date: str = "",
+        bound_entry_id: str = "",
     ) -> dict | None:
         """登记一条挂起等主人拍板的家里事（d 编号，按 topic 分栏去重）；超过 24h 转 lapsed 解除阻塞。"""
         body = clean_text(question, 320)
@@ -441,6 +444,9 @@ class Companionship:
             "created": fmt_time(now),
             "created_ts": self._ts(now),
             "asked_at": fmt_time(now) if sent else "",
+            "ask_after": str(ask_after or "").strip(),
+            "bound_date": str(bound_date or "").strip(),
+            "bound_entry_id": str(bound_entry_id or "").strip(),
             "choice": "",
             "intent": "",
         }
@@ -448,6 +454,29 @@ class Companionship:
         data["decisions"] = decs[-48:]
         self._save()
         return row
+
+    def bind_decision_entry(self, dec_id: str, bound_date: str, bound_entry_id: str) -> None:
+        """将定时暂存的 idea 请示绑定到对应世界线段，便于原段被撤排/打断时自动作废。"""
+        if not dec_id or not bound_entry_id:
+            return
+        for row in self._data().get("decisions") or []:
+            if row.get("id") == dec_id:
+                row["bound_date"] = str(bound_date or "").strip()
+                row["bound_entry_id"] = str(bound_entry_id or "").strip()
+                self._save()
+                return
+
+    def cancel_decision(self, dec_id: str, reason: str = "") -> None:
+        """作废一条尚未发出的 idea 请示（例如绑定的世界线段已被撤排或打断）。"""
+        if not dec_id:
+            return
+        for row in self._data().get("decisions") or []:
+            if row.get("id") == dec_id and row.get("status") in ("idea", "pending"):
+                row["status"] = "cancelled"
+                if reason:
+                    row["choice"] = clean_text(reason, 120)
+                self._save()
+                return
 
     def mark_decision_asked(self, dec_id: str, now: datetime.datetime) -> None:
         for row in self._data().get("decisions") or []:
