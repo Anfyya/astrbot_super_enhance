@@ -1008,6 +1008,12 @@ class Recorder:
                 self._fit_moved(record)
                 logger.info("[super_enhance/world] 记录员把%s排好的 %s 挪到 %s（%s），分步和标的吃的照留",
                             self.label(who) or who, raw.get("same_as"), start[11:16], clean_text(record.get("doing"), 30))
+            if record is not None and who == "master":
+                at_m = parse_time(record.get("start"))
+                stop_m = parse_time(record.get("end")) if record.get("end") else None
+                if at_m is not None and (stop_m is None or stop_m > flat_now - datetime.timedelta(minutes=FREE_SHIFT_MINUTES)):
+                    if record.get("at_home") is False or (kind == "activity" and record.get("at_home") is True):
+                        self._clear_future_step_for_master_shift(max(at_m, flat_now), flat_now, clean_text(record.get("doing") or record.get("place"), 30))
             if record is not None and kind == "activity" and who in bots:
                 records.append(record)
                 stop = parse_time(record.get("end")) if record.get("end") else None
@@ -1334,6 +1340,7 @@ class Recorder:
                 doing = str(item.get("doing") or "")
                 self.world.update(day, iid, doing=doing if note in doing else doing + note,
                                         **{"with": [x for x in (item.get("with") or []) if x != who]})
+                self._drop_partner_from_stopped(day, who, owner, start, end or since)
                 freed.append("%s的 %s 只去掉%s" % (self.label(owner) or owner, iid, name))
         # 对方和她一起的段还没开始：对方从那段起往后补写排的都撤掉重排
         for day, item, owner, iid, start in movable():
@@ -1343,6 +1350,44 @@ class Recorder:
         if removed or freed:
             logger.info("[super_enhance/world] %s的现在改了（%s 起）：后面补写排的撤掉重排：%s%s", name, fmt_time(since)[11:],
                         "；".join(removed) or "（没有）", "；对方：" + "；".join(freed) if freed else "")
+
+    def _clear_future_step_for_master_shift(self, since: datetime.datetime, now: datetime.datetime, reason: str = "") -> None:
+        """主人离家/回家等动向变化时，撤掉两只 bot 尚未开始的 step 预排段，避免继续按主人在场写互动或等门。"""
+        flat = now.replace(tzinfo=None)
+        bots = set(self.raw_log.enabled_bots())
+        fresh = self.batch.fresh
+        days = sorted({since.date().isoformat(), flat.date().isoformat(), (flat.date() + datetime.timedelta(days=1)).isoformat()})
+        removed = []
+        for day in days:
+            for item in list(self.world.entries(day, "")):
+                owner, iid = str(item.get("who") or ""), str(item.get("id") or "")
+                if owner not in bots or str(item.get("source") or "") != "step" or is_event(item):
+                    continue
+                if iid in self.batch.mentioned or iid in fresh:
+                    continue
+                start = parse_time(item.get("start"))
+                if start is None or start <= flat or start < since or is_sleep(item):
+                    continue
+                self.world.delete_entry(day, iid)
+                removed.append("%s:%s" % (self.label(owner) or owner, iid))
+        if removed:
+            logger.info("[super_enhance/world] 主人动向变化（%s），撤掉 %d 段未开始的补写预排：%s",
+                        reason or fmt_time(since)[11:16], len(removed), "、".join(removed[:8]))
+
+    def _drop_partner_from_stopped(self, day: str, who: str, partner: str,
+                                   start: datetime.datetime, end: datetime.datetime) -> None:
+        """当把 partner 从 ongoing 段里去掉 who 时，同步清理 who 同一时段已 stopped 的 step 段里的 partner，避免遗留单边 with。"""
+        for item in list(self.world.entries(day, who)):
+            if is_event(item) or str(item.get("source") or "") != "step" or not item.get("stopped"):
+                continue
+            wlist = list(item.get("with") or [])
+            if partner not in wlist:
+                continue
+            s2 = parse_time(item.get("start"))
+            e2 = parse_time(item.get("end"))
+            if s2 is None or e2 is None or max(start, s2) >= min(end, e2):
+                continue
+            self.world.update(day, str(item.get("id")), **{"with": [x for x in wlist if x != partner]})
 
     def _unpair(self, now: datetime.datetime) -> None:
         """两人「一起」两边要对得上：聊天里记的、还没结束的段写着和对方一起，对方那边同一时候却没有写着和她一起的段
@@ -1531,6 +1576,9 @@ class Recorder:
                 # 结果原来是按两个人写的：换成记录员写的一个人的；没写就清掉，别留着两个人的说法
                 fields["result"] = clean_text(raw.get("result"), 80)
                 self.world.update(date_text, entry_id, mode="patch", **fields)
+                for leaver in was_with:
+                    if leaver in bots and leaver != who:
+                        self._drop_partner_from_stopped(date_text, leaver, who, start, end or flat)
                 # 走了的那个人段里没做到的那几步标的吃的、东西（两人一起的饭常只标在一个人那段里）：跟到这段上，她做完就算
                 moved = []
                 for leaver, tags in orphans:

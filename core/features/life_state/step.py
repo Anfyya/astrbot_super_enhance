@@ -104,7 +104,7 @@ STEP_SYSTEM_TEMPLATE = """{base_system}
 4. 每段写 at_home 和 meal：at_home 是这段她人在不在宿舍（屋里、院子、廊下、门口、后头小屋都算 true；出了宿舍去别处、走在路上都算 false）；meal 是这段是不是正在吃饭（吃早饭午饭晚饭、夜宵算 true；做饭、摆碗筷、洗碗都不算）。
 5. 睡觉也是一段：到了她今天定的入睡时刻，就写一段睡觉，state 填「睡觉」，从入睡时刻一直写到第二天定的起床时刻；睡前那段要在入睡时刻结束。过了入睡时刻还醒着的（比如答应了陪主人熬夜），那件事做完就接着写睡觉，睡到起床时刻。睡觉这段的 place 三选一：「船屋·船舱地铺」「船屋·船舱吊床」「船屋·船舱主人的床上」，doing 跟着写（铺盖/吊床/床），别写别的睡法；吊床只睡得下一个人，主人的床睡得下两个人（主人加一个），地铺能睡两个人。
 6. 下面「还没做的约定」里有钟点的：到那个钟点她要已经在约定的地方、和约定的人在一起。要换地方的，在那之前写一段赶过去，留足路上的工夫；约定那件事从约定的钟点开始写。
-7. **不许生成主人的条目，也不许替主人编他做了什么、说了什么。** 主人在哪只看「主人最近的动向」：他最后说在哪、之后没说离开，就当他还在那儿，她们可以待在他身边、在他旁边做自己的事；他说了出门、去上课、睡了这类，就照那个写，别写他在场。**主人眼下在船屋里且没到你们明确约好钟点的出发时刻前，严禁补写擅自写 `at_home=false` 且 `with` 里带上 `"master"` 强行把主人带出门**（想约主人出门请先在家提醒发消息，或用 `ask_master` 问准点，或自己单独去办不写 `master`）。只有两种例外：① 约好了具体钟点的约定/打算（如明确写着 14:00 一起出海），到点才写成和主人一起出门；② 主人已经自己出门在外头了，之后同一趟里接着往下的段才写 `"master"`。**只要带主人一起出了门（`at_home=false` 且 `with` 含 `"master"`），回家的路途段也必须把 `"master"` 写进 `with` 一起带回来，严禁中途把主人丢在外面自己回家；带回到家就为止，到家之后（`at_home=true` 的段）她们各做各的事，不必也不该再把 `"master"` 写进 with。** 在家吃饭默认是三个人一起吃：饭点那段主人在船屋（「主人最近的动向」里没说他出门、去上课、睡了），就写成她们和主人一起吃，with 里写上 "master"；主人不在家，就她们俩吃，给主人留一份收好。除此之外 with 里不写 master。
+7. **不许生成主人的条目，也不许替主人编他做了什么、说了什么。** 主人在哪只看「主人最近的动向」：他最后说在哪、之后没说离开，就当他还在那儿，她们可以待在他身边、在他旁边做自己的事；他说了出门、去上课、睡了这类，就照那个写，别写他在场。**未来数小时的预排段（非当下刚发生的约定）严禁把「亲手递到主人跟前」「挨着主人聊天搭话」写成既定结果**（万一主人临时出门或去睡就会穿帮；做好的小物或饭菜只写「搁在矮桌上留给主人 / 等主人方便再递给他」，不预设主人一直坐着不动）。**主人眼下在船屋里且没到你们明确约好钟点的出发时刻前，严禁补写擅自写 `at_home=false` 且 `with` 里带上 `"master"` 强行把主人带出门**（想约主人出门请先在家提醒发消息，或用 `ask_master` 问准点，或自己单独去办不写 `master`）。只有两种例外：① 约好了具体钟点的约定/打算（如明确写着 14:00 一起出海），到点才写成和主人一起出门；② 主人已经自己出门在外头了，之后同一趟里接着往下的段才写 `"master"`。**只要带主人一起出了门（`at_home=false` 且 `with` 含 `"master"`），回家的路途段也必须把 `"master"` 写进 `with` 一起带回来，严禁中途把主人丢在外面自己回家；带回到家就为止，到家之后（`at_home=true` 的段）她们各做各的事，不必也不该再把 `"master"` 写进 with。** 在家吃饭默认是三个人一起吃：饭点那段主人在船屋（「主人最近的动向」里没说他出门、去上课、睡了），就写成她们和主人一起吃，with 里写上 "master"；主人不在家，就她们俩吃，给主人留一份收好。除此之外 with 里不写 master。
    做给主人的、拿主人买回来的东西做的，那份是主人的：做好了端给主人或者给他留着，她们别再吃它、分它；主人吃没吃、剩下的给谁，后面聊天里定。
    「主人说过他要做的事」分两种：只是他自己去做的（上课、出门办事），那段时间他人不在，别把她们写成和他在一起；写着要她们做、或者和她们一起做的（比如晚上和亚托莉一起吃帝王蟹），就是交给她们的事，照着排进去，到时候写成和主人一起，with 写上 "master"——这是照主人说过的写，不算替他编。
 8. 约束优先级最高：写着不许出门的，这段时间就得在屋里。照主人的意思守，别钻字眼上的空子：「不许捞她上来」就别改成给她送饭、递东西，「不许出门」就别叫人把东西送进来。主人罚她的事（扔下水、关在外头、罚站这类），别人也别背着主人替她松；想替她求情的，填 ask_master 问主人一句，主人点头才做。
@@ -200,7 +200,7 @@ STEP_SYSTEM_TEMPLATE = """{base_system}
 - `"training"`: 字符串（练在练的事填 `"#编号"`，否则 `""`）；`"intent"`: 字符串（做各自的打算填 `"i编号"`，否则 `""`）。
 - `"from"`: 字符串必填（只准填候选短编号如 `"T1"`/`"G1"`/`"P1"`/`"I1"`/`"F1"`/`"A1"`，或枚举 `"routine"` / `"intent"` / `"promise"` / `"rule"` / `"training"` / `"continue:前段事"` / `"self"`；严禁留空或填栏目标题）。同一个人同一次补写里，同一条候选短编号最多只准用一次，别重复套同一条。
 - `"mood"`: 字符串必填（非空，写明什么心情及具体由头）。
-- `"outfit"`: 字符串必填（非空，写明这段她身上实际穿什么、披裹什么、穿没穿鞋袜，如 `"奶白色水手领长袖连衣裙，冷得把旧毛毯披在肩上，光脚缩在炉边"` 或 `"黑色和服薄披肩配绀紫抹胸常服与绑腿木屐"`。**严守真实家底与穿搭连贯**：只能穿人设自带的日常常服/睡衣，或上方「家里的东西」里真在当前住处且归本人或「共用」的衣物铺盖（标着「归主人」等明确归属他人的衣物严禁自己穿走）；同日连贯时段未换衣时须延续上一段穿搭，严禁平白无故突然跳换成人设里的「校服」（丛雨日常可在原版黑和服常服与粉白和式常服间正常换穿，但换衣必须有真实换衣动作，只有起床穿常服、临睡换睡衣、正经换常服或买回新衣真换上时才变动）；**睡前换睡衣与早起换常服必须先有真实洗漱换衣的步骤或段落**（例如睡前先洗漱并换上人设里的睡衣，严禁上一段还穿着常服、下一段直接睡觉却凭空瞬移成睡衣；若没换衣就倒头睡，睡觉段 outfit 须如实延续上一身）；海边船屋开局没有厚冬衣和厚棉被，严禁凭空编出棉袄/大衣/毛衣/围巾/厚棉被，也严禁给衣物铺盖写 `what="原来就有"`——冷了只能先裹现有薄被毛毯、生铁桶柴炉烤火，或正经排一段去集市/半淹商店街旧衣铺买换回来记入 `items` 后才能穿上）。
+- `"outfit"`: 字符串必填（非空，写明这段她身上实际穿什么、披裹什么、穿没穿鞋袜，如 `"奶白色水手领长袖连衣裙外罩厚棉衣，深灰打底裤配米白毛线袜和棕色平底冬靴"` 或 `"黑色和服薄披肩配绀紫抹胸常服与绑腿木屐"`。**严守真实家底与穿搭连贯**：只能穿人设自带的日常常服/睡衣，或上方「家里的东西」里真在当前住处且归本人或「共用」的衣物铺盖（标着「归主人」等明确归属他人的衣物严禁自己穿走）；同日连贯时段未换衣时必须完整延续上一段穿搭（**尤其上一段穿着冬靴/鞋子/厚棉衣的，除非这一段明确写了脱靴洗漱或换睡衣，严禁在跨批续写时凭空丢掉鞋靴改成光脚**），严禁平白无故突然跳换成人设里的「校服」（丛雨日常可在原版黑和服常服与粉白和式常服间正常换穿，但换衣必须有真实换衣动作，只有起床穿常服、临睡换睡衣、正经换常服或买回新衣真换上时才变动）；**睡前换睡衣与早起换常服必须先有真实洗漱换衣的步骤或段落**（例如睡前先洗漱并换上人设里的睡衣，严禁上一段还穿着常服、下一段直接睡觉却凭空瞬移成睡衣；若没换衣就倒头睡，睡觉段 outfit 须如实延续上一身）；海边船屋开局没有厚冬衣和厚棉被，严禁凭空编出棉袄/大衣/毛衣/围巾/厚棉被，也严禁给衣物铺盖写 `what="原来就有"`——冷了只能先裹现有薄被毛毯、生铁桶柴炉烤火，或正经排一段去集市/半淹商店街旧衣铺买换回来记入 `items` 后才能穿上）。
 - `"things"`（食物变动数组，没动食物填 `[]`；凡买菜买鱼、赶海收蟹、做饭、热菜、吃饭、保鲜加工必填）：
   - 动已有食物：`{{"id": "w编号或n代号", "what": "用掉一部分|用完了|吃了一部分|吃完了|挪地方|切开了|热了一下|轻腌|重盐腌|糖渍|醋泡|酱渍|油封|灰沙埋|晒上了|炉烘|熏上了|丢了|坏了扔了", "used": "10毫升", "left": "剩余量(仅用完/吃完/扔了必填\"\"；挪地方或热菜未吃须保留余量如\"一小碗\")", "into": "n1(可选)", "place": {{"area": "船舱", "at": "矮桌", "detail": ""}}, "keep": "罩着放", "spot": "屋里", "state": "整的", "step": 1}}`
   - 新食物入库：`{{"new": "n1", "name": "番薯焖鱼", "kind": "熟菜炒菜", "what": "做好了|买回来|收到（海边禁填原来就有）", "cook": "boil|fry|steam|roast|cold（what=做好了时必填！无食用油时严禁填fry；生鲜/买回填\"\"）", "from": ["w1"], "origin": "集市鱼摊(买回/收到时填)", "amount": "500克(按量记的食材调料填)", "left": "一锅", "place": {{"area": "船舱", "at": "灶上", "detail": "锅里"}}, "keep": "罩着放", "spot": "灶上温着", "step": 2}}`
@@ -1380,7 +1380,56 @@ class LifeStep:
                     "；备注：%s" % base["notes"] if base.get("notes") else "",
                 )
             )
+        meal_done = self._today_meals_summary(bots, now.replace(tzinfo=None))
+        if meal_done:
+            lines.append(meal_done)
         return "\n".join(lines) if lines else "（没有骨架）"
+
+    @staticmethod
+    def _meal_slot_of(dt: datetime.datetime) -> str:
+        hm = dt.hour * 60 + dt.minute
+        if hm < 10 * 60 + 30:
+            return "早饭"
+        if hm < 15 * 60 + 30:
+            return "午饭"
+        return "晚饭"
+
+    def _today_meals_by_bot(self, bots: list, flat: datetime.datetime) -> dict[str, list[tuple[str, datetime.datetime, datetime.datetime, str]]]:
+        """统计今日各 bot 已发生/已排好的正餐（meal=True 且非 real_stop）。"""
+        today = flat.date().isoformat()
+        res: dict[str, list[tuple[str, datetime.datetime, datetime.datetime, str]]] = {}
+        for bot in bots:
+            rows = []
+            for item in self.world.entries(today, bot):
+                if is_event(item) or real_stop(item) or item.get("meal") is not True:
+                    continue
+                st = parse_time(item.get("start"))
+                if st is None:
+                    continue
+                en = parse_time(item.get("end")) or st
+                rows.append((self._meal_slot_of(st), st, en, clean_text(item.get("doing"), 30)))
+            rows.sort(key=lambda x: x[1])
+            if rows:
+                res[bot] = rows
+        return res
+
+    def _today_meals_summary(self, bots: list, flat: datetime.datetime) -> str:
+        by_bot = self._today_meals_by_bot(bots, flat)
+        if not by_bot:
+            return ""
+        parts = []
+        for bot in bots:
+            rows = by_bot.get(bot)
+            if not rows:
+                continue
+            desc = "、".join("%s(%s–%s)" % (slot, fmt_time(st)[11:16], fmt_time(en)[11:16]) for slot, st, en, _ in rows)
+            parts.append("%s：%s" % (self.label(bot) or bot, desc))
+        if not parts:
+            return ""
+        return (
+            "- 今日已吃/已排正餐（已吃过的正餐严禁重吃！若主人后来才醒或另点菜，只给主人做/陪坐，她们自己不再标 meal=true 重吃第二顿）："
+            + "；".join(parts)
+        )
 
 
     def _promise_lines(self, now: datetime.datetime) -> list:
@@ -1456,10 +1505,19 @@ class LifeStep:
 
     @staticmethod
     def _things_moment(tasks: dict | None, flat: datetime.datetime) -> datetime.datetime:
-        """回补过去时从最早的补写起点取库存，后续取得须沿事件推进。"""
-        starts = [x.get("start") for x in (tasks or {}).values() if isinstance(x, dict)]
-        starts = [x for x in starts if isinstance(x, datetime.datetime)]
-        return min([flat] + [x.replace(tzinfo=None) for x in starts])
+        """回补过去时从最早的补写起点取库存；提前预排未来（start > flat）时推进到最晚接续起点，
+        让前序已排好但尚未到点的收钱/入库/出锅先落地，避免跨批重复记账或误扣已用完生料。"""
+        starts = [
+            x.get("start").replace(tzinfo=None)
+            for x in (tasks or {}).values()
+            if isinstance(x, dict) and isinstance(x.get("start"), datetime.datetime)
+        ]
+        if not starts:
+            return flat
+        future_starts = [s for s in starts if s > flat]
+        if future_starts:
+            return max(future_starts)
+        return min([flat] + starts)
 
     def _history_blocks(
         self,
@@ -1661,9 +1719,8 @@ class LifeStep:
         money_book = getattr(self, "money", None)
         if money_book is not None and self.home == "海边小镇":
             try:
-                moment = ref_moment
-                money_book.archive_settled(moment, self.world)
-                slow_parts.append(money_book.step_block(moment, self.world))
+                money_book.archive_settled(flat, self.world)
+                slow_parts.append(money_book.step_block(ref_moment, self.world))
             except Exception:
                 logger.warning("[super_enhance/money] 补写拼账面失败", exc_info=True)
 
@@ -1795,12 +1852,15 @@ class LifeStep:
                     start = parse_time(item.get("start"))
                     if start is None or start <= flat or is_event(item) or (upto is not None and start >= upto):
                         continue
-                    planned.append("- %s %s %s %s%s" % (
+                    item_end = parse_time(item.get("end")) or flat
+                    ops_brief = self._entry_ops_brief(item)
+                    planned.append("- %s %s %s %s%s%s" % (
                         self.label(bot) or bot,
                         timeutil.span_text(item.get("start"), item.get("end"), date_prefix=True, ongoing="~…"),
                         item.get("place") or "",
-                        event_text_at(item, flat),
+                        event_text_at(item, item_end),
                         "（和%s）" % "、".join(self.label(x) or x for x in item["with"]) if item.get("with") else "",
+                        ops_brief,
                     ))
         if planned:
             live_parts.append("已经排好、这次不改的：\n" + "\n".join(planned))
@@ -1912,7 +1972,11 @@ class LifeStep:
                 if sealed_cnt > 0 and "sealed_loot" not in pend_topics and asked_by_topic["sealed_loot"] < topic_ask_limit("sealed_loot"):
                     topic_hints.append("`sealed_loot`「船屋现存 %d 件封口旧物待拆，想喊主人一起拆看」" % sealed_cnt)
                 if flat.hour in (10, 11, 16, 17) and "meal" not in pend_topics and asked_by_topic["meal"] < topic_ask_limit("meal"):
-                    topic_hints.append("`meal`「快到正餐点拿不准主人回不回来吃或吃哪样」")
+                    slot_now = "午饭" if flat.hour in (10, 11) else "晚饭"
+                    meals_now = self._today_meals_by_bot(bots, flat)
+                    both_ate = bool(bots) and all(any(sl == slot_now for sl, *_ in meals_now.get(b, [])) for b in bots)
+                    if not both_ate:
+                        topic_hints.append("`meal`「快到正餐点拿不准主人回不回来吃或吃哪样」")
 
                 if topic_hints:
                     blocked_note = (
@@ -1972,28 +2036,63 @@ class LifeStep:
                 )
         return "\n".join(lines)
 
+    @staticmethod
+    def _entry_ops_brief(entry: dict) -> str:
+        """把前序段已落盘的 things/money 变动拼成短摘要，防止跨批续写重复入库或重复记账。"""
+        if not isinstance(entry, dict):
+            return ""
+        parts = []
+        th = [t for t in (entry.get("things") or []) if isinstance(t, dict)]
+        if th:
+            t_desc = []
+            for t in th[:5]:
+                w = str(t.get("what") or "").strip()
+                tgt = str(t.get("new") or t.get("id") or "").strip()
+                nm = str(t.get("name") or "").strip()
+                lbl = f"{tgt} {nm}".strip() if (tgt and nm) else (nm or tgt)
+                if w or lbl:
+                    t_desc.append(f"{w}{lbl}")
+            if t_desc:
+                parts.append("已记物品变动：" + "、".join(t_desc))
+        mn = [m for m in (entry.get("money") or []) if isinstance(m, dict)]
+        if mn:
+            m_desc = []
+            for m in mn[:4]:
+                k = str(m.get("kind") or "").strip()
+                amt = m.get("amount")
+                cp = str(m.get("counterparty") or "").strip()
+                m_desc.append(f"{k} ¥{amt}{('(' + cp + ')') if cp else ''}")
+            if m_desc:
+                parts.append("已记账：" + "、".join(m_desc))
+        return "（" + "；".join(parts) + "——严禁后续段重复记账或重复入库）" if parts else ""
+
     def _where(self, entry, what: str = "那段") -> str:
-        """接着写时交代她上一段结束时的样子：在哪、结果怎样（第一段从这儿接上，人在外面就先把路走完）；没有那段就空。"""
+        """接着写时交代她上一段结束时的样子：在哪、穿搭、结果与已记账/入库（第一段从这儿接上，绝不藏前段结局与穿搭）；没有那段就空。"""
         if not entry or is_event(entry):
             return ""
         moment = self._now().replace(tzinfo=None)
         ended = parse_time(entry.get("end"))
-        if ended is None or ended > moment:
-            return "%s截至此刻：%s；后续结果尚未发生。" % (what, event_text_at(entry, moment))
-        out = "%s结束时她在：%s" % (what, clean_text(entry.get("place") or "", 40) or "（没写地方）")
-        if entry.get("at_home") is False:
-            out += "，人不在宿舍"
-        worn = clean_text(entry.get("outfit") or "", 80)
+        worn = clean_text(entry.get("outfit") or "", 100)
         if not worn:
             from .view import current_outfit_of
             e_who = str(entry.get("who") or "")
             worn = current_outfit_of(self.world, e_who, self.label(e_who) or e_who, ended or moment)
-        if worn:
-            out += "（当时身上穿的：%s）" % worn
+        worn_part = "（当时身上穿的：%s；未换衣请原样延续，勿凭空丢靴或变光脚）" % worn if worn else ""
+        ops_part = self._entry_ops_brief(entry)
+        if ended is None:
+            return "%s截至此刻：%s%s%s。" % (what, event_text_at(entry, moment), worn_part, ops_part)
+        out = "%s结束时她在：%s" % (what, clean_text(entry.get("place") or "", 40) or "（没写地方）")
+        if entry.get("at_home") is False:
+            out += "，人不在宿舍"
+        out += worn_part
         if real_stop(entry):
             stopped = clean_text(entry.get("stop_result") or "", 60)
-            return out + ("（停下时：%s）。" % stopped if stopped else "。")
-        return out + result_text(entry) + "。"
+            return out + ("（停下时：%s）" % stopped if stopped else "") + ops_part + "。"
+        if ended > moment:
+            planned_res = clean_text(entry.get("result") or "", 80)
+            res_part = "（该段已排好结果：%s；从这里接着往下写，勿重复做这件收尾）" % planned_res if planned_res else ""
+            return out + res_part + ops_part + "。"
+        return out + result_text(entry) + ops_part + "。"
 
     async def build_system_prompt(self, bots: list[str] | None = None) -> str:
         """构造全静态的补写 system_prompt（人设、地图、规则、规范、示例、常识），不含任何会随轮次变动的时刻。"""
@@ -2573,8 +2672,20 @@ class LifeStep:
                 return len(parts) >= 2
             return False
 
-        def _wood_ready_weather(eff: dict, is_new: bool) -> bool:
-            w_cond = weathering.clean_conditions(eff.get("weather"))
+        def _wood_ready_weather(eff: dict, is_new: bool, hit_item: dict | None = None) -> bool:
+            w_cond: dict = {}
+            if not is_new and isinstance(hit_item, dict):
+                w_cond.update(weathering.clean_conditions(hit_item.get("weather")))
+                for stg in (hit_item.get("stages") or []):
+                    if isinstance(stg, dict) and stg.get("weather"):
+                        w_cond.update(weathering.clean_conditions(stg.get("weather")))
+                sim_w = hit_item.get("_weather")
+                if isinstance(sim_w, dict):
+                    if isinstance(sim_w.get("wet"), (int, float)):
+                        w_cond["wet"] = float(sim_w["wet"])
+                    if isinstance(sim_w.get("fuel_wet"), (int, float)):
+                        w_cond["fuel_wet"] = float(sim_w["fuel_wet"])
+            w_cond.update(weathering.clean_conditions(eff.get("weather")))
             if w_cond.get("split") is False:
                 return False
             if is_new:
@@ -2594,6 +2705,10 @@ class LifeStep:
             if raw_topic not in DECISION_TOPICS:
                 errors.append(
                     f"ask_master.topic={ask_obj.get('topic')!r} 非法（必须填 {' / '.join(DECISION_TOPICS)} 六选一）"
+                )
+            elif raw_topic == "meal" and flat.hour not in (10, 11, 16, 17, 18):
+                errors.append(
+                    f"ask_master.topic='meal' 仅在临近午饭（10:00–12:00）或晚饭（16:00–19:00）时请示，当前时刻（{fmt_time(flat)[11:16]}）不在饭前请示时段，请把 ask_master 留空"
                 )
             elif comp_ref is not None:
                 topic_pend = comp_ref.safe("pending_decisions", flat, topic=raw_topic, default=[]) or []
@@ -2729,11 +2844,37 @@ class LifeStep:
                                         batch_wood_tier[tid_str] = "hardwood"
                                     elif tid_str not in batch_wood_tier and hit_item is not None:
                                         batch_wood_tier[tid_str] = weathering.wood_fuel_meta(hit_item, seg_end)["tier"]
-                                if is_wood_ref and _wood_ready_weather(eff, False):
+                                if is_wood_ref and _wood_ready_weather(eff, False, hit_item):
                                     if first_wood_at is None or seg_end < first_wood_at:
                                         first_wood_at = seg_end
                 cursor = seg_end
             kept_by_bot[bot] = (bot_kept, cursor, until)
+
+        # 每位 bot 在自己接续起点的库存视角 + 本批内按时间追踪已消耗完的食物 ID（防同批后段误扣已用完生料）
+        bot_shelves: dict[str, object] = {}
+        for b_key, b_info in tasks.items():
+            b_st = b_info.get("start")
+            if store is not None and isinstance(b_st, datetime.datetime):
+                try:
+                    bot_shelves[b_key] = self._shelf_at(b_st.replace(tzinfo=None))
+                except Exception:
+                    bot_shelves[b_key] = shelf
+            else:
+                bot_shelves[b_key] = shelf
+        existing_meals_by_bot = self._today_meals_by_bot(list(tasks.keys()), flat)
+        batch_food_ended_at: dict[str, datetime.datetime] = {}
+        for _b_key, (b_kept, _, _) in kept_by_bot.items():
+            for _idx, _raw, _ss, _se, _sc in b_kept:
+                if _sc != "do":
+                    continue
+                for _eff in (_raw.get("things") or []):
+                    if not isinstance(_eff, dict) or _eff.get("new"):
+                        continue
+                    _tid = str(_eff.get("id") or "").strip()
+                    _w = norm_step(_eff.get("what"), CAT_FOOD)
+                    if _tid and _w in END_STEPS:
+                        if _tid not in batch_food_ended_at or _se < batch_food_ended_at[_tid]:
+                            batch_food_ended_at[_tid] = _se
 
         # 逐人逐段做纯结构化校验
         for bot, (bot_kept, final_cursor, until) in kept_by_bot.items():
@@ -2814,10 +2955,41 @@ class LifeStep:
                     errors.append(f"{tag}：睡觉段 at_home 必须为 true")
                 if st_code != "do" and raw.get("meal") is True:
                     errors.append(f"{tag}：非做事段 meal 必须为 false")
+                if st_code == "do" and raw.get("meal") is True:
+                    cur_slot = self._meal_slot_of(seg_start)
+                    if cur_slot in ("午饭", "晚饭"):
+                        prior_meal = next(
+                            (
+                                (p_st, p_en)
+                                for p_sl, p_st, p_en, _ in existing_meals_by_bot.get(bot, [])
+                                if p_sl == cur_slot and (seg_start - p_en).total_seconds() >= 40 * 60
+                            ),
+                            None,
+                        )
+                        if prior_meal is not None:
+                            errors.append(
+                                f"{tag}：{who_lbl}今日{cur_slot}已在 {fmt_time(prior_meal[0])[11:16]}–{fmt_time(prior_meal[1])[11:16]} 吃过，"
+                                f"严禁重吃第二顿{cur_slot}（若陪主人吃另做的饭请将 meal 填 false）"
+                            )
                 if raw.get("with"):
                     bot_has_partner = True
-                # 防擅自把在家主人带出门校验（主人还在屋里且未到定好钟点的约定，补写严禁擅自写 at_home=false + with: master）
+                # 防擅自把在家主人带出门 & 防主人已外出时仍在家写 with: master
                 with_ids = [str(x) for x in (raw.get("with") or [])]
+                if (
+                    raw.get("at_home") is True
+                    and "master" in with_ids
+                    and master_outside_now
+                    and not master_replied
+                ):
+                    brought_home_earlier = any(
+                        p_raw.get("at_home") is False and "master" in [str(x) for x in (p_raw.get("with") or [])]
+                        for _, p_raw, p_s, _, _ in bot_kept
+                        if p_s < seg_start
+                    )
+                    if not brought_home_earlier:
+                        errors.append(
+                            f"{tag}：主人眼下已外出不在住处，在家的段（at_home=true）严禁把 \"master\" 写进 with！"
+                        )
                 if (
                     raw.get("at_home") is False
                     and "master" in with_ids
@@ -2992,12 +3164,24 @@ class LifeStep:
                                 if ck == "fry" and not has_oil_now:
                                     errors.append(f"{tag} things[{t_i}]（{nm}）：家里食用油现余 0 毫升且在此之前未补油，cook 严禁填 \"fry\"")
                                 if seaside and raw.get("at_home") is True and ck in ("boil", "fry", "steam", "roast") and stove_val not in ("charcoal", "wood"):
-                                    errors.append(f"{tag} things[{t_i}]（{nm}）：在船屋做好热食（cook=\"{ck}\"）时，该段 stove 必须填 \"charcoal\" 或 \"wood\"，不能填 \"\"")
+                                    # 若紧挨着的前一段是已开火的 chat 做菜段（记录员未建菜品、由本段盛盘入库），放行不强逼重复填 stove
+                                    prev_chat_cooked = False
+                                    if idx == 1:
+                                        prev_e = self.world.latest_for(bot, before=fmt_time(seg_start))
+                                        if prev_e and str(prev_e.get("source") or "") == "chat" and str(prev_e.get("stove") or "") in ("charcoal", "wood"):
+                                            pe_end = parse_time(prev_e.get("end"))
+                                            if pe_end is not None and 0 <= (seg_start - pe_end).total_seconds() <= 5 * 60:
+                                                prev_chat_cooked = True
+                                    if not prev_chat_cooked:
+                                        errors.append(f"{tag} things[{t_i}]（{nm}）：在船屋做好热食（cook=\"{ck}\"）时，该段 stove 必须填 \"charcoal\" 或 \"wood\"，不能填 \"\"")
                     else:
                         tid = str(eff.get("id") or "").strip()
-                        shelf_food = shelf.find(tid) if (shelf is not None and tid) else None
-                        found = tid in batch_food_keys or (
-                            (shelf_food is not None and is_ended(shelf_food) is None) if shelf is not None else bool(tid)
+                        cur_shelf = bot_shelves.get(bot, shelf)
+                        shelf_food = cur_shelf.find(tid) if (cur_shelf is not None and tid) else None
+                        ended_before = tid in batch_food_ended_at and batch_food_ended_at[tid] <= seg_start
+                        found = (not ended_before) and (
+                            tid in batch_food_keys
+                            or ((shelf_food is not None and is_ended(shelf_food) is None) if cur_shelf is not None else bool(tid))
                         )
                         if not tid or not found:
                             errors.append(f"{tag} things[{t_i}]：id={tid!r} 在当前可用库存或本轮新建代号中不存在（或早已吃完用完）")
@@ -3232,6 +3416,15 @@ class LifeStep:
         master_sleeping = (master_cur is not None and is_sleep(master_cur)) or bool(
             companion is not None and companion.safe("resting", flat, default=False)
         )
+        from . import view as view_mod
+        try:
+            m_where_apply = self.world.master_where(flat)
+        except Exception:
+            m_where_apply = None
+        master_outside_apply = (
+            view_mod._is_outside_place(m_where_apply.get("place"), m_where_apply.get("at_home"), self.home)
+            if m_where_apply is not None else False
+        )
 
         # 第一遍：先按每人 MAX_SEGMENTS / horizon / until 截断保留段，杜绝截断段提前预占 ID
         kept_plans: dict[str, tuple[list, datetime.datetime, datetime.datetime | None]] = {}
@@ -3328,7 +3521,7 @@ class LifeStep:
                 training = self.training_id(raw.get("training"), bot)
                 prev = staged_entries[-1] if staged_entries else self.world.latest_for(bot, before=fmt_time(seg_start))
                 prev_with_master = bool(prev) and "master" in (prev.get("with") or []) and not prev.get("sleep")
-                at_meal = bool(raw.get("meal")) and raw.get("at_home") is not False and not master_sleeping
+                at_meal = bool(raw.get("meal")) and raw.get("at_home") is not False and not master_sleeping and not master_outside_apply
                 if not master_sleeping and not idle and not sleep and "master" in raw_with and (
                     self._intent_with_master(intent) or prev_with_master or at_meal
                 ):

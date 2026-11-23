@@ -1031,6 +1031,25 @@ def validate_step_segments_money(
     sim_bal = {k: round_yuan(v.get("balance") or 0.0) for k, v in snap["accounts"].items()}
     sim_debts = {str(d["id"]): copy.deepcopy(d) for d in snap["debts"] if d.get("status") == "open"}
     acc_labels = {k: v.get("label") or k for k, v in snap["accounts"].items()}
+    # 近期已记收支/赊账（用于防跨批衔接重复记同一笔账）
+    recent_ops: list[tuple[str, str, float, str, datetime.datetime, str]] = []
+    for rec in snap.get("records") or []:
+        if not isinstance(rec, dict):
+            continue
+        r_kind = normalize_kind(rec.get("kind"))
+        if r_kind not in ("earn", "spend", "debt_add"):
+            continue
+        r_dt = parse_time(rec.get("at"))
+        if r_dt is None:
+            continue
+        recent_ops.append((
+            str(rec.get("who") or "").strip(),
+            r_kind,
+            round_yuan(rec.get("amount") or 0.0),
+            clean_text(rec.get("counterparty"), 40),
+            r_dt,
+            clean_text(rec.get("what"), 60),
+        ))
 
     # 按时间顺序汇总所有人的做事段来模拟共用铁盒与个人口袋的真实先后变动
     timeline: list[tuple[str, str, int, dict]] = []
@@ -1107,6 +1126,41 @@ def validate_step_segments_money(
             if not what_s:
                 errors.append(f"{tag} money[{m_i}]：what 必须一句话写清这笔钱干了什么/打哪来的")
                 continue
+            op_cp = clean_text(op.get("counterparty"), 40)
+            seg_dt = parse_time(_start_s)
+            if kind in ("earn", "spend", "debt_add") and op_cp and seg_dt is not None:
+                dup_hit = next(
+                    (
+                        (r_dt, r_what)
+                        for r_who, r_kind, r_amt, r_cp, r_dt, r_what in recent_ops
+                        if r_who == bot and r_kind == kind and abs(r_amt - amt) <= 1e-6 and r_cp == op_cp
+                        and abs((seg_dt - r_dt).total_seconds()) <= 45 * 60
+                    ),
+                    None,
+                )
+                if dup_hit is not None:
+                    errors.append(
+                        f"{tag} money[{m_i}]：近期已记过一笔同对手方「{op_cp}」同金额（{fmt_yuan(amt)} 元）的 {kind}"
+                        f"（{fmt_time(dup_hit[0])[11:16]} {dup_hit[1]}），严禁跨段重复记账！"
+                    )
+                    continue
+                if kind == "debt_add":
+                    dup_open = next(
+                        (
+                            d for d in sim_debts.values()
+                            if d.get("direction") == normalize_direction(op.get("direction"))
+                            and clean_text(d.get("counterparty"), 40) == op_cp
+                            and abs(round_yuan(d.get("amount") or 0.0) - amt) <= 1e-6
+                            and parse_time(d.get("created")) is not None
+                            and abs((seg_dt - parse_time(d.get("created"))).total_seconds()) <= 45 * 60
+                        ),
+                        None,
+                    )
+                    if dup_open is not None:
+                        errors.append(
+                            f"{tag} money[{m_i}]：未结欠账中已有同对手方「{op_cp}」同金额（{fmt_yuan(amt)} 元）的欠账 {dup_open.get('id')}，严禁重复赊账！"
+                        )
+                        continue
 
             if seaside and bot == "napcat" and "napcat2" not in with_list and "master" not in with_list:
                 if kind in ("earn", "spend", "debt_add", "debt_settle"):
@@ -1135,6 +1189,8 @@ def validate_step_segments_money(
                     continue
                 sim_bal[acc] = round_yuan(sim_bal[acc] - amt)
                 has_payment_or_barter = True
+                if op_cp and seg_dt is not None:
+                    recent_ops.append((bot, kind, amt, op_cp, seg_dt, what_s[:60]))
 
             elif kind == "transfer":
                 fa = normalize_account(op.get("from_account"))
@@ -1208,6 +1264,8 @@ def validate_step_segments_money(
                             errors.append(f"{tag} money[{m_i}]：寄卖回款(reason=consign_payout)请改用 kind=\"debt_settle\" 并填对应的待收 debt_id")
                             continue
                 sim_bal[acc] = round_yuan(sim_bal[acc] + amt)
+                if op_cp and seg_dt is not None:
+                    recent_ops.append((bot, kind, amt, op_cp, seg_dt, what_s[:60]))
 
             elif kind == "debt_add":
                 direction = normalize_direction(op.get("direction"))
@@ -1217,6 +1275,8 @@ def validate_step_segments_money(
                     continue
                 if direction == "payable":
                     has_payment_or_barter = True
+                if seg_dt is not None:
+                    recent_ops.append((bot, kind, amt, cp, seg_dt, what_s[:60]))
 
             elif kind == "debt_settle":
                 did = str(op.get("debt_id") or "").strip()
