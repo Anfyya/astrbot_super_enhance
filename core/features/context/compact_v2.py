@@ -346,13 +346,18 @@ class CompactV2:
             "stream_options": {"include_usage": True},
             "response_format": {"type": "json_object"},
         }
-        max_tokens = int(self._cfg("v2_max_tokens", 200000) or 0)
+        prov_extra = (getattr(provider, "provider_config", None) or {}).get("custom_extra_body") or {}
+        prov_max = int(prov_extra.get("max_tokens") or 0)
+        max_tokens = int(self._cfg("v2_max_tokens", prov_max or 65536) or 0)
+        if prov_max > 0 and max_tokens > prov_max:
+            max_tokens = prov_max
         if max_tokens > 0:
             kwargs["max_tokens"] = max_tokens
         effort = str(self._cfg("v2_reasoning_effort", "high")).strip()
         if effort:
             kwargs["extra_body"] = {"reasoning_effort": effort}
         t0 = time.time()
+        ttft, first_content = None, None
         think_len, content, usage, finish = 0, [], None, None
         stream = await client.chat.completions.create(**kwargs)
         async for chunk in stream:
@@ -363,17 +368,32 @@ class CompactV2:
                 rc = getattr(delta, "reasoning_content", None)
                 if rc is None and getattr(delta, "model_extra", None):
                     rc = delta.model_extra.get("reasoning_content")
+                ct = getattr(delta, "content", None)
+                if (rc or ct) and ttft is None:
+                    ttft = time.time() - t0
+                if ct and first_content is None:
+                    first_content = time.time() - t0
                 if rc:
                     think_len += len(rc)
-                if getattr(delta, "content", None):
-                    content.append(delta.content)
+                if ct:
+                    content.append(ct)
                 finish = ch.finish_reason or finish
+        elapsed = time.time() - t0
+        comp_tokens = getattr(usage, "completion_tokens", None)
+        decode_tps = (
+            round(comp_tokens / max(0.01, elapsed - ttft), 1)
+            if comp_tokens and ttft is not None
+            else None
+        )
         info = {
             "model": "%s（%s）" % (model, pid),
-            "seconds": time.time() - t0,
+            "seconds": round(elapsed, 2),
+            "ttft": round(ttft, 2) if ttft is not None else None,
+            "first_content": round(first_content, 2) if first_content is not None else None,
+            "decode_tps": decode_tps,
             "finish": finish,
             "think_chars": think_len,
-            "completion_tokens": getattr(usage, "completion_tokens", None),
+            "completion_tokens": comp_tokens,
             "prompt_tokens": getattr(usage, "prompt_tokens", None),
         }
         logger.info("[super_enhance/compact_v2] 模型返回：%s", info)
