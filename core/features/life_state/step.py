@@ -110,7 +110,7 @@ STEP_SYSTEM_TEMPLATE = """{base_system}
 4. 每段写 at_home 和 meal：at_home 是这段她人在不在宿舍（屋里、院子、廊下、门口、后头小屋都算 true；出了宿舍去别处、走在路上都算 false）；meal 是这段是不是正在吃饭（吃早饭午饭晚饭、夜宵算 true；做饭、摆碗筷、洗碗都不算）。
 5. 睡觉也是一段：到了她今天定的入睡时刻，就写一段睡觉，state 填「睡觉」，从入睡时刻一直写到第二天定的起床时刻；睡前那段要在入睡时刻结束。过了入睡时刻还醒着的（比如答应了陪主人熬夜），那件事做完就接着写睡觉，睡到起床时刻。睡觉这段的 place 三选一：「船屋·船舱地铺」「船屋·船舱吊床」「船屋·船舱砖炕」，doing 和 public 都要写明睡在哪、盖的什么被子或毯子（严格照家里现存被褥写，谁盖哪床不能撞车，绝不凭空多编被子，如 public 写「盖着薄被睡了」「裹着旧毛毯睡了」），让世界线和同伴一眼看清各自盖着什么；吊床只睡得下一个人，砖炕最多睡两个人（主人加一个），地铺能睡两个人。
 6. 下面「还没做的约定」里有钟点的：到那个钟点她要已经在约定的地方、和约定的人在一起。要换地方的，在那之前写一段赶过去，留足路上的工夫；约定那件事从约定的钟点开始写。
-7. **不许生成主人的条目，也不许替主人编他做了什么、说了什么、吃了什么、听了什么或怎么回应。** 不仅禁止替主人编台词，也**严禁在 `doing`/`steps`/`result`/`mood` 里把主人的任何动作、在场反应或互动结果写成既定事实**（比如「主人热乎乎吃上了三只汉堡」「新发现说给主人了」「跟主人一起摊开海图圈完位置」「挨着主人聊天搭话」——哪怕没写主人说话也不行！）。主人在哪只看「主人最近的动向」：他最后说在哪、之后没说离开，她们可以在同屋安静做自己的事；他说了出门、去上课、睡了这类，就照那个写，别写他在场。**凡是想找主人互动的事（叫主人开饭、把刚发现的旧铺面或趣事讲给主人听、拿海图或物件找主人商量），补写里只写到她这边做好准备这一步**（例如做好饭菜摆上桌给主人留出热份、自己吃自己的；或回船屋摊开旧海图先把发现的位置圈好记牢），并把真正开口讲给主人听、叫主人吃饭或问主人拿主意交给对应段的 `send_msg: true` 或 `ask_master`（到点触发实际对话），**严禁把「讲给主人听、一起商量完、主人吃上了」直接静音演进段里跳过实际对话**。**主人眼下在船屋里且没到你们明确约好钟点的出发时刻前，严禁补写擅自写 `at_home=false` 且 `with` 里带上 `"master"` 强行把主人带出门**（想约主人出门请先在家标 `send_msg: true` 开口喊他，或用 `ask_master` 问准点，或自己单独去办不写 `master`）。只有两种例外：① 约好了具体钟点的约定/打算（如明确写着 14:00 一起出海），到点才写成和主人一起出门；② 主人已经自己出门在外头了，之后同一趟里接着往下的段才写 `"master"`。**只要带主人一起出了门（`at_home=false` 且 `with` 含 `"master"`），回家的路途段也必须把 `"master"` 写进 `with` 一起带回来，严禁中途把主人丢在外面自己回家；带回到家就为止，到家之后（`at_home=true` 的段）她们各做各的事，不再把 `"master"` 写进 with。** 在家吃饭时，做好摆桌并给主人盛好或留好温着，她俩自己吃自己的，标 `send_msg: true` 叫主人开饭（主人吃没吃、吃多少、怎么聊都留给实际对话，不要替主人写进 `with` 或替他吃完）；主人明确约好钟点一起办的事才在 `with` 里写 `"master"`，除此之外 `with` 里一律不写 `"master"`。
+7. **不许生成主人的条目，也不许替主人编他做了什么、说了什么、吃了什么、听了什么或怎么回应。** 不仅禁止替主人编台词，也**严禁在 `doing`/`steps`/`result`/`mood` 里把主人的任何动作、在场反应或互动结果写成既定事实**（比如「主人热乎乎吃上了三只汉堡」「新发现说给主人了」「跟主人一起摊开海图圈完位置」「挨着主人聊天搭话」——哪怕没写主人说话也不行！）。主人在哪只看「主人最近的动向」：他最后说在哪、之后没说离开，她们可以在同屋安静做自己的事；他说了出门、去上课、睡了这类，就照那个写，别写他在场。**凡是想找主人互动的事（叫主人开饭、把刚发现的旧铺面或趣事讲给主人听、拿海图或物件找主人商量），补写里只写到她这边做好准备这一步**（例如做好饭菜摆上桌给主人留出热份、自己吃自己的；或回船屋摊开旧海图先把发现的位置圈好记牢），并把真正开口讲给主人听、叫主人吃饭或问主人拿主意交给对应段的 `send_msg: true` 或 `ask_master`（到点触发实际对话），**严禁把「讲给主人听、一起商量完、主人吃上了」直接静音演进段里跳过实际对话**。**主人眼下在船屋里且没到你们明确约好钟点的出发时刻前，严禁补写擅自写 `at_home=false` 且 `with` 里带上 `"master"` 强行把主人带出门**（想约主人出门请先在家标 `send_msg: true` 开口喊他，或用 `ask_master` 问准点，或自己单独去办不写 `master`）。只有两种例外：① 约好了具体钟点的约定/打算（如明确写着 14:00 一起出海），到点才写成和主人一起出门；② 主人已经自己出门在外头了，之后同一趟里接着往下的段才写 `"master"`。**只要带主人一起出了门（`at_home=false` 且 `with` 含 `"master"`），回家的路途段也必须把 `"master"` 写进 `with` 一起带回来，严禁中途把主人丢在外面自己回家；带回到家就为止，到家之后（`at_home=true` 的段）她们各做各的事，不再把 `"master"` 写进 with。** 在家吃饭时，若主人清醒在家，她俩做好摆桌并给主人盛好或留好温着，标 `send_msg: true` 叫主人开饭（同屋一起开饭可在 `with` 里记上 `"master"`，但严禁替主人编吃没吃、吃多少、怎么聊——这些全留给实际对话）；主人睡着或外出不在家时 `with` 里一律不写 `"master"`；主人明确约好钟点一起办的事才在外出段 `with` 里写 `"master"`，除此之外不擅自把 `"master"` 写进 `with`。
    做给主人的、拿主人买回来的东西做的，那份是主人的：做好了端给主人或者给他留着，她们别再吃它、分它；主人吃没吃、剩下的给谁，后面聊天里定。
    「主人说过他要做的事」分两种：只是他自己去做的（上课、出门办事），那段时间他人不在，别把她们写成和他在一起；写着要她们做、或者和她们一起做的（比如晚上和亚托莉一起吃帝王蟹），就是交给她们的事，照着排进去，到时候写成和主人一起，with 写上 "master"——这是照主人说过的写，不算替他编。
 8. 约束优先级最高：写着不许出门的，这段时间就得在屋里。照主人的意思守，别钻字眼上的空子：「不许捞她上来」就别改成给她送饭、递东西，「不许出门」就别叫人把东西送进来。主人罚她的事（扔下水、关在外头、罚站这类），别人也别背着主人替她松；想替她求情的，填 ask_master 问主人一句，主人点头才做。
@@ -367,10 +367,10 @@ def _trigger_time_of(entry: dict) -> datetime.datetime | None:
 
 MSG_KINDS = ("routine", "casual", "repair")
 _MSG_KIND_RANK = {"casual": 1, "routine": 2, "repair": 3}
+# 与 proactive._REPAIR_PURPOSE_WORDS 保持严格一致：仅保留真正道歉/认错/破冰/补救/外头受气安慰词，绝不把日常热茶/热汤/纸条/陪着误标 repair
 _REPAIR_PURPOSE_WORDS = (
     "反思", "道歉", "认错", "破冰", "说开", "补救", "赔罪", "对不起", "原谅",
-    "纸条", "关心", "安慰", "吐槽", "委屈", "受气", "累了", "热汤", "热茶",
-    "台阶", "缓和", "惹主人生气", "错在哪", "陪着", "抱不平",
+    "台阶", "缓和", "惹主人生气", "错在哪", "外头受气", "受委屈", "抱不平", "安慰吐槽",
 )
 _ROUTINE_PURPOSE_WORDS = (
     "早安", "早上好", "晚安", "睡了", "先睡了", "歇下了",
@@ -594,8 +594,93 @@ class LifeStep:
         self._offered_by_day: dict = {}
         self._mood_guard_start: dict | None = None
         self._last_apply_aborted_by_mood: bool = False
+        self._last_apply_aborted_by_world: bool = False
         self._mood_abort_streak: int = 0
         self._mood_abort_at: datetime.datetime | None = None
+        self._run_lock: asyncio.Lock | None = None
+        self._run_lock_loop = None
+
+    def _get_run_lock(self) -> asyncio.Lock:
+        """按当前事件循环惰性获取互斥锁，防止网页手动触发与后台 _step_task 并发重入。"""
+        try:
+            cur_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            cur_loop = None
+        if self._run_lock is None or self._run_lock_loop is not cur_loop:
+            self._run_lock = asyncio.Lock()
+            self._run_lock_loop = cur_loop
+        return self._run_lock
+
+    def _tasks_world_fingerprint(self, tasks: dict, flat: datetime.datetime) -> dict:
+        """对本次待排程各 bot 的当前段与后续活动段、以及主人的睡眠/外出大状态拍轻量指纹，防挂起期间被改写后覆盖脏盘。"""
+        from . import view as view_mod
+
+        fp: dict = {}
+        days = sorted({
+            (flat.date() - datetime.timedelta(days=1)).isoformat(),
+            flat.date().isoformat(),
+            (flat.date() + datetime.timedelta(days=1)).isoformat(),
+        })
+        for bot, info in (tasks or {}).items():
+            anchor = info.get("start")
+            cur_obj = info.get("cur") if isinstance(info.get("cur"), dict) else self.world.current(bot, flat)
+            if isinstance(cur_obj, dict):
+                cur_s = parse_time(cur_obj.get("start"))
+                if cur_s is not None:
+                    anchor = cur_s if not isinstance(anchor, datetime.datetime) else min(anchor, cur_s)
+            cutoff = (anchor - datetime.timedelta(minutes=1)) if isinstance(anchor, datetime.datetime) else None
+            sig: list[tuple] = []
+            for d_txt in days:
+                for item in self.world.entries(d_txt, bot):
+                    if is_event(item):
+                        continue
+                    st = parse_time(item.get("start"))
+                    if cutoff is not None and st is not None and st < cutoff:
+                        continue
+                    sig.append((
+                        d_txt,
+                        str(item.get("id") or ""),
+                        str(item.get("start") or ""),
+                        str(item.get("end") or ""),
+                        bool(item.get("stopped")),
+                        str(item.get("source") or ""),
+                    ))
+            fp[bot] = tuple(sig)
+        # 纳入主人睡眠与外出大状态（仅比对睡眠/外出布尔态，不因普通室内聊天 event 误杀 ask_master 回话）
+        companion = getattr(self, "companionship", None)
+        master_cur = self.world.current("master", flat)
+        m_sleeping = (master_cur is not None and is_sleep(master_cur)) or bool(
+            companion is not None and companion.safe("resting", flat, default=False)
+        )
+        try:
+            mw = self.world.master_where(flat)
+        except Exception:
+            mw = None
+        m_outside = (
+            view_mod._is_outside_place(mw.get("place"), mw.get("at_home"), self.home)
+            if isinstance(mw, dict) else False
+        )
+        fp["__master_state__"] = (bool(m_sleeping), bool(m_outside))
+        return fp
+
+    def _commit_pending_resolved_decision(self, moment: datetime.datetime) -> None:
+        """仅在 apply 真正成功落盘后，才将 ask_master 收到回话的请示标为 resolved/rejected，杜绝竞态丢单。"""
+        info = getattr(self, "_pending_resolved_decision", None)
+        self._pending_resolved_decision = None
+        if not info:
+            return
+        dec_id, is_approved, choice_txt = info
+        companion = getattr(self, "companionship", None)
+        if companion is None or not dec_id:
+            return
+        for row in companion._data().get("decisions") or []:
+            if row.get("id") == dec_id:
+                row["status"] = "resolved" if is_approved else "rejected"
+                row["choice"] = choice_txt
+                row["resolved_at"] = fmt_time(self._now().replace(tzinfo=None) if callable(getattr(self, "_now", None)) else moment)
+                row["fast_replied"] = True
+                companion._save()
+                break
 
     def _guard_now(self, fallback: datetime.datetime | None = None) -> datetime.datetime:
         """取情绪守卫对比用的当前本地时刻（兼容单测注入的 now_fn）。"""
@@ -1342,7 +1427,7 @@ class LifeStep:
             return False
         for item in self.world.intentions():
             if str(item.get("id")) == str(intent_id):
-                return "master" in (item.get("with") or [])
+                return str(item.get("who") or "") == "master" or "master" in (item.get("with") or [])
         return False
 
     def intent_id(self, value, bot: str, with_bots: list[str] | None = None) -> str:
@@ -2557,6 +2642,14 @@ class LifeStep:
                 break
 
     async def run(self, now: datetime.datetime | None = None, force: bool = False) -> bool:
+        lock = self._get_run_lock()
+        if lock.locked() or self.running:
+            logger.info("[super_enhance/world] 补写已在运行中，跳过并发重入（force=%s）", force)
+            return False
+        async with lock:
+            return await self._run_locked(now=now, force=force)
+
+    async def _run_locked(self, now: datetime.datetime | None = None, force: bool = False) -> bool:
         # 世界线里的时间都是不带时区的本地时间，这里统一成一样的口径
         moment = (now or self._now()).replace(tzinfo=None)
         self._run_cache = {}
@@ -2574,6 +2667,8 @@ class LifeStep:
         self.running = True
         self._mood_guard_start = self._mood_guard_snapshot(moment)
         self._last_apply_aborted_by_mood = False
+        self._last_apply_aborted_by_world = False
+        world_fp_start = self._tasks_world_fingerprint(tasks, moment)
         try:
             system_prompt = await self.build_system_prompt()
             prompt = await self.build_prompt(tasks, moment)
@@ -2597,7 +2692,11 @@ class LifeStep:
                 self.world.set_last_step_attempt(fmt_time(moment))
                 return False
             self._save_thought(moment, thought, True)
-            # 进入 _ask_master 前先复核一次主人情绪，避免主人刚发火还把发火前的问话发出去或干等 120s
+            # 进入 _ask_master 前先复核世界线与主人情绪，避免在途被记录员/手动修改或主人刚发火时发出过期问话
+            if self._tasks_world_fingerprint(tasks, moment) != world_fp_start:
+                logger.info("[super_enhance/world] 补写在途目标角色世界线已变动，放弃过期排程等待下轮重排")
+                self._last_apply_aborted_by_world = True
+                return False
             drifted_pre, pre_reason = self._mood_guard_drifted(
                 self._mood_guard_start,
                 self._mood_guard_snapshot(self._guard_now(moment)),
@@ -2610,15 +2709,22 @@ class LifeStep:
                 self._note_mood_abort(moment)
                 return False
             self._deferred_decision = None
+            self._pending_resolved_decision = None
             self._last_ask_approved = False
             data, text = await self._ask_master(data, prompt, text, tasks, moment, system_prompt=system_prompt)
             written, missed = self.apply(
                 data, tasks, moment, mood_snapshot=self._mood_guard_start,
                 master_replied=bool(getattr(self, "_last_ask_approved", False)),
+                world_fp=world_fp_start,
             )
             if self._last_apply_aborted_by_mood:
+                self._pending_resolved_decision = None
                 self._note_mood_abort(moment)
                 return False
+            if self._last_apply_aborted_by_world:
+                self._pending_resolved_decision = None
+                return False
+            self._commit_pending_resolved_decision(moment)
             self._bind_deferred_decision(written)
             total_written = sum(len(x) for x in written.values())
             if missed and total_written == 0:
@@ -2651,6 +2757,7 @@ class LifeStep:
             self._last_live_ctx = None
             self._last_cand_map = None
             self._deferred_decision = None
+            self._pending_resolved_decision = None
             self._mood_guard_start = None
 
     def _bind_deferred_decision(self, written: dict) -> None:
@@ -2784,14 +2891,8 @@ class LifeStep:
             logger.warning("[super_enhance/world] 补写照主人回话重写未通过结构化校验（%s），保持请示挂起交由记录员接续", "；".join(errs[:3]))
             return data, text
         if companion is not None and dec_id:
-            for row in companion._data().get("decisions") or []:
-                if row.get("id") == dec_id:
-                    row["status"] = "resolved" if is_approved else "rejected"
-                    row["choice"] = said[:200]
-                    row["resolved_at"] = fmt_time(self._now().replace(tzinfo=None))
-                    row["fast_replied"] = True
-                    companion._save()
-                    break
+            # 暂存待结案信息，等 apply 真正成功落盘后再写 resolved/rejected，防止在途竞态放弃落盘导致永久吞单
+            self._pending_resolved_decision = (dec_id, is_approved, said[:200])
         if is_approved:
             self._last_ask_approved = True
         return fixed, again
@@ -3170,6 +3271,11 @@ class LifeStep:
             kept_by_bot[bot] = (bot_kept, cursor, until)
 
         # 第一遍结束后，按实际送抵船屋的时刻结算跨人可用时间（防止 A 还在买油/换炭/领煤油路上，B 在家提前时空倒流用上）
+        _RETURN_HOME_WORDS = (
+            "回船屋", "回到船屋", "回家", "回到家", "回住处", "返回船屋",
+            "拎回船屋", "带回船屋", "搬回船屋", "提回船屋", "拿回船屋", "送回船屋", "扛回船屋",
+        )
+
         def _home_arrival_of(b_kept: list, pos_idx: int) -> datetime.datetime | None:
             _i, r0, _s0, e0, _c0 = b_kept[pos_idx]
             if r0.get("at_home") is True:
@@ -3177,6 +3283,12 @@ class LifeStep:
             for _i2, r2, s2, _e2, _c2 in b_kept[pos_idx + 1:]:
                 if r2.get("at_home") is True:
                     return s2
+            # 若本批末段虽标 at_home=false 但已明确写走回/带回船屋（先剔除「还没回船屋/不回家」等否定），则末段结束时刻即已送抵船屋门口
+            _il, rl, _sl, el, _cl = b_kept[-1]
+            tail_txt = f"{rl.get('doing') or ''} {rl.get('result') or ''} {rl.get('place') or ''}"
+            tail_clean = re.sub(r"(?:还没|未|不|别|暂不|先不)(?:回|回到|返回|拎回|带回|搬回|提回|拿回|送回|扛回)(?:船屋|家|住处)", "", tail_txt)
+            if any(w in tail_clean for w in _RETURN_HOME_WORDS):
+                return el
             return None
 
         first_kerosene_at = None
@@ -3234,7 +3346,17 @@ class LifeStep:
                     bot_shelves[b_key] = shelf
             else:
                 bot_shelves[b_key] = shelf
-        existing_meals_by_bot = self._today_meals_by_bot(list(tasks.keys()), flat)
+        # 按 (bot, 日期) 分日收集已吃/已排正餐，避免跨午夜预排次日早饭被今日早饭误杀
+        meal_dates = {flat.date()}
+        for _b_k, (b_kept, _, _) in kept_by_bot.items():
+            for _idx, _raw, _ss, _se, _sc in b_kept:
+                meal_dates.add(_ss.date())
+        existing_meals_by_bot_day: dict[tuple[str, str], list[tuple[str, datetime.datetime, datetime.datetime, str]]] = {}
+        for m_day in sorted(meal_dates):
+            day_meals = self._today_meals_by_bot(list(tasks.keys()), datetime.datetime.combine(m_day, datetime.time(12, 0)))
+            d_iso = m_day.isoformat()
+            for mb, mrows in day_meals.items():
+                existing_meals_by_bot_day[(mb, d_iso)] = list(mrows)
         batch_food_ended_at: dict[str, datetime.datetime] = {}
         batch_item_consumed_at: dict[str, datetime.datetime] = {}
         for _b_key, (b_kept, _, _) in kept_by_bot.items():
@@ -3340,21 +3462,28 @@ class LifeStep:
                 if st_code == "do" and raw.get("meal") is True:
                     cur_slot = self._meal_slot_of(seg_start)
                     if cur_slot in ("早饭", "午饭", "晚饭"):
+                        meal_day_key = (bot, seg_start.date().isoformat())
                         prior_meal = next(
                             (
                                 (p_st, p_en)
-                                for p_sl, p_st, p_en, _ in existing_meals_by_bot.get(bot, [])
-                                if p_sl == cur_slot and (seg_start - p_en).total_seconds() >= 40 * 60
+                                for p_sl, p_st, p_en, _ in existing_meals_by_bot_day.get(meal_day_key, [])
+                                if p_sl == cur_slot and (
+                                    (seg_start - p_en).total_seconds() > 10 * 60
+                                    or (p_st - seg_end).total_seconds() > 10 * 60
+                                )
                             ),
                             None,
                         )
                         if prior_meal is not None:
+                            day_lbl = "今日" if seg_start.date() == flat.date() else seg_start.strftime("%m-%d ")
                             errors.append(
-                                f"{tag}：{who_lbl}今日{cur_slot}已在 {fmt_time(prior_meal[0])[11:16]}–{fmt_time(prior_meal[1])[11:16]} 吃过，"
+                                f"{tag}：{who_lbl}{day_lbl}{cur_slot}已在 {fmt_time(prior_meal[0])[11:16]}–{fmt_time(prior_meal[1])[11:16]} 吃过，"
                                 f"严禁重吃第二顿{cur_slot}（若陪主人吃另做的饭请将 meal 填 false）"
                             )
                         else:
-                            existing_meals_by_bot.setdefault(bot, []).append((cur_slot, seg_start, seg_end, str(raw.get("doing") or "")))
+                            existing_meals_by_bot_day.setdefault(meal_day_key, []).append(
+                                (cur_slot, seg_start, seg_end, str(raw.get("doing") or ""))
+                            )
                 if raw.get("with"):
                     bot_has_partner = True
                 # 防擅自把在家主人带出门 & 防主人已外出时仍在家写 with: master
@@ -3435,6 +3564,32 @@ class LifeStep:
                     if str(raw.get("msg_at") or "").strip() or str(raw.get("msg_purpose") or "").strip():
                         errors.append(f"{tag}：send_msg=false 时 msg_at 与 msg_purpose 必须填 \"\"")
 
+                # 本段在家现场劈好干柴/取得闷炭/取得食用油时，允许同段自用不自锁（跨人仍受 _home_arrival_of 约束）
+                self_got_charcoal = False
+                self_got_wood = False
+                self_got_oil = False
+                if st_code == "do" and raw.get("at_home") is True:
+                    for _e in (raw.get("things") or []):
+                        if isinstance(_e, dict) and _e.get("new") and str(_e.get("kind") or "") == "干货调料粮食":
+                            if store is not None and store._is_edible_oil({"cat": CAT_FOOD, "name": _e.get("name"), "kind": "干货调料粮食"}):
+                                self_got_oil = True
+                    for _e in (raw.get("items") or []):
+                        if not isinstance(_e, dict):
+                            continue
+                        if _e.get("new"):
+                            _kd = clean_text(_e.get("kind"), 10)
+                            _purp = str(_e.get("purpose") or "").strip()
+                            if is_charcoal({"cat": CAT_ITEM, "name": _e.get("name"), "kind": _kd}):
+                                self_got_charcoal = True
+                            if (_kd in weathering.STOVE_WOOD_KINDS or _purp == "fuel") and _wood_ready_weather(_e, True):
+                                self_got_wood = True
+                        else:
+                            _tid = str(_e.get("id") or "").strip()
+                            _hit = shelf.find(_tid) if (shelf is not None and _tid) else None
+                            _is_w = _tid in batch_fuel_keys or (_hit is not None and weathering.fuel_item(_hit) and not is_charcoal(_hit))
+                            if _is_w and _wood_ready_weather(_e, False, _hit):
+                                self_got_wood = True
+
                 if "stove" not in raw or not isinstance(raw.get("stove"), str) or raw.get("stove") not in ("", "charcoal", "wood"):
                     errors.append(f"{tag}：stove 必须显式填 \"\"、\"charcoal\" 或 \"wood\" 三选一（当前值={raw.get('stove')!r}）")
                     stove_val = ""
@@ -3444,9 +3599,9 @@ class LifeStep:
                         errors.append(f"{tag}：非海边住处 stove 必须填 \"\"")
                     elif stove_val != "" and raw.get("at_home") is False:
                         errors.append(f"{tag}：外出段（at_home=false）不在船屋，不能由本人标生火，stove 必须填 \"\"")
-                    elif stove_val == "charcoal" and inv_state["charcoal_g"] <= 0 and not (first_charcoal_at is not None and first_charcoal_at <= seg_start):
+                    elif stove_val == "charcoal" and inv_state["charcoal_g"] <= 0 and not self_got_charcoal and not (first_charcoal_at is not None and first_charcoal_at <= seg_start):
                         errors.append(f"{tag}：家里闷炭现余 0 克且在此之前未把闷炭带回船屋，stove 严禁填 \"charcoal\"")
-                    elif stove_val == "wood" and inv_state["wood_kg"] <= 0 and not (first_wood_at is not None and first_wood_at <= seg_start):
+                    elif stove_val == "wood" and inv_state["wood_kg"] <= 0 and not self_got_wood and not (first_wood_at is not None and first_wood_at <= seg_start):
                         errors.append(f"{tag}：家里干柴为 0 公斤且在此之前未把干柴带回船屋，stove 严禁填 \"wood\"")
                     if stove_val == "wood":
                         bot_has_wood_stove = True
@@ -3578,7 +3733,11 @@ class LifeStep:
                             if ck not in ("boil", "fry", "steam", "roast", "cold"):
                                 errors.append(f"{tag} things[{t_i}]（{nm}）：what=\"做好了\" 时必须填 cook（boil/fry/steam/roast/cold 五选一）")
                             else:
-                                has_oil_now = (inv_state["oil_ml"] is None or inv_state["oil_ml"] > 0) or (first_oil_at is not None and first_oil_at <= seg_start)
+                                has_oil_now = (
+                                    (inv_state["oil_ml"] is None or inv_state["oil_ml"] > 0)
+                                    or self_got_oil
+                                    or (first_oil_at is not None and first_oil_at <= seg_start)
+                                )
                                 if ck == "fry" and not has_oil_now:
                                     errors.append(f"{tag} things[{t_i}]（{nm}）：家里食用油现余 0 毫升且在此之前未把油带回船屋，cook 严禁填 \"fry\"")
                                 if seaside and raw.get("at_home") is True and ck in ("boil", "fry", "steam", "roast") and stove_val not in ("charcoal", "wood"):
@@ -3607,7 +3766,7 @@ class LifeStep:
                             errors.append(f"{tag} things[{t_i}]（{tid}）：已有食物的 what={eff.get('what')!r} 不合法")
                         if what in ("用完了", "吃完了") and str(eff.get("left") or "").strip():
                             errors.append(f"{tag} things[{t_i}]（{tid}）：what=\"{what}\" 时 left 必须填空串 \"\"")
-                        if what == "油封" and inv_state["oil_ml"] is not None and inv_state["oil_ml"] < 60 and not (first_oil_at is not None and first_oil_at <= seg_start):
+                        if what == "油封" and inv_state["oil_ml"] is not None and inv_state["oil_ml"] < 60 and not self_got_oil and not (first_oil_at is not None and first_oil_at <= seg_start):
                             errors.append(f"{tag} things[{t_i}]（{tid}）：家里食用油不足 60 毫升且在此之前未把油带回船屋，不能做 \"油封\"")
                         if what == "炉烘" and stove_val != "wood":
                             errors.append(f"{tag} things[{t_i}]（{tid}）：做 what=\"炉烘\" 时该段 stove 必须填 \"wood\"")
@@ -3830,25 +3989,48 @@ class LifeStep:
                             l_bot, l_idx, l_s, l_e, bool(l_raw.get("at_home")),
                             [str(x) for x in (l_raw.get("with") or [])], str(l_raw.get("place") or ""),
                         ))
-            # 仅本批确实有点灯段时，才纳入世界线里对方已有且与本批重叠的 lamp=True 段
+            # 仅本批确实有点灯段时，才纳入世界线里对方已有且与本批重叠的 lamp=True 段（含前一天跨午夜段与进行中开口段）
             if lamp_spans:
-                all_days = sorted({s.date().isoformat() for _, _, s, _, _, _, _ in lamp_spans} | {e.date().isoformat() for _, _, _, e, _, _, _ in lamp_spans})
+                span_dates = {s.date() for _, _, s, _, _, _, _ in lamp_spans} | {e.date() for _, _, _, e, _, _, _ in lamp_spans}
+                span_dates.add(min(span_dates) - datetime.timedelta(days=1))
+                all_days = sorted(d.isoformat() for d in span_dates)
+                max_lamp_end = max(e for _, _, _, e, _, _, _ in lamp_spans)
                 batch_bots_covered = {b: (bk[0][2], bk[-1][3]) for b, (bk, _, _) in kept_by_bot.items() if bk}
                 all_bots = list(self.raw_log.enabled_bots()) if self.raw_log is not None else list(tasks.keys())
                 for other_bot in all_bots:
+                    cur_open = self.world.current(other_bot, flat)
+                    cur_open_key = (
+                        (str(cur_open.get("id") or ""), str(cur_open.get("start") or ""))
+                        if isinstance(cur_open, dict) else ("", "")
+                    )
+                    cov = batch_bots_covered.get(other_bot)
                     for d_s in all_days:
                         for ex in self.world.entries(d_s, other_bot):
                             if is_event(ex) or real_stop(ex) or ex.get("lamp") is not True:
                                 continue
                             es = parse_time(ex.get("start"))
+                            if es is None:
+                                continue
                             ee = parse_time(ex.get("end")) if ex.get("end") else None
-                            if es is None or ee is None:
-                                continue
-                            cov = batch_bots_covered.get(other_bot)
-                            if cov is not None and not (ee <= cov[0] or es >= cov[1]):
-                                continue
+                            if ee is None:
+                                # 仅认该 bot 此刻真正在进行中的开口段（按 id+start 双键匹配，防跨天同名 e1 误撞昨日未封口脏段）
+                                if not cur_open_key[0] or (str(ex.get("id") or ""), str(ex.get("start") or "")) != cur_open_key:
+                                    continue
+                                if cov is not None:
+                                    # 若本批 open 模式已用 end_current 截到 cov[0]，按 [es, cov[0]] 纳入校验，不被 cov 跳过
+                                    if cov[0] <= es:
+                                        continue
+                                    ee = cov[0]
+                                else:
+                                    if es >= max_lamp_end:
+                                        continue
+                                    ee = max(es + datetime.timedelta(minutes=30), flat, max_lamp_end)
+                            else:
+                                if cov is not None and not (ee <= cov[0] or es >= cov[1]):
+                                    continue
+                            ex_at_home = not view_mod._is_outside_place(ex.get("place"), ex.get("at_home"), self.home)
                             lamp_spans.append((
-                                other_bot, 0, es, ee, bool(ex.get("at_home", True)),
+                                other_bot, 0, es, ee, ex_at_home,
                                 [str(x) for x in (ex.get("with") or [])], str(ex.get("place") or ""),
                             ))
             reported_lamp_pairs: set[tuple] = set()
@@ -3896,8 +4078,25 @@ class LifeStep:
 
         return errors
 
-    def apply(self, data: dict, tasks: dict, now: datetime.datetime, *, mood_snapshot: dict | None = None, master_replied: bool = False):
+    def apply(
+        self,
+        data: dict,
+        tasks: dict,
+        now: datetime.datetime,
+        *,
+        mood_snapshot: dict | None = None,
+        master_replied: bool = False,
+        world_fp: dict | None = None,
+    ):
         self._last_apply_aborted_by_mood = False
+        self._last_apply_aborted_by_world = False
+        if world_fp is not None:
+            flat_now = now.replace(tzinfo=None)
+            if self._tasks_world_fingerprint(tasks, flat_now) != world_fp:
+                self._last_apply_aborted_by_world = True
+                self._cancel_deferred_decision_on_abort()
+                logger.info("[super_enhance/world] 补写落盘前目标角色世界线已被改写，放弃过期排程等待重排")
+                return {}, []
         guard_before = mood_snapshot if mood_snapshot is not None else getattr(self, "_mood_guard_start", None)
         if guard_before is not None:
             guard_after = self._mood_guard_snapshot(self._guard_now(now))
@@ -4060,7 +4259,14 @@ class LifeStep:
                 )
                 is_meal_with_master = bool(raw.get("meal") is True and raw.get("at_home") is True and not master_outside_apply)
                 is_promise_with_master = origin_val.get("kind") == "promise"
-                if not master_sleeping and not idle and not sleep and "master" in raw_with and (
+                # 主人此刻在睡时：近期（<2h）或深夜/凌晨（<06:00 / >=22:00）的段视为仍在睡；
+                # 跨到白天 06:00–22:00 且距今 >=2h 的预排段（如凌晨 04:00 预排 07:30 早饭或 08:00 约定）正常保留合法 master
+                is_future_daytime = (
+                    6 <= seg_start.hour < 22
+                    and (seg_start - flat).total_seconds() >= 2 * 3600
+                )
+                seg_master_sleeping = bool(master_sleeping and not is_future_daytime)
+                if not seg_master_sleeping and not idle and not sleep and "master" in raw_with and (
                     self._intent_with_master(intent)
                     or prev_with_master
                     or is_meal_with_master

@@ -584,10 +584,22 @@ WOOD_TAU_UP, WOOD_TAU_DOWN = ZONE_PARAMS["mid"][0], ZONE_PARAMS["mid"][1]
 CHAR_TAU_UP, CHAR_TAU_DOWN = 25.0, 40.0
 
 
-def _stove_spans_from_world(world, start_day: datetime.date, end_day: datetime.date, clip_until: datetime.datetime | None = None) -> list[tuple[datetime.datetime, datetime.datetime, str]]:
-    """按纯结构化 stove 字段提取 [start_day, end_day] 内的船屋生火区间 [(start, end, 'wood'|'charcoal')]（同刻重叠时 wood 优先）。"""
+def _merge_single_stove_spans(raw_spans: list, kind: str) -> list[tuple[datetime.datetime, datetime.datetime, str]]:
+    """提取单一炉具（wood 或 charcoal）的时间区间并合并间隔 ≤5 分钟的连续段，避免双炉同燃互相吞没。"""
+    picked = sorted(((s, e) for s, e, k in raw_spans if k == kind), key=lambda x: x[0])
+    merged: list[tuple[datetime.datetime, datetime.datetime, str]] = []
+    for s, e in picked:
+        if merged and (s - merged[-1][1]).total_seconds() <= 300:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], e), kind)
+        else:
+            merged.append((s, e, kind))
+    return merged
+
+
+def _split_stove_tracks(world, start_day: datetime.date, end_day: datetime.date, clip_until: datetime.datetime | None = None) -> tuple[list, list, list]:
+    """返回 (merged_spans, wood_spans, charcoal_spans) 三条炉火轨道：合并轨道供整体描述，独立轨道防双炉同燃互吞。"""
     if world is None:
-        return []
+        return [], [], []
     from .world import parse_time as _parse_time, stove_active_in_entry as _stove_active
 
     raw_spans: list[tuple[datetime.datetime, datetime.datetime, str]] = []
@@ -631,7 +643,7 @@ def _stove_spans_from_world(world, start_day: datetime.date, end_day: datetime.d
                 continue
             raw_spans.append((st, en, stove))
     if not raw_spans:
-        return []
+        return [], [], []
 
     pts = sorted({t for s, e, _k in raw_spans for t in (s, e)})
     atomic: list[tuple[datetime.datetime, datetime.datetime, str]] = []
@@ -647,7 +659,15 @@ def _stove_spans_from_world(world, start_day: datetime.date, end_day: datetime.d
             atomic[-1] = (atomic[-1][0], b, chosen)
         else:
             atomic.append((a, b, chosen))
-    return atomic
+    wood_spans = _merge_single_stove_spans(raw_spans, "wood")
+    charcoal_spans = _merge_single_stove_spans(raw_spans, "charcoal")
+    return atomic, wood_spans, charcoal_spans
+
+
+def _stove_spans_from_world(world, start_day: datetime.date, end_day: datetime.date, clip_until: datetime.datetime | None = None) -> list[tuple[datetime.datetime, datetime.datetime, str]]:
+    """按纯结构化 stove 字段提取 [start_day, end_day] 内的船屋生火区间 [(start, end, 'wood'|'charcoal')]（同刻重叠时 wood 优先）。"""
+    merged, _, _ = _split_stove_tracks(world, start_day, end_day, clip_until=clip_until)
+    return merged
 
 
 def _merge_wood_ember_spans(spans: list, ember_minutes: float = WOOD_EMBER_MINUTES) -> list:
@@ -804,26 +824,38 @@ def cabin_temp_info(moment: datetime.datetime, world, text_of, home: str) -> dic
             "kang_delta": 0.0,
             "mode": "none",
             "wood_mode": "none",
+            "wood_minutes": 0,
             "charcoal_mode": "none",
+            "charcoal_minutes": 0,
             "stove": "",
             "minutes": 0,
             "stove_desc": "",
             "zones_desc": "屋里约 %s 度" % _deg(base_cabin),
         }
 
-    spans = _stove_spans_from_world(world, flat.date() - datetime.timedelta(days=1), flat.date(), clip_until=flat)
+    spans, wood_spans, charcoal_spans = _split_stove_tracks(world, flat.date() - datetime.timedelta(days=1), flat.date(), clip_until=flat)
     _, eval_near = _build_zone_curve(spans, text_of, home, "near")
-    _, eval_near_wood = _build_zone_curve(spans, text_of, home, "near_wood")
-    _, eval_near_charcoal = _build_zone_curve(spans, text_of, home, "near_charcoal")
-    _, eval_mid = _build_zone_curve(spans, text_of, home, "mid")
-    _, eval_far = _build_zone_curve(spans, text_of, home, "far")
-    _, eval_kang = _build_zone_curve(spans, text_of, home, "kang")
+    _, eval_near_wood = _build_zone_curve(wood_spans, text_of, home, "near_wood")
+    _, eval_near_charcoal_own = _build_zone_curve(charcoal_spans, text_of, home, "near_charcoal")
+    _, eval_near_charcoal_amb = _build_zone_curve(wood_spans, text_of, home, "near_charcoal")
+    _, eval_mid_w = _build_zone_curve(wood_spans, text_of, home, "mid")
+    _, eval_mid_c = _build_zone_curve(charcoal_spans, text_of, home, "mid")
+    _, eval_far_w = _build_zone_curve(wood_spans, text_of, home, "far")
+    _, eval_far_c = _build_zone_curve(charcoal_spans, text_of, home, "far")
+    _, eval_kang = _build_zone_curve(wood_spans, text_of, home, "kang")
 
     d_near, st_near = eval_near(flat)
     d_near_wood, st_wood = eval_near_wood(flat)
-    d_near_charcoal, st_charcoal = eval_near_charcoal(flat)
-    d_mid, st_mid = eval_mid(flat)
-    d_far, _ = eval_far(flat)
+    d_char_own, st_charcoal = eval_near_charcoal_own(flat)
+    d_char_amb, _ = eval_near_charcoal_amb(flat)
+    d_near_charcoal = max(d_char_own, d_char_amb)
+    d_mid_w, st_mid_w = eval_mid_w(flat)
+    d_mid_c, st_mid_c = eval_mid_c(flat)
+    d_mid = min(ZONE_PARAMS["mid"][3], d_mid_w + d_mid_c)
+    st_mid = st_mid_w if d_mid_w >= d_mid_c else st_mid_c
+    d_far_w, _ = eval_far_w(flat)
+    d_far_c, _ = eval_far_c(flat)
+    d_far = min(ZONE_PARAMS["far"][3], d_far_w + d_far_c)
     d_kang, _ = eval_kang(flat)
 
     near_wood_t = min(23.0, base_cabin + d_near_wood)
@@ -888,7 +920,9 @@ def cabin_temp_info(moment: datetime.datetime, world, text_of, home: str) -> dic
         "kang_delta": round(d_kang, 1),
         "mode": mode,
         "wood_mode": st_wood["mode"] if st_wood.get("stove") == "wood" else "cold",
+        "wood_minutes": int(st_wood.get("minutes") or 0) if st_wood.get("stove") == "wood" else 0,
         "charcoal_mode": st_charcoal["mode"] if st_charcoal.get("stove") == "charcoal" else "cold",
+        "charcoal_minutes": int(st_charcoal.get("minutes") or 0) if st_charcoal.get("stove") == "charcoal" else 0,
         "stove": kind,
         "minutes": mins,
         "stove_desc": desc,

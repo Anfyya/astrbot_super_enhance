@@ -909,7 +909,8 @@ def clean_stage(stage: dict, cat: str = CAT_FOOD) -> dict:
         raw_state = clean_text(stage.get("state"), MAX_ITEM_STATE)
         out["state"] = norm_state(raw_state)
         if raw_state and raw_state not in STATES and any(
-            w in raw_state for w in SALT_WORDS + SUGAR_PRESERVE_WORDS + ACID_PICKLE_WORDS + OIL_SEAL_WORDS + ASH_SAND_WORDS + ("重盐", "烘", "一夜干")
+            w in raw_state for w in SALT_WORDS + SUGAR_PRESERVE_WORDS + ACID_PICKLE_WORDS + OIL_SEAL_WORDS + ASH_SAND_WORDS
+            + ("重盐", "烘", "一夜干", "开封", "开口", "开盖", "打开", "盖严", "拧紧", "密封", "封严", "漏气", "吃剩")
         ):
             prev_note = clean_text(stage.get("note"), MAX_NOTE)
             if raw_state not in prev_note:
@@ -1881,7 +1882,10 @@ class ThingStore:
         if seg.get("charcoal_grams"):
             self._auto_use_charcoal(items, at=at, grams=int(seg["charcoal_grams"]), by=by, ref=ref)
         if seg.get("wood_burn"):
-            self._auto_use_wood(items, at=at, by=by, ref=ref, minutes=int(seg["wood_burn"]))
+            self._auto_use_wood(
+                items, at=at, by=by, ref=ref,
+                minutes=int(seg["wood_burn"]), start=str(seg.get("start") or ""),
+            )
 
     @staticmethod
     def _is_edible_oil(item: dict) -> bool:
@@ -2116,10 +2120,13 @@ class ThingStore:
                 )
         if dkind in SAVORY_COOK_KINDS:
             dname = re.sub(r"\s+", "", str(dish.get("name") or ""))
-            # 白米粥、杂粮粥、红薯粥、甜汤/糖水等清粥甜汤不自动扣盐
+            # 白米粥、清粥、杂粮粥、红薯粥、红糖姜汤、甜汤/糖水等清粥甜汤不自动扣盐
             _BLAND_OR_SWEET_SOUP = (
-                "白粥", "白米粥", "大米粥", "小米粥", "糙米粥", "杂粮粥", "稀饭", "米汤",
+                "白粥", "白米粥", "大米粥", "清粥", "小米粥", "糙米粥", "杂粮粥", "八宝粥",
+                "燕麦粥", "麦片粥", "玉米粥", "黑米粥", "紫米粥", "腊八粥", "稀饭", "米汤",
                 "地瓜粥", "番薯粥", "红薯粥", "南瓜粥", "绿豆", "红豆", "银耳", "冰糖",
+                "红糖", "姜汤", "姜茶", "蜂蜜", "梨汤", "杏仁露", "杏仁茶", "豆浆", "米糊", "藕粉", "醪糟",
+                "芝麻糊", "米露", "花生露", "甜酒",
                 "甜汤", "甜粥", "糖水", "桂圆", "红枣", "莲子", "百合", "雪梨", "酒酿", "汤圆",
             )
             _SAVORY_SOUP_HINTS = ("咸", "海鲜", "鱼", "虾", "蟹", "肉", "蛋", "皮蛋", "青菜", "裙带菜", "海带", "排骨", "鸡", "辣", "酸辣", "菌", "菇", "豆腐", "味噌", "萝卜")
@@ -2153,25 +2160,43 @@ class ThingStore:
                         active, min(total_avail, COOK_SALT_G), "克", at, by, dish_id, ref, eff_id, "做菜用盐自动扣减", {"auto_cook": "salt"}
                     )
 
-    def _auto_use_wood(self, items: dict, at: str, by: str, ref: str, minutes: int = 60) -> None:
-        """柴炉点火取暖/烘烤/烟熏若本段未手写耗柴、且当前时刻未被手动炉火覆盖，按实际时长与硬木/细枝耐烧度统一按公斤扣减。
-        按段出处（wl==ref）、手动炉火覆盖区间及同刻重叠（<=15分钟）精准去重，避免接力烧炉漏扣或手动+世界线双扣。"""
-        moment = parse_time(at)
-        if moment is None:
+    @staticmethod
+    def _subtract_time_spans(
+        base: tuple[datetime.datetime, datetime.datetime],
+        covers: list[tuple[datetime.datetime, datetime.datetime]],
+    ) -> list[tuple[datetime.datetime, datetime.datetime]]:
+        """从区间 base=[s, e] 中减去 covers 的并集，返回剩余未覆盖的子区间列表。"""
+        bs, be = base
+        if be <= bs:
+            return []
+        merged: list[tuple[datetime.datetime, datetime.datetime]] = []
+        for cs, ce in sorted(covers, key=lambda x: x[0]):
+            if ce <= bs or cs >= be:
+                continue
+            cs, ce = max(cs, bs), min(ce, be)
+            if merged and cs <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], ce))
+            else:
+                merged.append((cs, ce))
+        rem: list[tuple[datetime.datetime, datetime.datetime]] = []
+        cur = bs
+        for cs, ce in merged:
+            if cs > cur:
+                rem.append((cur, cs))
+            cur = max(cur, ce)
+        if cur < be:
+            rem.append((cur, be))
+        return rem
+
+    def _auto_use_wood(self, items: dict, at: str, by: str, ref: str, minutes: int = 60, start: str = "") -> None:
+        """柴炉点火取暖/烘烤/烟熏若本段未手写耗柴，按完整真实区间 [start, end] 减去手动炉火已付柴区间与先前已扣柴烧炉区间并集，再按净燃烧时长（上限 240m）扣公斤。"""
+        seg_e = parse_time(at)
+        if seg_e is None:
             return
-        # 若此刻已被网页手动点起/续烧的柴炉覆盖（手动操作瞬间已实扣整段燃料），不再重复自动扣柴
-        if self.world is not None and hasattr(self.world, "manual_stoves"):
-            try:
-                day_d = moment.date()
-                for ms in self.world.manual_stoves(day_d - datetime.timedelta(days=1), day_d):
-                    if str(ms.get("stove") or "").strip().lower() != "wood":
-                        continue
-                    ms_s = parse_time(ms.get("start"))
-                    ms_e = parse_time(ms.get("end"))
-                    if ms_s is not None and ms_e is not None and ms_s <= moment < ms_e:
-                        return
-            except Exception:
-                pass
+        seg_s = parse_time(start) if start else None
+        if seg_s is None or seg_s >= seg_e:
+            seg_s = seg_e - datetime.timedelta(minutes=max(15, min(240, int(minutes or 60))))
+        moment = seg_e
         day_text, home_at = self._weather_helpers(moment)
         fire_lit_fn = self._fire_lit_fn(moment)
         all_wood = [
@@ -2180,6 +2205,22 @@ class ThingStore:
         ]
         if not all_wood:
             return
+
+        covered: list[tuple[datetime.datetime, datetime.datetime]] = []
+        # 1) 网页手动点起/续烧的柴炉已扣柴覆盖区间（续烧世界线时优先用 paid_start，避免把原世界线段未扣柴时间吃掉）
+        if self.world is not None and hasattr(self.world, "manual_stoves"):
+            try:
+                for ms in self.world.manual_stoves(seg_s.date() - datetime.timedelta(days=1), seg_e.date()):
+                    if str(ms.get("stove") or "").strip().lower() != "wood":
+                        continue
+                    ms_s = parse_time(ms.get("paid_start")) if ms.get("paid_start") else parse_time(ms.get("start"))
+                    ms_e = parse_time(ms.get("end"))
+                    if ms_s is not None and ms_e is not None and ms_e > ms_s:
+                        covered.append((ms_s, ms_e))
+            except Exception:
+                pass
+
+        # 2) 已存在的烧炉柴火消耗记录（同 ref 幂等跳过；网页手动扣柴已由 manual_stoves 精确覆盖绝不短路；非烧炉用柴如以物易物不计覆盖）
         for wood in all_wood:
             for st in wood.get("stages") or []:
                 if st.get("what") not in ("用了", "用掉一部分", "用完了"):
@@ -2188,10 +2229,42 @@ class ThingStore:
                     continue
                 if ref and st.get("wl") == ref:
                     return
-                when = parse_time(st.get("at"))
-                # 仅对 15 分钟内同刻双人并排段去重，不误杀首尾相接的接力烧炉段
-                if when is not None and abs((when - moment).total_seconds()) <= 15 * 60:
-                    return
+                src = st.get("src") if isinstance(st.get("src"), dict) else {}
+                # 网页手动扣柴 stage 已由上方 manual_stoves 精确提供覆盖区间，跳过单点短路防漏扣世界线未重叠时段
+                if src.get("manual") or src.get("stove_id"):
+                    continue
+                ws = parse_time(src.get("wood_start")) if src.get("wood_start") else None
+                we = parse_time(src.get("wood_end")) if src.get("wood_end") else None
+                if ws is not None and we is not None and we > ws:
+                    covered.append((ws, we))
+                    continue
+                # 兼容旧自动扣柴或同段手写烧炉扣柴：仅当关联世界线段明确是 stove=="wood" 时才算烧炉覆盖，排除以物易物等非烧炉用柴
+                st_wl = str(st.get("wl") or "")
+                if st_wl:
+                    if "/" in st_wl and self.world is not None and hasattr(self.world, "find"):
+                        try:
+                            d_part, eid_part = st_wl.split("/", 1)
+                            ent = self.world.find(eid_part, date_text=d_part)
+                            if isinstance(ent, dict) and str(ent.get("stove") or "").strip().lower() == "wood":
+                                es = parse_time(ent.get("start"))
+                                ee = parse_time(ent.get("end"))
+                                if es is not None and ee is not None and ee > es:
+                                    covered.append((es, ee))
+                        except Exception:
+                            pass
+                    continue
+                # 无 wl、无 manual 标记的纯手写 stage：仅当明确是柴炉扣柴备注且时刻落在段内才跳过
+                st_note = str(st.get("note") or "")
+                if any(k in st_note for k in ("柴炉", "烧炉", "生火", "添柴", "烤火")):
+                    when = parse_time(st.get("at"))
+                    if when is not None and seg_s <= when <= seg_e:
+                        return
+
+        remaining_spans = self._subtract_time_spans((seg_s, seg_e), covered)
+        net_minutes = sum((b - a).total_seconds() / 60.0 for a, b in remaining_spans)
+        if net_minutes < 1.0:
+            return
+
         pool = [
             x for x in all_wood
             if weathering.usable_stove_wood(x, moment, day_text, home_at, fire_lit_fn=fire_lit_fn)
@@ -2202,14 +2275,14 @@ class ThingStore:
             (x for x in pool if is_ended(x) is None and str(x.get("created") or "") <= at),
             key=lambda x: (str(x.get("created") or ""), str(x.get("id") or "")),
         )
-        dur = max(15, min(240, int(minutes or 60)))
+        dur = min(240.0, net_minutes)
         remain_ratio = 1.0
         for wood in candidates:
             if remain_ratio <= 1e-6:
                 break
             tier = weathering.wood_fuel_meta(wood, moment).get("tier")
             rate = WOOD_KG_PER_HOUR_KINDLING if tier == "kindling" else WOOD_KG_PER_HOUR_HARDWOOD
-            need_kg = max(0.5, round(rate * (dur / 60.0) * remain_ratio, 1))
+            need_kg = max(0.1, round(rate * (dur / 60.0) * remain_ratio, 1))
             info = stock(wood)
             if info is not None and float(info.get("left") or 0.0) > 0:
                 avail = float(info["left"])
@@ -2228,7 +2301,12 @@ class ThingStore:
                     "wl": ref,
                     "effect": "#auto_wood",
                     "note": "柴炉开火烧柴自动扣减",
-                    "src": {"entry": ref, "auto_wood": "1"},
+                    "src": {
+                        "entry": ref,
+                        "auto_wood": "1",
+                        "wood_start": fmt_time(seg_s),
+                        "wood_end": fmt_time(seg_e),
+                    },
                 },
                 CAT_ITEM,
             )

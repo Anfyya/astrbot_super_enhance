@@ -270,10 +270,10 @@ def build_world_text(
     else:
         masters = world.master_trail(date_text)
         item, text = _latest_visible(masters, viewer, now)
+        yday_text = (today - datetime.timedelta(days=1)).isoformat()
+        y_masters = world.master_trail(yday_text)
         used_yesterday = False
         if item is None:
-            yday_text = (today - datetime.timedelta(days=1)).isoformat()
-            y_masters = world.master_trail(yday_text)
             y_item, y_text = _latest_visible(y_masters, viewer, now)
             if y_item is not None:
                 y_anchor = parse_time(y_item.get("end")) if y_item.get("end") else parse_time(y_item.get("start"))
@@ -288,10 +288,16 @@ def build_world_text(
                 sleep_hm = timeutil.day_hm(item.get("start")) if used_yesterday else (str(item.get("start") or "")[11:16] or timeutil.day_hm(item.get("start")))
                 line = "主人：%s（%s 入睡，还在睡）" % (_master_text(item, text, label, viewer), sleep_hm)
             else:
-                when_s = (timeutil.day_hm(item.get("start")) if used_yesterday else str(item.get("start"))[11:16]) if moment else (timeutil.day_hm(item.get("start")) if used_yesterday else _when(item))
+                if used_yesterday:
+                    st_s = timeutil.day_hm(item.get("start"))
+                    en_raw = str(item.get("end") or "")
+                    when_s = st_s if (moment or not en_raw) else ("%s–%s" % (st_s, en_raw[11:16]))
+                else:
+                    when_s = str(item.get("start"))[11:16] if moment else _when(item)
                 line = "主人：%s（%s）" % (_master_text(item, text, label, viewer), when_s)
             if not str(item.get("place") or "").strip():
-                placed = [x for x in masters if str(x.get("place") or "").strip()]
+                search_trail = masters if used_yesterday else (y_masters + masters)
+                placed = [x for x in search_trail if str(x.get("place") or "").strip()]
                 where, _text = _latest_visible(placed, viewer, now)
                 if where is not None:
                     line += "；最后说在%s（%s）" % (where.get("place"), timeutil.day_hm(where.get("start")))
@@ -641,8 +647,19 @@ OUTFIT_STATIC_GENERIC = "（关于身上穿的衣裳与体感：结合当下穿�
 _WINTER_COAT_WORDS = ("厚棉衣", "棉衣", "棉袄", "厚棉服", "棉服", "厚外套", "棉外套", "大衣")
 _PAJAMA_WORDS = ("睡衣", "睡裙", "吊带睡裙", "灯笼短裤", "和式睡衣")
 _PINK_KIMONO_WORDS = ("粉白", "粉白色", "樱花粉", "和式女仆", "复活后的常服", "复活后常服")
-_OUTFIT_PRE_OFF = ("没", "无", "未", "不", "脱", "换下", "收起", "搁下", "放下")
-_OUTFIT_POST_OFF = ("脱下", "脱了", "换下", "搁", "放", "搭在主人", "给主人", "收好", "叠好", "挂")
+_OUTFIT_PRE_OFF = (
+    "没有", "不含", "未带", "没带", "不带", "少了", "缺",
+    "没穿", "未穿", "不穿", "不用穿", "没披", "未披", "不披", "没套", "未套", "无",
+    "脱下", "脱了", "脱掉", "脱去", "换下", "收起", "收进", "搁下", "放下", "挂起", "挂在", "放在",
+)
+_OUTFIT_POST_OFF = (
+    "没穿", "未穿", "还没穿", "不穿", "没披", "未披", "没带", "没套",
+    "脱下", "脱了", "脱掉", "换下", "搁在", "搁着", "搁下",
+    "放在", "放进", "放回", "放好", "搭在主人", "给主人", "递给",
+    "收好", "收起", "收进", "叠好", "叠在", "叠放", "叠起来", "压在", "铺在",
+    "挂在", "挂着", "挂起", "晾着", "晾在",
+)
+_OUTFIT_POCKET_RE = re.compile(r"(?:衣兜里|口袋里|兜里|袖口|领口)[^，。；、]*")
 
 
 def _clause_matches_any(outfit: str, words: tuple[str, ...]) -> bool:
@@ -656,8 +673,8 @@ def _clause_matches_any(outfit: str, words: tuple[str, ...]) -> bool:
         for w in words:
             pos = c.find(w)
             while pos != -1:
-                prefix = c[max(0, pos - 6):pos]
-                suffix = c[pos + len(w):pos + len(w) + 6]
+                prefix = c[max(0, pos - 8):pos]
+                suffix = _OUTFIT_POCKET_RE.sub("", c[pos + len(w):])
                 if not any(off in prefix for off in _OUTFIT_PRE_OFF) and not any(off in suffix for off in _OUTFIT_POST_OFF):
                     return True
                 pos = c.find(w, pos + len(w))

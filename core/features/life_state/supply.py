@@ -195,10 +195,6 @@ def _lamp_hours(world, start: datetime.datetime, end: datetime.datetime) -> floa
                     continue
             a = parse_time(item.get("start"))
             b = parse_time(item.get("end")) if item.get("end") else None
-            if _real_stop(item) and item.get("stop_at"):
-                st_cut = parse_time(item.get("stop_at"))
-                if st_cut is not None:
-                    b = min(b, st_cut) if b is not None else st_cut
             if a is None or b is None:
                 continue
             a, b = max(a, start), min(b, end)
@@ -243,10 +239,10 @@ def _is_store_kerosene(item: dict) -> bool:
         return True
     place = str(item.get("place") or "")
     doing = str(item.get("doing") or "")
-    # 去杂货铺/集市买或以物易物换小壶煤油，归为小壶（STORE_KEROSENE_HOURS），绝不误加整桶 20h
+    # 去杂货铺/集市/镇上小铺买或以物易物换小壶煤油，归为小壶（STORE_KEROSENE_HOURS），绝不误加整桶 20h
     if "补给船" not in (place + doing) and not _has_supply_things(item):
-        if any(k in place for k in ("杂货铺", "集市", "商店街", "旧衣铺")) or any(
-            k in doing for k in ("小壶", "一壶", "打回一壶", "换回一壶", "杂货铺")
+        if any(k in place for k in ("杂货铺", "集市", "商店街", "旧衣铺", "小铺", "商店", "铺子", "货铺", "五金")) or any(
+            k in doing for k in ("小壶", "一壶", "打回一壶", "换回一壶", "杂货铺", "小铺", "换了点煤油", "换煤油", "打煤油", "买煤油")
         ):
             return True
     money_ops = item.get("money") if isinstance(item.get("money"), list) else []
@@ -259,11 +255,13 @@ def _is_store_kerosene(item: dict) -> bool:
 
 def _store_refills(world, start: datetime.datetime, end: datetime.datetime) -> list[datetime.datetime]:
     """[start, end) 里去坡上杂货铺打回小壶煤油的时刻列表（按结构化 kerosene=true + origin.text 精确枚举识别）。"""
+    from .world import real_stop as _real_stop
+
     out: list[datetime.datetime] = []
     day = start.date()
     while day <= end.date():
         for item in world.entries(day.isoformat()):
-            if str(item.get("who")) == "master" or item.get("stopped"):
+            if str(item.get("who")) == "master" or _real_stop(item):
                 continue
             moment = parse_time(item.get("end")) if item.get("end") else parse_time(item.get("start"))
             if moment is None or not start <= moment < end:
@@ -271,16 +269,24 @@ def _store_refills(world, start: datetime.datetime, end: datetime.datetime) -> l
             if _is_store_kerosene(item):
                 out.append(moment)
         day += datetime.timedelta(days=1)
-    return sorted(out)
+    # 两人同行去杂货铺同标 kerosene=True 时，30 分钟内合并为 1 次小壶加油防双加 16h
+    deduped: list[datetime.datetime] = []
+    for ts in sorted(out):
+        if deduped and (ts - deduped[-1]).total_seconds() <= 30 * 60:
+            continue
+        deduped.append(ts)
+    return deduped
 
 
 def _pickup(world, start: datetime.datetime, end: datetime.datetime):
     """[start, end) 里把这一趟煤油领回来的时刻（纯结构化判定：kerosene=true 或段里入库了补给船配给物资）；没领返回 None。"""
+    from .world import real_stop as _real_stop
+
     legacy_cutoff = datetime.datetime(2026, 11, 16, 0, 0)
     day = start.date()
     while day <= end.date():
         for item in world.entries(day.isoformat()):
-            if str(item.get("who")) == "master" or item.get("stopped"):
+            if str(item.get("who")) == "master" or _real_stop(item):
                 continue
             moment = parse_time(item.get("end")) if item.get("end") else parse_time(item.get("start"))
             if moment is None or not start <= moment < end:

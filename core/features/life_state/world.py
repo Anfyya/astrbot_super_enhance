@@ -281,6 +281,7 @@ class WorldStore:
         note: str = "",
         fuel: list[dict] | None = None,
         by: str = "master",
+        paid_start: datetime.datetime | None = None,
     ) -> dict:
         """新增一条手动炉火区间并落盘，递增 revision 刷新热力学与烘干缓存。"""
         kind = str(stove or "").strip().lower()
@@ -305,6 +306,9 @@ class WorldStore:
             "created": fmt_time(self.now_local()),
             "stopped_at": "",
         }
+        if paid_start is not None:
+            ps = paid_start.replace(tzinfo=None, second=0, microsecond=0)
+            record["paid_start"] = fmt_time(max(st, min(ps, en)))
         rows.append(record)
         cutoff = fmt_time(self.now_local() - datetime.timedelta(days=14))
         rows = [x for x in rows if str(x.get("end") or "") >= cutoff][-200:]
@@ -761,6 +765,7 @@ class WorldStore:
                 if not item["send_msg"]:
                     item["msg_at"] = ""
                     item["msg_purpose"] = ""
+                    item["msg_kind"] = ""
             if fields.get("msg_at") is not None:
                 raw_at = str(fields["msg_at"] or "").strip().lower()
                 item["msg_at"] = raw_at if item.get("send_msg") and raw_at in ("start", "end") else ""

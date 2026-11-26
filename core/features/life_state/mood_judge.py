@@ -56,7 +56,9 @@ _ESSENTIAL_DOING_TOKENS = (
 _SHARED_INDOOR_TOKENS = (
     "船舱", "船屋", "矮桌", "砖炕", "火炕", "柴炉", "炭炉", "灶", "地铺", "吊床", "堂屋", "卧房",
 )
-_SEPARATE_SPOT_TOKENS = ("甲板", "船头", "船顶", "储物舱", "仓棚", "院子", "藏经阁", "门外", "屋外")
+_SEPARATE_SPOT_TOKENS = (
+    "甲板", "船头", "船顶", "船舷", "舱外", "储物舱", "仓棚", "船篷", "屋顶", "院子", "藏经阁", "门外", "屋外",
+)
 
 JUDGE_SYSTEM_PROMPT = (
     llm.SYSTEM_PROMPT
@@ -104,11 +106,15 @@ def _places_close(a: str, b: str) -> bool:
     xa, xb = _norm_place_key(a), _norm_place_key(b)
     if not xa or not xb:
         return False
-    if xa == xb or xa in xb or xb in xa:
+    if xa == xb:
         return True
-    # 都在船屋/宿舍同一室内公共区且不涉及明显隔离点
-    if any(t in xa for t in _SEPARATE_SPOT_TOKENS) or any(t in xb for t in _SEPARATE_SPOT_TOKENS):
-        return False
+    # 先判分隔隔离点（储物舱/甲板/船舷/舱外等）：只要任一方在隔离点，须双方同处该隔离点才算同场，防止 xa in xb 击穿隔离
+    sep_a = {t for t in _SEPARATE_SPOT_TOKENS if t in xa}
+    sep_b = {t for t in _SEPARATE_SPOT_TOKENS if t in xb}
+    if sep_a or sep_b:
+        return bool(sep_a & sep_b)
+    if xa in xb or xb in xa:
+        return True
     return any(t in xa for t in _SHARED_INDOOR_TOKENS) and any(t in xb for t in _SHARED_INDOOR_TOKENS)
 
 

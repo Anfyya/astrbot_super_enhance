@@ -1225,9 +1225,11 @@ def validate_step_segments_money(
                 if op_cp and seg_dt is not None:
                     recent_ops.append((bot, kind, amt, op_cp, seg_dt, what_s[:60]))
                 _SERVICE_SPEND_HINTS = (
-                    "泡澡", "澡堂", "洗澡", "修", "缝补", "运费", "船费", "渡费", "工钱", "工费",
-                    "邮费", "寄", "门票", "理发", "诊费", "看病", "茶水费", "茶位", "租", "押金",
-                    "煤油", "打水", "淡水", "小费", "打赏", "捐",
+                    "泡澡", "澡堂", "洗澡", "修理费", "修船费", "修补费", "维修费", "代修", "请人修",
+                    "缝补费", "裁缝费", "运费", "船费", "渡费", "工钱", "工费",
+                    "邮费", "寄信", "寄包裹", "寄件", "快递", "门票", "理发", "诊费", "看病",
+                    "茶水费", "茶位", "租金", "租借费", "租船费", "房租", "押金",
+                    "打煤油", "灌煤油", "散装煤油", "一壶煤油", "小壶煤油", "打水", "淡水", "小费", "打赏", "捐款", "捐钱",
                 )
                 _GOODS_SPEND_HINTS = ("买", "购", "称", "置办", "添置", "挑了", "带回", "打回")
                 if any(k in what_s for k in _GOODS_SPEND_HINTS) and not any(k in what_s for k in _SERVICE_SPEND_HINTS):
@@ -1319,6 +1321,16 @@ def validate_step_segments_money(
                     continue
                 if direction == "payable":
                     has_payment_or_barter = True
+                    _DEBT_SERVICE_HINTS = (
+                        "泡澡", "澡堂", "洗澡", "修理费", "修船费", "修补费", "维修费", "代修", "请人修",
+                        "缝补费", "裁缝费", "运费", "船费", "渡费", "工钱", "工费",
+                        "邮费", "寄信", "寄包裹", "寄件", "快递", "门票", "理发", "诊费", "看病",
+                        "茶水费", "茶位", "租金", "租借费", "租船费", "房租", "押金",
+                        "打煤油", "灌煤油", "散装煤油", "一壶煤油", "小壶煤油", "打水", "淡水", "小费", "打赏", "捐款", "捐钱",
+                    )
+                    _DEBT_GOODS_HINTS = ("买", "购", "称", "置办", "添置", "挑了", "带回", "打回", "赊账买", "赊购")
+                    if any(k in what_s for k in _DEBT_GOODS_HINTS) and not any(k in what_s for k in _DEBT_SERVICE_HINTS):
+                        goods_spend_notes.append(f"赊账{fmt_yuan(amt)}元「{what_s}」")
                 if seg_dt is not None:
                     recent_ops.append((bot, kind, amt, cp, seg_dt, what_s[:60]))
 
@@ -1363,12 +1375,23 @@ def validate_step_segments_money(
                 f"也没在 things/items 里用已有东西以物易物！必须如实付现或赊账"
             )
         if seaside and goods_spend_notes and new_inbound_count == 0 and not raw.get("kerosene") and not raw.get("water"):
-            # 双人同行买东西时，兼容另一人同起止段写新物品入库的情况
+            # 双人同行买东西时，仅兼容对方确实与自己同行且在相近时段记入 what=="买回来" 新实物的情况（防居家做饭误豁免）
             partner_inbound = False
             seg_st_raw = str(raw.get("start") or "")
             for p_st, p_bot, _p_idx, p_raw in timeline:
-                if p_bot != bot and p_bot in with_list and str(p_raw.get("start") or "") == seg_st_raw:
-                    if any(isinstance(e, dict) and e.get("new") for e in (p_raw.get("things") or []) + (p_raw.get("items") or [])):
+                if p_bot != bot and p_bot in with_list:
+                    p_with = [str(x) for x in (p_raw.get("with") or [])]
+                    if bot not in p_with:
+                        continue
+                    same_or_near = str(p_raw.get("start") or "") == seg_st_raw
+                    if not same_or_near and seg_dt is not None and p_st is not None:
+                        p_dt = parse_time(p_st) if isinstance(p_st, str) else p_st
+                        if p_dt is not None and abs((p_dt - seg_dt).total_seconds()) <= 30 * 60:
+                            same_or_near = True
+                    if same_or_near and any(
+                        isinstance(e, dict) and e.get("new") and str(e.get("what") or "").strip() == "买回来"
+                        for e in (p_raw.get("things") or []) + (p_raw.get("items") or [])
+                    ):
                         partner_inbound = True
                         break
             if not partner_inbound:

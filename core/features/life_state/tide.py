@@ -164,26 +164,34 @@ def tide_step_text(start: datetime.datetime, until: datetime.datetime | None = N
             flat_s = start.replace(tzinfo=None)
             flat_e = until.replace(tzinfo=None)
             has_day_low = False
-            bad_wx = False
+            has_good_day_low = False
+            has_bad_day_low = False
             cur = flat_s
             while cur < flat_e:
                 step_end = min(flat_e, cur + datetime.timedelta(minutes=30))
                 if 6 <= cur.hour < 18 and has_low_tide_in_window(cur, step_end, home):
                     has_day_low = True
+                    slot_bad = False
                     if weather_of is not None:
                         try:
                             from . import weather as _wmod
                             wtxt = weather_of(cur.date()) if callable(weather_of) else str(weather_of)
                             hr = _wmod.day_hours(cur.date().isoformat(), wtxt, home)[cur.hour]
                             if int(hr.get("wind") or 0) >= 7 or float(hr.get("rain") or 0.0) >= 8.0:
-                                bad_wx = True
+                                slot_bad = True
                         except Exception:
                             pass
+                    if slot_bad:
+                        has_bad_day_low = True
+                    else:
+                        has_good_day_low = True
                 cur = step_end
             if not has_day_low:
                 win_bit = "；本时段虽逢低潮但天黑夜深，不宜下滩赶海"
-            elif bad_wx:
+            elif not has_good_day_low:
                 win_bit = "；本时段虽逢低潮但风浪/暴雨过大，严禁下滩赶海"
+            elif has_bad_day_low:
+                win_bit = "；本时段部分白天低潮浅滩可赶海（注意避开后面起风/暴雨钟点）"
             else:
                 win_bit = "；本时段覆盖白天低潮浅滩窗口"
         else:

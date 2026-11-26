@@ -103,63 +103,74 @@ def recorder_on(service) -> bool:
 
 async def world_loop(service) -> None:
     """世界线后台循环：记录员、补写和每日维护。"""
-    await asyncio.sleep(20.0)
-    while True:
-        try:
-            await flush_outbox(service)
-            now = service._now()
-            today = now.date()
-            if service._world_day != today:
-                await world_daily(service, today)
-                service._world_day = today
-            else:
+    try:
+        await asyncio.sleep(20.0)
+        while True:
+            try:
+                await flush_outbox(service)
+                now = service._now()
+                today = now.date()
+                if service._world_day != today:
+                    await world_daily(service, today)
+                    service._world_day = today
+                else:
+                    if recorder_on(service):
+                        await review_if_due(service, now)
+                service.world.tick(now)
+                # 面板里改了「住在哪」：从这一刻起记成换了住处（存货按它分两处，见 ThingStore.here）
+                if service.world.note_home(service.life_step.home, now.replace(tzinfo=None)):
+                    logger.info("[super_enhance/life] 住处换成 %s（%s 起）", service.life_step.home, now.strftime("%m-%d %H:%M"))
+                done = 0
                 if recorder_on(service):
-                    await review_if_due(service, now)
-            service.world.tick(now)
-            # 面板里改了「住在哪」：从这一刻起记成换了住处（存货按它分两处，见 ThingStore.here）
-            if service.world.note_home(service.life_step.home, now.replace(tzinfo=None)):
-                logger.info("[super_enhance/life] 住处换成 %s（%s 起）", service.life_step.home, now.strftime("%m-%d %H:%M"))
-            done = 0
-            if recorder_on(service):
-                for umo in service.recorder.sessions():
-                    items = service.recorder.pending(umo, now)
-                    if items:
-                        logger.info("[super_enhance/life] 世界线：%s 待处理 %d 条，可跑=%s", umo, len(items), service.recorder.ready(umo, now))
-                done = await service.recorder.run_all(now)
+                    for umo in service.recorder.sessions():
+                        items = service.recorder.pending(umo, now)
+                        if items:
+                            logger.info("[super_enhance/life] 世界线：%s 待处理 %d 条，可跑=%s", umo, len(items), service.recorder.ready(umo, now))
+                    done = await service.recorder.run_all(now)
+                    if done:
+                        await sync_live_jobs(service, today.isoformat())
+                else:
+                    # 关着的时候游标照样往前走：不然再打开时，会把关着那几天的聊天一口气补记进世界线
+                    service.recorder.skip_pending(now)
+                companion = getattr(service, "companionship", None)
+                if companion is not None:
+                    companion.safe("apply_refresh", service._now(), service.enabled_bots())
+                step_task = getattr(service, "_step_task", None)
+                if step_task is not None and step_task.done():
+                    try:
+                        step_task.result()
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception as e:
+                        logger.error("[super_enhance/life] 后台补写任务异常：%s", e)
+                    service._step_task = None
+                    step_task = None
+                if step_task is None and service.life_step.due(now) and not _pending_blocks_step(service, service._now()):
+                    service._step_task = asyncio.create_task(service.life_step.run(now))
+                await settle_live(service, now)
+                await notify_done(service, service._now())
+                companion = getattr(service, "companionship", None)
+                if companion is not None:
+                    companion.safe("reconcile", service._now())
                 if done:
-                    await sync_live_jobs(service, today.isoformat())
-            else:
-                # 关着的时候游标照样往前走：不然再打开时，会把关着那几天的聊天一口气补记进世界线
-                service.recorder.skip_pending(now)
-            companion = getattr(service, "companionship", None)
-            if companion is not None:
-                companion.safe("apply_refresh", service._now(), service.enabled_bots())
-            step_task = getattr(service, "_step_task", None)
-            if step_task is not None and step_task.done():
-                try:
-                    step_task.result()
-                except asyncio.CancelledError:
-                    pass
-                except Exception as e:
-                    logger.error("[super_enhance/life] 后台补写任务异常：%s", e)
-                service._step_task = None
-                step_task = None
-            if step_task is None and service.life_step.due(now) and not _pending_blocks_step(service, service._now()):
-                service._step_task = asyncio.create_task(service.life_step.run(now))
-            await settle_live(service, now)
-            await notify_done(service, service._now())
-            companion = getattr(service, "companionship", None)
-            if companion is not None:
-                companion.safe("reconcile", service._now())
-            if done:
-                service._debug("世界线：记录员处理了 %d 个会话", done)
-            service.world.clear_error("loop")
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            logger.error("[super_enhance/life] 世界线后台循环出错：%s", e)
-            service.world.note_error("loop", "%s: %s" % (type(e).__name__, e))
-        await asyncio.sleep(30.0)
+                    service._debug("世界线：记录员处理了 %d 个会话", done)
+                service.world.clear_error("loop")
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error("[super_enhance/life] 世界线后台循环出错：%s", e)
+                service.world.note_error("loop", "%s: %s" % (type(e).__name__, e))
+            await asyncio.sleep(30.0)
+    finally:
+        step_task = getattr(service, "_step_task", None)
+        if step_task is not None:
+            if not step_task.done():
+                step_task.cancel()
+            try:
+                await step_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            service._step_task = None
 
 async def sync_live_jobs(service, date_text: str) -> None:
     """世界线 live：按今天定好的起床 / 入睡和约定补排主动对话（只补缺的）。"""

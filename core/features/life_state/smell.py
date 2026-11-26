@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import datetime
+import re
 from typing import Any
 
 from . import things as things_mod
@@ -17,8 +18,14 @@ from .world import parse_time
 
 _OUTSIDE_PLACE_TOKENS = ("仓棚", "码头", "甲板", "船舷", "船顶", "船头", "屋外", "院子", "补给船", "跳板", "街", "集市", "滩", "海里", "海底", "水下")
 _SEALED_CONTAINER_WORDS = ("密封", "罐头", "拧紧", "盖严", "密闭", "未开封", "玻璃瓶", "陶罐", "铁罐", "油罐", "腌坛", "坛子")
+_OPEN_OR_UNSEALED_WORDS = (
+    "开了口", "开口", "已开封", "开了封", "开封", "打开了", "开了盖", "开盖",
+    "没盖严", "未盖严", "盖不严", "没拧紧", "未拧紧", "未密封", "没封严", "没封好",
+    "破了口", "漏气", "吃了一部分", "吃剩", "敞着", "敞口",
+)
 _DRY_STORAGE_WORDS = ("抽屉", "工具箱", "木盒", "铁盒", "收纳盒", "袋里", "箱里", "柜格", "书桌")
 _WET_RUST_WORDS = ("湿", "潮", "海泥", "发腥", "海腥", "生锈", "锈透", "滴水", "泡")
+_DRY_NEGATION_RE = re.compile(r"(?:防潮|不潮|无潮|未潮|没生锈|未生锈|不生锈|无锈|除锈|去锈|防锈|擦干|晾干|烘干|干透)")
 _RAW_SMELL_KINDS = frozenset(("生鱼虾水产", "生肉禽肉"))
 _AROMA_WINDOW_MINUTES = 60.0
 _SMOKE_LINGER_MINUTES = 30.0
@@ -106,7 +113,9 @@ def cabin_smell_info(
             continue
         wx_desc = str(item.get("_weather") or "")
         state_txt = str(last.get("state") or "")
-        if "吹进海里" in (wx_desc + state_txt) or "不在船上" in (wx_desc + state_txt):
+        note_txt = str(last.get("note") or "")
+        detail_txt = f"{state_txt} {note_txt}".strip()
+        if "吹进海里" in (wx_desc + detail_txt) or "不在船上" in (wx_desc + detail_txt):
             continue
 
         cat = things_mod.cat_of(item)
@@ -114,19 +123,26 @@ def cabin_smell_info(
         name = str(item.get("name") or "").strip()
         keep = str(last.get("keep") or "").strip()
         w_meta = last.get("weather") if isinstance(last.get("weather"), dict) else {}
-        is_sealed_box = (
+        # 剥离「未开封/没开封/未拆封」后再判是否开封，同时合并检查 state 与 note（CAT_FOOD 归一化后原文常留在 note）
+        open_probe = re.sub(r"(?:未|没|还没)(?:开封|拆封|打开|开盖)", "", detail_txt)
+        is_explicitly_open = (
+            keep == "敞着放"
+            or state_txt == "切开了"
+            or any(k in open_probe for k in _OPEN_OR_UNSEALED_WORDS)
+            or any(str(st.get("what") or "").strip() in ("吃了一部分", "用掉一部分", "切开了", "打开了") for st in stages)
+        )
+        # 剔除「没盖严/未拧紧/未密封」等否定片段后再判密封，且显式开封/吃剩罐头绝不当作密封
+        clean_seal_state = re.sub(r"(?:没|未|不)(?:盖严|拧紧|密封|封严|封好|封紧)", "", detail_txt)
+        is_sealed_box = (not is_explicitly_open) and (
             bool(w_meta.get("sealed"))
-            or (keep == "收着放" and any(k in (name + place + state_txt) for k in _SEALED_CONTAINER_WORDS))
-            or any(k in state_txt for k in ("拧紧", "密封", "盖严", "未开封"))
+            or (keep == "收着放" and any(k in (name + place + clean_seal_state) for k in _SEALED_CONTAINER_WORDS))
+            or any(k in clean_seal_state for k in ("拧紧", "密封", "盖严", "未开封"))
         )
 
         if cat == things_mod.CAT_FOOD:
             try:
                 prof = store.profile(item, flat, shelf)
                 fresh_lvl = str((prof.get("fresh") or {}).get("level") or "")
-                wx_note = str(prof.get("weather") or "")
-                if "吹进海里" in wx_note or "不在船上" in wx_note:
-                    continue
             except Exception:
                 fresh_lvl = ""
 
@@ -161,10 +177,11 @@ def cabin_smell_info(
                             aroma_hits.append((at_dt, name))
                     break
         elif cat == things_mod.CAT_ITEM:
-            # 只有真正敞堆在舱内、或湿潮/带海泥锈味的废金属才算潮腥铁锈味；擦干收在抽屉/木盒里的干零件不误报
+            # 只有真正敞堆在舱内、或湿潮/带海泥锈味的废金属才算潮腥铁锈味；擦干防潮收在抽屉/木盒里的干零件不误报
             if things_mod.is_scrap(item):
                 in_dry_box = any(k in place for k in _DRY_STORAGE_WORDS) or is_sealed_box
-                is_wet_or_rusty = any(k in (state_txt + wx_desc) for k in _WET_RUST_WORDS)
+                clean_rust_txt = _DRY_NEGATION_RE.sub("", state_txt + wx_desc)
+                is_wet_or_rusty = any(k in clean_rust_txt for k in _WET_RUST_WORDS)
                 if in_dry_box and not is_wet_or_rusty:
                     continue
                 cabin_scrap_count += 1
@@ -184,23 +201,27 @@ def cabin_smell_info(
             break
     res["aroma_names"] = aroma_names
 
-    # 柴火烟气（仅海边船舱铁桶柴炉正在烧或停火 30 分钟内）
+    # 柴火烟气（仅海边船舱铁桶柴炉正在烧或停火 30 分钟内；使用独立 wood_mode，避免双炉或刚灭转炭炉漏判）
     has_smoke = False
     if home == "海边小镇":
         if isinstance(temp_info, dict):
-            mode = str(temp_info.get("mode") or "")
-            stove = str(temp_info.get("stove") or "")
-            mins = int(temp_info.get("minutes") or 0)
-            if stove == "wood" and (mode == "burning" or (mode == "cooling" and mins <= _SMOKE_LINGER_MINUTES)):
-                has_smoke = True
+            w_mode = str(temp_info.get("wood_mode") or "")
+            if w_mode in ("burning", "cooling", "cold"):
+                w_mins = int(temp_info.get("wood_minutes") if temp_info.get("wood_minutes") is not None else (temp_info.get("minutes") or 0))
+                if w_mode == "burning" or (w_mode == "cooling" and w_mins <= _SMOKE_LINGER_MINUTES):
+                    has_smoke = True
+            else:
+                mode = str(temp_info.get("mode") or "")
+                stove = str(temp_info.get("stove") or "")
+                mins = int(temp_info.get("minutes") or 0)
+                if stove == "wood" and (mode == "burning" or (mode == "cooling" and mins <= _SMOKE_LINGER_MINUTES)):
+                    has_smoke = True
         elif world is not None:
             try:
-                spans = weather_mod._stove_spans_from_world(
+                _merged, wood_spans, _char = weather_mod._split_stove_tracks(
                     world, flat.date() - datetime.timedelta(days=1), flat.date(), clip_until=flat
                 )
-                for st_t, en_t, sk in reversed(spans):
-                    if sk != "wood":
-                        continue
+                for st_t, en_t, _sk in reversed(wood_spans):
                     if st_t <= flat <= en_t + datetime.timedelta(minutes=_SMOKE_LINGER_MINUTES):
                         has_smoke = True
                     break

@@ -224,7 +224,7 @@ _DEFAULT_POOLS_RAW: dict[str, tuple[dict, ...]] = {
         _e("帮码头渔民理渔网或卸货，或者帮镇上铺子修坏掉的旧手电和老收音机开关，当场挣回一点手艺零钱", 0, 0.75, group="帮工", bucket="镇上谋生", where="海边小镇", wx="dry", outdoor=True),
         _e("镇上有人问路搭话，或顺手帮照看一小会儿摊子与小猫小狗，闹出点好玩的小插曲", 0, 0.75, bucket="观察闲逛", where="海边小镇", wx="dry", outdoor=True),
         _e("码头有船靠岸卸货，顺路去布告板翻了翻新贴出的寻物启事和换物纸条", 0.6, 0.7, group="码头见闻", bucket="观察闲逛", where="海边小镇", wx="dry", outdoor=True),
-        _e("在船坞外头看老船匠补船底、敲木钉，顺便打听打捞船修补的门道", 0.55, 0.6, bucket="观察闲逛", where="海边小镇", wx="dry", outdoor=True),
+        _e("在船坞外头看老船匠补船底、敲木钉，顺便打听打捞船修补的门道", 0, 0.6, bucket="观察闲逛", where="海边小镇", wx="dry", outdoor=True),
         _e("在煮盐棚边看人熬海水、听码头的人聊大陆消息，记了一耳朵真假难辨的传闻", 0.55, 0.6, group="码头见闻", bucket="观察闲逛", where="海边小镇", wx="dry", outdoor=True),
         _e("赶上公共澡堂烧水的日子，去泡了个热乎乎的澡", 0, 0.45, bucket="出门走走", where="海边小镇", wx="dry", outdoor=True),
         _e("去集市摊头看鲜鱼和菜价，顺便打听今天有没有便宜收摊货", 0, 0.4, group="逛集市", bucket="镇上谋生", where="海边小镇", wx="dry", outdoor=True),
@@ -1007,8 +1007,24 @@ def clean_pool_item(kind: str, item: dict) -> dict:
     }
 
 
+_FORCE_ZERO_CONGYU_TEXTS = frozenset({
+    "在船坞外头看老船匠补船底、敲木钉，顺便打听打捞船修补的门道",
+    "去码头布告板接了一张镇民家屋后倒树或风断枝清理短工，帮着锯断劈开后分走几十公斤硬木劈柴",
+    "去坡上菜地帮菜农清理老果木修剪下来的硬枝和旧木架，顺手扛回十几公斤硬木柴码在仓棚",
+    "去船坞帮老船匠打下手修旧木件，顺手学了一手修船木工窍门还换回十几公斤干硬木边料",
+    "去坡上柴料场挑二三十公斤便宜半湿硬木柴或带湿原段，拉回仓棚劈开码在通风干燥架上晾着",
+    "退潮后去漂流物小湾高潮线以上拾雨水冲刷晒透的干陆枝，或挑根结实浮木带去船坞换干硬木柴",
+    "趁好天去坡上柴料场、船坞或林边拉回百来公斤大圆木和粗硬木，花大半天锯劈并码满棚下大柴垛",
+    "去煮盐棚扎扎实实帮大半天大工挑海水添柴，一口气换回一大罐闷炭和工钱扛回船屋",
+    "花大半天把仓棚攒的废铜废铁全拆解捆好过秤卖钱，顺路把家里米面油盐和耐放菜一次买齐",
+    "去船坞或码头接大半天重头短工，帮老船匠修大木船或帮渔民集中补网卸货，挣笔大工钱或换批硬木料",
+    "外头下着细密小雨，打着伞去码头布告板和杂货铺顺路逛了一圈，顺便打听新鲜菜价",
+    "冒着中雨跑到码头棚子底下找躲雨渔民闲聊，顺便打听雨停后哪片水域好摸货",
+})
+
+
 def normalize_pools(data, *, merge_new_defaults: bool = False) -> dict:
-    """读进来的池子：哪个池子缺了或坏了就用默认的那份；单条坏了就跳过。merge_new_defaults=True 时仅补入 _NEW_DEFAULT_TEXTS 白名单新条。"""
+    """读进来的池子：哪个池子缺了或坏了就用默认的那份；单条坏了就跳过。merge_new_defaults=True 时仅补入 _NEW_DEFAULT_TEXTS 白名单新条并同步灵体丛雨禁用外人条目置零。"""
     out = default_pools()
     if not isinstance(data, dict):
         return out
@@ -1022,6 +1038,9 @@ def normalize_pools(data, *, merge_new_defaults: bool = False) -> dict:
                 item = clean_pool_item(kind, row)
             except ValueError:
                 continue
+            if merge_new_defaults and item["text"] in _FORCE_ZERO_CONGYU_TEXTS and isinstance(item.get("w"), dict):
+                if float(item["w"].get("丛雨") or 0) > 0:
+                    item["w"] = dict(item["w"], 丛雨=0.0)
             if item["text"] not in seen:
                 seen.add(item["text"])
                 clean.append(item)
@@ -2384,7 +2403,7 @@ class PoolStore:
     def save(self, pools: dict) -> None:
         data = {kind: list(pools.get(kind) or []) for kind in POOL_KINDS}
         jsonio.save(self.path, data, indent=1)
-        self._cache = (self.path.stat().st_mtime_ns, normalize_pools(data))
+        self._cache = (self.path.stat().st_mtime_ns, normalize_pools(data, merge_new_defaults=True))
 
     def reset(self) -> None:
         if self.path.exists():

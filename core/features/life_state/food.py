@@ -193,7 +193,11 @@ def norm_state(value) -> str:
         return ""
     if text in STATES:
         return text
-    return _match(text, STATE_WORDS)
+    # 先剥离「未开封/没开封/未拆封/没拆封」等否定词，避免被 ("开封", "切开了") 误判为已切开
+    cleaned = re.sub(r"(?:未|没|还没)(?:开封|拆封|打开|开盖)", "", text)
+    if not cleaned:
+        return DEFAULT_STATE
+    return _match(cleaned, STATE_WORDS)
 
 
 def split_keep(keep, spot="", place="") -> tuple:
@@ -1212,13 +1216,13 @@ class Sim:
                 self.reheats += 1
                 if self.state == "没熟透":
                     self.state = DEFAULT_STATE  # 回锅煎透、煮透了
-                # 仅熟食类回锅烧滚才适度抑菌：尚未明显变质（frac < 0.55）最多回拨到 0.25；临界酸败菜（0.55~0.85）绝不起死回生
+                # 仅熟食类回锅烧滚才适度抑菌：尚未明显变质（frac < 0.55）最多回拨到 0.25；临界酸败菜（0.55~0.85）绝不跌破 0.55 起死回生
                 is_cooked_dish = self.kind in COOKED + ("馒头面包主食", "鲜肉软点心")
                 if is_cooked_dish and self.reheats <= 2:
                     if self.frac < 0.55:
                         self.frac = min(self.frac, max(0.25, self.frac - 0.20))
                     elif self.frac < 0.85:
-                        self.frac = min(self.frac, self.frac * 0.85)
+                        self.frac = min(self.frac, max(0.55, self.frac * 0.92))
                 # 热一热：凉了的热回来、发硬的饭软回来、回软的炸物复脆、稠了的粥加水
                 for key in ("cool", "stale"):
                     self.acc[key] = 0.0
@@ -1238,27 +1242,39 @@ class Sim:
                 self._activate_salt(light=_has(stage_text, LIGHT_SALT_WORDS) and "重盐" not in stage_text)
             elif salt_hint and what not in ("糖渍", "醋泡", "酱渍", "油封", "灰沙埋"):
                 self._activate_salt(light=True)
-        # 5) 晴天晾晒 或 柴炉边烘干（结构化 what == "炉烘" / "晒上了" 优先；后续收进舱底/密封盒/柜格自动停止烘干）
-        stove_drying_hint = what == "炉烘" or (
-            what != "做好了" and _has(stage_text, ("烘鱼", "烘干", "炉边烘", "柴炉边烘", "烟管旁烘", "挂在炉边"))
-        )
-        sun_drying_hint = what == "晒上了" or (
-            what != "做好了" and _has(stage_text, ("晒上", "晾晒", "晒鱼", "一夜干")) and self.spot in ("太阳底下", "屋外")
-        )
-        if stove_drying_hint or sun_drying_hint:
-            self.drying = True
-            self.stove_drying = (what == "炉烘") or (
-                _has(self.place + " " + stage_text, STOVE_DRY_WORDS) and self.spot not in ("太阳底下", "屋外")
-            )
-        elif not first and (self.drying or self.stove_drying):
-            in_closed_storage = (
+        # 5) 晴天晾晒 或 柴炉边烘干（先判是否已收进封闭容器/非烘干位，避免 note 里沾「炉边/烘干」继续无限烘干）
+        _CLOSED_BOX_WORDS = ("木盒", "铁盒", "铁罐", "玻璃瓶", "陶罐", "密封罐", "收纳盒", "袋里", "罐里", "盒里", "柜里", "柜格", "抽屉", "坛子")
+        _STOP_DRY_VERBS = ("取下", "收进", "收好", "装进", "装入", "放进", "收起来", "移入", "盖好")
+        place_in_box = _has(self.place, _CLOSED_BOX_WORDS) and not _has(self.place, STOVE_DRY_WORDS + ("太阳", "甲板", "晾", "晒"))
+        note_put_away = _has(stage_text, _STOP_DRY_VERBS) and (_has(self.place + " " + stage_text, _CLOSED_BOX_WORDS) or self.cover in ("收着放", "罩着放"))
+        in_closed_storage = (
+            what not in ("炉烘", "晒上了")
+            and (
                 self.spot in ("舱底阴凉处", "冰箱", "冻着", "地窖", "井里", "海水/冷水镇着", "船舷海里活养", "阴凉处")
                 or self.cover in ("收着放", "泡在水里", "活养着")
+                or place_in_box
+                or note_put_away
                 or (what == "挪地方" and not _has(self.place + " " + stage_text, STOVE_DRY_WORDS + ("太阳", "甲板", "晾", "晒")))
             )
-            if in_closed_storage:
+        )
+        if in_closed_storage:
+            if not first and (self.drying or self.stove_drying):
                 self.drying = False
                 self.stove_drying = False
+            if (place_in_box or note_put_away) and self.cover == "挂着通风":
+                self.cover = "收着放"
+        else:
+            stove_drying_hint = what == "炉烘" or (
+                what != "做好了" and _has(stage_text, ("烘鱼", "烘干", "炉边烘", "柴炉边烘", "烟管旁烘", "挂在炉边"))
+            )
+            sun_drying_hint = what == "晒上了" or (
+                what != "做好了" and _has(stage_text, ("晒上", "晾晒", "晒鱼", "一夜干")) and self.spot in ("太阳底下", "屋外")
+            )
+            if stove_drying_hint or sun_drying_hint:
+                self.drying = True
+                self.stove_drying = (what == "炉烘") or (
+                    _has(self.place + " " + stage_text, STOVE_DRY_WORDS) and self.spot not in ("太阳底下", "屋外")
+                )
         if what == "熏上了":
             self.smoking = True
         elif not first:
@@ -1503,7 +1519,7 @@ class Sim:
                 self._add("melt", -dt)
         if "burn" in p and temp <= -10:
             self._add("burn", (0.3 if cover == "收着放" else 1.0) * dt)
-        if "chill_inj" in p and not frozen and temp <= p["chill_inj"]["below"]:
+        if "chill_inj" in p and not frozen and temp < p["chill_inj"]["below"]:
             self._add("chill_inj", (0.6 if temp <= p["chill_inj"]["below"] - 2.0 else 0.25) * dt)
         if "stale" in p:
             self._add("stale", _stale_rate(temp) * (0.8 if cover == "收着放" else (1.1 if cover == "敞着放" else 1.0)) * dt)

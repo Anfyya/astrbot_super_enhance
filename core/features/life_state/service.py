@@ -247,6 +247,15 @@ class LifeStateService:
             except (asyncio.CancelledError, Exception):
                 pass
             self._world_task = None
+        step_task = getattr(self, "_step_task", None)
+        if step_task is not None:
+            if not step_task.done():
+                step_task.cancel()
+            try:
+                await step_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._step_task = None
 
     # ---------- 主人情绪异步快刷与世界线联动 ----------
 
@@ -625,7 +634,8 @@ class LifeStateService:
                 companion.safe("apply_refresh", moment, self.enabled_bots())
             return after_state, slept_minutes, was_asleep
 
-        after, slept_mins, prev_asleep = await asyncio.to_thread(_sync_sleep)
+        # 直接在主事件循环同步写世界线与陪伴状态（纯内存+极小本地 JSON 落盘），杜绝工作线程与 world_loop/recorder 跨线程脏读写
+        after, slept_mins, prev_asleep = _sync_sleep()
         wake_greet = 0
         if target == "awake" and prev_asleep and slept_mins >= 45.0:
             try:

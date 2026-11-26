@@ -470,13 +470,18 @@ def _temp_curve(life, now: datetime.datetime, text_of, home: str) -> list[dict]:
     end_day = end_t.date()
 
     if home == "海边小镇":
-        spans = weather_mod._stove_spans_from_world(life.world, start_day, end_day, clip_until=None)
-        _, eval_near = weather_mod._build_zone_curve(spans, text_of, home, "near")
-        _, eval_mid = weather_mod._build_zone_curve(spans, text_of, home, "mid")
-        _, eval_far = weather_mod._build_zone_curve(spans, text_of, home, "far")
-        _, eval_kang = weather_mod._build_zone_curve(spans, text_of, home, "kang")
+        spans, wood_spans, charcoal_spans = weather_mod._split_stove_tracks(life.world, start_day, end_day, clip_until=None)
+        _, eval_near_wood = weather_mod._build_zone_curve(wood_spans, text_of, home, "near_wood")
+        _, eval_near_char_own = weather_mod._build_zone_curve(charcoal_spans, text_of, home, "near_charcoal")
+        _, eval_near_char_amb = weather_mod._build_zone_curve(wood_spans, text_of, home, "near_charcoal")
+        _, eval_mid_w = weather_mod._build_zone_curve(wood_spans, text_of, home, "mid")
+        _, eval_mid_c = weather_mod._build_zone_curve(charcoal_spans, text_of, home, "mid")
+        _, eval_far_w = weather_mod._build_zone_curve(wood_spans, text_of, home, "far")
+        _, eval_far_c = weather_mod._build_zone_curve(charcoal_spans, text_of, home, "far")
+        _, eval_kang = weather_mod._build_zone_curve(wood_spans, text_of, home, "kang")
     else:
-        eval_near = eval_mid = eval_far = eval_kang = None
+        eval_near_wood = eval_near_char_own = eval_near_char_amb = None
+        eval_mid_w = eval_mid_c = eval_far_w = eval_far_c = eval_kang = None
 
     points = []
     cur = day_start
@@ -485,12 +490,20 @@ def _temp_curve(life, now: datetime.datetime, text_of, home: str) -> list[dict]:
         out_t = float(hr.get("temp", 15.0))
         w_txt = "%s::%s" % (home, text_of(cur.date())) if home else text_of(cur.date())
         base_c = float(room_temp(cur, w_txt))
-        if home == "海边小镇" and eval_near is not None:
-            d_near, _ = eval_near(cur)
-            d_mid, _ = eval_mid(cur)
-            d_far, _ = eval_far(cur)
+        if home == "海边小镇" and eval_near_wood is not None:
+            d_nw, _ = eval_near_wood(cur)
+            d_nc_own, _ = eval_near_char_own(cur)
+            d_nc_amb, _ = eval_near_char_amb(cur)
+            d_mid_w, _ = eval_mid_w(cur)
+            d_mid_c, _ = eval_mid_c(cur)
+            d_far_w, _ = eval_far_w(cur)
+            d_far_c, _ = eval_far_c(cur)
+            d_mid = min(weather_mod.ZONE_PARAMS["mid"][3], d_mid_w + d_mid_c)
+            d_far = min(weather_mod.ZONE_PARAMS["far"][3], d_far_w + d_far_c)
             d_kang, _ = eval_kang(cur)
-            near_t = min(23.0, base_c + d_near)
+            near_wood_t = min(23.0, base_c + d_nw)
+            near_char_t = min(21.0, base_c + max(d_nc_own, d_nc_amb))
+            near_t = max(near_wood_t, near_char_t)
             mid_t = min(18.5, base_c + d_mid)
             far_t = min(15.0, base_c + d_far) if out_t <= 14.0 else base_c + d_far
             kang_t = min(34.0, base_c + d_kang)
@@ -1031,7 +1044,8 @@ def heat_action(life, payload: dict, now: datetime.datetime) -> dict[str, Any]:
                 "message": "已给%s添料续烧 +%s（至 %s，实扣 %s）" % (st_name, _fmt_dur(minutes), end_lbl, cost_text),
             }
 
-        # 如果此刻是她们在世界线里点着的火，直接从此刻 flat 覆盖续烧至 new_end，避免世界线段被打断后先灭又凭空复燃，且随时可手动熄火
+        # 如果此刻是她们在世界线里点着的火，热源区间从此刻 flat 覆盖续烧至 new_end 防断火且可熄火；
+        # 但 paid_start=base_end 精确记录手动扣柴仅覆盖新续出来的 [base_end, new_end]，[flat, base_end] 仍由世界线段按实扣柴，绝不漏扣
         old_end = parse_time(active_info["end"]) if active_info.get("burning") and active_info.get("end") else flat
         base_end = max(flat, old_end) if old_end is not None else flat
         new_end = base_end + datetime.timedelta(minutes=minutes)
@@ -1044,6 +1058,7 @@ def heat_action(life, payload: dict, now: datetime.datetime) -> dict[str, Any]:
             note="主人手动给%s添料接力续烧" % st_name,
             fuel=deducted,
             by="master",
+            paid_start=base_end,
         )
         _record_master_fire_event(life, flat, stove, "往%s里添了%s续烧至 %s" % (st_name, cost_text, end_lbl))
         return {
