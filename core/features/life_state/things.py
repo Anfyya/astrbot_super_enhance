@@ -220,11 +220,20 @@ STRICT_QTY_RE = re.compile(
     r"^\d+(?:\.\d+)?\s*(?:千克|公斤|kg|克|g|斤|两|毫升|ml|升|l|捆|袋|份|块|根|张|颗|粒|个|只|条|把|盒|瓶|罐|包|桶|箱|件|床|双)$",
     re.IGNORECASE,
 )
+STRICT_WEIGHT_QTY_RE = re.compile(
+    r"^\d+(?:\.\d+)?\s*(?:千克|公斤|kg|克|g|斤|两)$",
+    re.IGNORECASE,
+)
 
 
 def is_strict_qty(value) -> bool:
-    """严格结构化数量格式校验：必须为阿拉伯数字 + 固定单位（如 0.25捆、1.1捆、400克、15毫升）。"""
+    """严格结构化数量格式校验：必须为阿拉伯数字 + 固定单位（如 15公斤、400克、15毫升）。"""
     return bool(STRICT_QTY_RE.fullmatch(str(value or "").strip()))
+
+
+def is_strict_weight_qty(value) -> bool:
+    """炉柴等按重量计量的严格校验：必须为阿拉伯数字 + 重量单位（公斤/千克/kg/斤/克）。"""
+    return bool(STRICT_WEIGHT_QTY_RE.fullmatch(str(value or "").strip()))
 SHARE_WORDS = (("一点", 0.1),)
 PIECE_UNITS = ("个", "只", "颗", "粒", "根", "块", "片", "条", "枚", "尾", "头", "瓣", "段", "截", "张")
 LOW_LEFT_SHARE = 0.25
@@ -412,7 +421,9 @@ CHARCOAL_LOW_GRAMS = 500
 CHARCOAL_WINDOW_MINUTES = 50
 CHARCOAL_AUTO_SINCE = "2026-11-16 00:00"
 COOK_AUTO_SINCE = "2026-11-16 12:30"
-WOOD_BUNDLE_PER_BURN = 0.25
+WOOD_KG_PER_HOUR_HARDWOOD = 1.5
+WOOD_KG_PER_HOUR_KINDLING = 2.5
+WOOD_DEFAULT_KG_PER_USE = 1.5
 WOOD_WINDOW_MINUTES = 50
 COOK_FRY_OIL_ML = 15.0
 COOK_LIGHT_FRY_OIL_ML = 8.0
@@ -579,21 +590,96 @@ def quantity(value):
     return counted[0] if counted and counted[0][1] not in ("斤", "两") else parse_amount(value)
 
 
+WOOD_KG_PER_BUNDLE = 10.0
+WOOD_KG_PER_HANDFUL = 1.5
+WOOD_FALLBACK_INIT_KG = 8.0
+
+
+def _wood_kg(value) -> float | None:
+    """把炉柴量词统一解析为公斤数（公斤/千克/kg/斤/两/克/g，以及历史遗留的捆/把统一换算成公斤）。"""
+    got = parse_amount(value)
+    if got is not None and got[1] == "克":
+        return round(max(0.0, float(got[0])) / 1000.0, 2)
+    text = str(value or "").strip()
+    if not text:
+        return None
+    m = re.search(r"(\d+(?:\.\d+)?)\s*(捆|把)", text)
+    if m:
+        num = max(0.0, float(m.group(1)))
+        unit = m.group(2)
+        return round(num * (WOOD_KG_PER_BUNDLE if unit == "捆" else WOOD_KG_PER_HANDFUL), 2)
+    if "半捆" in text:
+        return round(0.5 * WOOD_KG_PER_BUNDLE, 2)
+    if "一捆" in text:
+        return round(1.0 * WOOD_KG_PER_BUNDLE, 2)
+    if "一小把" in text or "一把" in text:
+        return round(WOOD_KG_PER_HANDFUL, 2)
+    return None
+
+
 def stock(item: dict):
-    """尽力扣减（best-effort deduction）：识别到同单位用量或余量即扣减，单位模糊时不报错。"""
+    """尽力扣减（best-effort deduction）：炉柴强制全部统一按公斤计重（历史无重量或按捆柴堆统一换算/按默认公斤起步），其余按同单位扣减。"""
     measured = measure(item)
     if measured is not None:
         return measured
-    left, unit, zero, peak_left = None, "", None, 0.0
     starts, _, ends = steps_of(cat_of(item))
+    if weathering.fuel_item(item) and not is_charcoal(item):
+        left, zero, peak_left = None, None, 0.0
+        estimated = False
+        for stage in item.get("stages") or []:
+            what = stage.get("what")
+            amount = _wood_kg(stage.get("amount"))
+            if amount is None:
+                amount = _wood_kg(stage.get("left"))
+            if what in starts or what == "清点":
+                if amount is None and what in starts:
+                    amount = _wood_kg(stage.get("state"))
+                    if amount is None:
+                        amount = _wood_kg(item.get("look"))
+                if amount is not None:
+                    left = max(0.0, amount)
+                    peak_left = max(peak_left, left)
+                    estimated = False
+                    if left > 0:
+                        zero = None
+                elif left is None and what in starts:
+                    # 历史未标重量柴堆强制统一按默认公斤数起步，保证 things.py 与 heat.py 单一重量口径
+                    left = WOOD_FALLBACK_INIT_KG
+                    peak_left = max(peak_left, left)
+                    estimated = True
+            elif what in ends:
+                if left is not None:
+                    left, zero = 0.0, stage
+            elif what in ("用了", "用掉一部分", "吃了一部分"):
+                if left is None:
+                    left = WOOD_FALLBACK_INIT_KG
+                    peak_left = max(peak_left, left)
+                    estimated = True
+                explicit_left = _wood_kg(stage.get("left"))
+                used = _wood_kg(stage.get("used"))
+                if explicit_left is not None and explicit_left <= max(left, peak_left):
+                    left = max(0.0, explicit_left)
+                elif used is not None:
+                    left = max(0.0, round(left - max(0.0, used), 2))
+                elif amount is not None and amount < left:
+                    left = max(0.0, amount)
+                elif what in ("用了", "用掉一部分"):
+                    left = max(0.0, round(left - WOOD_DEFAULT_KG_PER_USE, 2))
+                if left > 0:
+                    zero = None
+                else:
+                    zero = stage
+        if left is None:
+            left = WOOD_FALLBACK_INIT_KG
+            estimated = True
+        return {"left": round(left, 2), "unit": "公斤", "zero": zero, "per_use": WOOD_DEFAULT_KG_PER_USE, "estimated": estimated}
+    left, unit, zero, peak_left = None, "", None, 0.0
     kind = re.sub(r"\s+", "", str(item.get("kind") or ""))
-    is_consumable = weathering.fuel_item(item) or kind in ("燃料", "燃柴", "火柴", "蜡烛")
+    is_consumable = kind in ("燃料", "燃柴", "火柴", "蜡烛")
     for stage in item.get("stages") or []:
         what = stage.get("what")
         amount = quantity(stage.get("amount")) or quantity(stage.get("left"))
         if what in starts or what == "清点":
-            if not amount and what in starts and weathering.fuel_item(item):
-                amount = quantity(stage.get("state")) or quantity(item.get("look"))
             if amount:
                 left, unit = max(0.0, amount[0]), amount[1]
                 peak_left = max(peak_left, left)
@@ -612,7 +698,7 @@ def stock(item: dict):
             elif amount and amount[1] in ("", unit) and amount[0] < left:
                 left = max(0.0, amount[0])
             elif what in ("用了", "用掉一部分") and is_consumable:
-                step_used = {"捆": 0.25, "袋": 0.25, "箱": 0.1, "盒": 0.02, "瓶": 0.05, "罐": 0.05}.get(unit, 1.0)
+                step_used = {"袋": 0.25, "箱": 0.1, "盒": 0.02, "瓶": 0.05, "罐": 0.05}.get(unit, 1.0)
                 left = max(0.0, left - step_used)
             if left > 0:
                 zero = None
@@ -1472,6 +1558,7 @@ class ThingStore:
                             end_stamp = fmt_time(end_dt)
                             out.append({
                                 "at": end_stamp,
+                                "order": fmt_time(end_dt + datetime.timedelta(minutes=CHARCOAL_WINDOW_MINUTES)),
                                 "start": entry.get("start") or end_stamp,
                                 "ref": ref,
                                 "key": "%s@charcoal@%s" % (ref, end_stamp),
@@ -1481,16 +1568,21 @@ class ThingStore:
                             })
                         if self._entry_wood_lit(entry, flat):
                             end_stamp = fmt_time(end_dt)
+                            start_dt = parse_time(entry.get("start"))
+                            dur_min = 60
+                            if start_dt is not None and end_dt > start_dt:
+                                dur_min = max(15, min(240, int(round((end_dt - start_dt).total_seconds() / 60.0))))
                             out.append({
                                 "at": end_stamp,
+                                "order": fmt_time(end_dt + datetime.timedelta(minutes=WOOD_WINDOW_MINUTES)),
                                 "start": entry.get("start") or end_stamp,
                                 "ref": ref,
                                 "key": "%s@wood@%s" % (ref, end_stamp),
                                 "by": str(entry.get("who") or ""),
                                 "steps": [],
-                                "wood_burn": True,
+                                "wood_burn": dur_min,
                             })
-        out.sort(key=lambda row: (row["at"], 1 if (row.get("charcoal_grams") or row.get("wood_burn")) else 0, row["start"], row["ref"]))
+        out.sort(key=lambda row: (row.get("order") or row["at"], 1 if (row.get("charcoal_grams") or row.get("wood_burn")) else 0, row["at"], row["start"], row["ref"]))
         return out
 
     @staticmethod
@@ -1666,13 +1758,21 @@ class ThingStore:
                 if old is not None:
                     alias[tid] = str(old["id"])
                     continue
-            candidates = [
-                x for x in items.values()
-                if cat_of(x) == cat and (
-                    not x.get("wl")
-                    or (x.get("wl") != ref and str((x.get("stages") or [{}])[0].get("by") or "") != by)
-                )
-            ]
+            new_owner = _norm_search_owner(step.get("owner") or "")
+            candidates = []
+            for x in items.values():
+                if cat_of(x) != cat:
+                    continue
+                if x.get("wl") and (
+                    x.get("wl") == ref or str((x.get("stages") or [{}])[0].get("by") or "") == by
+                ):
+                    continue
+                # 各自有明确私人归属（非空且非「共用」）且归属不同时，不跨人去重合并（避免两人各画一张画互相吞掉）
+                if new_owner and new_owner != "共用":
+                    old_owner = _norm_search_owner(self.owner_of(x))
+                    if old_owner and old_owner != "共用" and old_owner != new_owner:
+                        continue
+                candidates.append(x)
             same = find_same(
                 candidates, name, what,
                 start - datetime.timedelta(minutes=SEG_SAME_MINUTES),
@@ -1781,14 +1881,14 @@ class ThingStore:
         if seg.get("charcoal_grams"):
             self._auto_use_charcoal(items, at=at, grams=int(seg["charcoal_grams"]), by=by, ref=ref)
         if seg.get("wood_burn"):
-            self._auto_use_wood(items, at=at, by=by, ref=ref)
+            self._auto_use_wood(items, at=at, by=by, ref=ref, minutes=int(seg["wood_burn"]))
 
     @staticmethod
     def _is_edible_oil(item: dict) -> bool:
         if cat_of(item) != CAT_FOOD:
             return False
         name = re.sub(r"\s+", "", str(item.get("name") or ""))
-        if any(bad in name for bad in ("酱油", "生抽", "老抽", "蚝油", "红油", "葱油", "辣油", "油辣椒", "辣椒油", "花椒油", "藤椒油", "奶油", "黄油", "煤油", "柴油", "机油", "油浸", "油封", "油条", "葱油饼", "油酥", "油炸", "油泼")):
+        if any(bad in name for bad in ("酱油", "生抽", "老抽", "蚝油", "香油", "麻油", "芝麻油", "小磨香油", "红油", "葱油", "辣油", "油辣椒", "辣椒油", "花椒油", "藤椒油", "奶油", "黄油", "煤油", "柴油", "机油", "油浸", "油封", "油条", "葱油饼", "油酥", "油炸", "油泼")):
             return False
         return "油" in name and str(item.get("kind") or "") in ("干货调料粮食", DEFAULT_KIND)
 
@@ -2015,7 +2115,20 @@ class ThingStore:
                     active, min(total_avail, dose), "毫升", at, by, dish_id, ref, eff_id, "炒煎用油自动扣减", {"auto_cook": "oil"}
                 )
         if dkind in SAVORY_COOK_KINDS:
-            salted = False
+            dname = re.sub(r"\s+", "", str(dish.get("name") or ""))
+            # 白米粥、杂粮粥、红薯粥、甜汤/糖水等清粥甜汤不自动扣盐
+            _BLAND_OR_SWEET_SOUP = (
+                "白粥", "白米粥", "大米粥", "小米粥", "糙米粥", "杂粮粥", "稀饭", "米汤",
+                "地瓜粥", "番薯粥", "红薯粥", "南瓜粥", "绿豆", "红豆", "银耳", "冰糖",
+                "甜汤", "甜粥", "糖水", "桂圆", "红枣", "莲子", "百合", "雪梨", "酒酿", "汤圆",
+            )
+            _SAVORY_SOUP_HINTS = ("咸", "海鲜", "鱼", "虾", "蟹", "肉", "蛋", "皮蛋", "青菜", "裙带菜", "海带", "排骨", "鸡", "辣", "酸辣", "菌", "菇", "豆腐", "味噌", "萝卜")
+            skip_salt = (
+                dkind == "熟汤羹粥"
+                and any(w in dname for w in _BLAND_OR_SWEET_SOUP)
+                and not any(w in dname for w in _SAVORY_SOUP_HINTS)
+            )
+            salted = skip_salt
             for sid in dish.get("from") or []:
                 src_item = items.get(sid)
                 if not src_item:
@@ -2040,46 +2153,70 @@ class ThingStore:
                         active, min(total_avail, COOK_SALT_G), "克", at, by, dish_id, ref, eff_id, "做菜用盐自动扣减", {"auto_cook": "salt"}
                     )
 
-    def _auto_use_wood(self, items: dict, at: str, by: str, ref: str) -> None:
-        """柴炉点火取暖/烘烤/烟熏若 50 分钟窗内未手写消耗燃料，仅从可用炉柴自动扣减 0.25 捆干柴。"""
+    def _auto_use_wood(self, items: dict, at: str, by: str, ref: str, minutes: int = 60) -> None:
+        """柴炉点火取暖/烘烤/烟熏若本段未手写耗柴、且当前时刻未被手动炉火覆盖，按实际时长与硬木/细枝耐烧度统一按公斤扣减。
+        按段出处（wl==ref）、手动炉火覆盖区间及同刻重叠（<=15分钟）精准去重，避免接力烧炉漏扣或手动+世界线双扣。"""
         moment = parse_time(at)
         if moment is None:
             return
+        # 若此刻已被网页手动点起/续烧的柴炉覆盖（手动操作瞬间已实扣整段燃料），不再重复自动扣柴
+        if self.world is not None and hasattr(self.world, "manual_stoves"):
+            try:
+                day_d = moment.date()
+                for ms in self.world.manual_stoves(day_d - datetime.timedelta(days=1), day_d):
+                    if str(ms.get("stove") or "").strip().lower() != "wood":
+                        continue
+                    ms_s = parse_time(ms.get("start"))
+                    ms_e = parse_time(ms.get("end"))
+                    if ms_s is not None and ms_e is not None and ms_s <= moment < ms_e:
+                        return
+            except Exception:
+                pass
         day_text, home_at = self._weather_helpers(moment)
         fire_lit_fn = self._fire_lit_fn(moment)
-        pool = [
+        all_wood = [
             x for x in self._local_items(items.values(), moment)
+            if weathering.fuel_item(x) and not is_charcoal(x)
+        ]
+        if not all_wood:
+            return
+        for wood in all_wood:
+            for st in wood.get("stages") or []:
+                if st.get("what") not in ("用了", "用掉一部分", "用完了"):
+                    continue
+                if st.get("into"):
+                    continue
+                if ref and st.get("wl") == ref:
+                    return
+                when = parse_time(st.get("at"))
+                # 仅对 15 分钟内同刻双人并排段去重，不误杀首尾相接的接力烧炉段
+                if when is not None and abs((when - moment).total_seconds()) <= 15 * 60:
+                    return
+        pool = [
+            x for x in all_wood
             if weathering.usable_stove_wood(x, moment, day_text, home_at, fire_lit_fn=fire_lit_fn)
         ]
         if not pool:
             return
-        for wood in pool:
-            for st in wood.get("stages") or []:
-                if st.get("what") not in ("用了", "用掉一部分", "用完了"):
-                    continue
-                when = parse_time(st.get("at"))
-                if when is not None and abs((when - moment).total_seconds()) <= WOOD_WINDOW_MINUTES * 60:
-                    return
         candidates = sorted(
             (x for x in pool if is_ended(x) is None and str(x.get("created") or "") <= at),
             key=lambda x: (str(x.get("created") or ""), str(x.get("id") or "")),
         )
+        dur = max(15, min(240, int(minutes or 60)))
+        remain_ratio = 1.0
         for wood in candidates:
+            if remain_ratio <= 1e-6:
+                break
+            tier = weathering.wood_fuel_meta(wood, moment).get("tier")
+            rate = WOOD_KG_PER_HOUR_KINDLING if tier == "kindling" else WOOD_KG_PER_HOUR_HARDWOOD
+            need_kg = max(0.5, round(rate * (dur / 60.0) * remain_ratio, 1))
             info = stock(wood)
             if info is not None and float(info.get("left") or 0.0) > 0:
-                unit = info.get("unit") or "捆"
-                step_amt = WOOD_BUNDLE_PER_BURN if unit in ("捆", "袋") else 1.0
-                take = min(float(info["left"]), step_amt)
-                what = "用了"
-                used_text = "%s%s" % (_num_text(take), unit)
-            elif info is None:
-                # 无明确数量的可用柴在 variety.py 中折算为 0.5 捆，自动烧完 2 次即结束，防无限幽灵柴火
-                prior_burns = sum(
-                    1 for st in wood.get("stages") or []
-                    if st.get("what") in ("用了", "用掉一部分")
-                )
-                what = "用完了" if prior_burns >= 1 else "用了"
-                used_text = "%s捆" % _num_text(WOOD_BUNDLE_PER_BURN)
+                avail = float(info["left"])
+                take = min(avail, need_kg)
+                what = "用完了" if avail - take <= 1e-6 else "用了"
+                used_text = "%s公斤" % _num_text(take)
+                remain_ratio = max(0.0, remain_ratio * (1.0 - take / need_kg))
             else:
                 continue
             stage = clean_stage(
@@ -2096,7 +2233,6 @@ class ThingStore:
                 CAT_ITEM,
             )
             insert_stage(wood, stage)
-            return
 
     def _auto_use_charcoal(self, items: dict, at: str, grams: int, by: str, ref: str) -> None:
         """小炭炉开火做饭自动从现有闷炭/木炭批次扣减克数；绝不凭空生炭，同餐 50 分钟窗内不重复双扣。"""
@@ -2157,7 +2293,7 @@ class ThingStore:
         cutoff = fmt_time(flat - datetime.timedelta(days=SETTLE_DAYS))
         data = self._load()
         settled = data.setdefault("settled", {})
-        todo = [x for x in self.segments(flat) if x["at"] < cutoff and x["ref"] not in settled and x["key"] not in settled]
+        todo = [x for x in self.segments(flat) if (x.get("order") or x["at"]) < cutoff and x["ref"] not in settled and x["key"] not in settled]
         if not todo:
             return 0
         items = {str(x.get("id")): x for x in data.get("items") or []}
@@ -2637,6 +2773,17 @@ class ThingStore:
         key = (fmt_time(flat), str(item.get("id") or id(item)), id(item), self._revision)
         if key in cache:
             return cache[key]
+        if is_ended(item):
+            _, word = KINDS.get(str(item.get("kind") or ""), KINDS[DEFAULT_KIND])
+            value = {
+                "fresh": {
+                    "x": 0.0, "level": "没了", "word": word,
+                    "bad_since": None, "hurry_at": None, "bad_at": None, "events": [],
+                },
+                "taste": {"rows": [], "left": None},
+            }
+            cache[key] = value
+            return value
         fresh_note, taste_note = manual_notes(item)
         if (fresh_note or taste_note) and not is_ended(item):
             rows = []
@@ -3279,7 +3426,7 @@ class ThingStore:
 
         scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
 
-        def _compact_row(it: dict, prof: dict | None, st: dict, it_own: str, it_plc: str) -> str:
+        def _compact_row(it: dict, prof: dict | None, bucket: str, st: dict, it_own: str, it_plc: str) -> str:
             parts = ["%s %s" % (it.get("id") or "", str(it.get("name") or "").strip())]
             rem = ""
             if prof:
@@ -3303,11 +3450,18 @@ class ThingStore:
                     parts.append("未拆封")
                 if self.is_secret(it):
                     parts.append("私人物品")
-            if it_own and it_own != "共用":
-                parts.append("归%s" % it_own)
-            if it_plc:
-                short_p = it_plc.split("·")[-1] if len(it_plc) > 10 else it_plc
-                parts.append(short_p)
+            if bucket == "穿戴被褥":
+                if it_own:
+                    parts.append("归%s" % it_own)
+                look = str(it.get("look") or "").strip()
+                if look:
+                    parts.append(look if len(look) <= 24 else look[:24] + "…")
+            else:
+                if it_own and it_own != "共用":
+                    parts.append("归%s" % it_own)
+                if it_plc:
+                    short_p = it_plc.split("·")[-1] if len(it_plc) > 10 else it_plc
+                    parts.append(short_p)
             return "｜".join(parts)
 
         if not scored:
@@ -3319,7 +3473,7 @@ class ThingStore:
                     o = _norm_search_owner(self.owner_of(it) or st.get("owner") or "", label_fn)
                     if o == own_str:
                         p = str(self._where(st, label_fn) or st.get("place") or "")
-                        own_rows.append(_compact_row(it, prof, st, o, p))
+                        own_rows.append(_compact_row(it, prof, _search_bucket(it), st, o, p))
                 if own_rows:
                     hint_parts.append("归%s现存：%s" % (own_str, "；".join(own_rows[:6])))
             conds = [x for x in (
@@ -3332,7 +3486,9 @@ class ThingStore:
             return "屋里目前没有符合「%s」的东西。%s" % ("，".join(conds), extra)
 
         shown = scored[:limit]
-        lines = ["- " + _compact_row(it, prof, st, it_own, it_plc) for _, _, it, prof, _, st, it_own, it_plc in shown]
+        lines = ["- " + _compact_row(it, prof, b, st, it_own, it_plc) for _, _, it, prof, b, st, it_own, it_plc in shown]
+        if any(b == "穿戴被褥" for _, _, _, _, b, _, _, _ in shown):
+            lines.append("（穿戴被褥只列家里现存件与归属，此刻身上穿着、睡前盖什么以当前穿搭、世界线及聊天现场为准）")
         if len(scored) > limit:
             rest = scored[limit:]
             rc: dict[str, int] = {}
@@ -3367,27 +3523,27 @@ _SEARCH_BUCKETS: dict[str, dict] = {
         "kw": ("茶", "点心", "饼", "糕", "糖果", "零食", "可可", "咖啡", "饮品"),
     },
     "穿戴被褥": {
-        "kinds": {"衣物", "衣裳", "衬衫", "袜子", "围巾", "手套", "被褥", "薄被", "毛毯", "鞋", "靴", "帽", "外套", "棉衣", "睡衣"},
-        "kw": ("衣", "衣服", "冬衣", "棉衣", "棉袄", "外套", "衬衫", "单衣", "裙", "裤", "穿", "鞋", "靴", "袜", "围巾", "手套", "帽", "被", "被子", "褥", "毯", "铺盖", "泳衣"),
+        "kinds": {"衣物", "衣裳", "衬衫", "袜子", "围巾", "手套", "披肩", "被褥", "薄被", "棉被", "厚棉被", "被子", "毛毯", "铺盖", "鞋", "鞋子", "靴", "靴子", "帽", "外套", "棉衣", "睡衣", "睡裙", "泳衣"},
+        "kw": ("衣", "衣服", "冬衣", "棉衣", "棉袄", "外套", "衬衫", "单衣", "裙", "裤", "穿", "鞋", "靴", "袜", "围巾", "手套", "披肩", "帽", "被", "被子", "棉被", "褥", "毯", "铺盖", "泳衣"),
     },
     "柴炭油灯": {
         "kinds": {"燃柴", "薪柴", "引火料", "木炭", "闷炭", "炭", "煤油", "油灯", "火柴", "燃料", "灯"},
         "kw": ("柴", "柴火", "木柴", "干柴", "湿柴", "硬木", "枯枝", "炭", "闷炭", "木炭", "煤油", "灯油", "油灯", "火柴", "燃料", "生火", "炉"),
     },
     "工具船具": {
-        "kinds": {"工具", "木箱", "缆绳", "绳索", "渔具", "厨具", "餐具", "器皿", "灯具"},
-        "kw": ("工具", "锤", "凿", "扳手", "钳", "刀", "斧", "绳", "缆", "网兜", "吊钩", "船", "木箱", "桶", "盆", "锅", "碗", "火钳", "毛巾"),
+        "kinds": {"工具", "木箱", "缆绳", "绳索", "渔具", "渔网", "钓具", "厨具", "餐具", "器皿", "杯子", "灯具", "刀"},
+        "kw": ("工具", "锤", "凿", "扳手", "钳", "刀", "斧", "绳", "缆", "网兜", "渔网", "钓竿", "吊钩", "船", "木箱", "桶", "盆", "锅", "碗", "杯", "火钳", "毛巾"),
     },
     "废铁战利品": {
-        "kinds": {"废铜旧铁", "废铁", "废铜", "旧金属", "打捞物", "旧物", "铁盒", "零件"},
-        "kw": ("废铁", "废铜", "铁皮", "铁管", "铜管", "金属", "战利品", "打捞", "铁盒", "零件", "上锁", "封口", "卖钱", "旧物"),
+        "kinds": {"废铜旧铁", "废铁", "废铜", "旧金属", "旧铜件", "打捞物", "旧物", "旧机器", "旧怀表", "铁盒", "零件"},
+        "kw": ("废铁", "废铜", "铁皮", "铁管", "铜管", "铜扣", "金属", "战利品", "打捞", "铁盒", "零件", "上锁", "封口", "卖钱", "旧物", "收音机", "怀表"),
     },
     "书画信纸": {
-        "kinds": {"书", "画", "纸条", "信", "书签", "本子", "海图", "报纸", "唱片", "照片", "短句"},
-        "kw": ("书", "画", "纸条", "信", "书签", "本子", "账本", "日记", "海图", "报纸", "唱片", "作业本", "笔"),
+        "kinds": {"书", "画", "纸条", "信", "书签", "本子", "海图", "报纸", "唱片", "照片", "短句", "收价单", "杂志", "食谱", "诗", "草图"},
+        "kw": ("书", "画", "纸条", "信", "书签", "本子", "账本", "日记", "海图", "简图", "草图", "报纸", "杂志", "食谱", "唱片", "作业本", "笔", "诗"),
     },
     "日用杂物": {
-        "kinds": set(),
+        "kinds": {"折纸"},
         "kw": ("杂物", "摆件", "贝壳", "石头", "钱盒", "零碎", "折纸", "窗花", "布片"),
     },
 }
@@ -3481,7 +3637,7 @@ def _search_bucket(it: dict) -> str:
     if cat == CAT_FOOD:
         return "零食饮品"
     for bname in ("柴炭油灯", "穿戴被褥", "废铁战利品", "工具船具", "书画信纸"):
-        if any(k in name for k in _SEARCH_BUCKETS[bname]["kw"][:10]):
+        if any(k in name for k in _SEARCH_BUCKETS[bname]["kw"]):
             return bname
     return "日用杂物"
 

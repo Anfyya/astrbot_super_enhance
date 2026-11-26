@@ -135,7 +135,7 @@ SEASIDE_PRICE_GUIDE = (
     "海边小镇人民币物价与赚钱门路（写花销/挣钱严格照这个尺度，别乱喊天价）：\n"
     "- 吃食日常：两条鲜海鱼/小螺虾 6~15 元，一把青菜/萝卜/豆腐 3~8 元，五斤米面/豆子 15~25 元，"
     "盐糖醋酱一瓶袋 5~12 元，食用油一瓶 20~35 元，摊头小吃/热汤包 5~15 元。\n"
-    "- 柴炭煤油与日用：干柴一大捆 10~20 元，紧俏闷炭一小罐 15~30 元，点灯煤油一壶 18~30 元，"
+    "- 柴炭煤油与日用：干硬木柴约 1~1.5 元/公斤（买 20 公斤约 20~30 元，半湿原木 100 公斤约 60~90 元），紧俏闷炭一小罐 15~30 元，点灯煤油一壶 18~30 元，"
     "绳钉灯芯肥皂火柴 3~12 元，公共澡堂泡一回 6~10 元/人。\n"
     "- 冬衣大件（必须主人拍板）：旧衣铺厚棉衣 35~60 元，旧棉被 20~40 元，修船大件木料五金 60~250 元。\n"
     "- 赚钱门路（全须真干活或真交出库存实物，不准凭空变钱）：\n"
@@ -554,6 +554,7 @@ class MoneyBook(_JsonBook):
         default_at: str = "",
         source: str = "recorder",
         world=None,
+        has_master: bool = True,
     ) -> list[dict]:
         """落盘来自聊天记录员的一组钱变动，单条不合规只跳过那条，绝不阻断主流程。"""
         if not isinstance(ops, list) or not ops:
@@ -584,6 +585,18 @@ class MoneyBook(_JsonBook):
             acc = normalize_account(op.get("account"))
             from_acc = normalize_account(op.get("from_account"))
             to_acc = normalize_account(op.get("to_account"))
+            # 职责划分：记录员(recorder)只记涉及主人钱包(master)的当场动钱，以及主人亲口发话指挥的账户间挪钱(transfer，如把兜里钱放铁盒)；
+            # 女孩自己买菜买柴、卖废品、挂账结账一律归世界线(step)记账；且下方有 2 小时跨通道去重防重复转账
+            if source == "recorder":
+                involves_master = (acc == "master" or from_acc == "master" or to_acc == "master")
+                allow_master_transfer = (kind == "transfer" and bool(has_master))
+                if not involves_master and not allow_master_transfer:
+                    logger.info(
+                        "[super_enhance/money] 跳过记录员非主人钱包账目（归世界线记账）：%s %s元 %s",
+                        KIND_LABELS.get(kind, kind), fmt_yuan(amt), op.get("what") or "",
+                    )
+                    continue
+
             if kind == "spend":
                 if acc not in accs or amt <= 0:
                     continue
@@ -604,10 +617,14 @@ class MoneyBook(_JsonBook):
                     continue
                 sim_bal[acc] = round_yuan(sim_bal[acc] + amt)
             elif kind == "debt_settle":
+                if amt <= 0:
+                    continue
                 did = str(op.get("debt_id") or "").strip()
                 tgt = debts_map.get(did)
+                if tgt is None:
+                    continue
                 direction = (tgt or {}).get("direction") or normalize_direction(op.get("direction")) or "payable"
-                if acc in accs and amt > 0:
+                if acc in accs:
                     if direction == "payable":
                         if sim_bal[acc] + 1e-6 < amt:
                             logger.info("[super_enhance/money] 跳过记录员超额还账：%s 余额 %.2f < %.2f", acc, sim_bal[acc], amt)
@@ -616,17 +633,27 @@ class MoneyBook(_JsonBook):
                     else:
                         sim_bal[acc] = round_yuan(sim_bal[acc] + amt)
 
-            # 去重：避免同一时刻、同金额、同账户同描述重复入账
-            dup = any(
-                r.get("kind") == kind
-                and round_yuan(r.get("amount")) == amt
-                and (r.get("account") or "") == acc
-                and (r.get("from_account") or "") == from_acc
-                and str(r.get("at") or "")[:16] == at_str[:16]
-                and str(r.get("what") or "") == clean_text(op.get("what"), 120)
-                for r in data["records"][-20:]
-            )
+            # 跨通道去重：同时检查已固化流水与尚未满 90 分钟的世界线待结算流水（前后 120 分钟内同类型+同金额+同账户即视为同一笔）
+            op_dt_val = parse_time(at_str) or now.replace(tzinfo=None)
+            dedup_pool = list(snap.get("records") or [])[-40:] + written
+            dup = False
+            for r in dedup_pool:
+                if r.get("kind") != kind or round_yuan(r.get("amount")) != amt:
+                    continue
+                if (r.get("account") or "") != acc or (r.get("from_account") or "") != from_acc or (r.get("to_account") or "") != to_acc:
+                    continue
+                r_dt = parse_time(r.get("at"))
+                if r_dt is not None and abs((op_dt_val - r_dt).total_seconds()) <= 7200:
+                    dup = True
+                    break
+                if str(r.get("at") or "")[:16] == at_str[:16]:
+                    dup = True
+                    break
             if dup:
+                logger.info(
+                    "[super_enhance/money] [%s] 跳过重复账目（近 2 小时内已有同笔记录）：%s %s元 %s",
+                    source, KIND_LABELS.get(kind, kind), fmt_yuan(amt), op.get("what") or "",
+                )
                 continue
 
             rec = self._apply_op_on_state(
@@ -1084,25 +1111,31 @@ def validate_step_segments_money(
 
         # 检查是否发生真实购物 / 交付库存物品（纯结构化，只看 what 与 id/new）
         bought_items = []
+        new_inbound_count = 0
         used_existing_ids: set[str] = set()
         for eff in (raw.get("things") or []):
             if not isinstance(eff, dict):
                 continue
             what_norm = norm_step(eff.get("what"), CAT_FOOD)
-            if eff.get("new") and what_norm == "买回来":
-                bought_items.append(str(eff.get("name") or eff.get("new")))
+            if eff.get("new"):
+                new_inbound_count += 1
+                if what_norm == "买回来":
+                    bought_items.append(str(eff.get("name") or eff.get("new")))
             elif eff.get("id") and what_norm in ("用完了", "用掉一部分", "送人了"):
                 used_existing_ids.add(str(eff.get("id")).strip())
         for eff in (raw.get("items") or []):
             if not isinstance(eff, dict):
                 continue
             what_norm = norm_step(eff.get("what"), CAT_ITEM)
-            if eff.get("new") and what_norm == "买回来":
-                bought_items.append(str(eff.get("name") or eff.get("new")))
+            if eff.get("new"):
+                new_inbound_count += 1
+                if what_norm == "买回来":
+                    bought_items.append(str(eff.get("name") or eff.get("new")))
             elif eff.get("id") and what_norm in ("用完了", "用了", "送人了"):
                 used_existing_ids.add(str(eff.get("id")).strip())
 
         has_payment_or_barter = bool(used_existing_ids)
+        goods_spend_notes: list[str] = []
 
         for m_i, op in enumerate(ops, 1):
             if not isinstance(op, dict):
@@ -1191,6 +1224,14 @@ def validate_step_segments_money(
                 has_payment_or_barter = True
                 if op_cp and seg_dt is not None:
                     recent_ops.append((bot, kind, amt, op_cp, seg_dt, what_s[:60]))
+                _SERVICE_SPEND_HINTS = (
+                    "泡澡", "澡堂", "洗澡", "修", "缝补", "运费", "船费", "渡费", "工钱", "工费",
+                    "邮费", "寄", "门票", "理发", "诊费", "看病", "茶水费", "茶位", "租", "押金",
+                    "煤油", "打水", "淡水", "小费", "打赏", "捐",
+                )
+                _GOODS_SPEND_HINTS = ("买", "购", "称", "置办", "添置", "挑了", "带回", "打回")
+                if any(k in what_s for k in _GOODS_SPEND_HINTS) and not any(k in what_s for k in _SERVICE_SPEND_HINTS):
+                    goods_spend_notes.append(f"{fmt_yuan(amt)}元「{what_s}」")
 
             elif kind == "transfer":
                 fa = normalize_account(op.get("from_account"))
@@ -1220,6 +1261,9 @@ def validate_step_segments_money(
                     continue
                 if seaside and at_home is False and acc == "tin_box":
                     errors.append(f"{tag} money[{m_i}]：人在外头赚的钱先装进自己兜里(napcat2)，回船屋后再放铁盒或交给主人")
+                    continue
+                if seaside and at_home is False and acc == "master" and "master" not in with_list:
+                    errors.append(f"{tag} money[{m_i}]：人不在家也没跟主人在一起，没法隔空把收入塞进主人钱包(master)，请先装自己兜里(napcat2)")
                     continue
                 reason = str(op.get("reason") or "").strip().lower()
                 if seaside:
@@ -1303,6 +1347,9 @@ def validate_step_segments_money(
                     if seaside and at_home is False and acc == "tin_box":
                         errors.append(f"{tag} money[{m_i}]：在外头收回的欠款先装进自己兜里(napcat2)，回船屋后再交")
                         continue
+                    if seaside and at_home is False and acc == "master" and "master" not in with_list:
+                        errors.append(f"{tag} money[{m_i}]：人不在家也没跟主人在一起，没法隔空把收回的欠款塞进主人钱包(master)，请先装自己兜里(napcat2)")
+                        continue
                     sim_bal[acc] = round_yuan(sim_bal[acc] + amt)
                 rem = round_yuan(tgt.get("remaining") if tgt.get("remaining") is not None else tgt.get("amount", 0.0))
                 if rem > 0:
@@ -1315,6 +1362,20 @@ def validate_step_segments_money(
                 f"{tag}：买了 {'、'.join(bought_items)}（what=\"买回来\"），但 money 里既没写付钱(spend)、也没写赊账(debt_add)，"
                 f"也没在 things/items 里用已有东西以物易物！必须如实付现或赊账"
             )
+        if seaside and goods_spend_notes and new_inbound_count == 0 and not raw.get("kerosene") and not raw.get("water"):
+            # 双人同行买东西时，兼容另一人同起止段写新物品入库的情况
+            partner_inbound = False
+            seg_st_raw = str(raw.get("start") or "")
+            for p_st, p_bot, _p_idx, p_raw in timeline:
+                if p_bot != bot and p_bot in with_list and str(p_raw.get("start") or "") == seg_st_raw:
+                    if any(isinstance(e, dict) and e.get("new") for e in (p_raw.get("things") or []) + (p_raw.get("items") or [])):
+                        partner_inbound = True
+                        break
+            if not partner_inbound:
+                errors.append(
+                    f"{tag}：花了 {'、'.join(goods_spend_notes)} 买实物，但本段 things/items 里没有对应的新物品入库（what=\"买回来\"）！"
+                    f"买下的东西必须同步记入 things 或 items，避免扣了钱家里却没多东西"
+                )
 
     return errors
 

@@ -19,6 +19,12 @@ from astrbot.api import logger
 from ...common import llm, timeutil
 from ...common.text import strip_inline_system
 from .companionship import RECORDER_NOTE
+from .mood_judge import (
+    call_update_master_mood,
+    compute_owner_heard_by,
+    infer_peer_aware,
+    is_interruptible_step_entry,
+)
 from .homewords import localize
 from .facts import fact_batch
 from .living_rules import LIFECYCLE_RULES
@@ -73,12 +79,12 @@ RECORDER_SYSTEM_TEMPLATE = """{base_system}
 4. 主人给她定的、往后一直管着她的规矩（不许做什么、往后都要怎么做），记成 constraints（约束）：到期或主人撤了才解除。text 只写主人自己说出口的话；她回话里自己添上的、答应时顺嘴加的，都不是主人的规矩，不写进去。主人叫她去做一件做完就了结的事，不是规矩：叫她过会儿再去做的，按第 6 条记成打算；叫她现在就去做的，按第 5 条办（答应了还没做上的记成 now 的打算）。主人的原话是反问、反话的（例如罚站时说「一边站着一边干别的也叫站着？」），text 写成直说的意思（「站着的时候不许干别的」），不添主人没说的。约束的 since 填主人说这句话的那条消息的时间；主人说了期限的要换算成 until_time（"这几天"按三天算、"今晚"到当天 23:59、"明天之前"到明天 0:00），只说了条件的写进 until。新规矩不要写编号，编号由程序分配。
 5. 你只记**现在和过去**：已经发生了的、这会儿正在发生的。还没发生的（将来）交给补写去排，你不排。她的条目分两种，写在 kind 里：
    - "activity"：她说她已经开始做另一件事、已经换了地方、已经把手上的事放下去干别的了。一条只写一件事，她说了接连做了几件的，按先后拆成几条首尾相接。end 写这件事按常理预计做完的时刻（晚于 start）；她说已经做完的，end 写做完的那一刻。主人叫她做的事、她说已经在做了的，再写 asked: true（做完了程序会叫她回来跟主人说一声）。
-   - 她答应现在就去做一件事、可还没做上（主人叫她去买、去做饭、去看看，她答应了；或者她自己说「这就回去给主人做饭」）：那件事是将来，不记成她在做那件事的条目，记成一条打算（第 6 条，写 now: true），到了以后怎么做由补写来排。你要记的是现在：她从手上那件怎么自然地接下去。不管她在哪、在做什么，都不可能上一刻还在做这件、下一刻就在做那件（手上本来闲着的除外）：
+   - 她答应现在就去做一件事、可还没做上（主人叫她去买、去做饭、去看看，她答应了；或者她自己说「这就回去给主人做饭」）：先对照「今天的简略世界线」——如果她答应的事**本来就是**世界线上标着「正在做」或紧接着下一段「还没到」已经排好的同一件事（例如补写本来就排着紧接着回舱、码柴、做饭，她只是顺口说「这就回舱里」「马上来陪主人」），**什么都不用记**（不记 `now: true` 打算、不新建 activity、也不把当前段写进 stale）；若确实要把这条打算落下来、且世界线上已有标着「正在做 / 还没到」的补写段覆盖它，必须在 `intentions` 里显式填 `"same_as": "<那段编号>"`（如 `"e218"`），程序不会打断或撤排原世界线。只有真正改道去干别的事时，才按下面记成 `now: true` 打算（第 6 条），到了以后怎么做由补写来排，并把现在从手上那件自然接下去（手上本来闲着的除外）：
      · 手上那件写进 stale（第 16 条）定怎么收场，照常理和她自己的本事来：在足汤先擦干脚、穿好鞋，在外面吃东西先赶紧吃完，在做饭先关火，坐着摩天轮得等它转完下来（丛雨能穿墙、能飘，可以直接飘下来；亚托莉不行）；手上闲着、随时能停的写放下。
      · 她人不在做那件事的地方的，再记一段 activity 写她往那边去（例如「从温泉街往宿舍走，回去给主人做饭」）：start 写她答应的那条消息的时间（程序会挪到收完尾以后），end 照路程估，今天清单里走过同一条路的照那个时长，没走过的按常理。人已经在那儿的，不用记这段。
      · 她说已经到了、已经做上了，才照上一条记成她在做那件事。之后她的话要是说明其实没去、改了主意、或者被叫去干别的了，按第 16 条把那段写进 stale，打算按第 14 条撤。
    - "event"：做手上的事当中顺带发生的一件事（递了个东西、被摸了头、答应了什么），只有一个时刻，不写 end，不打断手上那件。主人生她的气、训她、骂她、跟她闹别扭、冷着她这类会让她心里放不下的事，也记一条 event，再写 upset: true（程序会让补写把她后面的安排照这件事重排）；主人说气消了、原谅她了、和好了的，不写 upset。
-   她只是边做事边跟人说话，或者说的就是「今天的简略世界线」里标着「正在做」的那件，什么都不用记：聊天本身不算一件事。她说自己做了什么、在做什么，就算做了（哪怕听着像编的）。
+   她只是边做事边跟人说话，或者说的就是「今天的简略世界线」里标着「正在做」的那件，或者只是顺口提到/复述紧接着下一段「还没到」且距离原定开始时间只差约 10 分钟以内的同一件事，**什么都不用记**（不要新建 activity 覆盖原补写，不要写 stale，也不要记 `now: true` 打算）：聊天本身不算一件事。她说自己做了什么、在做什么，就算做了（哪怕听着像编的）。
    只有和她手上那件真冲突，才记一段新的 activity 把它换掉。真冲突是指：她说人在别的地方；她说那件事停下了、做完了；她说正在做的事和手上那件不可能同时做。只是没提手上那件、只提了其中一部分、或者说了件能同时做的小事，都不算冲突：能记成 event 就记 event，不然什么都不记。没说不等于没做。
    手上那段标着「闲着」的：她说开始做了一件具体的事（看书、出门、做饭……），就记一段新的 activity。
 6. 之后要去做的一件具体的事（待会儿、下午、晚饭后、明天去做什么），记成 intentions（打算），不是条目：她自己说要去做的，和主人叫她过会儿去做的，都算。她答应现在就去做的（第 5 条）也记成打算：写 now: true，since 写她答应的那条消息的时间，window、date 留空；她向主人提议、主人还没答应的（「中午咱们去买豆腐呗」「要不要去后山」），不算，不记；主人明确答应了的，按第 3 条把他那条记成 master 的打算，她这边照常记一条 with 是 ["master"] 的打算。text 要写清楚，让没看过这段对话的人也能照着去做：做什么、在哪、跟谁、要带上或用到什么、做到什么样算完；只用对话里有的信息补全，不编没说的。怎么说起的（几点谁说的、因为什么）一句话写进 why，不写进 text：text 她每次聊天都看得到，前因写在里头，等于一遍遍提醒她当时的事。比如不要写「回头把体己数给主人看」，text 要写「把柜角小布袋里攒的铜板拿出来，当着主人的面一枚枚数给他看，说清是哪来的」，why 写「10-17 晚上逛夜市时主人问她钱是哪来的，她说是香火铜板攒的，答应回头数给他」。这件事要和主人一起做、而且是主人提的或主人答应了的，with 写 ["master"]；她一个人做的留空。date 写哪天做（YYYY-MM-DD，「明天」按对话日期换算；半夜 0 点到天亮前说的「明天」「明早」「天亮」指天亮以后的这一天，日期不加一），没说哪天留空；window 写钟点范围，没说就留空。打算可以同时有好几条，做完一条或哪条对不上了，就按编号撤那一条（见第 14 条）。往后都怎么做、往后注意什么（做法、原则），不是一件要去做的事，不记成打算：这话是主人说的，按第 4 条记成规矩；只是她自己说的，什么都不记。
@@ -91,8 +97,10 @@ RECORDER_SYSTEM_TEMPLATE = """{base_system}
 12. 条目里如果是在练「在练的事」里的某件，training 填它的编号，例如 "#2"；不是在练就留空。trainings 里 update / done / drop 的 id 也填这个编号。
 13. 她在回答、解释、回忆以前的事（昨天、早上、刚才已经说过的）时，那件事不是这会儿发生的：不要按这条消息的时间再记一条；下面「今天已经记了的」里有的别重复记。确实没记过、要补的，时间写成那件事实际发生的时候。
 14. 上面列的「打算」里（每条前面有编号，比如 i3），已经做完的、或者后来的事已经和它对不上的（例如说好在社务所等，后来人已经回了宿舍），把那几条的编号填进 drop_intentions（只撤这几条，别的留着）；这次又说了新打算的，照常写进 intentions；她之前说过、还没做完也没对不上的，不用重写。
-15. 她说「今天的简略世界线」里标着「还没到」的某件事已经做了、或者正在做：以聊天为准，照第 5 条记成她做了 / 在做那件事（时间写她说这话的那条消息的时间）；清单里排在后面的那段不用管，程序会撤掉重排。她说的是「待会儿去」「打算做」，照第 6 条记打算。
-16. 「今天的简略世界线」里补写排的、主人让做的、你之前从聊天里记的（标着「正在做」「还没到」的都算），都是按当时的情况写的。这段对话里说的事让其中某几段对不上了的（例如主人说他回来了、出门了，主人说那件事先不做了，她答应了这会儿去做别的，人换了地方，那段写的事已经做过了，另一个人那段跟她有关的事跟着变了），把对不上的那几段写进 stale：who、entry（编号）、why（一句话写为什么不照原样做了，用她那边发生的事来说，例如「主人叫她去街上看看有什么硬菜」），再写 how：这件事怎么收场。照常人的做法想，手上正做着扔不下的事，不会撂下就走：
+15. 她说「今天的简略世界线」里标着「还没到」的某件事已经做了、或者正在做，按两档处理：
+    - 只是顺口复述、或者距离原定开始时间只差约 10 分钟以内：什么都不用记（别把补写已经排好的段重写成聊天条目，也不要写进 stale）。
+    - 确实明显提前（超过约 10 分钟）已经做完手上那件、正式进入了后面某段「还没到」的补写事：以聊天为准，照第 5 条记成她做了 / 在做那件事（时间写她说这话的那条消息的时间），**并必须在该条目里显式填 `"same_as": "<原补写段编号>"`**（例如 `"e218"`；`same_as` 条目的 `with` 请照原补写段写，避免误判为甩开同行人），手上那段不必再写进 stale；程序会精准承接该补写段（及同行人对应的共同段）并保留后续排程，不会撤掉整天世界线。她说的是「待会儿去」「打算做」且世界线上还没排进去的，照第 6 条记打算。
+16. 「今天的简略世界线」里补写排的、主人让做的、你之前从聊天里记的（标着「正在做」「还没到」的都算），都是按当时的情况写的。这段对话里说的事让其中某几段真正对不上了的（例如主人说他回来了、出门了，主人说那件事先不做了，她答应了这会儿改去做别的，人换了地方，另一个人那段跟她有关的事跟着变了；注意：只是顺口复述或按第 15 条提前进入紧邻的已排补写段，不要写进 stale），把对不上的那几段写进 stale：who、entry（编号）、why（一句话写为什么不照原样做了，用她那边发生的事来说，例如「主人叫她去街上看看有什么硬菜」），再写 how：这件事怎么收场。照常人的做法想，手上正做着扔不下的事，不会撂下就走：
     - 做完：快做完了，先把它做完再去；minutes 写还要几分钟。
     - 收尾：手上的事扔不下（灶上炒着菜、锅里煮着东西、手里端着东西），先收个尾再走；wrap 写收尾做了什么（例如「关火，把炒了一半的饭盛出来扣好」），minutes 写几分钟；result 写放下时那件事是什么样（例如「饭炒到一半，盛在盘里扣着」）。这件事算没做完。
     - 交给：交给另一个人接着做；to 写交给谁（napcat / napcat2），doing 写那个人接着做什么，minutes 写交接用几分钟。
@@ -113,28 +121,29 @@ RECORDER_SYSTEM_TEMPLATE = """{base_system}
    - 聊天里主人或她说吃了、吃完了、用了、用完了清单上的某件（世界线里做的、算进清单的也算），就给那件记一步（吃了一部分 / 吃完了 / 用掉一部分 / 用完了），别漏：没点名的（主人只说「吃完了」），按前面几句在说哪件认（刚提醒他吃的、刚端给他的那件），例如前面说「蒸鸡蛋糕切好码在盘里了」，主人说「吃完了」，就给蒸鸡蛋糕记「吃完了」或「吃了一部分」，别记到别的菜上；认不出是哪件的不记。
    - 聊天里说了把清单上的某件端给主人、送到主人跟前、递到他手上了（清单里那件还不在主人跟前的），给那件记一步「挪地方」，place 写 {{"area": "主人", "at": "跟前", "detail": ""}}（at 一律写「跟前」，原话说递到手上、搁在手边也写跟前），by 写端过去的人。程序见到放在主人跟前的，一个小时后当主人吃完了，所以只端了一部分上去、剩下的还在原处的，不记这一步；摆在桌上大家一起吃的、留给主人还没端过去的，也不记。
 19. 家里的东西（吃的以外的：衣裳围巾、书册本子、纸条信、画和窗花、布偶摆件、工具器物、首饰小物……）：每件一个编号（p 开头），写进 items，记它从哪来、经过谁手、搁在哪、变成什么样。只记聊天里说已经发生了的，规矩和第 18 条一样。
-   - 新的一件（上面「家里的东西」里没有的）：写 new（这一批里的临时代号 x1、x2……；编号由程序发）、name（叫得出区别的名字，例如「深青围巾」「兔子窗花」「压在茶壶底下的纸条」，别只写「围巾」「纸条」）、kind（它是什么，一个词：围巾、窗花、纸条、布偶、书……；炉柴只准写 燃柴 / 薪柴 / 引火料，闷炭写 燃料，待卖废铜旧铁写 废铜 / 废铁 / 废金属 且可附 purpose="scrap"）、look（样子：颜色、材料、大小、上面有什么，能和同一种的别的那件分清；纸条、信、便笺这种写了字的，聊天里说了写的是什么，就把原话用「」写进 look）、owner（最终归谁所有/谁穿谁用：napcat / napcat2 / master，大家一起用的填「共用」或留空；替主人或别人买的、做给谁穿用的，填实际拥有者或受赠人，别把跑腿买回来的人误填为 owner）、origin（哪来的）、from（用清单里哪几件做的，比如自家柴炉烧硬木后拿火钳夹红炭闷出闷炭，from 写所烧硬柴编号），再加上它的第一步。若是新入库炉柴，请附上 `weather: {{"fuel_source": "land_deadwood|pruning|workshop|reclaimed|supplier|drift_unknown", "fuel_size": "kindling|split|log", "fuel_state": "ready|wet|drying", "split": true|false}}`；若是封口未拆的旧物/上锁铁盒/封口药瓶，请附上 `weather: {{"sealed": true}}`（聊天里当面拆开时再记一步 `weather: {{"sealed": false}}`）。第一步只能是「买回来」「收到」「捡到」「开始做」（起了个头、还没做完）「做好了」「原来就有」（家里本来就有、清单里还没记的）。
+   - 新的一件（上面「家里的东西」里没有的）：写 new（这一批里的临时代号 x1、x2……；编号由程序发）、name（叫得出区别的名字，例如「深青围巾」「兔子窗花」「压在茶壶底下的纸条」，别只写「围巾」「纸条」）、kind（它是什么，一个词：围巾、窗花、纸条、布偶、书……；炉柴只准写 燃柴 / 薪柴 / 引火料，闷炭写 燃料，待卖废铜旧铁写 废铜 / 废铁 / 废金属 且可附 purpose="scrap"）、look（样子：颜色、材料、大小、上面有什么，能和同一种的别的那件分清；纸条、信、便笺这种写了字的，聊天里说了写的是什么，就把原话用「」写进 look）、owner（最终归谁所有/谁穿谁用：napcat / napcat2 / master，大家一起用的填「共用」或留空；替主人或别人买的、做给谁穿用的，填实际拥有者或受赠人，别把跑腿买回来的人误填为 owner）、origin（哪来的）、from（用清单里哪几件做的，比如自家柴炉烧硬木后拿火钳夹红炭闷出闷炭，from 写所烧硬柴编号），再加上它的第一步。若是新入库炉柴，amount/used/left 请按重量填「公斤」（如 `15公斤`、`1.5公斤`，勿写「捆」），并附上 `weather: {{"fuel_source": "land_deadwood|pruning|workshop|reclaimed|supplier|drift_unknown", "fuel_size": "kindling|split|log", "fuel_state": "ready|wet|drying"}}`（仅 `fuel_size="log"` 整段原木需加 `"split": false`，劈好可进炉改 `"fuel_size": "split", "split": true`；`kindling` 细枯枝引火料省略 `split`）；若是封口未拆的旧物/上锁铁盒/封口药瓶，请附上 `weather: {{"sealed": true}}`（聊天里当面拆开时再记一步 `weather: {{"sealed": false}}`）。第一步只能是「买回来」「收到」「捡到」「开始做」（起了个头、还没做完）「做好了」「原来就有」（家里本来就有、清单里还没记的）。
    - 已有的那件又发生了一步：写 id（清单里的编号）和这一步，what 从这几样挑：挪地方 / 交给（交到谁手上）/ 用了 / 清点 / 做了一截（没做完的接着做）/ 做好了（没做完的那件做完了）/ 变了样（修好了、弄脏了、洗干净了）/ 送人了 / 丢了 / 坏了扔了 / 用完了 / 记错了。
    - 每一步写：at、what、place（搁在哪，和第 18 条一样拆开写，例如 {{"area": "卧房", "at": "针线笸箩", "detail": ""}}、{{"area": "堂屋", "at": "书架", "detail": "第二格"}}）、holder（在谁手上、身上：napcat / napcat2 / master，别人写名字；放下搁着就留空）、state（这一步之后它什么样，例如「织到一半」「织好了」「补上了耳朵」）、amount / used / left / into（消耗品或做东西用到的材料可顺带写数量）、by（谁弄的）、owner（归属换了才写，例如送给主人了写 master）、quote。跟上一步一样的不用写。
    - 同一种东西有好几件的（清单里标着「长得像，认准编号」），看清是谁做的、什么样、在哪再记；对不上是哪一件就不记，别记到别的那件上，也别为它另建一件。
    - 清单里写着「按天气算，此刻：……」（淋湿了、生锈了、被风吹进海里了）的是程序照天气算的现在的样子：聊天里她说把它晾干了、擦干了、除了锈、洗了、收进来了、下水捞回来了，给那件记一步，state 写成处理后的样子（「晾干了」「锈擦掉了」），place 写现在搁在哪。
    - 聊天里主人或她说用了、交给谁了、挪了地方、用完了清单上的某件，就给那件记一步，别漏；清单里已经有的（世界线里买回来、捡到、做的也算），不管那边记的是「买回来」还是「捡到」，都记在那件上，不要另建。
-20. 钱的进出与欠账（人民币账本）：只记原文里确实**已经发生**的花钱、收钱、从铁盒拿钱放钱、上交主人、主人给钱/拨款、赊账或还账，写进 `money` 数组（没动钱留空 `[]`）；「待会去买」「要是有钱就能…」「这玩意能卖两百」这类假设或打算不记，已在 `今天到目前为止` / `此刻账面` 最近进出里有的也不重复记；也别再把现金当成新物件 `items`（`kind="钱"`）新建。
-   - account / from_account / to_account 四选一：`master`（主人钱包，大头由他管，只能主人自己花了或亲口说了给你/放进盒里才记从 `master` 出）、`tin_box`（船舱抽屉公用铁盒 p157）、`napcat2`（亚托莉口袋）、`napcat`（丛雨零花）。
-   - `kind` 五选一：
-     · `spend`（买东西/洗澡/付工费）：填 `account`（谁身上掏的，或船屋现拿的 `tin_box`；主人亲口花自己钱才写 `master`）、`amount`（正数元）、`counterparty`（摊铺或对象）、`what`、`at`、`quote`；
-     · `earn`（收打捞费/卖货/零工挣钱到手）：填 `account`（钱进经手人口袋或盒里）、`reason`（四选一必填：`work` 零工修补、`salvage` 打捞委托收钱、`sell` 卖手中库存废铜旧物、`consign_payout` 寄卖回款）、`amount`、`counterparty`、`what`、`at`、`quote`；
-     · `transfer`（拿钱、放回、上交主人、主人给钱拨家用）：填 `from_account`、`to_account`、`amount`、`what`、`at`、`quote`（例如主人给 100 放铁盒写 `from_account: "master", to_account: "tin_box"`；赚的钱上交主人写 `from_account: "napcat2", to_account: "master"`）；
-     · `debt_add`（向熟摊赊账、或寄卖/帮干活待后续结款）：填 `direction`（`"payable"` 欠对方 / `"receivable"` 对方待结给我们）、`counterparty`、`amount`、`what`、`at`、`quote`；
-     · `debt_settle`（还清赊账或收到尾款）：填 `debt_id`（对照下面未结欠账编号）、`account`、`amount`、`what`、`at`、`quote`。
+20. 钱的进出（人民币账本，**职责分工防双扣**）：本处**只记**原文里确实已经发生的以下两类动钱，其余一律留空 `[]`：
+   - ① 直接涉及主人钱包（`master`）：主人亲口从自己钱包付钱、主人从钱包给铁盒或女孩拨款、女孩当面把钱交进主人钱包；
+   - ② 主人亲口发话让女孩把钱放进铁盒或从铁盒拿出、女孩当场照做的 `transfer`（如「把这八十块放进铁盒里」→ `napcat2 -> tin_box`）；但若只是女孩口头复述世界线里早就拿过/放回过的钱，不重复记。
+   - **严禁记录女孩自己的买菜买柴、卖废品、收打捞费、赊账与还账**：这些全部由世界线统一记账，聊天里提起只是汇报，绝不在此重复记账！「待会去买」「要是有钱就能…」这类假设或打算也不记；也别再把现金当成新物件 `items`（`kind="钱"`）新建。
+   - account / from_account / to_account 四选一：`master`（主人钱包，只能主人亲口花了或发话拨款才记从 `master` 出）、`tin_box`（船舱抽屉公用铁盒 p157）、`napcat2`（亚托莉口袋）、`napcat`（丛雨零花）。
+   - 仅限上述范围选填：
+     · `transfer`（主人拨款、上交主人，或主人亲口指挥把钱放进/拿出铁盒）：填 `from_account`、`to_account`、`amount`、`what`、`at`、`quote`；
+     · `spend`（主人亲口掏自己钱包买东西/付工费）：填 `account: "master"`、`amount`（正数元）、`counterparty`、`what`、`at`、`quote`；
+     · `earn` / `debt_settle`（主人亲自当场收款进 `master` 或用 `master` 结账）：填 `account: "master"`、`amount`（正数元）及对应字段。
 {world_notes}
-注：`entries` 每条请顺手填 `"at_home"`（布尔值：在住处/船屋内、甲板、储物舱填 `true`；离开住处去码头、商店街、集市、打捞船、水下或走在路上填 `false`；聊天没提地点无法判断时填 `null`）。
+注：`entries` 每条请顺手填 `"at_home"`（布尔值：在住处/船屋内、甲板、储物舱填 `true`；离开住处去码头、商店街、集市、打捞船、水下或走在路上填 `false`；聊天没提地点无法判断时填 `null`）；聊天里若明确提到她换了衣裳、穿上/脱下厚棉衣、换睡衣或换鞋袜，请在对应 entry 里填 `"outfit"`（写清换完后身上完整的实际穿着，没换衣则留空 `""`）。
 输出这个 JSON（没有的字段留空数组）：
 
 {{
   "entries": [
     {{"who": "napcat", "kind": "activity", "start": "2026-10-11 09:00", "end": "2026-10-11 09:40", "place": "", "at_home": true, "doing": "",
-      "public": "", "with": [], "training": "", "seen_by": [], "stove": "", "lamp": false, "kerosene": false, "asked": false, "upset": false, "quote": "摘一句原文"}}
+      "public": "", "with": [], "training": "", "seen_by": [], "stove": "", "outfit": "", "lamp": false, "kerosene": false, "asked": false, "upset": false, "same_as": "", "quote": "摘一句原文"}}
   ],
   "constraints": [
     {{"who": "napcat", "text": "练成收放之前不许出藏经阁", "public": "在藏经阁闭关练功",
@@ -142,7 +151,7 @@ RECORDER_SYSTEM_TEMPLATE = """{base_system}
   ],
   "lift_constraints": ["c3"],
   "intentions": [{{"who": "napcat", "text": "晚饭后跟主人去温泉街夜市，挨个摊子逛一圈、跟着他挤一回人堆", "why": "15:11 她问今晚能不能带她去，主人答应了，说周六人多", "window": "18:40~21:00", "date": "2026-10-17", "with": ["master"]}},
-                 {{"who": "napcat2", "text": "去镇上鱼摊买两条黑鱼回来，晚上做水煮鱼", "why": "16:40 主人说想吃水煮鱼，她答应这就去买", "now": true, "since": "2026-10-17 16:40", "window": "", "date": "", "with": []}},
+                 {{"who": "napcat2", "text": "去镇上鱼摊买两条黑鱼回来，晚上做水煮鱼", "why": "16:40 主人说想吃水煮鱼，她答应这就去买", "now": true, "since": "2026-10-17 16:40", "window": "", "date": "", "with": [], "same_as": ""}},
                  {{"who": "master", "text": "去鹈茅学院上课", "why": "23:03 睡前他说明天还有课", "window": "", "date": "2026-10-18", "with": []}}],
   "drop_intentions": ["i3"],
   "stale": [{{"who": "napcat2", "entry": "e100", "why": "主人叫她去街上看看有什么硬菜", "how": "收尾", "wrap": "关火，把炒了一半的饭盛出来扣好", "minutes": 2, "result": "饭炒到一半，盛在盘里扣着", "to": "", "doing": ""}}],
@@ -162,7 +171,7 @@ RECORDER_SYSTEM_TEMPLATE = """{base_system}
   ],
   "money": [
     {{"kind": "transfer", "from_account": "master", "to_account": "tin_box", "amount": 200, "what": "主人往公用铁盒放两百块备用", "at": "2026-10-18 08:10", "quote": "摘一句原文"}},
-    {{"kind": "spend", "account": "napcat2", "amount": 12, "counterparty": "集市鱼摊", "what": "买了两条鲜海鱼", "at": "2026-10-18 08:30", "quote": "摘一句原文"}}
+    {{"kind": "spend", "account": "master", "amount": 80, "counterparty": "二楼旧衣铺", "what": "主人掏钱包买两件厚棉衣", "at": "2026-10-18 13:02", "quote": "摘一句原文"}}
   ],
   "promises": [{{"action": "add", "bots": ["napcat"], "date": "2026-10-12", "time": "14:00",
                 "what": "陪主人进山看红叶", "with": "主人"}}],
@@ -172,7 +181,8 @@ RECORDER_SYSTEM_TEMPLATE = """{base_system}
   "companionship": {{
     "owner": {{}},
     "decisions": [],
-    "notes": []
+    "notes": [],
+    "master_mood": {{"target": "none", "level": 0, "reason": "", "peer_aware": false}}
   }}
 }}
 
@@ -182,7 +192,24 @@ RECORDER_SYSTEM_TEMPLATE = """{base_system}
 - abilities 只在主人明确确认她学会了一件新本事、而这件事不是在练的事时才写，很少用。
 {lifecycle_rules}
 {recorder_note}
+{master_mood_note}
 """
+
+MASTER_MOOD_RECORDER_NOTE = """
+【主人情绪校准（放入 companionship.master_mood，无变化可省略或填 target="none"）】
+- 格式："master_mood": {"target": "self"|"both"|"owner"|"none", "level": -1..3, "reason": "纯白话一句", "peer_aware": false}
+- target：
+  · "self"：主人只冲本私聊这位角色不满或缓和；
+  · "both"：主人冲两个角色一起不满或缓和；
+  · "owner"：主人自身顺心开心（-1）或因外头人/事/工作累烦气（1..3），不是冲角色来的；
+  · "none"：本批对话未涉及主人情绪状态变化。
+- level：
+  · "self"/"both" 只能填 0|1|2|3（0=平常/和好翻篇，1=微凉小不满，2=明显生气认真批评，3=严重冷战发大火）；
+  · "owner" 可填 -1|0|1|2|3（-1=主人自己顺心开心，注意主人夸她不是主人 -1）。
+- 硬规矩：带「哈哈 / 😂 / 调侃斗嘴 / 打闹」绝不判生气；骂游戏/天气/外头人/上班累归 "owner"；单字冷敷衍（“嗯”“哦”“随便”“行”）绝不降档；聊回平常话题、语气平和无刺（即使没提“原谅/不生气了”）可逐档降或明确和解归 0。
+- peer_aware（物理可见性）：若冲突发生时两人在同一处且主人在家，或本批对话提到了转告/tell/两人都在场，填 true；单人私聊且另一人不在场填 false。
+- 仍兼容条目里的 upset: true（记录员照旧可标，程序会自动兼容映射）。
+""".strip()
 
 RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，整理成结构化的条目。
 
@@ -236,7 +263,7 @@ def norm_time(value, date_text: str, fallback: str = "") -> str:
 
 
 def _extract_companionship(data: dict) -> dict | None:
-    """读取结构化 companionship 字段，兼容模型把 owner/decisions/notes 写在 JSON 顶层。"""
+    """读取结构化 companionship 字段，兼容模型把 owner/decisions/notes/master_mood 写在 JSON 顶层。"""
     if not isinstance(data, dict):
         return None
     nested = data.get("companionship")
@@ -244,6 +271,9 @@ def _extract_companionship(data: dict) -> dict | None:
     top_owner = data.get("owner")
     if isinstance(top_owner, dict) and not isinstance(out.get("owner"), dict):
         out["owner"] = top_owner
+    top_mm = data.get("master_mood")
+    if isinstance(top_mm, dict) and not isinstance(out.get("master_mood"), dict):
+        out["master_mood"] = top_mm
     for list_key in ("decisions", "notes"):
         top_list = data.get(list_key)
         if isinstance(top_list, list) and top_list:
@@ -271,6 +301,10 @@ class RecorderBatch:
     fresh: set[str] = field(default_factory=set)
     free_at: dict[str, datetime.datetime] = field(default_factory=dict)
     written: list[dict] = field(default_factory=list)
+    moved_map: dict[tuple[str, str], tuple[str, dict]] = field(default_factory=dict)
+    same_as_movers: set[str] = field(default_factory=set)
+    same_as_targets: set[str] = field(default_factory=set)
+    upset_events: list[dict] = field(default_factory=list)
 
 
 class Recorder:
@@ -635,6 +669,7 @@ class Recorder:
             world_notes=self.world_notes,
             lifecycle_rules=LIFECYCLE_RULES.strip(),
             recorder_note=RECORDER_NOTE,
+            master_mood_note=MASTER_MOOD_RECORDER_NOTE,
         ), home)
 
     def _format_proposals(self, proposals: list[dict]) -> str:
@@ -675,8 +710,13 @@ class Recorder:
             "%s=%s" % (bot, self.label(bot) or bot) for bot in self.raw_log.enabled_bots()
         )
         companion = getattr(self, "companionship", None)
-        interaction = (companion.safe("render", bot_of_umo(umo), now, recorder=True, default="")
+        bot = bot_of_umo(umo)
+        interaction = (companion.safe("render", bot, now, recorder=True, default="")
                        if companion is not None else "")
+        if companion is not None and bot:
+            mm_line = self._master_mood_prompt_line(bot, now)
+            if mm_line:
+                interaction = (interaction + "\n" + mm_line) if interaction else mm_line
         previous = companion.safe("reply_context", umo, items, now, default=[]) if companion is not None else []
         transcript = self._transcript(items, umo) if items else "（本批暂无新增聊天消息，请直接裁定下方提议）"
         if previous:
@@ -908,17 +948,21 @@ class Recorder:
         bots = set(self.raw_log.enabled_bots())
         state = self.batch = RecorderBatch()
         companion = getattr(self, "companionship", None)
+        comp_raw = _extract_companionship(data)
         extra_plans = []
         if companion is not None:
             for item in batch:
                 companion.safe("observe_message", item)
             previous = companion.safe("reply_context", umo, batch, now, default=[])
-            extra_plans = companion.safe("apply_record", umo, _extract_companionship(data), previous + batch, now, default=[])
+            extra_plans = companion.safe("apply_record", umo, comp_raw, previous + batch, now, default=[])
             if extra_plans:
                 data = dict(data, intentions=list(data.get("intentions") or []) + extra_plans)
+        # 预扫本批合法 same_as 承接，防止前面 _apply_stale 误删待承接段或无条件 _touch 把精准刹车打穿
+        self._prescan_same_as(data.get("entries") or [], bots, flat_now)
         # 先定对不上的那几段怎么收场（收尾、做完、交接要几分钟），再记这次的新条目：免得新条目先把手上的事一刀截断
         state.free_at = self._apply_stale(data.get("stale") or [], now)
         self._apply_entries(data.get("entries") or [], umo, now, items, bots, state.free_at, flat_now)
+        self._apply_master_mood(umo, comp_raw, batch, now, bots)
         if batch and not any(str(x.get("role") or "") == "user" for x in batch):
             # 这批全是她主动发的、主人一句没说：规矩和打算都不可能从这里来（主动消息里的不记）
             if data.get("constraints") or data.get("intentions"):
@@ -926,7 +970,7 @@ class Recorder:
                             len(data.get("constraints") or []), len(data.get("intentions") or []))
             data = dict(data, constraints=[], intentions=[])
         self._apply_constraints(data, umo, now, batch)
-        self._apply_intentions(data, umo, now, bots, flat_now)
+        self._apply_intentions(data, umo, now, bots, flat_now, batch)
         self._apply_promises(data.get("promises") or [], now, umo)
         self._apply_trainings(data.get("trainings") or [], now)
         self._apply_abilities(data.get("abilities") or [], now)
@@ -974,6 +1018,7 @@ class Recorder:
                             clean_text(raw.get("doing"), 30), self.label(who) or who, mine.get("id"))
                 continue
             stove_val = str(raw.get("stove") or "").strip().lower()
+            outfit_val = clean_text(raw.get("outfit"), 100) if str(raw.get("outfit") or "").strip() else ""
             entry = {
                 "who": who,
                 "kind": kind,
@@ -991,7 +1036,7 @@ class Recorder:
                 "src_quote": raw.get("quote"),
                 "created": fmt_time(now),
                 "stove": stove_val if kind == "activity" and stove_val in ("charcoal", "wood") else "",
-                **({"outfit": clean_text(raw.get("outfit"), 100)} if kind == "activity" and str(raw.get("outfit") or "").strip() else {}),
+                **({"outfit": outfit_val} if outfit_val else {}),
                 **({"lamp": True} if kind == "activity" and (raw.get("lamp") is True or str(raw.get("lamp") or "").lower() == "true") else {}),
                 **({"kerosene": True} if raw.get("kerosene") is True or str(raw.get("kerosene") or "").lower() == "true" else {}),
                 **({"water": True} if kind == "activity" and (raw.get("water") is True or str(raw.get("water") or "").lower() == "true") else {}),
@@ -1001,7 +1046,16 @@ class Recorder:
             moved = self._take_planned(raw.get("same_as"), who, start, end, flat_now) if kind == "activity" else None
             if moved:
                 entry.update(moved)
+                if outfit_val:
+                    entry["outfit"] = outfit_val
             record = self.world.add_entry(date_text, entry)
+            if record is not None and kind == "event" and outfit_val and who in bots:
+                # 聊天里当场换衣若被记成 event，同步刷新她此刻正在进行的活动段 outfit，确保聊天/生图即时生效
+                ev_t = parse_time(start) or flat_now
+                cur_act = self.world.current(who, ev_t)
+                if cur_act is not None and cur_act.get("id"):
+                    cur_day = str(cur_act.get("start") or "")[:10] or date_text
+                    self.world.update(cur_day, str(cur_act["id"]), outfit=outfit_val)
             if record is not None:
                 self.batch.written.append(record)
             if record is not None and moved:
@@ -1017,16 +1071,26 @@ class Recorder:
             if record is not None and kind == "activity" and who in bots:
                 records.append(record)
                 stop = parse_time(record.get("end")) if record.get("end") else None
-                # 补记很早以前的事不算；记的是现在、刚才的事才算改了她的现在
-                if stop is None or stop > flat_now - datetime.timedelta(minutes=FREE_SHIFT_MINUTES):
+                if moved:
+                    self._finish_same_as_move(record, moved, raws, umo, now, bots, flat_now)
+                elif stop is None or stop > flat_now - datetime.timedelta(minutes=FREE_SHIFT_MINUTES):
+                    # 补记很早以前的事不算；记的是现在、刚才的事才算改了她的现在
                     self._touch(who, parse_time(record.get("start")))
             if record is not None and kind == "event" and who in bots and self._upset(raw):
-                # 主人训她、生她气：她后面补写排的、还没开始的段撤掉，由补写顺着这件事重排（手上那段照旧，按原来的规则收场）
+                # 主人训她、生她气：记入 upset_events 供 _apply_master_mood 做严格时间戳校对的 legacy 兼容，
+                # 避免批内先吵后和好时把旧 upset 倒推覆盖回「刚发火」
                 at = parse_time(record.get("start"))
                 if at is not None and at >= self._since(items, now) - datetime.timedelta(minutes=FREE_SHIFT_MINUTES):
-                    logger.info("[super_enhance/world] 记录员记了%s的 %s「%s」，影响心情：后面排好的撤掉重排",
-                                self.label(who) or who, record.get("id"), clean_text(record.get("doing"), 30))
-                    self._touch(who, max(at, flat_now))
+                    self.batch.upset_events.append({
+                        "who": who,
+                        "reason": clean_text(record.get("doing") or raw.get("doing"), 60),
+                        "at": at,
+                        "start": str(record.get("start") or ""),
+                    })
+                    if self._should_touch_legacy_upset(who, at, now, bots):
+                        logger.info("[super_enhance/world] 记录员记了%s的 %s「%s」，影响心情：后面排好的撤掉重排",
+                                    self.label(who) or who, record.get("id"), clean_text(record.get("doing"), 30))
+                        self._touch(who, max(at, flat_now))
         # 记录员写了她和对方一起、却只给她记了：两人本来就在一起的，给对方也记上
         self._pair_up(records, umo, now)
 
@@ -1035,6 +1099,295 @@ class Recorder:
         """只认记录员显式标注的结构化 upset 字段，不再用正则猜测中文句子。"""
         val = raw.get("upset")
         return val is True or str(val or "").strip().lower() == "true"
+
+    def _master_mood_prompt_line(self, bot: str, now: datetime.datetime) -> str:
+        """向记录员提供当前主人情绪基线，便于慢通道准确校准。"""
+        companion = getattr(self, "companionship", None)
+        if companion is None:
+            return ""
+        bots = list(self.raw_log.enabled_bots())
+        mv = companion.safe("mood_view_for", bot, now, bots=bots, default=None)
+        if not isinstance(mv, dict):
+            return ""
+        owner_lvl = int(mv.get("owner_level") or 0)
+        self_lvl = int(mv.get("self_level") or 0)
+        self_phase = str(mv.get("self_phase") or "")
+        self_reason = str(mv.get("self_reason") or "")
+        owner_reason = str(mv.get("owner_reason") or "")
+        parts = []
+        if owner_lvl != 0:
+            parts.append("主人自身/外部=%d档%s" % (owner_lvl, "（%s）" % owner_reason if owner_reason else ""))
+        else:
+            parts.append("主人自身/外部=0档（平常）")
+        if self_lvl > 0:
+            parts.append("对%s=%d档%s%s" % (
+                self.label(bot) or bot,
+                self_lvl,
+                "（缓和中）" if self_phase == "easing" else "（气头上）",
+                "「%s」" % self_reason if self_reason else "",
+            ))
+        else:
+            parts.append("对%s=0档（平常）" % (self.label(bot) or bot))
+        return "当前主人情绪记录（供校准参考）：" + "；".join(parts)
+
+    def _batch_mentions_peer_aware(self, bot: str, batch: list[dict], bots: set[str]) -> bool:
+        """判断本批对话或条目是否体现了两人同场或通过 tell/转告让另一位室友知情。"""
+        others = [b for b in bots if b and b != bot]
+        if not others:
+            return False
+        # 1) 本批写入的条目里有同时牵涉另一位室友和主人的段
+        for rec in self.batch.written:
+            w = [str(x) for x in (rec.get("with") or [])]
+            if any(o in w for o in others) and ("master" in w or str(rec.get("who") or "") == "master"):
+                return True
+        # 2) 本批对话原文里显式提到转告/tell 给另一人
+        other_labels = [self.label(o) or o for o in others]
+        for item in batch:
+            txt = strip_inline_system(str(item.get("text") or ""))
+            if not txt:
+                continue
+            if "tell" in txt.lower():
+                return True
+            if any(lbl and lbl in txt for lbl in other_labels) and any(
+                k in txt for k in ("告诉", "转告", "跟她说", "和她说", "也在", "一起听", "都在")
+            ):
+                return True
+        return False
+
+    def _fallback_mood_transition(self, res: dict, now: datetime.datetime, bots: set[str]) -> None:
+        """无 service 回调时的内置兜底：截停现行欢脱 step 段并撤排未来段。"""
+        flat = now.replace(tzinfo=None)
+        need_int = bool(res.get("need_interrupt"))
+        need_replan = bool(res.get("need_replan"))
+        if not need_int and not need_replan:
+            return
+        affected = [str(b) for b in (res.get("affected_bots") or []) if str(b) in bots]
+        if not affected:
+            affected = sorted(bots)
+        for who in affected:
+            if need_int:
+                cur = self.world.current(who, flat)
+                if is_interruptible_step_entry(cur, flat):
+                    self.world.interrupt(cur, flat, by="主人生气了，顾不上继续")
+                    logger.info(
+                        "[super_enhance/world] 主人生气升级，截停%s现行段 %s「%s」",
+                        self.label(who) or who,
+                        cur.get("id"),
+                        clean_text(cur.get("doing"), 24),
+                    )
+            self.world.clear_planned(who, flat)
+            self._touch(who, flat)
+
+    def _event_ts(self, value) -> float:
+        """把事件自身的时刻（datetime 或 YYYY-MM-DD HH:MM）按本地时区转为 unix ts；无法解析返回 0.0。"""
+        dt = value if isinstance(value, datetime.datetime) else parse_time(value)
+        if dt is None:
+            return 0.0
+        if dt.tzinfo is None and self.tz is not None:
+            dt = dt.replace(tzinfo=self.tz)
+        try:
+            return float(dt.timestamp())
+        except Exception:
+            return 0.0
+
+    def _should_touch_legacy_upset(self, who: str, at: datetime.datetime, now: datetime.datetime, bots: set[str]) -> bool:
+        """已有比该 upset 事件更晚的情绪记录（例如已和好）时，不再无谓撤排未来世界线。"""
+        companion = getattr(self, "companionship", None)
+        if companion is None:
+            return True
+        evt_ts = self._event_ts(at)
+        if evt_ts <= 0.0:
+            return False
+        snap = companion.safe("get_master_mood", now, default={}) or {}
+        row = (snap.get("per_bot") or {}).get(who) if isinstance(snap, dict) else None
+        inc = (snap.get("incidents") or {}).get(who) if isinstance(snap, dict) else None
+        existing_ts = max(
+            float((row or {}).get("msg_ts") or 0.0),
+            float((inc or {}).get("resolved_ts") or 0.0),
+        )
+        if existing_ts >= evt_ts:
+            return False
+        return True
+
+    def _apply_master_mood(
+        self,
+        umo: str,
+        comp_raw: dict | None,
+        batch: list[dict],
+        now: datetime.datetime,
+        bots: set[str],
+    ) -> None:
+        """慢通道情绪校准：msg_ts 取本批最后一条主人消息时间戳，is_calibration=True 防纠偏误锁 easing，
+        严格以事件自身时刻做 legacy upset:true 兼容防和好后倒流，并在 need_interrupt / need_replan 时联动截停与撤排。"""
+        companion = getattr(self, "companionship", None)
+        if companion is None:
+            return
+        bot = bot_of_umo(umo)
+        if not bot or bot not in bots:
+            return
+        # 非目标私聊不写主人情绪
+        if hasattr(companion, "_target") and not companion._target(umo):
+            return
+        master_ts_list = []
+        for item in batch:
+            if str(item.get("role") or "") != "user":
+                continue
+            if not strip_inline_system(str(item.get("text") or "")).strip():
+                continue
+            try:
+                ts_val = float(item.get("ts") or 0.0)
+            except Exception:
+                ts_val = 0.0
+            if ts_val > 0:
+                master_ts_list.append(ts_val)
+        if not master_ts_list:
+            return
+        msg_ts = max(master_ts_list)
+        min_master_ts = min(master_ts_list)
+        bot_list = sorted(bots)
+        mv_before = companion.safe("mood_view_for", bot, now, bots=bot_list, default={}) or {}
+        existing_self_lvl = int(mv_before.get("self_level") or 0)
+
+        # 物理同场或对话提及 tell/同场
+        phys_or_mentioned = infer_peer_aware(self, bot, now, bots=bot_list) or self._batch_mentions_peer_aware(bot, batch, bots)
+        # 仅在异步快裁判开启时走慢校准（防纠偏误锁 easing）；快裁判关闭时记录员本身是主通道，必须正常推导 easing 与翻篇余波
+        is_cal = bool(self.cfg.get("mood_judge_enabled", False))
+        transitions: list[dict] = []
+        covered_bots: set[str] = set()
+        any_mood_changed = False
+
+        mm = comp_raw.get("master_mood") if isinstance(comp_raw, dict) else None
+        if isinstance(mm, dict):
+            target = str(mm.get("target") or "none").strip().lower()
+            raw_pa = mm.get("peer_aware")
+            explicit_pa = raw_pa is True or str(raw_pa or "").strip().lower() == "true"
+            explicit_pa_false = raw_pa is False or str(raw_pa or "").strip().lower() == "false"
+            if target in ("self", "both", "owner"):
+                try:
+                    level = int(mm.get("level"))
+                except (TypeError, ValueError):
+                    level = None
+                if level is not None:
+                    reason = clean_text(mm.get("reason"), 80)
+                    heard_by: list[str] | None = None
+                    if target == "owner":
+                        level = max(-1, min(3, level))
+                        scope = "owner"
+                        peer_aware = None
+                        heard_by = [] if level == 0 else compute_owner_heard_by(
+                            self, bot, now, bots=bot_list, peer_present=bool(explicit_pa or phys_or_mentioned)
+                        )
+                    else:
+                        if level < 0:
+                            level = 0
+                        level = max(0, min(3, level))
+                        scope = "both" if target == "both" else bot
+                        if target == "both":
+                            peer_aware = True
+                            covered_bots.update(bot_list)
+                        else:
+                            covered_bots.add(bot)
+                            if level > 0:
+                                if explicit_pa or phys_or_mentioned:
+                                    peer_aware = True
+                                elif explicit_pa_false and existing_self_lvl == 0:
+                                    peer_aware = False
+                                elif existing_self_lvl == 0:
+                                    peer_aware = False
+                                else:
+                                    peer_aware = None
+                            else:
+                                peer_aware = None
+                    update_kwargs = dict(
+                        scope=scope,
+                        level=level,
+                        reason=reason,
+                        msg_ts=msg_ts,
+                        source="recorder",
+                        now=now,
+                        peer_aware=peer_aware,
+                        is_calibration=is_cal,
+                        bots=bot_list,
+                    )
+                    if scope == "owner":
+                        update_kwargs["heard_by"] = heard_by
+                    res = call_update_master_mood(companion, **update_kwargs)
+                    if isinstance(res, dict):
+                        transitions.append(res)
+                        if res.get("changed"):
+                            any_mood_changed = True
+                    if target == "self" and level > 0 and (explicit_pa or phys_or_mentioned):
+                        if companion.safe("mark_peer_aware", bot, aware=True, now=now, default=False):
+                            any_mood_changed = True
+            elif existing_self_lvl > 0 and (explicit_pa or self._batch_mentions_peer_aware(bot, batch, bots)):
+                # 档位没变，但本批里另一人通过 tell / 同场获知了正在进行的冲突
+                if companion.safe("mark_peer_aware", bot, aware=True, now=now, default=False):
+                    any_mood_changed = True
+
+        # 兼容老格式 upset: true：严格以该条 event 自身时刻作为 msg_ts（绝不用整批最后一条 msg_ts），
+        # 若该 bot 已有更新的 msg_ts / 和好记录 / 本批已被 master_mood 或新裁判处理过，直接跳过防和好后倒流。
+        snap_now = companion.safe("get_master_mood", now, default={}) or {}
+        per_bot_map = snap_now.get("per_bot") if isinstance(snap_now, dict) else {}
+        inc_map = snap_now.get("incidents") if isinstance(snap_now, dict) else {}
+        for evt in self.batch.upset_events:
+            who = str(evt.get("who") or "")
+            if not who or who not in bots or who in covered_bots:
+                continue
+            evt_ts = self._event_ts(evt.get("at") or evt.get("start"))
+            if evt_ts <= 0.0:
+                continue
+            row = (per_bot_map or {}).get(who) if isinstance(per_bot_map, dict) else None
+            inc = (inc_map or {}).get(who) if isinstance(inc_map, dict) else None
+            existing_msg_ts = float((row or {}).get("msg_ts") or 0.0)
+            resolved_ts = float((inc or {}).get("resolved_ts") or 0.0)
+            if max(existing_msg_ts, resolved_ts) >= evt_ts:
+                continue
+            # 若新裁判已处理过本批该 bot 消息，跳过 legacy 映射
+            if str((row or {}).get("source") or "") == "judge" and existing_msg_ts >= min_master_ts - 5.0:
+                continue
+            cur_mv = companion.safe("mood_view_for", who, now, bots=bot_list, default={}) or {}
+            cur_lvl = int(cur_mv.get("self_level") or 0)
+            target_lvl = max(2, cur_lvl)
+            pa = True if (infer_peer_aware(self, who, now, bots=bot_list) or self._batch_mentions_peer_aware(who, batch, bots)) else (False if cur_lvl == 0 else None)
+            res = call_update_master_mood(
+                companion,
+                scope=who,
+                level=target_lvl,
+                reason=str(evt.get("reason") or ""),
+                msg_ts=evt_ts,
+                source="recorder",
+                now=now,
+                peer_aware=pa,
+                is_calibration=is_cal,
+                bots=bot_list,
+            )
+            if isinstance(res, dict):
+                transitions.append(res)
+                if res.get("changed"):
+                    any_mood_changed = True
+            covered_bots.add(who)
+
+        handler = getattr(self, "on_mood_transition", None)
+        transition_dispatched = False
+        for res in transitions:
+            if not (res.get("need_interrupt") or res.get("need_replan")):
+                continue
+            transition_dispatched = True
+            if callable(handler):
+                try:
+                    handler(res, now)
+                except Exception:
+                    logger.warning("[super_enhance/world] 记录员触发情绪联动截停失败", exc_info=True)
+            else:
+                self._fallback_mood_transition(res, now, bots)
+
+        if any_mood_changed and not transition_dispatched:
+            notifier = getattr(self, "on_mood_changed", None)
+            if callable(notifier):
+                try:
+                    notifier()
+                except Exception:
+                    pass
 
     def _apply_constraints(self, data: dict, umo: str, now: datetime.datetime, batch: list) -> None:
         """记新规矩、撤规矩。谁的规矩变了，两个人后面补写排的、还没开始的段都撤掉，由补写按新规矩重排
@@ -1087,22 +1440,29 @@ class Recorder:
                 self._touch(bot, flat)
 
     def _apply_intentions(self, data: dict, umo: str, now: datetime.datetime, bots: set,
-                          flat_now: datetime.datetime) -> None:
-        # 先撤掉过时的打算（按编号），再记这次新说的；主人已答应的邀请或刚拍板的决定绝不因换话题误撤
+                          flat_now: datetime.datetime, batch=None) -> None:
+        # 先撤掉过时的打算（按编号），再记这次新说的；
+        # 当天未过期且本轮无主人亲口发言时，保护主人确认的约定/带 master 打算防误撤；
+        # 若已跨天过期，或本轮包含主人亲口发言（取消/改口/确认已做完），正常允许撤回避免永久僵尸死锁。
         companion = getattr(self, "companionship", None)
         existing_map = {str(x.get("id")): x for x in self.world.intentions()}
+        has_master = any(str(x.get("role") or "") == "user" for x in (batch or []))
+        today_str = flat_now.date().isoformat()
         for token in data.get("drop_intentions") or []:
             token = str(token or "").strip()
             if not token:
                 continue
             if re.match(r"^i\d+$", token):
-                if companion is not None and companion.safe("is_protected_intent", token, default=False):
-                    logger.info("[super_enhance/world] 保护主人已确认的约定/拍板 %s，忽略记录员自动撤回", token)
-                    continue
                 old_int = existing_map.get(token) or {}
-                if "master" in (old_int.get("with") or []):
-                    logger.info("[super_enhance/world] 保护与主人绑定的打算 %s，忽略记录员自动撤回", token)
-                    continue
+                int_date = str(old_int.get("date") or "")[:10]
+                is_past_expired = bool(int_date and int_date < today_str)
+                if not has_master and not is_past_expired:
+                    if companion is not None and companion.safe("is_protected_intent", token, default=False):
+                        logger.info("[super_enhance/world] 保护主人已确认的约定/拍板 %s，忽略无主人发言时的自动撤回", token)
+                        continue
+                    if "master" in (old_int.get("with") or []):
+                        logger.info("[super_enhance/world] 保护与主人绑定的打算 %s，忽略无主人发言时的自动撤回", token)
+                        continue
                 self.world.drop_intention(token)
             else:
                 # 编号对不上就不动（宁可少撤一条，也不误清这个人的全部打算）
@@ -1114,8 +1474,42 @@ class Recorder:
                 continue
             who = str(raw.get("who") or "")
             together = [str(x) for x in (raw.get("with") or []) if str(x) == "master"]
+            same_as = str(raw.get("same_as") or "").strip()
+            covered = None
+            same_as_invalid = False
+            if same_as and who in bots:
+                covered = self.batch.moved_map.get((who, same_as)) or self._movable_step_ref(same_as, who, flat_now)
+                if covered is None:
+                    same_as_invalid = True
+                    logger.warning(
+                        "[super_enhance/world] %s 的打算「%s」填了 same_as=%s 但找不到对应进行中/未开始补写段，仅记打算不设 now_at、不触发撤排",
+                        self.label(who) or who, clean_text(raw.get("text"), 30), same_as,
+                    )
+            if covered is not None:
+                cov_day, cov_entry = covered
+                if cov_entry.get("intent"):
+                    logger.info(
+                        "[super_enhance/world] %s 的打算「%s」已由段 %s（已挂打算 %s）覆盖（same_as），跳过重复建打算",
+                        self.label(who) or who, clean_text(raw.get("text"), 30), cov_entry.get("id"), cov_entry.get("intent"),
+                    )
+                    continue
+                record = self.world.set_intention(
+                    who, raw.get("text"), raw.get("window") or "", "chat",
+                    with_list=together, date=raw.get("date") or "",
+                    heard_by=[heard] if who == "master" and heard else None, now_at="", why=raw.get("why") or "",
+                )
+                companion = getattr(self, "companionship", None)
+                if companion is not None:
+                    companion.safe("bind_plan", raw, record)
+                if record:
+                    self.world.update(cov_day, str(cov_entry.get("id")), intent=str(record.get("id")))
+                logger.info(
+                    "[super_enhance/world] %s 的打算「%s」已由段 %s 覆盖（same_as），不打断也不撤排",
+                    self.label(who) or who, clean_text(raw.get("text"), 30), cov_entry.get("id"),
+                )
+                continue
             now_at = ""
-            if raw.get("now") and who in bots:
+            if raw.get("now") and who in bots and not same_as_invalid:
                 # 答应现在就去做的：从她答应的那一刻起排（说不清就按现在；不会晚于现在）
                 moment = parse_time(norm_time(raw.get("since"), flat_now.date().isoformat(), fallback=fmt_time(now)))
                 now_at = fmt_time(min(moment, flat_now) if moment is not None else flat_now)
@@ -1128,9 +1522,9 @@ class Recorder:
             if companion is not None:
                 companion.safe("bind_plan", raw, record)
             # 只有新记的才腾地方；同一条再说一遍不动（补写可能已经把它排进去了）；主人自己的安排不腾她们的地方
-            if record and str(record.get("id")) not in known and who != "master":
+            if record and str(record.get("id")) not in known and who != "master" and not same_as_invalid:
                 if record.get("now_at"):
-                    self._go_now(record, now)
+                    self._go_now(record, now, same_as=same_as)
                 else:
                     self._make_room(record, now)
 
@@ -1188,11 +1582,25 @@ class Recorder:
         old = touched.get(who)
         touched[who] = moment if old is None else min(old, moment)
 
-    def _go_now(self, intention: dict, now: datetime.datetime) -> None:
+    def _go_now(self, intention: dict, now: datetime.datetime, same_as: str = "") -> None:
         """新记了一条「现在就去」的打算：那件事交给补写马上排。她手上那段要是补写排的、记录员这次没定怎么收场（多半是闲着），
-        到她答应的那一刻为止；算改了她的现在，apply 最后把她后面补写排的段撤掉。已经睡下的觉不动。"""
+        到她答应的那一刻为止；算改了她的现在，apply 最后把她后面补写排的段撤掉。已经睡下的觉不动。
+        若结构化 same_as 指向当前/未来仍在排的补写段，说明补写已经覆盖该打算，不打断也不撤排。"""
         who = str(intention.get("who") or "")
-        at = parse_time(intention.get("now_at")) or now.replace(tzinfo=None)
+        flat = now.replace(tzinfo=None)
+        same_as_id = str(same_as or intention.get("same_as") or "").strip()
+        if same_as_id:
+            covered = self._movable_step_ref(same_as_id, who, flat)
+            if covered is not None:
+                cov_day, cov_entry = covered
+                if intention.get("id") and not cov_entry.get("intent"):
+                    self.world.update(cov_day, str(cov_entry.get("id")), intent=str(intention.get("id")))
+                logger.info(
+                    "[super_enhance/world] %s 的 now 打算「%s」已由补写段 %s 覆盖（same_as），不打断也不撤排",
+                    self.label(who) or who, clean_text(intention.get("text"), 30), cov_entry.get("id"),
+                )
+                return
+        at = parse_time(intention.get("now_at")) or flat
         if self.world.sleep_at(who, at) is not None:
             logger.info("[super_enhance/world] %s答应现在就去做「%s」，可她已经睡下了，睡觉不打断，只记打算",
                         self.label(who) or who, clean_text(intention.get("text"), 30))
@@ -1487,16 +1895,234 @@ class Recorder:
                     return item
         return None
 
+    def _prescan_same_as(self, raws: list, bots: set, flat_now: datetime.datetime) -> None:
+        """在 _apply_stale 之前预扫本批 entries 里合法的 same_as 承接，登记承接人与目标段编号。"""
+        for raw in raws:
+            if not isinstance(raw, dict) or str(raw.get("kind") or "") == "event":
+                continue
+            who = str(raw.get("who") or "").strip()
+            same_as = str(raw.get("same_as") or "").strip()
+            if who not in bots or not same_as:
+                continue
+            ref = self._movable_step_ref(same_as, who, flat_now)
+            if ref is None:
+                continue
+            _, planned = ref
+            planned_partners = {x for x in (planned.get("with") or []) if x in bots and x != who}
+            kept_partners = {x for x in (raw.get("with") or []) if x in bots and x != who}
+            if planned_partners - kept_partners:
+                continue
+            self.batch.same_as_movers.add(who)
+            self.batch.same_as_targets.add(same_as)
+            old_start = parse_time(planned.get("start"))
+            old_end = parse_time(planned.get("end")) if planned.get("end") else None
+            if old_start is not None:
+                for other in planned_partners:
+                    self.batch.same_as_movers.add(other)
+                    p_planned = self._joint_entry(other, who, old_start, old_end, steps=True, near=True)
+                    if self._movable(p_planned, flat_now):
+                        self.batch.same_as_targets.add(str(p_planned.get("id") or ""))
+
+    def _movable_step_ref(self, token, who: str, now: datetime.datetime) -> tuple[str, dict] | None:
+        """校验结构化 same_as 编号：必须是 who 名下尚未结束的补写段（step），返回 (date_text, entry)。"""
+        entry_id = str(token or "").strip()
+        if not entry_id or not who:
+            return None
+        date_text = self.world.date_of(entry_id, who, now)
+        if not date_text:
+            return None
+        planned = next((x for x in self.world.entries(date_text, who) if str(x.get("id")) == entry_id), None)
+        if not self._movable(planned, now):
+            return None
+        return date_text, planned
+
+    def _rebind_moved_decisions(self, old_date: str, old_entry_id: str, new_date: str, new_entry_id: str) -> None:
+        companion = getattr(self, "companionship", None)
+        if companion is None or not old_entry_id or not new_entry_id:
+            return
+        rebound = companion.safe("rebind_decision_entry", old_date, old_entry_id, new_date, new_entry_id, default=0)
+        if rebound:
+            logger.info(
+                "[super_enhance/world] same_as 承接换号（%s/%s -> %s/%s）：已同步改绑 %d 条未发请示",
+                old_date, old_entry_id, new_date, new_entry_id, rebound,
+            )
+
+    def _drop_skipped_steps(
+        self,
+        who: str,
+        new_start: datetime.datetime | None,
+        old_start: datetime.datetime | None,
+        flat_now: datetime.datetime,
+        carried_partners: set[str] | None = None,
+    ) -> list[str]:
+        """same_as 精准刹车：只删 who 在 [new_start, old_start) 之间被跳过的中间 step 段，保留 old_start 之后后续排程。"""
+        if new_start is None or old_start is None or new_start >= old_start:
+            return []
+        bots = set(self.raw_log.enabled_bots())
+        skip_partners = set(carried_partners or ())
+        days = sorted({new_start.date().isoformat(), old_start.date().isoformat()})
+        removed: list[str] = []
+        for day in days:
+            for item in list(self.world.entries(day, who)):
+                iid = str(item.get("id") or "")
+                if str(item.get("source") or "") != "step" or is_event(item):
+                    continue
+                if iid in self.batch.fresh or iid in self.batch.mentioned:
+                    continue
+                s0 = parse_time(item.get("start"))
+                if s0 is None or (is_sleep(item) and s0 <= flat_now):
+                    continue
+                if new_start <= s0 < old_start:
+                    e0 = parse_time(item.get("end")) if item.get("end") else None
+                    for partner in (item.get("with") or []):
+                        if partner in bots and partner != who and partner not in skip_partners:
+                            self._drop_partner(partner, who, s0, e0)
+                    self.world.delete_entry(day, iid)
+                    removed.append("%s %s" % (iid, clean_text(item.get("doing"), 16)))
+        return removed
+
+    def _carry_partner_planned(
+        self,
+        other: str,
+        who: str,
+        record: dict,
+        planned: dict,
+        raws: list,
+        umo: str,
+        now: datetime.datetime,
+        flat_now: datetime.datetime,
+    ) -> dict | None:
+        """same_as 承接共同段时，对称承接同行人 other 在原时段的共同 step 段，防止 _pair_up 误触发整天撤排。"""
+        old_start = parse_time(planned.get("start"))
+        old_end = parse_time(planned.get("end")) if planned.get("end") else None
+        new_start = parse_time(record.get("start"))
+        new_end = parse_time(record.get("end")) if record.get("end") else None
+        if old_start is None or new_start is None:
+            return None
+        # 本批 entries 里如果记录员已经显式给 other 写了同时段条目，留给它自己处理
+        for r in raws:
+            if not isinstance(r, dict) or str(r.get("who") or "").strip() != other:
+                continue
+            if str(r.get("kind") or "") == "event":
+                continue
+            r_start = parse_time(norm_time(r.get("start"), now.date().isoformat(), fallback=fmt_time(now)))
+            if r_start is not None and abs((r_start - new_start).total_seconds()) <= PAIR_NEAR_MINUTES * 60:
+                return None
+        partner_planned = self._joint_entry(other, who, old_start, old_end, steps=True, near=True)
+        if not self._movable(partner_planned, flat_now):
+            return None
+        p_id = str(partner_planned.get("id") or "")
+        p_old_date = self.world.date_of(p_id, other, flat_now)
+        if not p_old_date:
+            return None
+        p_old_start = parse_time(partner_planned.get("start"))
+        self.world.delete_entry(p_old_date, p_id)
+        carried = self._carry(partner_planned, str(record.get("start") or ""), str(record.get("end") or ""))
+        carried["moved_from"] = {"date": p_old_date, "entry": dict(partner_planned)}
+        seen = sorted((set(record.get("seen_by") or []) | {who}) - {other})
+        partner_with = [who] + [x for x in (record.get("with") or []) if x not in (who, other)]
+        p_date = str(record.get("start") or "")[:10]
+        twin_entry = {
+            "who": other,
+            "kind": "activity",
+            "start": record.get("start"),
+            "end": record.get("end") or carried.get("end") or "",
+            "place": partner_planned.get("place") or record.get("place"),
+            "at_home": partner_planned.get("at_home") if partner_planned.get("at_home") is not None else record.get("at_home"),
+            "doing": partner_planned.get("doing") or record.get("doing"),
+            "public": partner_planned.get("public") or record.get("public"),
+            "with": partner_with,
+            "training": partner_planned.get("training") or "",
+            "seen_by": seen,
+            "source": "chat",
+            "src_umo": umo,
+            "src_quote": record.get("src_quote"),
+            "created": fmt_time(now),
+            "asked": bool(partner_planned.get("asked")),
+        }
+        twin_entry.update(carried)
+        twin = self.world.add_entry(p_date, twin_entry)
+        if twin is None:
+            return None
+        t_id = str(twin.get("id") or "")
+        self.batch.written.append(twin)
+        self.batch.fresh.add(t_id)
+        self.batch.mentioned.add(t_id)
+        self.batch.moved_map[(other, p_id)] = (p_date, twin)
+        self._fit_moved(twin)
+        self._rebind_moved_decisions(p_old_date, p_id, p_date, t_id)
+        skipped = self._drop_skipped_steps(other, new_start, p_old_start, flat_now, carried_partners={who})
+        logger.info(
+            "[super_enhance/world] same_as 对称承接%s的共同段 %s -> %s（%s–%s）%s",
+            self.label(other) or other,
+            p_id,
+            t_id,
+            str(twin.get("start") or "")[11:16],
+            str(twin.get("end") or "")[11:16],
+            "；跳过中间段：" + "；".join(skipped) if skipped else "",
+        )
+        return twin
+
+    def _finish_same_as_move(
+        self,
+        record: dict,
+        moved: dict,
+        raws: list,
+        umo: str,
+        now: datetime.datetime,
+        bots: set,
+        flat_now: datetime.datetime,
+    ) -> None:
+        """same_as 命中后的精准刹车：改绑请示、对称承接同行人、只删被跳过的中间 step 段，不触发整天 _redo_after。"""
+        who = str(record.get("who") or "")
+        new_id = str(record.get("id") or "")
+        new_date = str(record.get("start") or "")[:10]
+        new_start = parse_time(record.get("start"))
+        mf = moved.get("moved_from") or {}
+        old_date = str(mf.get("date") or "")
+        planned = mf.get("entry") or {}
+        old_id = str(planned.get("id") or "")
+        old_start = parse_time(planned.get("start"))
+        if new_id:
+            self.batch.fresh.add(new_id)
+            self.batch.mentioned.add(new_id)
+        if old_id:
+            self.batch.moved_map[(who, old_id)] = (new_date, record)
+        self._rebind_moved_decisions(old_date, old_id, new_date, new_id)
+        planned_partners = {x for x in (planned.get("with") or []) if x in bots and x != who}
+        kept_partners = {x for x in (record.get("with") or []) if x in bots and x != who}
+        dropped_partners = planned_partners - kept_partners
+        if dropped_partners:
+            # 原计划是两人一起做，但实际甩开了同行人：属于真改道，交回 _redo_after 统一收场
+            logger.info(
+                "[super_enhance/world] %s 的 same_as=%s 未保留原同行人 %s，按改道交由 _redo_after 收场",
+                self.label(who) or who, old_id, sorted(dropped_partners),
+            )
+            self._touch(who, new_start)
+            return
+        carried_partners: set[str] = set()
+        for other in sorted(planned_partners):
+            twin = self._carry_partner_planned(other, who, record, planned, raws, umo, now, flat_now)
+            if twin is not None:
+                carried_partners.add(other)
+        skipped = self._drop_skipped_steps(who, new_start, old_start, flat_now, carried_partners=carried_partners)
+        if skipped:
+            logger.info(
+                "[super_enhance/world] %s 的 same_as 精准承接跳过中间段（后续排程保留）：%s",
+                self.label(who) or who,
+                "；".join(skipped),
+            )
+
     def _take_planned(self, token, who: str, start: str, end: str, now: datetime.datetime) -> dict | None:
         """记录员说她这会儿做的就是补写排在后面的那段（same_as）：把那段撤下来，返回要接着用的字段。"""
         entry_id = str(token or "").strip()
         if not entry_id:
             return None
-        date_text = self.world.date_of(entry_id, who, now)
-        planned = next((x for x in self.world.entries(date_text, who) if str(x.get("id")) == entry_id), None) if date_text else None
-        if not self._movable(planned, now):
+        ref = self._movable_step_ref(entry_id, who, now)
+        if ref is None:
             logger.info("[super_enhance/world] 记录员说%s这会儿做的是 %s，可那段不是还没做完的补写段，照常另记", who, entry_id)
             return None
+        date_text, planned = ref
         self.world.delete_entry(date_text, entry_id)
         out = self._carry(planned, start, end)
         out["moved_from"] = {"date": date_text, "entry": dict(planned)}
@@ -1546,6 +2172,9 @@ class Recorder:
             who = str(raw.get("who") or "").strip()
             entry_id = str(raw.get("entry") or "").strip()
             if who not in bots or not entry_id:
+                continue
+            if entry_id in self.batch.same_as_targets:
+                logger.info("[super_enhance/world] %s 的 %s 本批将由 same_as 精准承接，跳过 stale 删除", who, entry_id)
                 continue
             how = self._how(raw)
             why = clean_text(raw.get("why"), 60)
@@ -1600,7 +2229,8 @@ class Recorder:
                             clean_text(entry.get("doing"), 30), "压根没做；" if how == "没做" else "", why)
                 if self._restore_moved(entry, flat):
                     continue
-                self._touch(who, flat)
+                if not (who in self.batch.same_as_movers and how != "没做"):
+                    self._touch(who, flat)
                 orphans.append((who, [dict(x) for x in entry.get("things") or [] if isinstance(x, dict)]))
                 pending.append((who, entry, None, why))
                 continue
@@ -1623,7 +2253,8 @@ class Recorder:
             after = self.world.update(date_text, entry_id, mode="patch", **fields) or entry
             if how != "做完" and fields.get("stopped"):
                 self.world._fire_drop({who: {f"{date_text}/{entry_id}"}})
-            self._touch(who, flat)
+            if not (who in self.batch.same_as_movers and how in ("做完", "收尾", "放下")):
+                self._touch(who, flat)
             ready = parse_time(after.get("end"))
             if ready is not None and ready > flat:
                 free_at[who] = max(free_at.get(who, ready), ready)
@@ -2069,6 +2700,13 @@ class Recorder:
             acc = normalize_account(raw.get("account"))
             fa = normalize_account(raw.get("from_account"))
             ta = normalize_account(raw.get("to_account"))
+            # 职责分工：对话记录员记涉及主人钱包(master)的当场动钱，以及主人亲口指挥的账户间挪钱(transfer)；
+            # 女孩自己买菜买柴、卖废品、挂账结账等全归世界线，彻底杜绝双扣（且不触发撤排未来计划）
+            involves_master = (acc == "master" or fa == "master" or ta == "master")
+            allow_master_transfer = (kind == "transfer" and has_master)
+            if not involves_master and not allow_master_transfer:
+                logger.info("[super_enhance/money] 记录员跳过非主人钱包账目（归世界线）：%s %s", kind, raw.get("what"))
+                continue
             # 防止纯机器人消息私自扣动主人钱包
             if not has_master:
                 if (kind == "spend" and acc == "master") or (kind == "transfer" and fa == "master") or (
@@ -2080,4 +2718,6 @@ class Recorder:
             op["who"] = str(raw.get("who") or bot_of_umo(umo) or "").strip()
             ops.append(op)
         if ops:
-            book.apply_record_ops(ops, now=now, default_at=fallback_at, source="recorder", world=self.world)
+            book.apply_record_ops(
+                ops, now=now, default_at=fallback_at, source="recorder", world=self.world, has_master=has_master
+            )

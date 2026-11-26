@@ -36,7 +36,13 @@ from ...common.bots import BotRegistry
 from . import view as view_mod
 from . import operations as operations_mod
 from .variety import PoolStore, SeedLog
-from .world import WorldStore, fmt_time, is_event, is_sleep, parse_time
+from .world import WorldStore, clean_text, fmt_time, is_event, is_sleep, parse_time
+from .mood_judge import (
+    EVENT_JUDGED_ATTR,
+    MoodJudge,
+    is_interruptible_step_entry,
+    is_valid_master_message,
+)
 from .recorder import Recorder
 from .step import LifeStep
 from .things import FILE_NAME as THINGS_FILE_NAME
@@ -128,10 +134,16 @@ class LifeStateService:
         self._world_task: asyncio.Task | None = None
         self._world_day = None
         # 共用一份有来源的互动记录；失败只少一段上下文，不阻断原有生活。
+        self._mood_revision: int = 0
+        self.on_mood_notify = None
         self.companionship = Companionship(self.world, cfg, self.raw_log, self.bots.label_for)
         self.recorder.companionship = self.companionship
+        self.recorder.on_mood_transition = self.handle_mood_transition
+        self.recorder.on_mood_changed = self.note_mood_changed
+        self.life_step.life = self
         self.life_step.companionship = self.companionship
         self.planner.companionship = self.companionship
+        self.mood_judge = MoodJudge(self)
         self.raw_log.on_record = lambda item: self.companionship.safe("observe_message", item)
         if self.cfg.get("world_enabled", True):
             self.companionship.safe("bootstrap", self._now())
@@ -225,6 +237,7 @@ class LifeStateService:
         logger.info("[super_enhance/life] 已启用（时区 %s，世界线）", self.timezone)
 
     async def terminate(self) -> None:
+        self.mood_judge.stop()
         await self.sleep_webhook.stop()
         self.planner.uninstall_gate()
         if self._world_task is not None:
@@ -234,6 +247,108 @@ class LifeStateService:
             except (asyncio.CancelledError, Exception):
                 pass
             self._world_task = None
+
+    # ---------- 主人情绪异步快刷与世界线联动 ----------
+
+    def mood_revision(self) -> int:
+        """主人情绪状态变更版本号（供补写在途防竞态校验用）。"""
+        return int(getattr(self, "_mood_revision", 0))
+
+    def note_mood_changed(self) -> int:
+        """递增情绪版本号并安全推送实时通知（如 WebUI SSE 刷新胶囊）。"""
+        self._mood_revision = int(getattr(self, "_mood_revision", 0)) + 1
+        cb = getattr(self, "on_mood_notify", None)
+        if callable(cb):
+            try:
+                cb()
+            except Exception:
+                logger.debug("[super_enhance/life] 主人情绪实时通知回调失败", exc_info=True)
+        return self._mood_revision
+
+    def on_master_message(self, event, *, bot_dialog=None) -> bool:
+        """收到主人合法私聊消息时，非阻塞投递给异步防抖裁判（绝不阻塞主模型首字，且防工具循环重复投递）。"""
+        if not self.enabled or event is None:
+            return False
+        try:
+            if event.get_extra(EVENT_JUDGED_ATTR):
+                return False
+        except Exception:
+            pass
+        ok, umo, text = is_valid_master_message(self, event, bot_dialog=bot_dialog)
+        if not ok:
+            return False
+        try:
+            event.set_extra(EVENT_JUDGED_ATTR, True)
+        except Exception:
+            pass
+        now = self._now()
+        msg_obj = getattr(event, "message_obj", None)
+        msg_id = str(getattr(msg_obj, "message_id", "") or "").strip() if msg_obj is not None else ""
+        dedup_key = "%s|id:%s" % (umo, msg_id) if msg_id else ""
+        return self.mood_judge.schedule(
+            umo,
+            text,
+            ts=now.timestamp(),
+            now=now,
+            dedup_key=dedup_key,
+        )
+
+    def handle_mood_transition(self, res: dict | None, now: datetime.datetime | None = None) -> dict:
+        """统一执行情绪跃迁后的世界线联动：升至 >= 2（且 need_interrupt=True）截停现行欢脱 step 段，
+        档位桶跨越清空未来预排；凡情绪变化或触发联动均递增 mood_revision 并推送实时通知。"""
+        out = {"interrupted": [], "cleared": [], "bots": []}
+        if not isinstance(res, dict):
+            return out
+        payload = res.get("transition") if isinstance(res.get("transition"), dict) else res
+        changed = bool(payload.get("changed"))
+        need_interrupt = bool(payload.get("need_interrupt"))
+        need_replan = bool(payload.get("need_replan"))
+        if changed or need_interrupt or need_replan:
+            self.note_mood_changed()
+        if not need_interrupt and not need_replan:
+            return out
+
+        moment = now or self._now()
+        flat = moment.astimezone(self.timezone).replace(tzinfo=None) if moment.tzinfo is not None else moment
+        enabled = list(self.enabled_bots())
+        raw_affected = [str(b) for b in (payload.get("affected_bots") or []) if str(b) in enabled]
+        target_bots = raw_affected if raw_affected else enabled
+        if not target_bots:
+            return out
+        out["bots"] = list(target_bots)
+
+        with self.world.day_transaction():
+            if need_interrupt:
+                for bot in target_bots:
+                    cur = self.world.current(bot, flat)
+                    if not is_interruptible_step_entry(cur, flat):
+                        continue
+                    partners = [str(x) for x in (cur.get("with") or []) if str(x) in enabled and str(x) != bot and str(x) not in target_bots]
+                    stopped = self.world.interrupt(cur, flat, by="主人生气了，顾不上继续")
+                    if stopped is not None:
+                        out["interrupted"].append("%s:%s" % (bot, cur.get("id")))
+                        label = self.bots.label_for(bot) or bot
+                        for partner in partners:
+                            other_cur = self.world.current(partner, flat)
+                            if (
+                                other_cur is not None
+                                and str(other_cur.get("source") or "") == "step"
+                                and bot in [str(x) for x in (other_cur.get("with") or [])]
+                            ):
+                                self.world.remove_partner(other_cur, bot, note="%s顾不上继续了" % label)
+            for bot in target_bots:
+                removed = self.world.clear_planned(bot, flat)
+                if removed:
+                    out["cleared"].extend("%s:%s" % (bot, x.get("id")) for x in removed if isinstance(x, dict))
+
+        if out["interrupted"] or out["cleared"]:
+            logger.info(
+                "[super_enhance/life] 主人情绪联动世界线：截停=%s，撤排=%d 段（bots=%s）",
+                "、".join(out["interrupted"]) or "无",
+                len(out["cleared"]),
+                "、".join(self.bots.label_for(b) or b for b in target_bots),
+            )
+        return out
 
     def _bot_enabled(self, bot: str) -> bool:
         """该机器人（平台实例）是否启用动态生活状态：在面板「作用会话」里的才算。"""

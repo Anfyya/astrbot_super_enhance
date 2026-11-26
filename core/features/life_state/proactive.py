@@ -56,6 +56,19 @@ MAX_POSTPONES = 72
 MERGE_SECONDS = 120
 # 时效性节点顺延超过这么久还没发出去就作罢（分钟）
 TIMELY_STALE_MINUTES = 25
+# 主动消息意图分类（供主人情绪精准过滤，不搞禁言）
+MSG_KINDS = ("routine", "casual", "repair")
+# 同角色发送 repair（反思道歉/破冰/外头受气关心）类主动消息的最小冷却间隔（秒）
+REPAIR_COOLDOWN_SECONDS = 3600
+_REPAIR_PURPOSE_WORDS = (
+    "反思", "道歉", "认错", "破冰", "说开", "补救", "赔罪", "对不起", "原谅",
+    "台阶", "缓和", "惹主人生气", "错在哪", "外头受气", "受委屈", "抱不平", "安慰吐槽",
+)
+_ROUTINE_PURPOSE_WORDS = (
+    "早安", "早上好", "晚安", "睡了", "先睡了", "歇下了",
+    "吃饭", "开饭", "早饭", "午饭", "晚饭", "夜宵",
+    "出门", "回来", "到家", "回船屋", "回宿舍",
+)
 
 
 @dataclass(frozen=True)
@@ -223,6 +236,8 @@ class ProactivePlanner:
         self._inflight: dict[str, float] = {}
         # 会话 → 最近一次主动消息实际发出的时刻（内存快表）
         self._last_dispatched_ts: dict[str, float] = {}
+        # 角色 → 最近一次实际发出 repair（反思道歉/破冰/关心）主动消息的时刻（60 分钟冷却防轰炸）
+        self._last_repair_sent_ts: dict[str, float] = {}
         # 已被撤除/打断的世界线条目键：bot → {"YYYY-MM-DD/eN", ...}
         self._dropped_entry_keys: dict[str, set[str]] = {}
         self._bg_tasks: set[asyncio.Task] = set()
@@ -468,6 +483,7 @@ class ProactivePlanner:
         node: str = "end",
         purpose: str = "",
         kind: str = "segment",
+        msg_kind: str = "",
         now: datetime.datetime | None = None,
         delay_seconds: int | None = None,
     ) -> int:
@@ -484,6 +500,8 @@ class ProactivePlanner:
                     else (now.replace(tzinfo=self.timezone) if now is not None else real_now))
         local_now = max(base_now, real_now)
         purpose_text = clean_line(purpose or entry.get("msg_purpose") or entry.get("doing") or "", 140)
+        raw_mk = str(msg_kind or (entry.get("msg_kind") if isinstance(entry, dict) else "") or "").strip().lower()
+        norm_mk = raw_mk if raw_mk in MSG_KINDS else ""
         if delay_seconds is None:
             if node == "start":
                 if any(w in purpose_text for w in ("早安", "早上好", "刚醒", "睡醒")):
@@ -530,6 +548,7 @@ class ProactivePlanner:
                 "purpose": purpose_text,
                 "entry_key": entry_key,
                 "msg_at": node,
+                "msg_kind": norm_mk,
                 "done": {
                     "doing": str(entry.get("doing") or entry.get("place") or ""),
                     "result": str(entry.get("result") or ""),
@@ -678,8 +697,10 @@ class ProactivePlanner:
                             store.mark_msg_fired(bot, start_key)
                             fired.add(start_key)
                             try:
+                                start_mk = "routine" if start_kind in ("out", "back") else str(item.get("msg_kind") or "")
                                 scheduled += await self.schedule_segment_msg(
-                                    bot, item, node="start", purpose=start_purpose, kind=start_kind, now=real_now
+                                    bot, item, node="start", purpose=start_purpose, kind=start_kind,
+                                    msg_kind=start_mk, now=real_now,
                                 )
                             except Exception:
                                 logger.warning("[super_enhance/life] 排段头主动对话失败", exc_info=True)
@@ -914,6 +935,8 @@ class ProactivePlanner:
             out["se_entry_key"] = str(meta["entry_key"])
         if meta.get("msg_at"):
             out["se_msg_at"] = str(meta["msg_at"])
+        if meta.get("msg_kind"):
+            out["se_msg_kind"] = str(meta["msg_kind"])
         if meta.get("promise"):
             out["se_promise"] = meta["promise"]
         if meta.get("training"):
@@ -954,6 +977,7 @@ class ProactivePlanner:
         training = payload.get("se_training")
         done = payload.get("se_done")
         question = payload.get("se_question")
+        raw_mk = str(payload.get("se_msg_kind") or "").strip().lower()
         return {
             "done": done if isinstance(done, dict) else None,
             "question": question if isinstance(question, dict) else None,
@@ -964,12 +988,86 @@ class ProactivePlanner:
             "purpose": str(payload.get("se_purpose") or "").strip(),
             "entry_key": str(payload.get("se_entry_key") or "").strip(),
             "msg_at": str(payload.get("se_msg_at") or "").strip(),
+            "msg_kind": raw_mk if raw_mk in MSG_KINDS else "",
             "promise": promise,
             "training": training if isinstance(training, dict) else None,
             "postponed": postponed,
             "job_id": str(getattr(job, "job_id", "") or ""),
             "extra": str(payload.get("se_extra") or "").strip(),
         }
+
+    @classmethod
+    def _effective_msg_kind(cls, meta: dict) -> str:
+        """按结构化 msg_kind 与兼容推断区分 routine / casual / repair。"""
+        explicit = str((meta or {}).get("msg_kind") or "").strip().lower()
+        if explicit in MSG_KINDS:
+            return explicit
+        kind = str((meta or {}).get("kind") or "segment").strip()
+        if kind in ("out", "back", "meal", "morning", "night", "wake_greet"):
+            return "routine"
+        purpose = str((meta or {}).get("purpose") or "").strip()
+        done = (meta or {}).get("done") if isinstance((meta or {}).get("done"), dict) else {}
+        probe = f"{purpose} {done.get('doing') or ''}"
+        if any(w in probe for w in _REPAIR_PURPOSE_WORDS):
+            return "repair"
+        if any(w in purpose for w in _ROUTINE_PURPOSE_WORDS):
+            return "routine"
+        if kind in CASUAL_KINDS:
+            return "casual"
+        return "routine"
+
+    def _last_repair_ts(self, bot: str, target: str, now_ts: float) -> float:
+        """查同角色最近一次实际发出 repair 类主动消息的时刻（内存快表 + 世界线/原始日志防重启兜底）。"""
+        latest = float(self._last_repair_sent_ts.get(bot) or 0.0)
+        if latest > now_ts + 120:
+            latest = 0.0
+        if latest > 0 and now_ts - latest < REPAIR_COOLDOWN_SECONDS:
+            return latest
+        if self.world is None:
+            return latest
+        try:
+            now_dt = datetime.datetime.fromtimestamp(now_ts, self.timezone)
+            flat = now_dt.replace(tzinfo=None)
+            fired = self.world.fired_msgs(bot) if hasattr(self.world, "fired_msgs") else set()
+            if not fired:
+                return latest
+            raw_proactive_ts: list[float] = []
+            for msg in self._raw_items(target, now_ts):
+                if msg.get("src") == "proactive":
+                    try:
+                        mts = float(msg.get("ts") or 0.0)
+                    except Exception:
+                        continue
+                    if 0 <= now_ts - mts < REPAIR_COOLDOWN_SECONDS:
+                        raw_proactive_ts.append(mts)
+            if not raw_proactive_ts:
+                return latest
+            for offset in (0, 1):
+                day = (flat.date() - datetime.timedelta(days=offset)).isoformat()
+                for item in self.world.entries(day, bot):
+                    if not isinstance(item, dict) or not item.get("send_msg") or real_stop(item):
+                        continue
+                    mk = str(item.get("msg_kind") or "").strip().lower()
+                    if mk != "repair":
+                        if mk in ("routine", "casual"):
+                            continue
+                        p_txt = f"{item.get('msg_purpose') or ''} {item.get('doing') or ''}"
+                        if not any(w in p_txt for w in _REPAIR_PURPOSE_WORDS):
+                            continue
+                    eid = str(item.get("id") or "").strip()
+                    at_tag = str(item.get("msg_at") or "end").strip().lower()
+                    if f"{day}/{eid}:{at_tag}" not in fired:
+                        continue
+                    trig_dt = parse_time(item.get("start") if at_tag == "start" else (item.get("end") or item.get("start")))
+                    if trig_dt is None:
+                        continue
+                    trig_ts = trig_dt.replace(tzinfo=self.timezone).timestamp()
+                    for mts in raw_proactive_ts:
+                        if abs(mts - trig_ts) <= 900 and mts > latest:
+                            latest = mts
+        except Exception:
+            logger.debug("[super_enhance/life] 回查近期 repair 主动消息记录失败", exc_info=True)
+        return latest
 
     def _entry_still_valid(self, bot: str, entry_key: str) -> bool:
         """二次校验关联的世界线段仍存活且未被打断（not real_stop）。"""
@@ -1162,6 +1260,34 @@ class ProactivePlanner:
                     logger.info("[super_enhance/life] [%s] 主人明确休息，普通主动联系转入睡期暂存", meta["bot"])
                     return None
 
+            # 主人情绪精准过滤（不搞禁言、不走 _postpone，绝不拦截 question / asked / promise / routine / repair）
+            if meta["kind"] not in ("question", "asked", "promise", "manual"):
+                eff_msg_kind = self._effective_msg_kind(meta)
+                mv = None
+                if companion is not None:
+                    now_dt = timeutil.now(self.timezone)
+                    mv = companion.safe(
+                        "mood_view_for", meta["bot"], now_dt, bots=self._default_bots(), default=None
+                    )
+                if isinstance(mv, dict) and meta["kind"] not in ("given", "intent", "training"):
+                    if mv.get("suppress_casual_proactive") and eff_msg_kind == "casual":
+                        logger.info(
+                            "[super_enhance/life] [%s] 主人情绪不佳（%s），取消轻松闲聊类主动消息（%s，原定 %s），不顺延",
+                            meta["bot"], mv.get("code") or mv.get("level"), label, self._planned_text(meta),
+                        )
+                        return None
+                explicit_repair = str((meta or {}).get("msg_kind") or "").strip().lower() == "repair"
+                mood_tense = isinstance(mv, dict) and int(mv.get("level") or 0) >= 1
+                if eff_msg_kind == "repair" and (explicit_repair or mood_tense):
+                    last_rep = self._last_repair_ts(meta["bot"], target, now_ts)
+                    if last_rep > 0 and 0 <= now_ts - last_rep < REPAIR_COOLDOWN_SECONDS:
+                        mins_ago = max(1, int(round((now_ts - last_rep) / 60.0)))
+                        logger.info(
+                            "[super_enhance/life] [%s] 距上次同类 repair 主动消息仅 %d 分钟（< 60 分钟），跳过不刷屏（不顺延）",
+                            meta["bot"], mins_ago,
+                        )
+                        return None
+
             if self._stale(meta, now_ts):
                 logger.info(
                     "[super_enhance/life] [%s] 主动对话（%s，原定 %s）过了 %d 分钟还没发出去，已过时效不发",
@@ -1259,6 +1385,8 @@ class ProactivePlanner:
                 sent = float(self.sent_fn(target) or 0.0)
             if sent >= started:
                 self._last_dispatched_ts[target] = sent
+                if self._effective_msg_kind(meta) == "repair" and meta.get("bot"):
+                    self._last_repair_sent_ts[str(meta["bot"])] = sent
                 if self.companionship is not None:
                     self.companionship.safe("consume_deferred", meta["bot"], timeutil.now(self.timezone))
             else:

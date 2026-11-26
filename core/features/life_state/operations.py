@@ -16,7 +16,7 @@ def _live_resource_state(service, now: datetime.datetime) -> dict:
     """读取此刻真实结构化燃料/油量/煤油灯余量（复用 variety/supply 同一套口径）。"""
     home = str(service.cfg.get("world_home") or "").strip() or "穗织"
     store = getattr(service, "things", None)
-    state = {"home": home, "has_inventory": False, "wood_bundles": 0.0, "charcoal_g": 0.0, "oil_ml": None, "lamp_ok": True}
+    state = {"home": home, "has_inventory": False, "wood_kg": 0.0, "charcoal_g": 0.0, "oil_ml": None, "lamp_ok": True}
     if store is not None:
         try:
             from . import variety as variety_mod
@@ -33,7 +33,7 @@ def _live_resource_state(service, now: datetime.datetime) -> dict:
             )
             if ctx.get("has_inventory"):
                 state["has_inventory"] = True
-                state["wood_bundles"] = float(ctx.get("wood_bundles") or 0.0)
+                state["wood_kg"] = float(ctx.get("wood_kg") or 0.0)
                 state["charcoal_g"] = float(ctx.get("charcoal_g") or 0.0)
                 state["oil_ml"] = float(ctx.get("oil_ml") or 0.0)
         except Exception:
@@ -146,8 +146,8 @@ def start_now(
 
     if stove_val and home != "海边小镇":
         return "没写进去：当前住处（%s）没有海边铁桶柴炉/小炭炉，stove 必须填 \"\"。" % home
-    if stove_val == "wood" and res["has_inventory"] and res["wood_bundles"] <= 0:
-        return "没写进去：家里现在干柴余量为 0 捆，生不着铁桶柴炉（须等干柴扛回或拾柴入库后再点）。"
+    if stove_val == "wood" and res["has_inventory"] and res["wood_kg"] <= 0:
+        return "没写进去：家里现在干柴余量为 0 公斤，生不着铁桶柴炉（须等干柴扛回或拾柴入库后再点）。"
     if stove_val == "charcoal" and res["has_inventory"] and res["charcoal_g"] <= 0:
         return "没写进去：家里现在闷炭余量为 0 克，小炭炉点不着火（须先换炭/买炭后再点）。"
     if cook_val == "fry" and res["has_inventory"] and res["oil_ml"] is not None and res["oil_ml"] <= 0:

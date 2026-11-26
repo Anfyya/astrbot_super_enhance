@@ -16,17 +16,17 @@ from .food import room_temp
 from .world import fmt_time, is_event, is_sleep, parse_time, real_stop, stove_active_in_entry
 
 # 与 things.py 保持一致的真实燃料消耗标准
-WOOD_MIN_PER_BUNDLE = 240  # 1 捆干柴 = 240 分钟（0.25 捆 = 1 小时）
+WOOD_MIN_PER_KG = 40  # 1.5 公斤干柴 = 60 分钟（40 分钟/公斤）
 CHARCOAL_MIN_PER_GRAM = 0.3  # 100 克闷炭 = 30 分钟（200 克 = 1 小时）
 
 WOOD_SLIDER = {
-    "min": 0.05,
-    "max": 2.0,
-    "step": 0.05,
-    "default": 0.5,
-    "refuel_default": 0.25,
-    "min_per_unit": WOOD_MIN_PER_BUNDLE,
-    "unit": "捆",
+    "min": 0.5,
+    "max": 12.0,
+    "step": 0.5,
+    "default": 3.0,
+    "refuel_default": 1.5,
+    "min_per_unit": WOOD_MIN_PER_KG,
+    "unit": "公斤",
 }
 CHARCOAL_SLIDER = {
     "min": 30,
@@ -39,11 +39,11 @@ CHARCOAL_SLIDER = {
 }
 
 WOOD_PRESETS = (
-    {"id": "wood_60", "label": "小烧暖舱", "minutes": 60, "bundles": 0.25, "desc": "烧 1 小时 · 扣 0.25 捆干柴"},
-    {"id": "wood_120", "label": "暖舱烘炕", "minutes": 120, "bundles": 0.5, "desc": "烧 2 小时 · 扣 0.5 捆干柴"},
-    {"id": "wood_180", "label": "大火透烧", "minutes": 180, "bundles": 0.75, "desc": "烧 3 小时 · 扣 0.75 捆干柴"},
+    {"id": "wood_60", "label": "小烧暖舱", "minutes": 60, "kg": 1.5, "desc": "烧 1 小时 · 扣 1.5 公斤干柴"},
+    {"id": "wood_120", "label": "暖舱烘炕", "minutes": 120, "kg": 3.0, "desc": "烧 2 小时 · 扣 3 公斤干柴"},
+    {"id": "wood_180", "label": "大火透烧", "minutes": 180, "kg": 4.5, "desc": "烧 3 小时 · 扣 4.5 公斤干柴"},
 )
-WOOD_REFUEL = {"minutes": 60, "bundles": 0.25, "desc": "续烧 1 小时 · 扣 0.25 捆干柴"}
+WOOD_REFUEL = {"minutes": 60, "kg": 1.5, "desc": "续烧 1 小时 · 扣 1.5 公斤干柴"}
 
 CHARCOAL_PRESETS = (
     {"id": "char_30", "label": "烧水热汤", "minutes": 30, "grams": 80, "desc": "烧 30 分钟 · 扣 80 克闷炭"},
@@ -95,9 +95,9 @@ def _describe_cabin_xy(wx: float, wy: float) -> dict[str, Any]:
     if wx >= 0.45 and wy >= 0.55:
         return {"place": "船屋·砖炕", "doing": "在砖炕上待着", "zone": "kang", "spot": "kang", "sleep_ok": True, "label": "红砖火炕"}
     if ((wx - 0.45) ** 2 + (wy - 0.06) ** 2) ** 0.5 <= 0.82:
-        return {"place": "船屋·船舱·柴炉边", "doing": "在铁桶柴炉边", "zone": "near", "spot": "stove", "sleep_ok": False, "label": "铁桶柴炉边"}
+        return {"place": "船屋·船舱·柴炉边", "doing": "在铁桶柴炉边", "zone": "near_wood", "spot": "stove", "sleep_ok": False, "label": "铁桶柴炉边"}
     if wx <= -0.85 and wy <= -0.65:
-        return {"place": "船屋·船舱·小灶台", "doing": "在小灶台边", "zone": "near", "spot": "kitchen", "sleep_ok": False, "label": "小灶台边"}
+        return {"place": "船屋·船舱·小灶台", "doing": "在小灶台边", "zone": "near_charcoal", "spot": "kitchen", "sleep_ok": False, "label": "小灶台边"}
     if -2.25 <= wx <= -0.35 and 1.25 <= wy <= 3.18:
         return {"place": "船屋·船舱·靠海书桌", "doing": "在靠海书桌前", "zone": "far", "spot": "desk", "sleep_ok": False, "label": "海图书桌"}
     if -1.85 <= wx <= 0.10 and -0.60 <= wy <= 1.15:
@@ -227,7 +227,7 @@ def _fuel_batches(life, now: datetime.datetime) -> dict[str, Any]:
     store = getattr(life, "things", None)
     home = str(life.cfg.get("world_home") or "").strip() or "穗织"
     out: dict[str, Any] = {
-        "wood_total_bundles": 0.0,
+        "wood_total_kg": 0.0,
         "wood_batches": [],
         "wood_unusable": [],
         "charcoal_total_g": 0,
@@ -276,20 +276,12 @@ def _fuel_batches(life, now: datetime.datetime) -> dict[str, Any]:
                 left_val = float(info.get("left") or 0.0)
                 if left_val <= 1e-6:
                     continue
-                unit = str(info.get("unit") or "捆")
-                # 与 variety.py / things.py 统一：捆/袋按原值算捆，其他单位按 0.25 捆/份折算展示
-                bundles_equiv = left_val if unit in ("捆", "袋") else round(left_val * things_mod.WOOD_BUNDLE_PER_BURN, 2)
-                left_text = "%s%s" % (_num_text(left_val), unit)
-                explicit = True
+                unit = "公斤"
+                kg_val = round(left_val, 2)
+                explicit = not bool(info.get("estimated"))
+                left_text = ("%s公斤" if explicit else "约%s公斤") % _num_text(kg_val)
             else:
-                prior = sum(1 for st in (item.get("stages") or []) if st.get("what") in ("用了", "用掉一部分"))
-                bundles_equiv = max(0.0, round(0.5 - prior * things_mod.WOOD_BUNDLE_PER_BURN, 2))
-                if bundles_equiv <= 1e-6:
-                    continue
-                left_val = bundles_equiv
-                unit = "捆"
-                left_text = "约%s捆" % _num_text(bundles_equiv)
-                explicit = False
+                continue
 
             tier = str(meta.get("tier") or "")
             tier_label = {"hardwood": "硬木粗柴", "kindling": "细枝引火"}.get(tier, "")
@@ -298,9 +290,9 @@ def _fuel_batches(life, now: datetime.datetime) -> dict[str, Any]:
             wood_batches.append({
                 "id": tid,
                 "name": name,
-                "left": round(left_val, 3),
+                "left": round(left_val, 2),
                 "unit": unit,
-                "bundles": round(bundles_equiv, 3),
+                "kg": round(kg_val, 2),
                 "left_text": left_text,
                 "explicit_qty": explicit,
                 "fuel_class": tier,
@@ -355,7 +347,7 @@ def _fuel_batches(life, now: datetime.datetime) -> dict[str, Any]:
     wood_batches.sort(key=lambda x: (x["created"], x["id"]))
     charcoal_batches.sort(key=lambda x: (x["created"], x["id"]))
     out["wood_batches"] = wood_batches
-    out["wood_total_bundles"] = round(sum(float(x["bundles"]) for x in wood_batches), 2)
+    out["wood_total_kg"] = round(sum(float(x["kg"]) for x in wood_batches), 2)
     out["wood_unusable"] = wood_unusable
     out["charcoal_batches"] = charcoal_batches
     out["charcoal_total_g"] = int(round(sum(float(x["left_g"]) for x in charcoal_batches)))
@@ -371,8 +363,10 @@ def _cabin_spot_of(place: str, *, sleeping: bool = False, meal: bool = False) ->
         return "hammock"
     if any(k in p for k in ("地铺", "地板")):
         return "floor_bed"
-    if (sleeping and not any(k in p for k in ("地铺", "地板", "吊床"))) or any(k in p for k in ("炕", "床上", "被窝", "褥子", "铺位")):
+    if any(k in p for k in ("炕",)):
         return "kang"
+    if sleeping:
+        return "floor_bed"
     if any(k in p for k in ("灶台", "炭炉", "厨柜", "水桶")):
         return "kitchen"
     if any(k in p for k in ("柴炉", "火炉", "炉边", "炉旁", "柴架")):
@@ -657,8 +651,8 @@ def heat_snapshot(life, now: datetime.datetime) -> dict[str, Any]:
     }
 
 
-def _plan_wood_deduction(batches: list[dict], need_bundles: float, preferred_id: str = "") -> list[dict]:
-    """校验并规划干柴扣减方案（绝不欠账、支持指定批次优先再顺延 FIFO）。"""
+def _plan_wood_deduction(batches: list[dict], need_kg: float, preferred_id: str = "") -> list[dict]:
+    """校验并规划干柴扣减方案（纯公斤，绝不欠账、支持指定批次优先再顺延 FIFO）。"""
     ordered = list(batches)
     if preferred_id:
         hit = [b for b in ordered if b["id"] == preferred_id]
@@ -666,46 +660,27 @@ def _plan_wood_deduction(batches: list[dict], need_bundles: float, preferred_id:
             raise ValueError("指定的干柴批次（%s）当前不可用或已用完" % preferred_id)
         ordered = hit + [b for b in ordered if b["id"] != preferred_id]
 
-    total_avail = round(sum(float(b["bundles"]) for b in ordered), 3)
-    if total_avail + 1e-6 < need_bundles:
-        raise ValueError("可用干柴不足（本次需要 %s 捆，当前仅剩 %s 捆）" % (_num_text(need_bundles), _num_text(total_avail)))
+    total_avail = round(sum(float(b["kg"]) for b in ordered), 2)
+    if total_avail + 1e-6 < need_kg:
+        raise ValueError("可用干柴不足（本次需要 %s 公斤，当前仅剩 %s 公斤）" % (_num_text(need_kg), _num_text(total_avail)))
 
     plan = []
-    remain = float(need_bundles)
+    remain = float(need_kg)
     for b in ordered:
         if remain <= 1e-6:
             break
-        take_b = min(float(b["bundles"]), remain)
-        if b["explicit_qty"]:
-            unit = b["unit"]
-            if unit in ("捆", "袋"):
-                take_u = round(take_b, 3)
-                new_left = max(0.0, round(float(b["left"]) - take_u, 3))
-            else:
-                # 非捆单位按 1 份 ≈ 0.25 捆换算，至少扣 1 份
-                units_needed = max(1, int(round(take_b / things_mod.WOOD_BUNDLE_PER_BURN)))
-                take_u = min(float(b["left"]), float(units_needed))
-                new_left = max(0.0, round(float(b["left"]) - take_u, 3))
-            ended = new_left <= 1e-6
-            plan.append({
-                "id": b["id"],
-                "name": b["name"],
-                "virtual": b["virtual"],
-                "what": "用完了" if ended else "用了",
-                "used": "%s%s" % (_num_text(take_u), unit),
-                "left": ("0%s" % unit) if ended else ("%s%s" % (_num_text(new_left), unit)),
-            })
-        else:
-            ended = (float(b["bundles"]) - take_b) <= 1e-6
-            plan.append({
-                "id": b["id"],
-                "name": b["name"],
-                "virtual": b["virtual"],
-                "what": "用完了" if ended else "用了",
-                "used": "%s捆" % _num_text(take_b),
-                "left": "0捆" if ended else "",
-            })
-        remain = round(remain - take_b, 3)
+        take_kg = round(min(float(b["kg"]), remain), 2)
+        new_left = max(0.0, round(float(b["kg"]) - take_kg, 2))
+        ended = new_left <= 1e-6
+        plan.append({
+            "id": b["id"],
+            "name": b["name"],
+            "virtual": b["virtual"],
+            "what": "用完了" if ended else "用了",
+            "used": "%s公斤" % _num_text(take_kg),
+            "left": "0公斤" if ended else ("%s公斤" % _num_text(new_left) if b["explicit_qty"] else ""),
+        })
+        remain = round(remain - take_kg, 2)
     return plan
 
 
@@ -808,31 +783,31 @@ def _fmt_end_clock(start_t: datetime.datetime, end_t: datetime.datetime) -> str:
 def _resolve_fuel_request(stove: str, action: str, payload: dict) -> tuple[float, int, str, str]:
     """解析点火/添料燃料量与对应燃烧时长，优先读取滑块传入的结构化数值，未传时兼容旧 preset。"""
     if stove == "wood":
-        raw = payload.get("bundles")
+        raw = payload.get("kg")
         if raw is not None and str(raw).strip() != "":
             try:
-                bundles = round(float(raw), 2)
+                kg = round(float(raw), 2)
             except (TypeError, ValueError):
-                raise ValueError("干柴数量格式无效")
-            if bundles < WOOD_SLIDER["min"] - 1e-6 or bundles > WOOD_SLIDER["max"] + 1e-6:
+                raise ValueError("干柴公斤数格式无效")
+            if kg < WOOD_SLIDER["min"] - 1e-6 or kg > WOOD_SLIDER["max"] + 1e-6:
                 raise ValueError(
-                    "单次用柴需在 %s～%s 捆之间"
+                    "单次用柴需在 %s～%s 公斤之间"
                     % (_num_text(WOOD_SLIDER["min"]), _num_text(WOOD_SLIDER["max"]))
                 )
-            minutes = max(12, int(round(bundles * WOOD_MIN_PER_BUNDLE)))
-            cost_text = "%s捆干柴" % _num_text(bundles)
+            minutes = max(15, int(round(kg * WOOD_MIN_PER_KG)))
+            cost_text = "%s公斤干柴" % _num_text(kg)
             label = "%s · %s" % (cost_text, _fmt_dur(minutes))
-            return bundles, minutes, cost_text, label
+            return kg, minutes, cost_text, label
         if action == "refuel":
-            bundles = float(WOOD_REFUEL["bundles"])
+            kg = float(WOOD_REFUEL["kg"])
             minutes = int(WOOD_REFUEL["minutes"])
-            cost_text = "%s捆干柴" % _num_text(bundles)
-            return bundles, minutes, cost_text, "%s · %s" % (cost_text, _fmt_dur(minutes))
+            cost_text = "%s公斤干柴" % _num_text(kg)
+            return kg, minutes, cost_text, "%s · %s" % (cost_text, _fmt_dur(minutes))
         preset_id = str(payload.get("preset") or "").strip()
         preset = next((p for p in WOOD_PRESETS if p["id"] == preset_id), WOOD_PRESETS[0])
-        bundles = float(preset["bundles"])
+        kg = float(preset["kg"])
         minutes = int(preset["minutes"])
-        return bundles, minutes, "%s捆干柴" % _num_text(bundles), str(preset["label"])
+        return kg, minutes, "%s公斤干柴" % _num_text(kg), str(preset["label"])
 
     raw = payload.get("grams")
     if raw is not None and str(raw).strip() != "":
@@ -1056,16 +1031,15 @@ def heat_action(life, payload: dict, now: datetime.datetime) -> dict[str, Any]:
                 "message": "已给%s添料续烧 +%s（至 %s，实扣 %s）" % (st_name, _fmt_dur(minutes), end_lbl, cost_text),
             }
 
-        # 如果此刻是她们在世界线里点着的火，顺接在她们停火时间之后续烧一段
-        base_start = parse_time(active_info["end"]) if active_info.get("burning") and active_info.get("end") else flat
-        if base_start is None or base_start < flat:
-            base_start = flat
-        new_end = base_start + datetime.timedelta(minutes=minutes)
+        # 如果此刻是她们在世界线里点着的火，直接从此刻 flat 覆盖续烧至 new_end，避免世界线段被打断后先灭又凭空复燃，且随时可手动熄火
+        old_end = parse_time(active_info["end"]) if active_info.get("burning") and active_info.get("end") else flat
+        base_end = max(flat, old_end) if old_end is not None else flat
+        new_end = base_end + datetime.timedelta(minutes=minutes)
         end_lbl = _fmt_end_clock(flat, new_end)
         deducted = _commit_fuel_plan(life, flat, plan, "网页手动给%s添料续烧（+%s）" % (st_name, _fmt_dur(minutes)))
         rec = life.world.add_manual_stove(
             stove,
-            base_start,
+            flat,
             new_end,
             note="主人手动给%s添料接力续烧" % st_name,
             fuel=deducted,

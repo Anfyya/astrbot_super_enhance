@@ -13,6 +13,55 @@ from .proactive import notify_done as _planner_notify_done
 # 每日约束复核失败后隔多久重试、一天最多试几回
 REVIEW_RETRY_MINUTES = 10
 REVIEW_TRIES = 3
+# 还有待记录员消化的聊天时暂缓补写，但最早一条聊天超过该时长则放行（防饿死）
+STEP_PENDING_MAX_WAIT_SECONDS = 600
+
+
+def _pending_blocks_step(service, now: datetime.datetime) -> bool:
+    """记录员尚有未消费的聊天（还没到安静防抖或刚进来新消息）时暂缓本轮补写，避免补写刚排完就被滞后记录员一刀撤掉。
+    防饿死上限：最早一条待处理消息超过 STEP_PENDING_MAX_WAIT_SECONDS，或任一启用角色此刻已断档（cur 为空）时照常放行补写。"""
+    if not recorder_on(service):
+        return False
+    pending_count = 0
+    oldest_ts: float | None = None
+    for umo in service.recorder.sessions():
+        items = service.recorder.pending(umo, now)
+        if not items:
+            continue
+        pending_count += len(items)
+        for item in items:
+            try:
+                ts = float(item.get("ts") or 0)
+            except Exception:
+                ts = 0.0
+            if ts > 0 and (oldest_ts is None or ts < oldest_ts):
+                oldest_ts = ts
+    if pending_count == 0:
+        return False
+    age = (now.timestamp() - oldest_ts) if oldest_ts is not None else 0.0
+    if oldest_ts is not None and age >= STEP_PENDING_MAX_WAIT_SECONDS:
+        logger.info(
+            "[super_enhance/life] 待处理聊天已等 %.0fs（>= %ds），防饿死放行本轮补写",
+            age,
+            STEP_PENDING_MAX_WAIT_SECONDS,
+        )
+        return False
+    flat = now.replace(tzinfo=None)
+    for bot in service.enabled_bots():
+        need = service.life_step.need(bot, flat)
+        if need is not None and need.get("cur") is None:
+            logger.info(
+                "[super_enhance/life] %s 此刻世界线已断档（mode=%s），不等待处理聊天，放行本轮补写",
+                bot,
+                need.get("mode"),
+            )
+            return False
+    logger.info(
+        "[super_enhance/life] 记录员尚有 %d 条待处理聊天（最早 %.0fs 前），本轮暂缓补写",
+        pending_count,
+        max(0.0, age),
+    )
+    return True
 
 async def flush_outbox(service) -> None:
     """手动外发队列：data_dir/outbox.jsonl 里的消息逐条发出去（运维用）。"""
@@ -85,8 +134,18 @@ async def world_loop(service) -> None:
             companion = getattr(service, "companionship", None)
             if companion is not None:
                 companion.safe("apply_refresh", service._now(), service.enabled_bots())
-            if service.life_step.due(now):
-                await service.life_step.run(now)
+            step_task = getattr(service, "_step_task", None)
+            if step_task is not None and step_task.done():
+                try:
+                    step_task.result()
+                except asyncio.CancelledError:
+                    pass
+                except Exception as e:
+                    logger.error("[super_enhance/life] 后台补写任务异常：%s", e)
+                service._step_task = None
+                step_task = None
+            if step_task is None and service.life_step.due(now) and not _pending_blocks_step(service, service._now()):
+                service._step_task = asyncio.create_task(service.life_step.run(now))
             await settle_live(service, now)
             await notify_done(service, service._now())
             companion = getattr(service, "companionship", None)

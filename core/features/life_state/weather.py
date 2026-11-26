@@ -143,20 +143,43 @@ def _profile(kind: str, home: str, month: int, rng: random.Random) -> dict:
             wind[h] = min(8.0, wind[h] + 2)
     elif "连着下雨" in kind:
         cloud = [2] * 24
+        cur_r = rng.uniform(1.4, 3.2)
+        raw_r = []
         for h in hours:
-            rain[h] = rng.uniform(1.0, 5.0) if rng.random() < 0.85 else rng.uniform(0.1, 0.8)
+            cur_r = max(0.3, min(4.8, cur_r + rng.uniform(-0.9, 0.9)))
+            raw_r.append(cur_r)
             wind[h] += 1
+        for h in hours:
+            lo = raw_r[h - 1] if h > 0 else raw_r[h]
+            hi = raw_r[h + 1] if h < 23 else raw_r[h]
+            rain[h] = 0.25 * lo + 0.5 * raw_r[h] + 0.25 * hi
     elif "冷雨" in kind:
         cloud = [2] * 24
+        cur_r = rng.uniform(0.6, 2.2)
+        raw_r = []
         for h in hours:
-            if rng.random() < 0.7:
-                rain[h] = rng.uniform(0.8, 3.0)
+            cur_r = max(-0.4, min(2.8, cur_r + rng.uniform(-0.75, 0.75)))
+            raw_r.append(max(0.0, cur_r))
             wind[h] += 1.5
+        for h in hours:
+            lo = raw_r[h - 1] if h > 0 else raw_r[h]
+            hi = raw_r[h + 1] if h < 23 else raw_r[h]
+            val = 0.25 * lo + 0.5 * raw_r[h] + 0.25 * hi
+            rain[h] = val if val >= 0.15 else 0.0
     elif "雪" in kind:
         snow = True
         cloud = [2] * 24
-        start = rng.randint(3, 10)
-        spell(start, rng.randint(5, 10), rng.uniform(0.5, 1.5), rng.uniform(0.4, 1.5))
+        if "大雪" in kind or "暴雪" in kind:
+            start = rng.randint(2, 9)
+            spell(start, rng.randint(6, 12), rng.uniform(2.5, 4.5), rng.uniform(1.8, 3.8))
+            for h in range(start, min(24, start + 8)):
+                wind[h] += 1.0
+        elif "雨夹雪" in kind:
+            start = rng.randint(3, 10)
+            spell(start, rng.randint(4, 8), rng.uniform(0.6, 1.8), rng.uniform(0.4, 1.4))
+        else:
+            start = rng.randint(3, 10)
+            spell(start, rng.randint(4, 9), rng.uniform(0.3, 1.1), rng.uniform(0.2, 0.9))
     elif "雨" in kind:  # 春雨绵绵、小雨
         cloud = [2] * 24
         for _ in range(rng.randint(2, 3)):
@@ -219,24 +242,156 @@ def _feels(temp: float, rain: float, fog: int, wind: int) -> float:
     return feels
 
 
+def _prev_kind_of(text: str) -> str:
+    """从天气原文中提取昨天的最终天气（含「和昨天差不多（昨天是「X」）」与「昨天是「X」，今天慢慢转成「Y」」）。"""
+    value = str(text or "")
+    if "::" in value:
+        value = value.split("::", 1)[1]
+    value = value.split("|", 1)[0]
+    m = re.search(r"昨天是「([^」]+)」", value)
+    return m.group(1) if m else ""
+
+
 @functools.lru_cache(maxsize=512)
 def _day(date_text: str, home: str, text: str) -> tuple:
     try:
-        month = int(str(date_text)[5:7])
+        cur_date = datetime.date.fromisoformat(str(date_text)[:10])
+        month = cur_date.month
     except Exception:
+        cur_date = None
         month = 1
     kind, before = day_kinds(text)
+    prev_kind = before or _prev_kind_of(text)
     today = _profile(kind, home, month, _rng(date_text, home, kind))
+    snow_hours = [bool(today["snow"])] * 24
+
+    # 计算昨天 23:00 的真实状态锚点（因为昨天 turn 最晚在 11 点，23:00 必已稳定在昨天最终天气 prev_kind 上）
+    y_anchor = None
+    if prev_kind and cur_date is not None:
+        yday_str = (cur_date - datetime.timedelta(days=1)).isoformat()
+        ymonth = int(yday_str[5:7])
+        y_real = _profile(prev_kind, home, ymonth, _rng(yday_str, home, prev_kind))
+        y_anchor = {
+            "cloud": int(y_real["cloud"][23]),
+            "rain": float(y_real["rain"][23]),
+            "fog": int(y_real["fog"][23]),
+            "wind": float(y_real["wind"][23]),
+            "snow": bool(y_real["snow"]),
+        }
+
+    def _blend_midnight(prof: dict, prof_snow: list[bool]) -> None:
+        if not y_anchor:
+            return
+        # 00:00~02:00 平滑承接昨晚 23:00，消除跨午夜闪现
+        for h, w in ((0, 0.72), (1, 0.42), (2, 0.16)):
+            prof["wind"][h] = y_anchor["wind"] * w + prof["wind"][h] * (1.0 - w)
+            if y_anchor["snow"] == prof_snow[h]:
+                prof["rain"][h] = y_anchor["rain"] * w + prof["rain"][h] * (1.0 - w)
+            elif h == 0 and y_anchor["rain"] >= 0.2 and prof["rain"][0] < 0.05:
+                prof["rain"][0] = y_anchor["rain"] * 0.45
+                prof_snow[0] = y_anchor["snow"]
+
     if before and before != kind:
-        # 昨天的天气慢慢转成今天的：上午照昨天那样，转的那个钟点以后照今天
+        # 昨天的天气慢慢转成今天的：00:00~02:00 接昨晚 23:00，白天在 turn 前后 3~4 小时平滑过渡
         yesterday = _profile(before, home, month, _rng(date_text, home, before, "before"))
+        y_snow = [bool(yesterday["snow"])] * 24
+        _blend_midnight(yesterday, y_snow)
+
         turn = _rng(date_text, home, text, "turn").randint(6, 11)
-        for key in ("cloud", "rain", "fog"):
-            today[key] = yesterday[key][:turn] + today[key][turn:]
-        today["wind"] = [yesterday["wind"][h] if h < turn - 1 else
-                         (yesterday["wind"][h] + today["wind"][h]) / 2 if h <= turn + 1 else today["wind"][h]
-                         for h in range(24)]
-        today["snow"] = today["snow"] or yesterday["snow"]
+        new_cloud = list(today["cloud"])
+        new_rain = list(today["rain"])
+        new_fog = list(today["fog"])
+        new_wind = list(today["wind"])
+        new_snow = [bool(today["snow"])] * 24
+
+        for h in range(24):
+            if h < turn - 1:
+                new_cloud[h] = yesterday["cloud"][h]
+                new_rain[h] = yesterday["rain"][h]
+                new_fog[h] = yesterday["fog"][h]
+                new_wind[h] = yesterday["wind"][h]
+                new_snow[h] = y_snow[h]
+            elif h <= turn + 1:
+                # 3 小时核心过渡带：turn-1 (0.25), turn (0.55), turn+1 (0.85)
+                alpha = 0.25 if h == turn - 1 else (0.55 if h == turn else 0.85)
+                new_wind[h] = (1.0 - alpha) * yesterday["wind"][h] + alpha * today["wind"][h]
+                new_cloud[h] = int(round((1.0 - alpha) * yesterday["cloud"][h] + alpha * today["cloud"][h]))
+
+                yr = float(yesterday["rain"][h])
+                tr = float(today["rain"][h])
+                ys = bool(y_snow[h])
+                ts = bool(today["snow"])
+                if ys != ts:
+                    # 雪与非雪（如雨夹雪→海上起雾、冷雨→雨夹雪）：先收小旧降水，再按新天气渐入
+                    if h == turn - 1:
+                        new_rain[h] = yr * 0.45 if yr >= 0.1 else 0.0
+                        new_snow[h] = ys if new_rain[h] >= 0.05 else False
+                    elif h == turn:
+                        if tr >= 0.05:
+                            new_rain[h] = tr * 0.50
+                            new_snow[h] = ts
+                        else:
+                            new_rain[h] = 0.0
+                            new_snow[h] = False
+                    else:
+                        new_rain[h] = tr * 0.85 if tr >= 0.05 else 0.0
+                        new_snow[h] = ts if new_rain[h] >= 0.05 else False
+                else:
+                    new_rain[h] = (1.0 - alpha) * yr + alpha * tr
+                    new_snow[h] = ts if new_rain[h] >= 0.05 else False
+
+                yf = int(yesterday["fog"][h])
+                tf = int(today["fog"][h])
+                if yf == tf:
+                    new_fog[h] = tf
+                elif h == turn - 1:
+                    new_fog[h] = yf
+                elif h == turn:
+                    # 起雾/散雾过渡先经薄雾(1)，避免从雨雪直接一步跳 2 级浓雾
+                    if new_rain[h] >= 0.2:
+                        new_fog[h] = min(1, max(yf, tf))
+                    else:
+                        new_fog[h] = 1 if abs(tf - yf) >= 2 else (tf if tf > yf else yf)
+                else:
+                    new_fog[h] = tf
+
+        today["cloud"] = new_cloud
+        today["rain"] = new_rain
+        today["fog"] = new_fog
+        today["wind"] = new_wind
+        snow_hours = new_snow
+    else:
+        _blend_midnight(today, snow_hours)
+
+    # 全天 24 小时物理连续钳制：雾(0/1/2)与云量(0/1/2)每小时最多变化 1 级，且绝不从晴天(0)直接一小时跳下雨
+    prev_fog = y_anchor["fog"] if y_anchor else None
+    prev_cloud = y_anchor["cloud"] if y_anchor else None
+    for h in range(24):
+        f_cur = int(today["fog"][h])
+        if prev_fog is not None:
+            if f_cur - prev_fog > 1:
+                f_cur = prev_fog + 1
+            elif prev_fog - f_cur > 1:
+                f_cur = prev_fog - 1
+        today["fog"][h] = f_cur
+        prev_fog = f_cur
+
+        c_cur = int(today["cloud"][h])
+        if prev_cloud is not None:
+            if c_cur - prev_cloud > 1:
+                c_cur = prev_cloud + 1
+            elif prev_cloud - c_cur > 1:
+                c_cur = prev_cloud - 1
+        # 若刚从晴天(0)起步，这一小时先转多云(1)铺垫，下一小时才落雨，避免晴天秒变雨
+        if c_cur < 2 and today["rain"][h] >= 0.05:
+            if prev_cloud == 0:
+                today["rain"][h] = 0.0
+                snow_hours[h] = False
+            else:
+                c_cur = 2
+        today["cloud"][h] = c_cur
+        prev_cloud = c_cur
+
     rng = _rng(date_text, home, "dir")
     direction = rng.choice(("东北风", "北风", "东风", "东北风")) if home in SEA_HOMES else rng.choice(("北风", "西风", "山风"))
     if "台风" in kind:
@@ -245,8 +400,11 @@ def _day(date_text: str, home: str, text: str) -> tuple:
     for h in range(24):
         wind = int(round(max(0.0, min(float(MAX_WIND), today["wind"][h]))))
         rain = round(max(0.0, today["rain"][h]), 1)
-        snow = bool(today["snow"] and rain > 0)
+        if rain < 0.05:
+            rain = 0.0
         temp = _outdoor(date_text, h, home, text)
+        # 物理兜底：零上 3℃ 以上绝不可能下雪，自动转为液态雨，避免 +6℃ 播报大雪
+        snow = bool(snow_hours[h] and rain > 0 and temp < 3.0)
         hours.append({"hour": h, "cloud": today["cloud"][h], "rain": rain, "fog": today["fog"][h], "wind": wind,
                       "snow": snow, "dir": direction,
                       "temp": temp, "feels": _feels(temp, rain, today["fog"][h], wind)})
@@ -276,7 +434,7 @@ def sky_word(hour: dict) -> str:
     if hour["fog"] >= 2:
         return "浓雾"
     if hour["fog"] == 1:
-        return "起雾"
+        return "薄雾"
     if hour["rain"] > 0 or hour["cloud"] >= 2:
         return "阴"
     if hour["cloud"] == 1:
@@ -414,11 +572,14 @@ def now_text(moment: datetime.datetime, text_of, home: str, ahead_hours: int = 6
 
 # 各温区参数：(升温常数min, 降温常数min, 铁桶柴炉目标上限℃, 铁桶柴炉最大温升℃, 小炭炉最大温升℃)
 ZONE_PARAMS = {
-    "near": (14.0, 95.0, 22.5, 17.5, 11.0),   # 炉边一两步烤火圈：升温快、辐射热足，火旺时20~22℃
-    "mid":  (42.0, 80.0, 16.0, 11.0, 2.5),    # 矮桌中段空气：慢烘，烧满1小时13~15℃（有温度但不算热）
-    "far":  (55.0, 45.0, 10.5, 4.5,  0.5),    # 舱门边/舷窗下/储物角落：烧透也仅8~9℃，停火最先凉回去
-    "kang": (75.0, 240.0, 25.0, 17.5, 0.0),   # 砖炕炕面：仅铁桶柴炉烟道供热，慢热透火、停火留温6~10小时
+    "near":          (14.0, 95.0, 22.5, 17.5, 11.0),  # 兼容合并炉边区（max(near_wood, near_charcoal)）
+    "near_wood":     (14.0, 95.0, 22.5, 17.5, 0.0),   # 铁桶柴炉边：仅吃柴炉辐射热，与 2m 外小炭炉隔离
+    "near_charcoal": (42.0, 80.0, 16.0, 5.5,  11.0),  # 小灶台/小炭炉边：主要吃炭炉近火，单烧柴炉时只蹭舱内扩散热
+    "mid":           (42.0, 80.0, 16.0, 11.0, 2.5),   # 矮桌中段空气：慢烘，烧满1小时13~15℃（有温度但不算热）
+    "far":           (55.0, 45.0, 10.5, 4.5,  0.5),   # 舱门边/舷窗下/储物角落：烧透也仅8~9℃，停火最先凉回去
+    "kang":          (55.0, 540.0, 32.0, 26.0, 0.0),  # 砖炕炕面：仅铁桶柴炉烟道供热，吃满炉膛余燃、烧透暖烘烘、停火留温一整宿
 }
+WOOD_EMBER_MINUTES = 45.0  # 铁桶柴炉添柴压小炉门后，炉膛红炭继续往炕道送热的焖烧余燃时长（分钟）
 WOOD_TAU_UP, WOOD_TAU_DOWN = ZONE_PARAMS["mid"][0], ZONE_PARAMS["mid"][1]
 CHAR_TAU_UP, CHAR_TAU_DOWN = 25.0, 40.0
 
@@ -489,15 +650,34 @@ def _stove_spans_from_world(world, start_day: datetime.date, end_day: datetime.d
     return atomic
 
 
+def _merge_wood_ember_spans(spans: list, ember_minutes: float = WOOD_EMBER_MINUTES) -> list:
+    """为砖炕热传导附加柴炉压火后的炉膛焖烧余燃时长，并合并相邻/重叠区间，不改变明火段本身。"""
+    wood_only = [(st, en) for st, en, k in spans if k == "wood"]
+    if not wood_only:
+        return []
+    pad = datetime.timedelta(minutes=max(0.0, float(ember_minutes)))
+    merged: list[tuple[datetime.datetime, datetime.datetime, str]] = []
+    for st, en in sorted(wood_only, key=lambda x: x[0]):
+        ext_en = en + pad
+        if merged and st <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], ext_en), "wood")
+        else:
+            merged.append((st, ext_en, "wood"))
+    return merged
+
+
 def _build_zone_curve(spans: list, text_of, home: str, zone: str):
     from .food import room_temp
 
     tau_up_w, tau_down_w, cap_w, max_add_w, max_add_c = ZONE_PARAMS[zone]
-    if max_add_c <= 0.0:
-        # 砖炕只走铁桶柴炉横向烟道，小炭炉做饭不影响炕温与散热惯性
-        spans = [row for row in spans if row[2] == "wood"]
-    tau_up_c = 10.0 if zone == "near" else CHAR_TAU_UP
-    tau_down_c = 35.0 if zone == "near" else CHAR_TAU_DOWN
+    if zone == "kang":
+        # 砖炕只走铁桶柴炉横向烟道，小炭炉做饭不影响炕温与散热惯性；并计入压火后的炉膛焖烧余燃
+        spans = _merge_wood_ember_spans(spans)
+    elif max_add_c <= 0.0:
+        # 铁桶柴炉近旁（near_wood）不受 2m 外小炭炉影响，仅吃柴炉段
+        spans = [(st, en, k) for st, en, k in spans if k == "wood"]
+    tau_up_c = 10.0 if zone in ("near", "near_charcoal") else CHAR_TAU_UP
+    tau_down_c = 35.0 if zone in ("near", "near_charcoal") else CHAR_TAU_DOWN
 
     table = []
     prev_end: datetime.datetime | None = None
@@ -578,20 +758,22 @@ def _kang_clause(mode: str, kind: str, d_kang: float) -> str:
     """按砖炕蓄热余温与当前灶火生成客观状态描述。"""
     if mode == "burning":
         if kind == "wood":
-            if d_kang >= 10.0:
+            if d_kang >= 12.0:
                 return "，砖炕已烧透暖烘烘的"
-            if d_kang >= 4.5:
+            if d_kang >= 6.0:
                 return "，砖炕已渐渐烘暖"
-            if d_kang >= 2.0:
+            if d_kang >= 2.5:
                 return "，砖炕刚透出一点温热"
             return "，砖炕热气还没透上来（炕面仍偏凉）"
-        if d_kang >= 2.0:
+        if d_kang >= 2.5:
             return "（小炭炉不通炕道，但先前柴炉留下的砖炕余温还在）"
         return "（小炭炉不通炕道，砖炕还是凉的）"
-    if d_kang >= 6.0:
+    if d_kang >= 12.0:
         return "，但砖炕底下还暖烘烘地留着厚实余温"
-    if d_kang >= 2.0:
+    if d_kang >= 6.0:
         return "，砖炕里还留着明显余温"
+    if d_kang >= 2.5:
+        return "，砖炕还留着一点微温"
     return "，砖炕也快凉透了"
 
 
@@ -612,6 +794,8 @@ def cabin_temp_info(moment: datetime.datetime, world, text_of, home: str) -> dic
             "feels": round(feels_t, 1),
             "cabin": round(base_cabin, 1),
             "near": round(base_cabin, 1),
+            "near_wood": round(base_cabin, 1),
+            "near_charcoal": round(base_cabin, 1),
             "mid": round(base_cabin, 1),
             "far": round(base_cabin, 1),
             "kang": round(base_cabin, 1),
@@ -619,6 +803,8 @@ def cabin_temp_info(moment: datetime.datetime, world, text_of, home: str) -> dic
             "delta": 0.0,
             "kang_delta": 0.0,
             "mode": "none",
+            "wood_mode": "none",
+            "charcoal_mode": "none",
             "stove": "",
             "minutes": 0,
             "stove_desc": "",
@@ -627,19 +813,25 @@ def cabin_temp_info(moment: datetime.datetime, world, text_of, home: str) -> dic
 
     spans = _stove_spans_from_world(world, flat.date() - datetime.timedelta(days=1), flat.date(), clip_until=flat)
     _, eval_near = _build_zone_curve(spans, text_of, home, "near")
+    _, eval_near_wood = _build_zone_curve(spans, text_of, home, "near_wood")
+    _, eval_near_charcoal = _build_zone_curve(spans, text_of, home, "near_charcoal")
     _, eval_mid = _build_zone_curve(spans, text_of, home, "mid")
     _, eval_far = _build_zone_curve(spans, text_of, home, "far")
     _, eval_kang = _build_zone_curve(spans, text_of, home, "kang")
 
     d_near, st_near = eval_near(flat)
+    d_near_wood, st_wood = eval_near_wood(flat)
+    d_near_charcoal, st_charcoal = eval_near_charcoal(flat)
     d_mid, st_mid = eval_mid(flat)
     d_far, _ = eval_far(flat)
     d_kang, _ = eval_kang(flat)
 
-    near_t = min(23.0, base_cabin + d_near)
+    near_wood_t = min(23.0, base_cabin + d_near_wood)
+    near_charcoal_t = min(21.0, base_cabin + d_near_charcoal)
+    near_t = max(near_wood_t, near_charcoal_t)
     mid_t = min(18.5, base_cabin + d_mid)
     far_t = min(15.0, base_cabin + d_far) if out_t <= 14.0 else base_cabin + d_far
-    kang_t = min(26.5, base_cabin + d_kang)
+    kang_t = min(34.0, base_cabin + d_kang)
 
     # 用 near 的状态识别刚点火/刚停火（因为炉边最先热、最后彻底凉）
     mode = st_near["mode"] if d_near >= 0.8 else st_mid["mode"]
@@ -672,7 +864,7 @@ def cabin_temp_info(moment: datetime.datetime, world, text_of, home: str) -> dic
         zones_desc = "炉边余温约 %s 度、矮桌中段约 %s 度、舱门角落约 %s 度、砖炕炕面约 %s 度（%s）" % (
             _deg(near_t), _deg(mid_t), _deg(far_t), _deg(kang_t), desc
         )
-    elif d_kang >= 2.0:
+    elif d_kang >= 2.5:
         desc = "炉火早已灭透、舱内空气也凉了，但砖炕底下还憋着余温，摸着仍比屋里暖和"
         zones_desc = "舱内空气约 %s 度、砖炕炕面余温约 %s 度（%s）" % (
             _deg(base_cabin), _deg(kang_t), desc
@@ -686,6 +878,8 @@ def cabin_temp_info(moment: datetime.datetime, world, text_of, home: str) -> dic
         "feels": round(feels_t, 1),
         "cabin": round(mid_t, 1),
         "near": round(near_t, 1),
+        "near_wood": round(near_wood_t, 1),
+        "near_charcoal": round(near_charcoal_t, 1),
         "mid": round(mid_t, 1),
         "far": round(far_t, 1),
         "kang": round(kang_t, 1),
@@ -693,6 +887,8 @@ def cabin_temp_info(moment: datetime.datetime, world, text_of, home: str) -> dic
         "delta": round(d_mid, 1),
         "kang_delta": round(d_kang, 1),
         "mode": mode,
+        "wood_mode": st_wood["mode"] if st_wood.get("stove") == "wood" else "cold",
+        "charcoal_mode": st_charcoal["mode"] if st_charcoal.get("stove") == "charcoal" else "cold",
         "stove": kind,
         "minutes": mins,
         "stove_desc": desc,

@@ -29,15 +29,17 @@ from .companionship import (DECISION_TOPICS, DECISION_TOPIC_LABELS, GLOBAL_DAILY
 from .living_rules import STEP_LIFECYCLE_RULES
 from .money import AUTONOMOUS_SELL_LIMIT, SEASIDE_PRICE_GUIDE, fmt_yuan, normalize_step_money_list, validate_step_segments_money
 from .things import FactConflict
-from .things import (CAT_FOOD, CAT_ITEM, END_STEPS, HOT_MEAL_KINDS, ITEM_END_STEPS, ITEM_MID_STEPS, ITEM_START_STEPS, KEEPS, KINDS, MEASURED_KINDS, MID_STEPS,
-                     SPOTS, START_STEPS, _same_name, cat_of, checked_place, had_before, is_charcoal, is_ended, is_sealed, is_strict_qty,
+from .things import (CAT_FOOD, CAT_ITEM, END_STEPS, ITEM_END_STEPS, ITEM_MID_STEPS, ITEM_START_STEPS, KEEPS, KINDS, MEASURED_KINDS, MID_STEPS,
+                     SPOTS, START_STEPS, _same_name, cat_of, checked_place, had_before, is_charcoal, is_ended, is_sealed, is_strict_qty, is_strict_weight_qty,
                      norm_kind, norm_state, parse_amount, spots_for, staple_of, norm_step, split_keep, step_no, MAX_INSIDE)
 from . import weather as weather_mod
 from . import weathering
+from . import smell as smell_mod
+from . import tide as tide_mod
 from . import supply as supply_mod
 from .homewords import localize
 from .menu import meal_slots, meals_text
-from .variety import PoolStore, big_set, build_live_context, cool_key, default_pools, draw_window, group_map, init_day_seed, short_set, twists_of, when_map, with_when
+from .variety import PoolStore, big_set, build_live_context, check_accident_wx_at, check_item_wx_at, cool_key, default_pools, draw_window, group_map, init_day_seed, short_set, twists_of, when_map, with_when
 from .world import (MAX_MSG_PURPOSE, WorldStore, clean_flag, clean_text, doing_text, event_text_at, fmt_time, is_event, is_sleep, mood_text,
                     parse_steps, parse_time, progress_of, real_stop, result_text, steps_text, why_text)
 
@@ -58,6 +60,10 @@ BATCH_MINUTES = 15
 JOIN_ROOM_MINUTES = 30
 # 补写失败后隔多久再试（秒）
 RETRY_SECONDS = 180
+# 补写在途因主人情绪变化主动放弃时的极短防忙等冷却（秒；小于 world_loop 30s 周期，下一拍即可按新情绪重排）
+MOOD_ABORT_COOLDOWN_SECONDS = 15
+# 连续因情绪漂移放弃达到该次数以上时，转入 RETRY_SECONDS 常规退避，防止极端场景下无限重跑
+MOOD_ABORT_MAX_FAST_RETRIES = 2
 # 一次最多往后写这么多小时（从给定时刻和现在里晚的那个算起；睡觉那段不受限）
 HORIZON_HOURS = 4
 # 一次最多写几段
@@ -93,7 +99,7 @@ STEP_SYSTEM_TEMPLATE = """{base_system}
 
 1. 只写下方「这次要你写的」里列出的人。每人从下面给的时刻开始，按时间顺序写几段，首尾相接、不重叠；最后一段的结束时间必须晚于下方给出的「现在」时刻。一次最多写到下方给出的「本次截止时刻」左右，不要把后面一整天都写完（睡觉那段除外，可以一直写到第二天起床）。
    **地方也要接上**：每人这次的第一段，从她上一段结束时人在哪、在干什么接下去（「这次要你写的」里写着那时候她在哪、结果怎样）。上一段结束时她还在路上、还在外面的，先把路走完——写一段走回去，或者这一段第一步就是走回去——到了地方才做下一件；不许上一段还在外面、下一段一开头就已经在屋里。段和段之间换到远一点的地方，中间也要写路上（在宿舍里换个屋子不用单写）。出门在外的事写到她到了地方为止，不许停在半路；快到本次截止时刻时正在路上的那段可以多写一点，把路走完。
-2. **一段只写一件事，且长短严格按三档标签走**：doing 只写这件事是什么（一句话），result 写这件事最后的结果（修好了没、找着没、堆满了几捆这类，一句；不算一步、没有分钟；state 是「闲着」「睡觉」的段不写），不要把几件事用「然后」「又」「再」串在同一段里。steps 把这件事按先后分成 1–5 步，每步写 text（一句，这一阵子她一直在干什么，写成能持续这一步那么多分钟的事）和 minutes（这一步按常理要几分钟）；最后一步顺带收尾归位即可，做完就接着做下一件事。**这段做多久就是各步 minutes 加起来**，程序按它算结束时间，end 照着算好写上就行（洗碗十来分钟、吃饭二三十分钟、看书一两个小时……）；state 是「闲着」「睡觉」的段不写 steps，end 照常写。**三档时长硬区分（严禁自己瞎猜）**：
+2. **一段只写一件事，且长短严格按三档标签走**：doing 只写这件事是什么（一句话），result 写这件事最后的结果（修好了没、找着没、码了多少公斤柴这类，一句；不算一步、没有分钟；state 是「闲着」「睡觉」的段不写），不要把几件事用「然后」「又」「再」串在同一段里。steps 把这件事按先后分成 1–5 步，每步写 text（一句，这一阵子她一直在干什么，写成能持续这一步那么多分钟的事）和 minutes（这一步按常理要几分钟）；最后一步顺带收尾归位即可，做完就接着做下一件事。**这段做多久就是各步 minutes 加起来**，程序按它算结束时间，end 照着算好写上就行（洗碗十来分钟、吃饭二三十分钟、看书一两个小时……）；state 是「闲着」「睡觉」的段不写 steps，end 照常写。**三档时长硬区分（严禁自己瞎猜）**：
    - 标着「短事·5~10分钟」的：本来就是几分钟利索干完的小事，**只写 1~2 步、总计 5~15 分钟收工**（严禁把拿放归位硬凑半小时）；
    - 标着「大活·可干半天~一整天」的：这是正经体力重活或整天大工程（比如拉圆木+劈满棚下大柴垛、出海深潜打捞、全屋大扫除大晒洗、集中检修船屋、煮盐棚帮大半天工），**放开去干！单段至少 ≥45 分钟、可一直写到 1.5~3.5 小时，而且允许分多段干一整天**（中间到点照常做饭吃饭、喝水歇会儿，歇完/吃完下一段 `from` 填 `"continue:前段事"` 接着干透，直到把柴垛真正堆满或整件大活完工，绝不被零碎小插曲打断、也不受「一天只做一次」限制）；
    - 没标「短事」也没标「大活」的正常活动：须按常理扎实展开到 **≥15 分钟**（通常 20~60 分钟），不得敷衍成几分钟。上面今天已经做完的普通事，别再原样做一遍。
@@ -102,7 +108,7 @@ STEP_SYSTEM_TEMPLATE = """{base_system}
    - 拿起「手边的消遣」来做是做事：state 填「做事」，照常写 steps，result 写做到哪了（看到哪、织了多少）；做到一半去忙别的，回头可以接着做。
    - 睡觉 state 填「睡觉」（见第 5 条）。其余的段都填「做事」。
 4. 每段写 at_home 和 meal：at_home 是这段她人在不在宿舍（屋里、院子、廊下、门口、后头小屋都算 true；出了宿舍去别处、走在路上都算 false）；meal 是这段是不是正在吃饭（吃早饭午饭晚饭、夜宵算 true；做饭、摆碗筷、洗碗都不算）。
-5. 睡觉也是一段：到了她今天定的入睡时刻，就写一段睡觉，state 填「睡觉」，从入睡时刻一直写到第二天定的起床时刻；睡前那段要在入睡时刻结束。过了入睡时刻还醒着的（比如答应了陪主人熬夜），那件事做完就接着写睡觉，睡到起床时刻。睡觉这段的 place 三选一：「船屋·船舱地铺」「船屋·船舱吊床」「船屋·船舱主人的床上」，doing 跟着写（铺盖/吊床/床），别写别的睡法；吊床只睡得下一个人，主人的床睡得下两个人（主人加一个），地铺能睡两个人。
+5. 睡觉也是一段：到了她今天定的入睡时刻，就写一段睡觉，state 填「睡觉」，从入睡时刻一直写到第二天定的起床时刻；睡前那段要在入睡时刻结束。过了入睡时刻还醒着的（比如答应了陪主人熬夜），那件事做完就接着写睡觉，睡到起床时刻。睡觉这段的 place 三选一：「船屋·船舱地铺」「船屋·船舱吊床」「船屋·船舱砖炕」，doing 和 public 都要写明睡在哪、盖的什么被子或毯子（严格照家里现存被褥写，谁盖哪床不能撞车，绝不凭空多编被子，如 public 写「盖着薄被睡了」「裹着旧毛毯睡了」），让世界线和同伴一眼看清各自盖着什么；吊床只睡得下一个人，砖炕最多睡两个人（主人加一个），地铺能睡两个人。
 6. 下面「还没做的约定」里有钟点的：到那个钟点她要已经在约定的地方、和约定的人在一起。要换地方的，在那之前写一段赶过去，留足路上的工夫；约定那件事从约定的钟点开始写。
 7. **不许生成主人的条目，也不许替主人编他做了什么、说了什么、吃了什么、听了什么或怎么回应。** 不仅禁止替主人编台词，也**严禁在 `doing`/`steps`/`result`/`mood` 里把主人的任何动作、在场反应或互动结果写成既定事实**（比如「主人热乎乎吃上了三只汉堡」「新发现说给主人了」「跟主人一起摊开海图圈完位置」「挨着主人聊天搭话」——哪怕没写主人说话也不行！）。主人在哪只看「主人最近的动向」：他最后说在哪、之后没说离开，她们可以在同屋安静做自己的事；他说了出门、去上课、睡了这类，就照那个写，别写他在场。**凡是想找主人互动的事（叫主人开饭、把刚发现的旧铺面或趣事讲给主人听、拿海图或物件找主人商量），补写里只写到她这边做好准备这一步**（例如做好饭菜摆上桌给主人留出热份、自己吃自己的；或回船屋摊开旧海图先把发现的位置圈好记牢），并把真正开口讲给主人听、叫主人吃饭或问主人拿主意交给对应段的 `send_msg: true` 或 `ask_master`（到点触发实际对话），**严禁把「讲给主人听、一起商量完、主人吃上了」直接静音演进段里跳过实际对话**。**主人眼下在船屋里且没到你们明确约好钟点的出发时刻前，严禁补写擅自写 `at_home=false` 且 `with` 里带上 `"master"` 强行把主人带出门**（想约主人出门请先在家标 `send_msg: true` 开口喊他，或用 `ask_master` 问准点，或自己单独去办不写 `master`）。只有两种例外：① 约好了具体钟点的约定/打算（如明确写着 14:00 一起出海），到点才写成和主人一起出门；② 主人已经自己出门在外头了，之后同一趟里接着往下的段才写 `"master"`。**只要带主人一起出了门（`at_home=false` 且 `with` 含 `"master"`），回家的路途段也必须把 `"master"` 写进 `with` 一起带回来，严禁中途把主人丢在外面自己回家；带回到家就为止，到家之后（`at_home=true` 的段）她们各做各的事，不再把 `"master"` 写进 with。** 在家吃饭时，做好摆桌并给主人盛好或留好温着，她俩自己吃自己的，标 `send_msg: true` 叫主人开饭（主人吃没吃、吃多少、怎么聊都留给实际对话，不要替主人写进 `with` 或替他吃完）；主人明确约好钟点一起办的事才在 `with` 里写 `"master"`，除此之外 `with` 里一律不写 `"master"`。
    做给主人的、拿主人买回来的东西做的，那份是主人的：做好了端给主人或者给他留着，她们别再吃它、分它；主人吃没吃、剩下的给谁，后面聊天里定。
@@ -111,7 +117,7 @@ STEP_SYSTEM_TEMPLATE = """{base_system}
 9. public 是住在一起的人自然会知道的粗粒度信息（人在哪、大概在干哪类事），可以为空。doing 是细节。
    两人在一起的时段，两边的 start/end 和共同的事要一致，with 互相写上对方的 key；对方手上的事还没做完的，别写成和她在一起。对方不在「这次要你写的」里时，她那段时间做什么以「她们此刻手上的事」和「已经排好、这次不改的」为准，你改不了：只有她那边写的也是这件事、也在这个地方，才能写成和她一起；不然就别把她写进来。
    丛雨一般人看不见：她一个人在外面时，店家、摊主、路人都看不见她，不会跟她说话、招呼她、夸她、把东西递给她；买东西照常把钱搁在柜台上、自己拿。
-10. **每段自主决定要不要开口找主人说话**：每段写 `send_msg`（true/false）、`msg_at`（`"start"` 段刚开始时开口，或 `"end"` 段刚做完时开口；不开口填 `""`）、`msg_purpose`（一句话自然写清楚这会儿想跟主人说什么事，不开口填 `""`）。
+10. **每段自主决定要不要开口找主人说话**：每段写 `send_msg`（true/false）、`msg_at`（`"start"` 段刚开始时开口，或 `"end"` 段刚做完时开口；不开口填 `""`）、`msg_purpose`（一句话自然写清楚这会儿想跟主人说什么事，不开口填 `""`），并可附可选字段 `msg_kind`（`"routine"` 日常节点/早晚安/叫吃饭/出门回家、`"casual"` 轻松闲聊/分享炫耀、`"repair"` 反思道歉/破冰沟通/主人外头受气时的暖心关心；不填由程序自动推断）。
    - **日常固定会开口跟主人说一声的 5 个节点**（只要主人没在睡觉；就算主人就在船屋里，叫他吃饭、跟他搭话也必须标 `send_msg: true` 才会真的开口）：
      1) **早安**：睡醒起床后的第一段（`msg_at: "start"`，或跨夜睡觉那段的 `"end"`，二选一别重复），跟主人道早安；
      2) **晚安**：晚上入睡那一段（`state: "睡觉"` **必须填 `msg_at: "start"`**，入睡前说晚安，严禁填 `"end"`）；
@@ -147,21 +153,21 @@ STEP_SYSTEM_TEMPLATE = """{base_system}
    - 端给主人的（送到主人跟前、递到他手上的那一份）：那一步的 place 写 {{"area": "主人", "at": "跟前", "detail": ""}}（at 一律写「跟前」，递到手上、搁在手边也写跟前；新做好直接端上去的，做好那步就这么写；已有的写一步「挪地方」）。程序见到放在主人跟前的，一个小时后当主人吃完了，所以只端了一部分上去、剩下的还在原处的，端上去的那份别写在原来那件上；摆在桌上大家一起吃的、留给主人温着还没端过去的，area 照常写屋子。
    - 做饭用料先用家里有的，先用快不行了的；新鲜的料（豆腐、菜、鱼肉、蛋、水果）家里没有，就在做饭之前排一段去买回来。米面油盐、调料干货、腌菜这些按量记的（清单里写着「还剩多少克 / 毫升」），用到的也要写：写进那盘菜的 from，再各写一步「用掉一部分」，used 必须填阿拉伯数字+单位（如 `"250克"`、`"3克"`、`"15毫升"`，严禁写 `"少许"`、`"约五分之一"`、`"小半"` 等模糊词）；标着「快用完了」的，排一段去买（买回来的 amount 与 left 也必须填数字+单位，如 `"5斤"`、`"500毫升"`）。海边船屋的食材和常备调料已在清单里列明，严禁填「原来就有」；家里没有的调料食材须先排一段去集市或杂货铺买回来入库（非海边住处若头一回用到常备调料才可记「原来就有」）。两人一起做的饭、一起吃的饭，things 写在其中一个人那段里。
    - 清单里写了口感和保鲜的：凡落在「按时间算已经坏了、还没说扔的」里的（馊掉/长毛/发臭），以及已经反复回锅两三回、标着「熬咸了/又咸又浓/没什么味了/菜都黄烂了」的剩菜，**不要再回锅热去给人吃，更绝不可端到主人跟前，发现坏了或难吃到没法吃就该写「坏了扔了」扔掉，给主人吃就现做一碗新的（清理坏菜不必单开水段，早起、做饭或饭后收尾 `routine` 里顺手一并写 `what: "坏了扔了"` 倒掉洗锅即可）**；还没坏、只是凉了的剩菜才热一热（写一步「热了一下」），发硬的饭炒成炒饭，蔫了的菜泡会儿冷水，熟过头的香蕉做成饼，串了味的拿去做红烧、麻辣这种重口的菜；标着有毒的（土豆发芽发绿）扔掉。放东西也照常理：剩菜盖好收着，挪到矮桌/跟前就别再挂着「灶上温着」；气味冲的（葱蒜、卤味、鱼）跟豆腐、米饭、点心分开放或者都盖好；生肉包好，跟熟食分开放；炸的晾凉了再盖。
-   - 段内是否开火（stove，三选一）：每段填 `"stove": ""`（没点火：备菜、洗碗、吃饭、聊天、外出、睡觉填 `""`；仅站在灶边商量菜单也没点火）、`"charcoal"`（船屋灶台小炭炉真点着开火做饭、烧水、热菜、煎蛋）或 `"wood"`（船屋柴炉真点着烧柴取暖、烘烤衣物/鱼干或烟熏；穗织住处统一填 `""`）。小炭炉烧闷炭/木炭由程序按顿自动从家里闷炭库存扣减，不用在 items 里手写扣炭；若闷炭已用光为 0，在弄回新炭之前小炭炉点不着火（`stove` 不能填 `"charcoal"`）。**闷炭金贵稀缺，取得全看运气与时机、绝不会烧柴炉就自动产炭**：光烧普通细枯枝（`kindling`）只会化成白灰；煮盐棚并非天天生火开锅，就算开锅那点锅底余炭也多半自留或早被镇上别人家挑水换光，跑一趟可能吃闭门羹/扑空，真碰巧赶上缺人手挑海水添柴累半天也至多换回一小捧到半小罐（约 `300~500 克`）；澡堂隔几天才烧一回且多杂枝，去搭把手未必有余炭、偶有剩也只换一小把（约 `150~250 克`）；柴料场买炭也可能遇上紧俏卖空；**自家柴炉只有专门烧粗硬木劈柴（清单标着「硬木粗柴·可夹闷炭」、`weather.fuel_size="split"`）、在火旺未化灰时动手拿火钳把红炭夹进陶罐闷灭才能产出零星闷炭（约 `100~200 克`，须同段 `stove="wood"`、steps 写明夹炭闷灭、items 写 `what="做好了"`、`new` 闷炭并在 `from` 填所烧硬柴编号；拿细枯枝或未标硬木柴填进 `from` 一律打回）**。因炭来之不易，留给灶台做饭烧水用，非万不得已不拿小炭炉干烧取暖。点柴炉（`stove="wood"`）时记得消耗干柴（items 记用了哪捆柴），冷柴炉烘不干鱼也熏不熟东西。给还在睡或不在家的主人留饭时，必须盖好保温（熬粥、饭团盖在锅里温着，汤面只留汤头等主人醒了现下面条，绝不把煮好的汤面敞口摆在矮桌上泡几个钟头）。
+   - 段内是否开火（stove，三选一）：每段填 `"stove": ""`（没点火：备菜、洗碗、吃饭、聊天、外出、睡觉填 `""`；仅站在灶边商量菜单也没点火）、`"charcoal"`（船屋灶台小炭炉真点着开火做饭、烧水、热菜、煎蛋）或 `"wood"`（船屋柴炉真点着烧柴取暖、烘烤衣物/鱼干或烟熏；穗织住处统一填 `""`）。小炭炉烧闷炭/木炭由程序按顿自动从家里闷炭库存扣减，不用在 items 里手写扣炭；若闷炭已用光为 0，在弄回新炭之前小炭炉点不着火（`stove` 不能填 `"charcoal"`）。**闷炭金贵稀缺，取得全看运气与时机、绝不会烧柴炉就自动产炭**：光烧普通细枯枝（`kindling`）只会化成白灰；煮盐棚并非天天生火开锅，就算开锅那点锅底余炭也多半自留或早被镇上别人家挑水换光，跑一趟可能吃闭门羹/扑空，真碰巧赶上缺人手挑海水添柴累半天也至多换回一小捧到半小罐（约 `300~500 克`）；澡堂隔几天才烧一回且多杂枝，去搭把手未必有余炭、偶有剩也只换一小把（约 `150~250 克`）；柴料场买炭也可能遇上紧俏卖空；**自家柴炉只有专门烧粗硬木劈柴（清单标着「硬木粗柴·可夹闷炭」、`weather.fuel_size="split"`）、在火旺未化灰时动手拿火钳把红炭夹进陶罐闷灭才能产出零星闷炭（约 `100~200 克`，须同段 `stove="wood"`、steps 写明夹炭闷灭、items 写 `what="做好了"`、`new` 闷炭并在 `from` 填所烧硬柴编号；拿细枯枝或未标硬木柴填进 `from` 一律打回）**。因炭来之不易，留给灶台做饭烧水用，非万不得已不拿小炭炉干烧取暖。点柴炉（`stove="wood"`）时记得消耗干柴（items 记用了哪批柴及公斤数，硬木压小火暖舱约 `1.5 公斤/小时`，细枝引火约 `0.5~1 公斤/把`），冷柴炉烘不干鱼也熏不熟东西。给还在睡或不在家的主人留饭时，必须盖好保温（熬粥、饭团盖在锅里温着，汤面只留汤头等主人醒了现下面条，绝不把煮好的汤面敞口摆在矮桌上泡几个钟头）。
    - kind 从这几类里挑：{kinds}；keep（怎么放）从这几样里挑：{keeps}；spot（放在哪，管冷热）从这几样里挑：{spots}。
 19. **被打断的事后来怎么样了**：上面「被打断、还没交代后来怎么样的事」里每一件，在 stopped_results 里用编号写一句后来怎么样了：撂下不做了、交给谁接着做完了、等手上的事忙完回头接着做完了、或者赶紧几下做完了，挑合情理的写。只写这个人自己怎么处理这件事，不替别人定事实：别人那件做没做完、做出了什么，以世界线上别人那段写的为准（标着「做到……先放下了」的就是没做完），拿不准就写撂下了或者等回头再说。要和你这次排的段对得上：写了回头接着做，就把接着做的那段排上；写了交给对方，对方那段就是接着做这件事。没列出来的不写。
 20. **家里的东西**（吃的以外）：上面「家里的东西」是此刻家里有的（编号、样子、在哪、在谁手上）。段里做了、用了、挪了、交给别人了、接着做了一截的东西，写进这段的 items（没动到就是空数组）：
    只是拿来读、翻看、摊开看一眼，之后原样放回去，地方、样子、数量都没变的，不算动到它，不写 items；别为了让校验通过硬编一条物品变化。船屋里隔音有限，主人睡觉时严禁在船舱里或头顶甲板上敲铁、凿木头、叮当拆修铁器。
    - 已有的写 id、what（挪地方 / 交给 / 用了 / 清点 / 做了一截 / 做好了 / 变了样 / 送人了 / 丢了 / 坏了扔了 / 用完了）、place、holder（交到谁手上）、owner（仅在交给别人或改变归属时填新拥有者，如 "master" / "napcat" / "napcat2" / "共用"）、state（这段做完它什么样，比如「织到两尺长」）；消耗品可顺带写 amount（清点数量）/ used（本次用量）/ left（剩余数量）。接着做没做完的那件（比如接着织那条围巾），就是清单里那一件，写「做了一截」或「做好了」，不要另建一件。清单里标着「已做好」的已经做完了，不要再排接着做它，也别给它写「做了一截」「做好了」；想再做一样的，就另起一件新的。**寄出寄卖或彻底交给外人带走的物件，what 请直接填「送人了」结单**（勿只填「交给」让它一直挂在家里）；**卖空后的脏空筐、看完的广告传单、用烂的旧报纸、彻底修不好的坏件等无用杂物**，日常收拾或大扫除时直接写「丢了」或「坏了扔了」清掉，不必样样供在桌上。
    - **新物件写了 `from` 必须同步消耗旧料**：凡用已有旧物拼装/改造成新成品（`new` 填了 `from` 如 `from: ["p118", "p119"]`），同段（或前序段）`items` 里必须对 `from` 中每个编号写一条消耗动作——整件合入成品或用光的填 `what: "用完了"`，只取走一部分材料的填 `what: "用了"`，严禁只建新成品却把原铁罐/碎料留在桌上重复占位。
-   - 新做出来的、买回来的、捡到的写 new（临时代号 x1、x2……，这一次里每件一个，两个人、几段之间也不重复：丛雨那段用了 x1，亚托莉那段的新东西就从 x2 起）、name（叫得出区别的名字，例如「兔子窗花」）、kind（它是什么，一个词：窗花、围巾、鱼漂……；捡/劈来烧柴炉的木柴 kind 必须填 `"燃柴"` / `"薪柴"` / `"引火料"`，修船/手工木料填 `"漂流木料"` / `"木料"`，仅闷炭/木炭填 `"燃料"`，严禁把木柴写成模糊的 `"燃料"`；打捞或捡来准备过秤卖钱的废金属 kind 填 `"废铜"` / `"废铁"` / `"废金属"` 并可附 `"purpose": "scrap"`，铜顶针/怀表等旧物纪念品勿写废金属；现金收支一律记在 `money` 里，严禁把钱当成新 `items`（`kind="钱"`）新建）、look（样子）、owner（最终归谁所有/谁穿谁用：填 "master" / "napcat" / "napcat2" / "共用"；替主人或别人买回来、做给谁穿用的衣物或物品，owner 一律填实际拥有者或受赠人如 "master"，严禁只因是谁跑腿买回或暂时拿着就误填成跑腿人）、origin（哪来的，如「杂货铺」「废铁站」「海滩漂流物」）、from（用哪几件原料做的，没有留空）、what（开始做 / 做好了 / 买回来 / 收到 / 捡到）、amount（凡燃柴/闷炭等燃料必填数字+单位如 `"1捆"`、`"400克"`，严禁写 `"两捆"`、`"一抱"`、`"约五分之一捆"` 等中文数字或模糊词）、place、state。严禁凭空编造旧东西或写「原来就有」。
-   - 已有燃柴/闷炭消耗或清点时，填的 `used` / `left` / `amount` 同样必须为阿拉伯数字+单位（如 `"0.25捆"`、`"1.1捆"`、`"200克"`；`"用完了"` 时 `left` 填 `""`），严禁写 `"小半捆"`、`"约五分之一捆"`、`"1捆半"` 等中文分数或模糊说法。
+   - 新做出来的、买回来的、捡到的写 new（临时代号 x1、x2……，这一次里每件一个，两个人、几段之间也不重复：丛雨那段用了 x1，亚托莉那段的新东西就从 x2 起）、name（叫得出区别的名字，例如「兔子窗花」）、kind（它是什么，一个词：窗花、围巾、鱼漂……；捡/劈来烧柴炉的木柴 kind 必须填 `"燃柴"` / `"薪柴"` / `"引火料"`，修船/手工木料填 `"漂流木料"` / `"木料"`，仅闷炭/木炭填 `"燃料"`，严禁把木柴写成模糊的 `"燃料"`；打捞或捡来准备过秤卖钱的废金属 kind 填 `"废铜"` / `"废铁"` / `"废金属"` 并可附 `"purpose": "scrap"`，铜顶针/怀表等旧物纪念品勿写废金属；现金收支一律记在 `money` 里，严禁把钱当成新 `items`（`kind="钱"`）新建）、look（样子）、owner（最终归谁所有/谁穿谁用：填 "master" / "napcat" / "napcat2" / "共用"；替主人或别人买回来、做给谁穿用的衣物或物品，owner 一律填实际拥有者或受赠人如 "master"，严禁只因是谁跑腿买回或暂时拿着就误填成跑腿人）、origin（哪来的，如「杂货铺」「废铁站」「海滩漂流物」）、from（用哪几件原料做的，没有留空）、what（开始做 / 做好了 / 买回来 / 收到 / 捡到）、amount（凡炉柴一律按重量写阿拉伯数字+`公斤`，严禁再写 `"捆"` 或模糊量词——参考真实体量：散步随手拾的细枯枝引火料 `2~5公斤`、船坞换一抱硬木边料或菜地帮剪 `12~25公斤`、帮清倒树或「囤柴大活」集中拉回劈码 `60~150公斤`；闷炭按 `"克"` 如 `"400克"`，严禁写中文数字或模糊词）、place、state。严禁凭空编造旧东西或写「原来就有」。
+   - 已有燃柴/闷炭消耗或清点时，填的 `used` / `left` / `amount` 同样必须为阿拉伯数字+重量单位（炉柴用 `"公斤"` 如 `"1.5公斤"`、`"28.5公斤"`，闷炭用 `"克"` 如 `"200克"`；`"用完了"` 时 `left` 填 `""`），严禁写 `"捆"`、`"小半抱"`、`"约五分之一"` 等模糊说法。
    - 上面写了字、画了东西的（给主人留的纸条、信、便笺、清单、贺卡、画）：look 里把上面写的原话一字不差地写出来，用「」括起来；画的写清楚画了什么。例如 look 写「黄纸条，铅笔写的：『主人，粥在灶上温着，亚托莉去码头了，中午前回来』」，别只写「一张写给主人的纸条」。这段的 steps 里写到她写纸条时也用这句原话。后来谁拿起来看、念给主人听，都照这句说，不能另编。
    - 封着送来的或捞上来的封口战利品（寄来的信、没拆的包裹、捆好的箱子、上锁小铁箱、封口药瓶）：look 写外面看得到的（信封、邮戳、外观大小），新建时必须在 `weather` 写 `{{"sealed": true}}`（信/已知包裹还可把内容写进 inside；未知战利品 inside 可留空）；state 写「封着没拆」。这段的 doing、steps、result 里写到它时，照外面的样子写。等主人拍板同意拆看后，才把该 `id` 的 `weather` 改为 `{{"sealed": false}}`（或在聊天里当面拆开）。
    - place 和第 18 条一样拆开写，例如 {{"area": "卧房", "at": "针线笸箩", "detail": ""}}、{{"area": "堂屋", "at": "书架", "detail": "第二格"}}。
    - 每一步也写 step（第几步，同第 18 条）。
    - 同一种东西有好几件的（清单里标着「长得像，认准编号」），照清单认准是哪一件。
-21. **刚挨了主人训、主人刚生她的气**（上面「已经发生的」里有主人训她、骂她、生她气、跟她闹别扭这类事，后来也没说气消了、原谅她了）：她后面的安排要顺着这件事、她的性格和当时的情况来排，不能像没事人一样照常出门玩、去买东西、坐下来做手工。具体怎么样由你按实际情况定（可能闷在屋里、想办法跟主人道歉、做点事想讨他欢心、做事心不在焉……）；主人后来气消了、原谅她了，再照常排。
+21. **主人情绪与相处余波**：若下方给出了「主人此刻情绪与相处实况」，后面的安排必须顺着那段白话说明、具体起因和她的性格来排，不能像没事人一样照常出门玩乐、画怪鱼或欢脱消遣；也**绝不写成罚站等发落、干坐着装死当哑巴**——该急刹车收手就立刻改掉欠妥细节，惹了具体祸事就复盘错在哪一步、先动手把窟窿补上再主动找主人把话说开（这类反思道歉、破冰沟通或主人外头受气后的暖心关心，应标 `send_msg: true`、`msg_kind: "repair"`）；若已松动回暖就格外仔细、拿不准的先问一声把改变实打实做出来；若主人是在外头受气或累着了，别瞎认错，安静体贴照应着就好。没有给情绪说明、或说明里只是翻篇后的轻余波时，正常过日子并在 `mood` 里自然带着一点余韵即可。
 22. **丛雨怎么移动**：丛雨平时是飘着的，脚不沾地，赶路就飘过去，累了或者撒娇时才落地走两步。她那几段里换地方、出门、回来、凑到谁跟前，都照这个写。
 23. **每段写 mood：这段她是什么心情、因为什么**，一句话，由头写在里头（比如「收音机拆开擦了半天还是不响，有点不服气」「主人还没回来，心里惦记着」「早上那锅鱼馊了，还有点闷」「被主人夸了，心里美滋滋的」）。聊天时她只看得到这一句，光写「有点不服气」「有点闷」，她不知道是冲着什么，就会往主人身上撒；所以冲着哪件事、哪样东西，就写明哪件事、哪样东西。心情跟着事走：从她上一段的心情接着往下写（上面已经发生的、手上的事后面写着当时的心情；今天头一段从起床时的底色起），这段碰上的事、主人说的话、过了多久都会让它变——闹别扭的气会慢慢消，高兴的劲头也会过去，别一整天都是同一个心情。心情不好要有由头，由头得是世界线或聊天记录里真有的事（可以就是这段里写出来的一件小事）；起床就带着、说不上由头的，写明「说不上为什么」，过一阵就淡了。睡觉那段写睡前的心情。
 24. **给外人帮忙、干活不白帮**：她们给镇上的人（家里人以外）搭手干活、跑腿、修东西、搬东西、照看东西，人家总会给点什么：几个钱、一点吃的、一样用得上的东西，或者讲好的工钱、打捞费。写进那段的 steps 和 result（谁给的、给了什么）；拿回来的吃的、东西照第 18、20 条记进 things。顺手扶一把、递个东西这种小事不算。丛雨一般人看不见，人家不知道是她帮的，别排她一个人给外人干活；跟亚托莉一起干的，回报给亚托莉。
@@ -193,25 +199,25 @@ STEP_SYSTEM_TEMPLATE = """{base_system}
   - 当 `"state": "闲着"` 或 `"睡觉"` 时：`"steps"` 填 `[]`，`"result"` 填 `""`，`"things"` 与 `"items"` 填 `[]`。
 - `"at_home"`: 布尔值必填 `true` | `false`（人在住处/船屋内、甲板、储物舱填 `true`；离开住处去码头/集市/镇上/水下或走在路上填 `false`；睡觉段必为 `true`）。
 - `"meal"`: 布尔值必填 `true` | `false`（只有正在吃早饭/午饭/晚饭/夜宵填 `true`；备菜、做饭、端菜、洗碗及其余一律填 `false`）。
-- `"stove"`: 字符串三选一必填 `""` | `"charcoal"` | `"wood"`（海边船屋：小炭炉点火做热食/烧水/回锅热菜/炭烤填 `"charcoal"`；铁桶柴炉点火烧柴暖舱/炉烘/烟熏填 `"wood"`；没点火、外出、吃饭、闲着、睡觉或住在穗织一律填 `""`；家里闷炭为 0 时严禁填 `"charcoal"`，干柴为 0 时严禁填 `"wood"`）。
+- `"stove"`: 字符串三选一必填 `""` | `"charcoal"` | `"wood"`（海边船屋：小炭炉点火做热食/烧水/回锅热菜/炭烤填 `"charcoal"`；铁桶柴炉点火烧柴暖舱/炉烘/烟熏填 `"wood"`；**人在船屋里吃饭、炉边烤火闲着或睡前封炉押火时，只要炉火客观上还在烧就如实填对应炉种，人物动作不影响炉火燃烧的客观事实**；只有确实没点火、人外出（`at_home=false`）或住在穗织时填 `""`；家里闷炭为 0 时严禁填 `"charcoal"`，干柴为 0 时严禁填 `"wood"`）。
 - `"lamp"`: 布尔值必填 `true` | `false`（海边船屋天黑后点着煤油灯做细活或提灯外出填 `true`；靠炉火微光吃饭闲聊、摸黑、白天或睡觉一律填 `false`；煤油耗尽时严禁填 `true`）。
 - `"kerosene"`: 布尔值必填 `true` | `false`（海边补给船到港日去码头签领含煤油的配给，或去坡上杂货铺打回煤油的那一段填 `true`，其余段一律填 `false`）。
 - `"water"`: 布尔值必填 `true` | `false`（海边去蓄水塔/老井/半淹车站打回淡水，或摆桶接存烧开雨水的那一段填 `true`，其余段一律填 `false`）。
-- `"send_msg"`: 布尔值必填 `true` | `false`；为 `true` 时 `"msg_at"` 必填 `"start"` 或 `"end"`（睡觉段晚安必为 `"start"`）、`"msg_purpose"` 必填非空句；为 `false` 时 `"msg_at"` 和 `"msg_purpose"` 均填 `""`。
+- `"send_msg"`: 布尔值必填 `true` | `false`；为 `true` 时 `"msg_at"` 必填 `"start"` 或 `"end"`（睡觉段晚安必为 `"start"`）、`"msg_purpose"` 必填非空句，并可附可选字段 `"msg_kind"`（`"routine"` 日常节点/早晚安/叫吃饭/出门回家、`"casual"` 轻松闲聊/分享炫耀、`"repair"` 反思道歉/破冰沟通/外头受气关心）；为 `false` 时 `"msg_at"` 和 `"msg_purpose"` 均填 `""`。
 - `"public"`: 字符串（同住人可见的粗粒度动向，可填 `""`）；`"with"`: 数组（如 `[]`、`["napcat2"]`、`["napcat", "master"]`）。
 - `"training"`: 字符串（练在练的事填 `"#编号"`，否则 `""`）；`"intent"`: 字符串（做各自的打算填 `"i编号"`，否则 `""`）。
 - `"from"`: 字符串必填（只准填候选短编号如 `"T1"`/`"G1"`/`"P1"`/`"I1"`/`"F1"`/`"A1"`，或枚举 `"routine"` / `"intent"` / `"promise"` / `"rule"` / `"training"` / `"continue:前段事"` / `"self"`；严禁留空或填栏目标题）。同一个人同一次补写里，同一条候选短编号最多只准用一次，别重复套同一条。
 - `"mood"`: 字符串必填（非空，写明什么心情及具体由头）。
-- `"outfit"`: 字符串必填（非空，写明这段她身上实际穿什么、披裹什么、穿没穿鞋袜，如 `"奶白色水手领长袖连衣裙外罩厚棉衣，深灰打底裤配米白毛线袜和棕色平底冬靴"` 或 `"黑色和服薄披肩配绀紫抹胸常服与绑腿木屐"`。**严守真实家底与穿搭连贯**：只能穿人设自带的日常常服/睡衣，或上方「家里的东西」里真在当前住处且归本人或「共用」的衣物铺盖（标着「归主人」等明确归属他人的衣物严禁自己穿走）；同日连贯时段未换衣时必须完整延续上一段穿搭（**尤其上一段穿着冬靴/鞋子/厚棉衣的，除非这一段明确写了脱靴洗漱或换睡衣，严禁在跨批续写时凭空丢掉鞋靴改成光脚**），严禁平白无故突然跳换成人设里的「校服」（丛雨日常可在原版黑和服常服与粉白和式常服间正常换穿，但换衣必须有真实换衣动作，只有起床穿常服、临睡换睡衣、正经换常服或买回新衣真换上时才变动）；**睡前换睡衣与早起换常服必须先有真实洗漱换衣的步骤或段落**（例如睡前先洗漱并换上人设里的睡衣，严禁上一段还穿着常服、下一段直接睡觉却凭空瞬移成睡衣；若没换衣就倒头睡，睡觉段 outfit 须如实延续上一身）；海边船屋开局没有厚冬衣和厚棉被，严禁凭空编出棉袄/大衣/毛衣/围巾/厚棉被，也严禁给衣物铺盖写 `what="原来就有"`——冷了只能先裹现有薄被毛毯、生铁桶柴炉烤火，或正经排一段去集市/半淹商店街旧衣铺买换回来记入 `items` 后才能穿上）。
+- `"outfit"`: 字符串必填（非空，写明这段她身上实际穿什么、披裹什么、穿没穿鞋袜，如 `"奶白色水手领长袖连衣裙外罩厚棉衣，深灰打底裤配米白毛线袜和棕色平底冬靴"` 或 `"黑色和服薄披肩配绀紫抹胸常服与绑腿木屐"`。**严守真实家底与穿搭连贯**：只能穿人设自带的日常常服/睡衣，或上方「家里的东西」里真在当前住处且归本人或「共用」的衣物铺盖（标着「归主人」等明确归属他人的衣物严禁自己穿走）；同日连贯时段未换衣时必须完整延续上一段穿搭（**尤其上一段穿着冬靴/鞋子/厚棉衣的，除非这一段明确写了脱靴洗漱或换睡衣，严禁在跨批续写时凭空丢掉鞋靴改成光脚**），严禁平白无故突然跳换成人设里的「校服」（丛雨日常可在原版黑和服常服与粉白和式常服间正常换穿，但换衣必须有真实换衣动作，只有起床穿常服、临睡换睡衣、正经换常服或买回新衣真换上时才变动）；**睡前换睡衣与早起换常服必须先有真实洗漱换衣的步骤或段落**（例如睡前先洗漱并换上人设里的睡衣，严禁上一段还穿着常服、下一段直接睡觉却凭空瞬移成睡衣；若没换衣就倒头睡，睡觉段 outfit 须如实延续上一身）；**每双脚只穿一双鞋**（穿了冬靴就别同时写木屐或乐福鞋，别闹出一脚套两双鞋的笑话），冬季严寒/雨雪天出门若家里已有本人厚棉衣和冬靴须穿齐整再出门，别光穿单薄夏秋常服配木屐冒雪干活；海边船屋开局没有厚冬衣和厚棉被，严禁凭空编出棉袄/大衣/毛衣/围巾/厚棉被，也严禁给衣物铺盖写 `what="原来就有"`——冷了只能先裹现有薄被毛毯、生铁桶柴炉烤火，或正经排一段去集市/半淹商店街旧衣铺花钱买、拿水下捞回的耐泡铜铁件/旧工具去以物易物换回，或去半淹废楼没泡水的干二三楼/高地废弃旧屋拾荒翻出受潮不大、晒干拍灰补两针就能用的旧棉被/厚毛毯/厚窗帘布/旧冬衣，记入 `items` 后才能穿上或铺盖（严禁从水下直接捞长期泡海水腐烂发臭的棉被棉衣来盖穿））。
 - `"things"`（食物变动数组，没动食物填 `[]`；凡买菜买鱼、赶海收蟹、做饭、热菜、吃饭、保鲜加工必填）：
   - 动已有食物：`{{"id": "w编号或n代号", "what": "用掉一部分|用完了|吃了一部分|吃完了|挪地方|切开了|热了一下|轻腌|重盐腌|糖渍|醋泡|酱渍|油封|灰沙埋|晒上了|炉烘|熏上了|丢了|坏了扔了", "used": "10毫升", "left": "剩余量(仅用完/吃完/扔了必填\"\"；挪地方或热菜未吃须保留余量如\"一小碗\")", "into": "n1(可选)", "place": {{"area": "船舱", "at": "矮桌", "detail": ""}}, "keep": "罩着放", "spot": "屋里", "state": "整的", "step": 1}}`
   - 新食物入库：`{{"new": "n1", "name": "番薯焖鱼", "kind": "熟菜炒菜", "what": "做好了|买回来|收到（海边禁填原来就有）", "cook": "boil|fry|steam|roast|cold（what=做好了时必填！无食用油时严禁填fry；生鲜/买回填\"\"）", "from": ["w1"], "origin": "集市鱼摊(买回/收到时填)", "amount": "500克(按量记的食材调料填)", "left": "一锅", "place": {{"area": "船舱", "at": "灶上", "detail": "锅里"}}, "keep": "罩着放", "spot": "灶上温着", "step": 2}}`
-- `"items"`（非食物物品变动数组，没动物品填 `[]`；凡换物、捡柴、换闷炭/夹闷炭、筛草木灰、做手工、写纸条必填，以物易物须同时写消耗旧物 `id` 与换回新物 `new`；**同一批已有物件只是搬动、拆捆、摊晾、码架或取用一部分时，必须沿用已有编号 `id` 写 `挪地方/用了/变了样`，严禁用 `new` 再复制一份同名物件**；描述铁桶柴炉时用「柴火/炉膛红灰」，别混写成「炭火」）：
-  - 动已有物品：`{{"id": "p编号或x代号", "what": "挪地方|交给|用了|清点|做了一截|做好了|变了样|送人了|丢了|坏了扔了|用完了", "used": "1捆(可选)", "left": "剩余(可选)", "place": {{"area": "船舱", "at": "储物格", "detail": ""}}, "holder": "", "owner": "改归属时才填(如master)", "state": "做完后的状态", "step": 1}}`
+- `"items"`（非食物物品变动数组，没动物品填 `[]`；凡换物、捡柴、换闷炭/夹闷炭、筛草木灰、做手工、写纸条必填；去半淹废楼未泡水的干二三楼或高地废弃旧屋拾荒翻到干爽可用的旧铺盖、厚布帘、旧冬衣或旧器物时写 `what="捡到"` 并写明受潮或晒补状态，严禁从水下直接捞泡烂的织物当被褥衣物；拿水下捞回的耐泡铜铁件、旧工具、玻璃瓶等去旧衣铺或镇民处以物易物时须同时写消耗旧物 `id` 与换回新物 `new`；**同一批已有物件只是搬动、拆捆、摊晾、码架或取用一部分时，必须沿用已有编号 `id` 写 `挪地方/用了/变了样`，严禁用 `new` 再复制一份同名物件**；描述铁桶柴炉时用「柴火/炉膛红灰」，别混写成「炭火」）：
+  - 动已有物品：`{{"id": "p编号或x代号", "what": "挪地方|交给|用了|清点|做了一截|做好了|变了样|送人了|丢了|坏了扔了|用完了", "used": "1.5公斤(可选)", "left": "剩余(可选)", "place": {{"area": "船舱", "at": "储物格", "detail": ""}}, "holder": "", "owner": "改归属时才填(如master)", "state": "做完后的状态", "step": 1}}`
   - 新物品入库：`{{"new": "x1", "name": "闷炭", "kind": "燃料", "look": "小半罐零碎硬木炭", "owner": "共用", "origin": "煮盐棚帮工换回", "from": [], "what": "开始做|做好了|买回来|收到|捡到", "amount": "400克", "place": {{"area": "船舱", "at": "灶台边", "detail": "陶罐里"}}, "state": "干燥盖严", "step": 2}}`
-  - **新炉柴入库（`kind` 必填 `"燃柴"` / `"薪柴"` / `"引火料"`，并必填 `weather` 区分来源与粗细，缺一项都会打回）**：
-    `{{"new": "x1", "name": "硬木劈柴", "kind": "燃柴", "look": "劈好的粗硬木段，断面干燥", "owner": "共用", "origin": "码头布告板帮镇民清倒树分回", "from": [], "what": "买回来|收到|捡到", "amount": "1捆", "weather": {{"fuel_source": "land_deadwood|pruning|workshop|reclaimed|supplier|drift_unknown", "fuel_size": "kindling(细枯枝引火料，只化灰)|split(硬木劈柴/粗实木边角，耐烧且可夹出闷炭)|log(整段粗原木)", "fuel_state": "ready|wet|drying", "split": true}}, "place": {{"area": "船舱", "at": "柴架", "detail": "上层"}}, "state": "码齐干燥", "step": 2}}`
-    （若捡/买回整段未劈或带湿硬柴，`fuel_size` 写 `"log"` 且 `split: false` / `fuel_state: "wet"`，后续另排一段劈柴晒干把该 `id` 的 `weather` 改为 `{{"fuel_size": "split", "split": true, "fuel_state": "ready"}}` 后才可进炉；自家柴炉手动夹炭时 `what` 填 `"做好了"`、`amount` 填 `"150克"`、`from` 填正烧的 `split` 硬木柴编号。）
+  - **新炉柴入库（`kind` 必填 `"燃柴"` / `"薪柴"` / `"引火料"`，`amount` 必须按重量写 `"公斤"`，并必填 `weather` 区分来源与粗细，缺一项都会打回）**：
+    `{{"new": "x1", "name": "硬木劈柴", "kind": "燃柴", "look": "劈好的粗硬木段，断面干燥", "owner": "共用", "origin": "码头布告板帮镇民清倒树分回", "from": [], "what": "买回来|收到|捡到", "amount": "60公斤", "weather": {{"fuel_source": "land_deadwood|pruning|workshop|reclaimed|supplier|drift_unknown", "fuel_size": "kindling(细枯枝引火料，只化灰)|split(硬木劈柴/粗实木边角，耐烧且可夹出闷炭)|log(整段粗原木)", "fuel_state": "ready|wet|drying"}}, "place": {{"area": "船舱", "at": "柴架", "detail": "上层"}}, "state": "码齐干燥", "step": 2}}`
+    （`split` 仅在 `fuel_size="log"` 时必填：未劈整段原木写 `fuel_size="log", split: false` / `fuel_state: "wet"`，后续另排一段劈柴晒干把该 `id` 的 `weather` 改为 `{{"fuel_size": "split", "split": true, "fuel_state": "ready"}}` 后才可进炉；`fuel_size="kindling"` 细枯枝引火料本就无需劈开，**直接省略 `split` 字段（切勿填 `split: false` 或 `true`）**；自家柴炉手动夹炭时 `what` 填 `"做好了"`、`amount` 填 `"150克"`、`from` 填正烧的 `split` 硬木柴编号。）
 - `"money"`（钱财进出与赊账数组，必填；没动钱填 `[]`，`"闲着"`/`"睡觉"` 段必填 `[]`）：
   - 花钱：`{{"kind": "spend", "account": "napcat2", "amount": 12, "counterparty": "集市鱼摊", "what": "买了两条海鱼", "step": 1}}`
   - 进账：`{{"kind": "earn", "account": "napcat2", "reason": "work|salvage|sell", "amount": 20, "counterparty": "诊所老医生", "what": "修好坏掉的手电筒挣零工钱", "step": 2}}`
@@ -323,8 +329,11 @@ def origin_of(
 
 def stale_days(item: dict, today: datetime.date) -> int:
     """她们自己的打算挂了几天没动（从记下、或上回补写推过它那天算起），到 STALE_INTENT_DAYS 才算挂太久；
-    不到、主人的、定了今天以后哪天做的、刚答应现在就去的，返回 0。"""
-    if str(item.get("who") or "") == "master" or item.get("now_at"):
+    不到、主人的、定了今天以后哪天做的、当天刚答应现在就去的，返回 0（跨天未做的 now_at 照常计入过期）。"""
+    if str(item.get("who") or "") == "master":
+        return 0
+    now_at = parse_time(item.get("now_at"))
+    if now_at is not None and now_at.date() >= today:
         return 0
     if str(item.get("date") or "")[:10] >= today.isoformat():
         return 0
@@ -356,15 +365,54 @@ def _trigger_time_of(entry: dict) -> datetime.datetime | None:
     return parse_time(entry.get("end")) or parse_time(entry.get("start"))
 
 
-def _normalize_proactive_fields(raw: dict, prev_entry: dict | None = None) -> dict:
-    """规整单段的 send_msg / msg_at / msg_purpose，含睡觉段晚安防反标护栏。"""
+MSG_KINDS = ("routine", "casual", "repair")
+_MSG_KIND_RANK = {"casual": 1, "routine": 2, "repair": 3}
+_REPAIR_PURPOSE_WORDS = (
+    "反思", "道歉", "认错", "破冰", "说开", "补救", "赔罪", "对不起", "原谅",
+    "纸条", "关心", "安慰", "吐槽", "委屈", "受气", "累了", "热汤", "热茶",
+    "台阶", "缓和", "惹主人生气", "错在哪", "陪着", "抱不平",
+)
+_ROUTINE_PURPOSE_WORDS = (
+    "早安", "早上好", "晚安", "睡了", "先睡了", "歇下了",
+    "吃饭", "开饭", "早饭", "午饭", "晚饭", "夜宵",
+    "出门", "回来", "到家", "回船屋", "回宿舍",
+)
+
+
+def _infer_msg_kind(raw: dict, *, prev_entry: dict | None = None, origin_mood_states=None) -> str:
+    """规范或轻量推断 msg_kind（routine / casual / repair），缺省完全兼容不报错。"""
+    explicit = str((raw or {}).get("msg_kind") or "").strip().lower()
+    if explicit in MSG_KINDS:
+        return explicit
+    sleepy = bool(raw.get("sleep")) or is_sleep(raw) or state_of(raw) == "sleep"
+    purpose = str(raw.get("msg_purpose") or "").strip()
+    doing = str(raw.get("doing") or "").strip()
+    if sleepy or bool(clean_flag(raw.get("meal"))):
+        return "routine"
+    if origin_mood_states and any(str(c) != "happy" for c in origin_mood_states):
+        return "repair"
+    probe = f"{purpose} {doing}"
+    if any(w in probe for w in _REPAIR_PURPOSE_WORDS):
+        return "repair"
+    if any(w in purpose for w in _ROUTINE_PURPOSE_WORDS):
+        return "routine"
+    prev_home = True if prev_entry is None else (clean_flag(prev_entry.get("at_home")) is not False)
+    cur_home = clean_flag(raw.get("at_home"))
+    if cur_home is False and prev_home and str(raw.get("msg_at") or "").strip().lower() == "start":
+        return "routine"
+    return "casual"
+
+
+def _normalize_proactive_fields(raw: dict, prev_entry: dict | None = None, *, origin_mood_states=None) -> dict:
+    """规整单段的 send_msg / msg_at / msg_purpose / msg_kind，含睡觉段晚安防反标护栏。"""
     if not isinstance(raw, dict):
-        return {"send_msg": False, "msg_at": "", "msg_purpose": ""}
+        return {"send_msg": False, "msg_at": "", "msg_purpose": "", "msg_kind": ""}
     send_msg = bool(clean_flag(raw.get("send_msg")))
     if not send_msg:
         raw["send_msg"] = False
         raw["msg_at"] = ""
         raw["msg_purpose"] = ""
+        raw["msg_kind"] = ""
         return raw
     purpose = clean_text(raw.get("msg_purpose"), MAX_MSG_PURPOSE)
     msg_at = str(raw.get("msg_at") or "").strip().lower()
@@ -392,10 +440,12 @@ def _normalize_proactive_fields(raw: dict, prev_entry: dict | None = None) -> di
         raw["send_msg"] = False
         raw["msg_at"] = ""
         raw["msg_purpose"] = ""
+        raw["msg_kind"] = ""
         return raw
     raw["send_msg"] = True
     raw["msg_at"] = msg_at
     raw["msg_purpose"] = purpose
+    raw["msg_kind"] = _infer_msg_kind(raw, prev_entry=prev_entry, origin_mood_states=origin_mood_states)
     return raw
 
 
@@ -416,9 +466,14 @@ def _sanitize_proactive_nodes(entries: list) -> list:
                         prev_msg["msg_purpose"] = clean_text(p2, MAX_MSG_PURPOSE)
                     else:
                         prev_msg["msg_purpose"] = clean_text(f"{p1}；{p2}", MAX_MSG_PURPOSE)
+                mk1 = str(prev_msg.get("msg_kind") or "").strip().lower()
+                mk2 = str(item.get("msg_kind") or "").strip().lower()
+                if _MSG_KIND_RANK.get(mk2, 0) > _MSG_KIND_RANK.get(mk1, 0):
+                    prev_msg["msg_kind"] = mk2
                 item["send_msg"] = False
                 item["msg_at"] = ""
                 item["msg_purpose"] = ""
+                item["msg_kind"] = ""
                 continue
         prev_msg = item
         prev_t = cur_t
@@ -537,6 +592,127 @@ class LifeStep:
         self._run_cache: dict = {}
         self._last_window_seed: dict | None = None
         self._offered_by_day: dict = {}
+        self._mood_guard_start: dict | None = None
+        self._last_apply_aborted_by_mood: bool = False
+        self._mood_abort_streak: int = 0
+        self._mood_abort_at: datetime.datetime | None = None
+
+    def _guard_now(self, fallback: datetime.datetime | None = None) -> datetime.datetime:
+        """取情绪守卫对比用的当前本地时刻（兼容单测注入的 now_fn）。"""
+        cur = None
+        if callable(getattr(self, "_now", None)):
+            try:
+                cur = self._now()
+            except Exception:
+                cur = None
+        if isinstance(cur, datetime.datetime):
+            cur_flat = cur.replace(tzinfo=None)
+            if isinstance(fallback, datetime.datetime):
+                fb_flat = fallback.replace(tzinfo=None)
+                return max(cur_flat, fb_flat)
+            return cur_flat
+        if isinstance(fallback, datetime.datetime):
+            return fallback.replace(tzinfo=None)
+        return datetime.datetime.now()
+
+    def _mood_guard_snapshot(self, now: datetime.datetime | None = None) -> dict | None:
+        """拍一份各已知角色的主人情绪核心快照（含 life.mood_revision 与各 bot 冲突桶/升降态）。"""
+        companion = getattr(self, "companionship", None)
+        life_ref = getattr(self, "life", None)
+        rev: int | None = None
+        if life_ref is not None and callable(getattr(life_ref, "mood_revision", None)):
+            try:
+                rev = int(life_ref.mood_revision())
+            except Exception:
+                rev = None
+        if companion is None and rev is None:
+            return None
+        moment = now.replace(tzinfo=None) if isinstance(now, datetime.datetime) else self._guard_now()
+        bots: list[str] = []
+        if self.raw_log is not None and hasattr(self.raw_log, "enabled_bots"):
+            try:
+                for b in (self.raw_log.enabled_bots() or ()):
+                    bid = str(b or "").strip()
+                    if bid and bid not in bots:
+                        bots.append(bid)
+            except Exception:
+                pass
+        if companion is not None:
+            raw_mm = companion.safe("get_master_mood", moment, default=None)
+            if isinstance(raw_mm, dict) and isinstance(raw_mm.get("per_bot"), dict):
+                for b in raw_mm["per_bot"].keys():
+                    bid = str(b or "").strip()
+                    if bid and bid not in bots:
+                        bots.append(bid)
+        bot_states: dict[str, tuple[str, int, bool, str]] = {}
+        if companion is not None:
+            for bid in bots:
+                mv = companion.safe("mood_view_for", bid, moment, bots=bots or None, default=None)
+                if not isinstance(mv, dict):
+                    continue
+                code = str(mv.get("code") or "").strip()
+                level = int(mv.get("level") or 0)
+                high = bool(level >= 2 or mv.get("block_playful_pool"))
+                phase = str(mv.get("phase") or "").strip()
+                bot_states[bid] = (code, level, high, phase)
+        return {"rev": rev, "bots": bot_states}
+
+    @staticmethod
+    def _mood_guard_drifted(before: dict | None, after: dict | None) -> tuple[bool, str]:
+        """对比补写前后两份主人情绪快照：冲突桶/升降态/负向切入/情绪码变更即判为过期漂移。"""
+        if not isinstance(before, dict) or not isinstance(after, dict):
+            return False, ""
+        b_map = before.get("bots") if isinstance(before.get("bots"), dict) else {}
+        a_map = after.get("bots") if isinstance(after.get("bots"), dict) else {}
+        rev_changed = (
+            before.get("rev") is not None
+            and after.get("rev") is not None
+            and before.get("rev") != after.get("rev")
+        )
+        reasons: list[str] = []
+        for bid in sorted(set(b_map.keys()) | set(a_map.keys())):
+            b_code, b_lvl, b_high, b_ph = b_map.get(bid, ("", 0, False, ""))
+            a_code, a_lvl, a_high, a_ph = a_map.get(bid, ("", 0, False, ""))
+            if b_high != a_high:
+                reasons.append(f"{bid} 冲突桶 {b_code or '平常'}→{a_code or '平常'}")
+            elif b_ph != a_ph:
+                reasons.append(f"{bid} 阶段 {b_ph or '无'}→{a_ph or '无'}({a_code or '平常'})")
+            elif (b_lvl <= 0 and a_lvl >= 1) or (b_lvl >= 1 and a_lvl <= 0):
+                reasons.append(f"{bid} 负向切变 {b_code or '平常'}→{a_code or '平常'}")
+            elif (b_lvl >= 1 or a_lvl >= 1) and b_code != a_code:
+                reasons.append(f"{bid} 情绪码 {b_code or '平常'}→{a_code or '平常'}")
+            elif rev_changed and b_code != a_code:
+                reasons.append(f"{bid} rev变更 {b_code or '平常'}→{a_code or '平常'}")
+        if reasons:
+            return True, "；".join(reasons)
+        return False, ""
+
+    def _cancel_deferred_decision_on_abort(self) -> None:
+        """补写因情绪漂移放弃时，同步作废本轮暂存未发的定时 idea 请示。"""
+        info = getattr(self, "_deferred_decision", None)
+        self._deferred_decision = None
+        if not info:
+            return
+        dec_id = info[0] if isinstance(info, (tuple, list)) and info else ""
+        companion = getattr(self, "companionship", None)
+        if companion is not None and dec_id:
+            companion.safe("cancel_decision", dec_id, "补写在途主人情绪已变化，放弃过期排程")
+
+    def _note_mood_abort(self, moment: datetime.datetime) -> None:
+        """记录情绪漂移中止：前几次走极短 15s 冷却让下拍快速按新情绪重跑，连撞过多才转常规退避防忙等。"""
+        now_flat = self._guard_now(moment)
+        prev_at = getattr(self, "_mood_abort_at", None)
+        if prev_at is not None and (now_flat - prev_at).total_seconds() <= RETRY_SECONDS * 2:
+            self._mood_abort_streak = int(getattr(self, "_mood_abort_streak", 0) or 0) + 1
+        else:
+            self._mood_abort_streak = 1
+        self._mood_abort_at = now_flat
+        if self._mood_abort_streak > MOOD_ABORT_MAX_FAST_RETRIES:
+            self.world.set_last_step_attempt(fmt_time(now_flat))
+            logger.warning(
+                "[super_enhance/world] 补写连续 %d 次因在途情绪变化放弃，转入 %d 秒常规退避",
+                self._mood_abort_streak, RETRY_SECONDS,
+            )
 
     def _pools(self) -> dict:
         pstore = getattr(self, "pool_store", None)
@@ -615,6 +791,7 @@ class LifeStep:
             shelf=shelf,
             money=getattr(self, "money", None),
             companion=getattr(self, "companionship", None),
+            labels=labels,
         )
         win_seed = draw_window(
             date_text,
@@ -761,6 +938,14 @@ class LifeStep:
                     "- 起步时刻（%s）船屋内外实时温度：屋外/甲板约 %.1f℃（体感 %.1f℃）%s；船舱内——%s（铁桶柴炉刚点时炉边先热，约半小时后砖炕烟道渐暖、连烧一两小时炕面暖透而角落仍微凉；停火后舱内空气与远角先凉，砖炕蓄热能留温数小时再缓降至无火室温 %.1f℃；小炭炉只做饭不通炕道）。"
                     % (start.strftime("%H:%M"), th_start["outdoor"], th_start["feels"], sea_note, th_start["zones_desc"], th_start["base_cabin"])
                 )
+                store = getattr(self, "things", None)
+                if store is not None:
+                    smell_line = smell_mod.cabin_smell_text(start, store, self._shelf_at(start), self.world, home, temp_info=th_start)
+                    if smell_line:
+                        lines.append("- 起步时刻（%s）船舱气味：%s" % (start.strftime("%H:%M"), smell_line))
+                tide_line = tide_mod.tide_step_text(start, until, home, weather_of=text_of)
+                if tide_line:
+                    lines.append("- " + tide_line)
             else:
                 lines.append(
                     "- 起步时刻（%s）内外实时温度：屋外约 %.1f℃（体感 %.1f℃），屋里约 %.1f℃。"
@@ -849,15 +1034,19 @@ class LifeStep:
             code_of[(str(meta.get("bot") or ""), str(meta.get("text") or ""))] = code
         shorts = short_set(pools_data)
         bigs = big_set(pools_data)
+        wx_hints = seed.get("wx_hints") if isinstance(seed.get("wx_hints"), dict) else {}
 
         def _fmt_cand(bot_key: str, raw_txt: str, body_txt: str) -> str:
             code = code_of.get((bot_key, raw_txt), "")
+            tags: list[str] = []
             if raw_txt in bigs:
-                size_tag = "（大活·可干半天~一整天：单段≥45分钟可至3~4小时，中间可吃饭歇息后用 continue 接着干透）"
+                tags.append("大活·可干半天~一整天：单段≥45分钟可至3~4小时，中间可吃饭歇息后用 continue 接着干透")
             elif raw_txt in shorts:
-                size_tag = "（短事·5~10分钟、1~2步写完，勿凑半小时）"
-            else:
-                size_tag = ""
+                tags.append("短事·5~10分钟、1~2步写完，勿凑半小时")
+            wx_h = str(wx_hints.get(raw_txt) or "").strip()
+            if wx_h:
+                tags.append(wx_h)
+            size_tag = f"（{'；'.join(tags)}）" if tags else ""
             if code:
                 return f"[{code}]{size_tag} {body_txt}"
             return f"{size_tag}{body_txt}"
@@ -895,8 +1084,9 @@ class LifeStep:
         if rows:
             lines.append(
                 "- %s这阵子必须优先采纳的插曲候选（已按接下来几小时的天色、海温与家里真实库存筛过，采用时 from 填短编号如 \"T1\" / \"G1\"）：\n%s\n"
-                "  **硬要求**：除正在睡觉、赶饭点、执行既有打算（intent）或处理紧急生火/缺粮缺水外，凡本轮有空闲做事段的成员，**必须从上方插曲/双人候选中至少挑 1 件自然写进 segments（严禁跳过全部插曲去填 \"self\" 硬凑数柴火、擦玻璃、盘柜子这类空转家务水段，程序会直接打回重写！）**。\n"
+                "  **硬要求**：除正在睡觉、赶饭点、执行既有打算（intent）、处理紧急生火/缺粮缺水，或**主人情绪不佳/正在对症反思补救期间**外，凡本轮有空闲做事段的成员，**必须从上方插曲/双人候选中至少挑 1 件自然写进 segments（严禁跳过全部插曲去填 \"self\" 硬凑数柴火、擦玻璃、盘柜子这类空转家务水段，程序会直接打回重写！）**。\n"
                 "  **时长规则（三档明确区分）**：标了「短事」的只写 1~2 步、总计 5~15 分钟；标了「大活」的单段至少 ≥45 分钟（可写 1.5~3.5 小时，并允许跨多段中间吃饭歇息后用 `continue:前段事` 干完大半天或一整天直到堆满/完工）；其余正常候选须写足 ≥15 分钟，不得敷衍成几分钟。\n"
+                "  **天气时段规则**：若某候选标了「仅 HH:MM–HH:MM …时可用」，采用时**必须排在标明的时间段内**（不能把浓雾/雨雪插曲排到雾已散或未下雪的钟点，程序会按该段真实钟点天气复核并打回重写）。\n"
                 "  注：采纳候选时若某处细节与真实库存略有出入，只按真实家底微调说法或改选本轮另一条候选，绝不凭空编造「之前攒的/柜底翻出的」物件。" % (
                     "今晚" if night else "眼下", "\n".join("  - " + row for row in rows))
             )
@@ -915,10 +1105,13 @@ class LifeStep:
         for bot, items in idles.items():
             if not items or bot not in labels:
                 continue
-            tagged = [
-                f"[{code_of.get((str(bot), str(x)), '')}] {x}" if code_of.get((str(bot), str(x))) else str(x)
-                for x in items
-            ]
+            tagged = []
+            for x in items:
+                raw_x = str(x)
+                c = code_of.get((str(bot), raw_x), "")
+                wh = str(wx_hints.get(raw_x) or "").strip()
+                wh_tag = f"（{wh}）" if wh else ""
+                tagged.append(f"[{c}]{wh_tag} {raw_x}" if c else f"{wh_tag}{raw_x}")
             rows.append("%s：%s" % (labels.get(bot) or bot, "；".join(tagged)))
         if rows:
             lines.append("- %s闲着的样子（state=\"闲着\" 时按这里写，from 填短编号如 \"I1\"）：\n%s" % (
@@ -1280,6 +1473,9 @@ class LifeStep:
         flat = now.replace(tzinfo=None)
         touched = self.world.manual_at()
         if touched is not None and 0 <= (flat - touched).total_seconds() < MANUAL_HOLD_SECONDS:
+            return False
+        abort_at = getattr(self, "_mood_abort_at", None)
+        if abort_at is not None and 0 <= (flat - abort_at).total_seconds() < MOOD_ABORT_COOLDOWN_SECONDS:
             return False
         failed = parse_time(self.world.last_step_attempt())
         done = parse_time(self.world.last_step())
@@ -1795,7 +1991,22 @@ class LifeStep:
         # 3. 易变项与今日实时状态（放动态后半：相处近况含主人即时位置与新聊天笔记，放于库存与窗口抽签种子之后）
         if living_nudges:
             live_parts.append(living_nudges)
+        suppress_nonurgent_ask = False
         if companion is not None:
+            mood_step_lines: list[str] = []
+            for bot in bots:
+                mv = companion.safe("mood_view_for", bot, flat, bots=bots, default=None)
+                if isinstance(mv, dict) and mv.get("suppress_nonurgent_ask"):
+                    suppress_nonurgent_ask = True
+                m_text = str(companion.safe("render_master_mood_step", bot, flat, bots=bots, default="") or "").strip()
+                if m_text:
+                    mood_step_lines.append("- %s：%s" % (self.label(bot) or bot, m_text))
+            if mood_step_lines:
+                if suppress_nonurgent_ask:
+                    mood_step_lines.append(
+                        "- （眼下主人情绪绷得很紧，本轮请勿用 ask_master 问“晚饭吃什么 / 出海玩 / 逛哪儿”之类非紧急琐事，先把精力放在对症反思、补救与诚恳沟通上。）"
+                    )
+                live_parts.append("【主人此刻情绪与相处实况】\n" + "\n".join(mood_step_lines))
             seen_owner_states: set[str] = set()
             for bot in bots:
                 owner_line = companion.safe("owner_state_text", bot, flat, default="")
@@ -1921,7 +2132,7 @@ class LifeStep:
                 )
         elif sleep_tail:
             live_parts.append("主人最近的动向（只作参考，不许改写、不许替他编）：" + sleep_tail.lstrip("\n"))
-        if companion is not None and not master_sleeping and 8 <= flat.hour <= 22:
+        if companion is not None and not master_sleeping and not suppress_nonurgent_ask and 8 <= flat.hour <= 22:
             pend_decs = companion.safe("pending_decisions", flat, default=[]) or []
             pend_topics = {normalize_decision_topic(d.get("topic")) for d in pend_decs}
             asked_by_topic = {
@@ -2359,6 +2570,8 @@ class LifeStep:
             self._run_cache = {}
             return False
         self.running = True
+        self._mood_guard_start = self._mood_guard_snapshot(moment)
+        self._last_apply_aborted_by_mood = False
         try:
             system_prompt = await self.build_system_prompt()
             prompt = await self.build_prompt(tasks, moment)
@@ -2382,9 +2595,24 @@ class LifeStep:
                 self.world.set_last_step_attempt(fmt_time(moment))
                 return False
             self._save_thought(moment, thought, True)
+            # 进入 _ask_master 前先复核一次主人情绪，避免主人刚发火还把发火前的问话发出去或干等 120s
+            drifted_pre, pre_reason = self._mood_guard_drifted(
+                self._mood_guard_start,
+                self._mood_guard_snapshot(self._guard_now(moment)),
+            )
+            if drifted_pre:
+                logger.info(
+                    "[super_enhance/world] 补写在途主人情绪已变化（%s），放弃过期排程（跳过 ask_master 与落盘）等待重排",
+                    pre_reason,
+                )
+                self._note_mood_abort(moment)
+                return False
             self._deferred_decision = None
             data, text = await self._ask_master(data, prompt, text, tasks, moment, system_prompt=system_prompt)
-            written, missed = self.apply(data, tasks, moment)
+            written, missed = self.apply(data, tasks, moment, mood_snapshot=self._mood_guard_start)
+            if self._last_apply_aborted_by_mood:
+                self._note_mood_abort(moment)
+                return False
             self._bind_deferred_decision(written)
             total_written = sum(len(x) for x in written.values())
             if missed and total_written == 0:
@@ -2394,6 +2622,8 @@ class LifeStep:
                     "[super_enhance/world] 补写没写全（%s），过 %d 秒再补", "、".join(missed), RETRY_SECONDS,
                 )
                 return False
+            self._mood_abort_streak = 0
+            self._mood_abort_at = None
             self.world.set_last_step(fmt_time(moment))
             self.world.clear_error("step")
             logger.info("[super_enhance/world] 补写写了 %d 段：%s%s", total_written, "；".join(
@@ -2415,6 +2645,7 @@ class LifeStep:
             self._last_live_ctx = None
             self._last_cand_map = None
             self._deferred_decision = None
+            self._mood_guard_start = None
 
     def _bind_deferred_decision(self, written: dict) -> None:
         """将延迟到未来时刻才发的 ask_master 绑定到本次刚落盘的对应世界线段上。"""
@@ -2757,7 +2988,9 @@ class LifeStep:
                     if isinstance(sim_w.get("fuel_wet"), (int, float)):
                         w_cond["fuel_wet"] = float(sim_w["fuel_wet"])
             w_cond.update(weathering.clean_conditions(eff.get("weather")))
-            if w_cond.get("split") is False:
+            eff_kind = re.sub(r"\s+", "", str((eff.get("kind") if is_new else (hit_item.get("kind") if isinstance(hit_item, dict) else "")) or ""))
+            is_kindling = w_cond.get("fuel_size") == "kindling" or (not w_cond.get("fuel_size") and eff_kind == "引火料")
+            if w_cond.get("split") is False and not is_kindling:
                 return False
             if is_new:
                 return (
@@ -2923,10 +3156,17 @@ class LifeStep:
                                 is_wood_ref = tid_str in batch_fuel_keys or (hit_item is not None and weathering.fuel_item(hit_item) and not is_charcoal(hit_item))
                                 if is_wood_ref:
                                     w_step = weathering.clean_conditions(eff.get("weather"))
-                                    if w_step.get("fuel_size") == "split" or w_step.get("split") is True:
+                                    prior_tier = batch_wood_tier.get(tid_str)
+                                    if prior_tier is None and hit_item is not None:
+                                        prior_tier = weathering.wood_fuel_meta(hit_item, seg_end)["tier"]
+                                    if w_step.get("fuel_size") == "kindling":
+                                        batch_wood_tier[tid_str] = "kindling"
+                                    elif w_step.get("fuel_size") == "split" or (
+                                        w_step.get("split") is True and prior_tier != "kindling"
+                                    ):
                                         batch_wood_tier[tid_str] = "hardwood"
-                                    elif tid_str not in batch_wood_tier and hit_item is not None:
-                                        batch_wood_tier[tid_str] = weathering.wood_fuel_meta(hit_item, seg_end)["tier"]
+                                    elif prior_tier is not None and tid_str not in batch_wood_tier:
+                                        batch_wood_tier[tid_str] = prior_tier
                                 if is_wood_ref and _wood_ready_weather(eff, False, hit_item):
                                     if first_wood_at is None or seg_end < first_wood_at:
                                         first_wood_at = seg_end
@@ -2953,40 +3193,27 @@ class LifeStep:
                 bot_shelves[b_key] = shelf
         existing_meals_by_bot = self._today_meals_by_bot(list(tasks.keys()), flat)
         batch_food_ended_at: dict[str, datetime.datetime] = {}
-        batch_consumed_at: dict[str, datetime.datetime] = {}
-        batch_new_ready_meal_at: list[datetime.datetime] = []
-        batch_meal_food_windows: list[tuple[str, datetime.datetime, datetime.datetime]] = []
+        batch_item_consumed_at: dict[str, datetime.datetime] = {}
         for _b_key, (b_kept, _, _) in kept_by_bot.items():
             for _idx, _raw, _ss, _se, _sc in b_kept:
                 if _sc != "do":
                     continue
-                _th_list = _raw.get("things") or []
-                _it_list = _raw.get("items") or []
-                if _raw.get("meal") is True and _th_list:
-                    batch_meal_food_windows.append((_b_key, _ss, _se))
-                for _eff in _th_list:
-                    if not isinstance(_eff, dict):
-                        continue
-                    _w = norm_step(_eff.get("what"), CAT_FOOD)
-                    if _eff.get("new"):
-                        if str(_eff.get("kind") or "").strip() in HOT_MEAL_KINDS:
-                            batch_new_ready_meal_at.append(_se)
+                for _eff in (_raw.get("things") or []):
+                    if not isinstance(_eff, dict) or _eff.get("new"):
                         continue
                     _tid = str(_eff.get("id") or "").strip()
+                    _w = norm_step(_eff.get("what"), CAT_FOOD)
                     if _tid and _w in END_STEPS:
                         if _tid not in batch_food_ended_at or _se < batch_food_ended_at[_tid]:
                             batch_food_ended_at[_tid] = _se
-                    if _tid and _w in ("用掉一部分", "用完了", "吃了一部分", "吃完了", "丢了", "坏了扔了"):
-                        if _tid not in batch_consumed_at or _ss < batch_consumed_at[_tid]:
-                            batch_consumed_at[_tid] = _ss
-                for _eff in _it_list:
+                for _eff in (_raw.get("items") or []):
                     if not isinstance(_eff, dict) or _eff.get("new"):
                         continue
                     _tid = str(_eff.get("id") or "").strip()
                     _w = norm_step(_eff.get("what"), CAT_ITEM)
                     if _tid and _w in ("用了", "用完了", "丢了", "坏了扔了", "送人了"):
-                        if _tid not in batch_consumed_at or _ss < batch_consumed_at[_tid]:
-                            batch_consumed_at[_tid] = _ss
+                        if _tid not in batch_item_consumed_at or _ss < batch_item_consumed_at[_tid]:
+                            batch_item_consumed_at[_tid] = _ss
 
         # 逐人逐段做纯结构化校验
         for bot, (bot_kept, final_cursor, until) in kept_by_bot.items():
@@ -3166,12 +3393,12 @@ class LifeStep:
                     stove_val = raw["stove"]
                     if not seaside and stove_val != "":
                         errors.append(f"{tag}：非海边住处 stove 必须填 \"\"")
-                    elif stove_val != "" and (st_code != "do" or raw.get("at_home") is False or raw.get("meal") is True):
-                        errors.append(f"{tag}：外出、吃饭、闲着或睡觉段没有生火，stove 必须填 \"\"")
+                    elif stove_val != "" and raw.get("at_home") is False:
+                        errors.append(f"{tag}：外出段（at_home=false）不在船屋，不能由本人标生火，stove 必须填 \"\"")
                     elif stove_val == "charcoal" and inv_state["charcoal_g"] <= 0 and not (first_charcoal_at is not None and first_charcoal_at <= seg_end):
                         errors.append(f"{tag}：家里闷炭现余 0 克且在此之前未补炭入库，stove 严禁填 \"charcoal\"")
-                    elif stove_val == "wood" and inv_state["wood_bundles"] <= 0 and not (first_wood_at is not None and first_wood_at <= seg_end):
-                        errors.append(f"{tag}：家里干柴为 0 且在此之前未补柴入库，stove 严禁填 \"wood\"")
+                    elif stove_val == "wood" and inv_state["wood_kg"] <= 0 and not (first_wood_at is not None and first_wood_at <= seg_end):
+                        errors.append(f"{tag}：家里干柴为 0 公斤且在此之前未补柴入库，stove 严禁填 \"wood\"")
                     if stove_val == "wood":
                         bot_has_wood_stove = True
 
@@ -3226,6 +3453,33 @@ class LifeStep:
                                     f"{tag}：候选「{orig['text'][:18]}…」不是短事，只写了 {seg_mins} 分钟过于敷衍，"
                                     f"请按常理写足 ≥15 分钟"
                                 )
+                    # 落盘前按该段实际排出的 [seg_start, seg_end] 二次复核气象门禁，杜绝变天期把大雾/雨雪插曲错排到已散雾/晴朗钟点
+                    if orig["kind"] in ("twist", "night_twist", "together", "pastime", "idle", "night_idle"):
+                        p_wx = pool_meta.get(orig["text"])
+                        if isinstance(p_wx, dict):
+                            wx_err = check_item_wx_at(
+                                p_wx,
+                                start=seg_start,
+                                end=seg_end,
+                                home=self.home,
+                                weather_of=self._weather_text_of(),
+                            )
+                            if wx_err:
+                                wx_h = str(((seed or {}).get("wx_hints") or {}).get(orig["text"]) or "").strip()
+                                tip = f"（该候选{wx_h}）" if wx_h else ""
+                                errors.append(
+                                    f"{tag}：候选「{orig['text'][:18]}…」{wx_err}{tip}，请改排到对应天气时段或换选当前时段可用的候选"
+                                )
+                    elif orig["kind"] == "accident":
+                        acc_err = check_accident_wx_at(
+                            orig["text"],
+                            start=seg_start,
+                            end=seg_end,
+                            home=self.home,
+                            weather_of=self._weather_text_of(),
+                        )
+                        if acc_err:
+                            errors.append(f"{tag}：意外「{orig['text'][:18]}…」{acc_err}，请改排到合适时段或本轮不写该意外")
                     if (
                         st_code == "do"
                         and orig["kind"] == "self"
@@ -3333,7 +3587,7 @@ class LifeStep:
                     what = norm_step(eff.get("what"), CAT_ITEM)
                     used_txt = str(eff.get("used") or "").strip()
                     if used_txt and not is_strict_qty(used_txt):
-                        errors.append(f"{tag} items[{i_i}]：used={used_txt!r} 必须为纯数字+单位（如 \"0.25捆\"、\"200克\"），严禁模糊中文或分数")
+                        errors.append(f"{tag} items[{i_i}]：used={used_txt!r} 必须为纯数字+单位（如 \"1.5公斤\"、\"200克\"），严禁模糊中文或分数")
                     if eff.get("new"):
                         bot_has_new_item = True
                         nm = clean_text(eff.get("name"), 30)
@@ -3345,13 +3599,20 @@ class LifeStep:
                         is_new_wood = kd in weathering.STOVE_WOOD_KINDS or purp == "fuel"
                         if kd == "燃料" and not is_new_charcoal:
                             errors.append(f"{tag} items[{i_i}]（{nm}）：炉柴 kind 必须明确填 \"燃柴\" / \"薪柴\" / \"引火料\"（仅闷炭/木炭填 \"燃料\"），严禁用模糊的 \"燃料\" 建木柴")
-                        if is_new_charcoal or is_new_wood:
+                        if is_new_wood:
                             amt_txt = str(eff.get("amount") or "").strip()
-                            if not amt_txt or not is_strict_qty(amt_txt):
-                                errors.append(f"{tag} items[{i_i}]（{nm}）：新入库燃料/燃柴必须填精确数字+单位的 amount（如 \"1捆\"、\"400克\"），严禁留空或写中文模糊量词")
+                            if not amt_txt or not is_strict_weight_qty(amt_txt):
+                                errors.append(f"{tag} items[{i_i}]（{nm}）：新入库炉柴 amount={amt_txt!r} 必须按重量填纯数字+公斤（如 \"15公斤\"、\"80公斤\"），严禁用 \"捆\" 或模糊量词")
                             left_txt = str(eff.get("left") or "").strip()
-                            if left_txt and not is_strict_qty(left_txt):
-                                errors.append(f"{tag} items[{i_i}]（{nm}）：新入库燃料 left={left_txt!r} 必须为纯数字+单位")
+                            if left_txt and not is_strict_weight_qty(left_txt):
+                                errors.append(f"{tag} items[{i_i}]（{nm}）：新入库炉柴 left={left_txt!r} 必须按重量填纯数字+公斤")
+                        elif is_new_charcoal:
+                            amt_txt = str(eff.get("amount") or "").strip()
+                            if not amt_txt or not is_strict_weight_qty(amt_txt):
+                                errors.append(f"{tag} items[{i_i}]（{nm}）：新入库闷炭必须填精确数字+克数的 amount（如 \"400克\"），严禁留空或写模糊量词")
+                            left_txt = str(eff.get("left") or "").strip()
+                            if left_txt and not is_strict_weight_qty(left_txt):
+                                errors.append(f"{tag} items[{i_i}]（{nm}）：新入库闷炭 left={left_txt!r} 必须为纯数字+重量单位")
                         if is_new_wood:
                             w_decl = weathering.clean_conditions(eff.get("weather"))
                             if not w_decl.get("fuel_source"):
@@ -3436,30 +3697,17 @@ class LifeStep:
                                     f"严禁擅自拆开（请先填 ask_master topic=\"sealed_loot\" 请主人一起看）"
                                 )
                         if is_fuel:
+                            if used_txt and not is_strict_weight_qty(used_txt):
+                                errors.append(f"{tag} items[{i_i}]（{tid}）：燃料 used={used_txt!r} 必须为纯数字+重量单位（炉柴用 \"公斤\" 如 \"1.5公斤\"，闷炭用 \"克\" 如 \"200克\"），严禁用 \"捆\" 或模糊量词")
                             if what in ITEM_END_STEPS and str(eff.get("left") or "").strip():
                                 errors.append(f"{tag} items[{i_i}]（{tid}）：what=\"{what}\" 时 left 必须填空串 \"\"")
                             elif what not in ITEM_END_STEPS:
                                 for qk in ("amount", "left"):
                                     qv = str(eff.get(qk) or "").strip()
-                                    if qv and not is_strict_qty(qv):
-                                        errors.append(f"{tag} items[{i_i}]（{tid}）：燃料 {qk}={qv!r} 必须为纯数字+单位（如 \"0.75捆\"、\"200克\"），严禁模糊中文或分数")
+                                    if qv and not is_strict_weight_qty(qv):
+                                        errors.append(f"{tag} items[{i_i}]（{tid}）：燃料 {qk}={qv!r} 必须为纯数字+重量单位（炉柴用 \"公斤\"，闷炭用 \"克\"），严禁用 \"捆\" 或模糊量词")
 
-                # 校验 1：新做食物/新做物品填了 from 时，对应原料必须在本轮同段或前序段写明消耗动作（防止原料不销造成裂变/发臭）
-                for t_i, eff in enumerate(raw.get("things") or [], 1):
-                    if not isinstance(eff, dict) or not eff.get("new"):
-                        continue
-                    what = norm_step(eff.get("what"))
-                    if what != "做好了":
-                        continue
-                    from_list = [str(x).strip() for x in (eff.get("from") or []) if str(x).strip()]
-                    for tok in from_list:
-                        c_at = batch_consumed_at.get(tok)
-                        if c_at is None or c_at > seg_end:
-                            nm = clean_text(eff.get("name"), 30)
-                            errors.append(
-                                f"{tag} things[{t_i}]（{nm}）：from 里写了原料 {tok!r}，但本段或前序段未对 {tok!r} 写消耗动作；"
-                                f"请在 things/items 中为 {tok!r} 补写 what=\"用掉一部分\" 或 \"用完了\"，避免已下锅原料继续滞留清单发臭"
-                            )
+                # 校验：新做物品填了 from 时，对应仍在库的旧料须在本段或前序段写明消耗动作（防止铁罐/旧料做成成品后裂变占位）
                 for i_i, eff in enumerate(raw.get("items") or [], 1):
                     if not isinstance(eff, dict) or not eff.get("new"):
                         continue
@@ -3468,7 +3716,11 @@ class LifeStep:
                         continue
                     from_list = [str(x).strip() for x in (eff.get("from") or []) if str(x).strip()]
                     for tok in from_list:
-                        c_at = batch_consumed_at.get(tok)
+                        s_hit = shelf.find(tok) if (shelf is not None and tok) else None
+                        # 若旧料已在更早批次标记结束（跨批完工），不重复要求消耗
+                        if s_hit is not None and is_ended(s_hit) is not None:
+                            continue
+                        c_at = batch_item_consumed_at.get(tok)
                         if c_at is None or c_at > seg_end:
                             nm = clean_text(eff.get("name"), 30)
                             errors.append(
@@ -3476,40 +3728,16 @@ class LifeStep:
                                 f"请在 items 中为 {tok!r} 补写 what=\"用完了\"（整件合入成品）或 \"用了\"（仅取一部分），避免同一件旧物重复占位"
                             )
 
-                # 校验 2：在家吃饭（meal=true）且家里有现成未坏熟食时，本人或同行同伴须记录吃了哪几件（防止剩菜锅永生发馊）
-                if raw.get("meal") is True and raw.get("at_home") is True and not (raw.get("things") or []):
-                    with_bots = {str(x).strip() for x in (raw.get("with") or []) if str(x).strip() in self.bots and str(x).strip() != bot}
-                    partner_logged = any(
-                        (_mb in with_bots) and (_ms < seg_end) and (_me > seg_start)
-                        for _mb, _ms, _me in batch_meal_food_windows
-                    )
-                    if not partner_logged:
-                        cur_shelf = bot_shelves.get(bot, shelf)
-                        has_ready_food = any(t <= seg_end for t in batch_new_ready_meal_at)
-                        if not has_ready_food and cur_shelf is not None and store is not None:
-                            for _fit in store._local_items(cur_shelf.values(), seg_start):
-                                if cat_of(_fit) != CAT_FOOD or is_ended(_fit) is not None:
-                                    continue
-                                if str(_fit.get("kind") or "") not in HOT_MEAL_KINDS:
-                                    continue
-                                _last_st = (_fit.get("stages") or [{}])[-1]
-                                if str(_last_st.get("place") or "").startswith("主人·跟前"):
-                                    continue
-                                try:
-                                    if store.profile(_fit, seg_start, cur_shelf)["fresh"]["level"] == "坏了":
-                                        continue
-                                except Exception:
-                                    pass
-                                has_ready_food = True
-                                break
-                        if has_ready_food:
-                            errors.append(
-                                f"{tag}：在家里吃饭（meal=true）且家里有现成熟食，却把 things 留空；"
-                                f"请在吃饭人（两人同吃任选其一）的 things 中写出吃了哪几件（what=\"吃了一部分\" 或 \"吃完了\"），避免吃过的锅一直挂在清单上发馊"
-                            )
-
             # 强制采纳插曲池校验：本轮给了可用插曲/双人候选时，严禁全靠纯自拟 from="self" 水段跳过池子
-            if isinstance(cand_map, dict) and bot_self_filler_cnt >= 1:
+            # （本轮已安排睡觉，或主人情绪触发 exempt_forced_twist 允许对症反思补救时豁免）
+            bot_has_sleep = any(st_code == "sleep" for _idx, _raw, _s, _e, st_code in bot_kept)
+            bot_mood_exempt = False
+            if comp_ref is not None:
+                all_bots = list(self.raw_log.enabled_bots()) if self.raw_log is not None else list(tasks.keys())
+                mv = comp_ref.safe("mood_view_for", bot, flat, bots=all_bots, default=None)
+                if isinstance(mv, dict) and mv.get("exempt_forced_twist"):
+                    bot_mood_exempt = True
+            if isinstance(cand_map, dict) and bot_self_filler_cnt >= 1 and not bot_has_sleep and not bot_mood_exempt:
                 avail_twist_codes = [
                     code for code, meta in cand_map.items()
                     if isinstance(meta, dict)
@@ -3565,7 +3793,20 @@ class LifeStep:
 
         return errors
 
-    def apply(self, data: dict, tasks: dict, now: datetime.datetime):
+    def apply(self, data: dict, tasks: dict, now: datetime.datetime, *, mood_snapshot: dict | None = None):
+        self._last_apply_aborted_by_mood = False
+        guard_before = mood_snapshot if mood_snapshot is not None else getattr(self, "_mood_guard_start", None)
+        if guard_before is not None:
+            guard_after = self._mood_guard_snapshot(self._guard_now(now))
+            drifted, reason = self._mood_guard_drifted(guard_before, guard_after)
+            if drifted:
+                self._last_apply_aborted_by_mood = True
+                self._cancel_deferred_decision_on_abort()
+                logger.info(
+                    "[super_enhance/world] 补写在途主人情绪已变化（%s），放弃过期排程等待重排",
+                    reason,
+                )
+                return {}, []
         with fact_batch(self):
             return self._apply(data, tasks, now)
 
@@ -3714,10 +3955,25 @@ class LifeStep:
                     self._intent_with_master(intent) or prev_with_master
                 ):
                     with_list.append("master")
+                origin_val = origin_of(
+                    raw.get("from"), bot, seed, intent=intent, training=training,
+                    pools_data=pools_data, cand_map=cand_map,
+                )
+                origin_mood_states = None
+                if isinstance(origin_val, dict) and origin_val.get("text"):
+                    o_txt = str(origin_val["text"])
+                    for p_kind in ("twists", "night_twists", "together", "pastimes", "idles", "night_idles"):
+                        for p_row in (pools_data.get(p_kind) or []):
+                            if isinstance(p_row, dict) and str(p_row.get("text") or "") == o_txt:
+                                origin_mood_states = p_row.get("mood_states") or None
+                                break
+                        if origin_mood_states:
+                            break
                 msg_copy = {
                     "send_msg": raw.get("send_msg"),
                     "msg_at": raw.get("msg_at"),
                     "msg_purpose": raw.get("msg_purpose"),
+                    "msg_kind": raw.get("msg_kind"),
                     "doing": raw.get("doing"),
                     "result": raw.get("result"),
                     "state": raw.get("state"),
@@ -3726,7 +3982,7 @@ class LifeStep:
                     "at_home": raw.get("at_home"),
                     "meal": raw.get("meal"),
                 }
-                _normalize_proactive_fields(msg_copy, prev_entry=prev)
+                _normalize_proactive_fields(msg_copy, prev_entry=prev, origin_mood_states=origin_mood_states)
                 things_list = (
                     self._thing_steps(raw.get("things"), thing_keys, shelf, bot)
                     + self._item_steps(raw.get("items"), item_keys, shelf, bot, seg_place=str(raw.get("place") or ""))
@@ -3760,6 +4016,7 @@ class LifeStep:
                     "send_msg": msg_copy["send_msg"],
                     "msg_at": msg_copy["msg_at"],
                     "msg_purpose": msg_copy["msg_purpose"],
+                    "msg_kind": msg_copy["msg_kind"],
                     "at_home": raw.get("at_home"),
                     "meal": raw.get("meal"),
                     **({"lamp": True} if raw.get("lamp") in (True, "true") and not sleep else {}),
@@ -3771,10 +4028,7 @@ class LifeStep:
                     "with": with_list,
                     "training": training,
                     "intent": intent,
-                    "origin": origin_of(
-                        raw.get("from"), bot, seed, intent=intent, training=training,
-                        pools_data=pools_data, cand_map=cand_map,
-                    ),
+                    "origin": origin_val,
                     "things": things_list,
                     **({"money": money_list} if money_list else {}),
                     "seen_by": [bot] + with_list,
@@ -3793,6 +4047,7 @@ class LifeStep:
                         entry["send_msg"] = False
                         entry["msg_at"] = ""
                         entry["msg_purpose"] = ""
+                        entry["msg_kind"] = ""
             rows = []
             cursor = tasks[bot]["start"] if not bot_plan else final_cursor
             last_ok_end = tasks[bot]["start"]
@@ -3801,6 +4056,12 @@ class LifeStep:
                 record = self.world.add_entry(seg_start.date().isoformat(), entry)
                 if record is None:
                     break
+                if entry.get("send_msg") and entry.get("msg_kind"):
+                    self.world.patch_entry(
+                        seg_start.date().isoformat(),
+                        record.get("id"),
+                        {"msg_kind": entry["msg_kind"]},
+                    )
                 rows.append(record)
                 last_ok_end = parse_time(record.get("end")) or last_ok_end
             cursor = last_ok_end if rows else tasks[bot]["start"]
@@ -3822,6 +4083,10 @@ class LifeStep:
         ctx = getattr(self, "_last_live_ctx", None)
         win_start = min((x["start"] for x in (tasks or {}).values() if isinstance(x, dict) and x.get("start")), default=None) or flat
         if not isinstance(ctx, dict) or not ctx.get("has_inventory"):
+            lbl_map = (
+                {b: (self.label(b) or b) for b in (self.raw_log.enabled_bots() or ())}
+                if self.raw_log is not None else None
+            )
             ctx = build_live_context(
                 start=win_start,
                 end=max(win_start, flat) + datetime.timedelta(hours=HORIZON_HOURS),
@@ -3832,6 +4097,7 @@ class LifeStep:
                 shelf=shelf,
                 money=getattr(self, "money", None),
                 companion=getattr(self, "companionship", None),
+                labels=lbl_map,
             )
         lamp_ok = True
         if self.home == "海边小镇":
@@ -3843,8 +4109,8 @@ class LifeStep:
                 pass
         return {
             "charcoal_g": float(ctx.get("charcoal_g") or 0.0) if ctx.get("has_inventory") else 999.0,
-            "wood_bundles": float(ctx.get("wood_bundles") or 0.0) if ctx.get("has_inventory") else 2.0,
-            "hardwood_bundles": float(ctx.get("hardwood_bundles") or 0.0) if ctx.get("has_inventory") else 1.0,
+            "wood_kg": float(ctx.get("wood_kg") or 0.0) if ctx.get("has_inventory") else 40.0,
+            "hardwood_kg": float(ctx.get("hardwood_kg") or 0.0) if ctx.get("has_inventory") else 20.0,
             "oil_ml": float(ctx.get("oil_ml") or 0.0) if ctx.get("has_inventory") else None,
             "ship_unpicked": bool(ctx.get("ship_unpicked")),
             "lamp_ok": lamp_ok,
@@ -3940,7 +4206,7 @@ class LifeStep:
                 last_lbl = weathering.FUEL_SOURCE_LABELS.get(last_src, last_src)
                 rot_hint = f"（上一回刚用过「{last_lbl}」[{last_src}]，这次务必换条门路，严禁连续两次在同一处拾枯枝）"
             hardwood_hint = ""
-            if inv["hardwood_bundles"] <= 0:
+            if inv["hardwood_kg"] <= 0:
                 hardwood_hint = "（家里眼下没有能夹出闷炭的硬木粗柴 `fuel_size=\"split\"`，优先弄硬木劈柴/船坞实木边角回来）"
             wood_ways = (
                 "别老只跑坡上薪柴地，按海边地图换着路子弄柴%s%s："
@@ -3953,7 +4219,7 @@ class LifeStep:
             )
             if freezing_cold:
                 if cabin_cool and not recent_wood:
-                    if inv["wood_bundles"] > 0:
+                    if inv["wood_kg"] > 0:
                         nudges.append(
                             "- 严寒生炉过冬：屋外已跌至约 %.0f℃，船舱此刻也降到了约 %.0f℃（%s）——早起舱冷、外出吹透海风回来或入夜前，顺着冷意抱干柴把铁桶柴炉生旺暖舱（生火/添柴段必填 \"stove\": \"wood\"），睡前拨小封火门压火留余温。"
                             % (min_temp, th_win["cabin"], th_win["stove_desc"])
@@ -3961,7 +4227,7 @@ class LifeStep:
                     else:
                         bed_word = "被褥" if ctx.get("has_thick_quilt") else "薄被和旧毛毯"
                         nudges.append(
-                            "- 严寒断柴转折：屋外低至约 %.0f℃、船舱仅约 %.0f℃，冻得想点铁桶柴炉，去摸柴架却发现干柴烧空了——白天无大雨大雪就%s（items 写 new 燃柴入库）再生炉；夜深了就紧塞门缝裹紧%s，记着明早头一件事去弄柴。"
+                            "- 严寒断柴转折：屋外低至约 %.0f℃、船舱仅约 %.0f℃，冻得想点铁桶柴炉，去摸柴架却发现干柴烧空了——白天无大雨大雪就%s（items 写 new 燃柴入库，amount 写公斤）再生炉；夜深了就紧塞门缝裹紧%s，记着明早头一件事去弄柴。"
                             % (min_temp, th_win["cabin"], wood_ways, bed_word)
                         )
                 if not ctx.get("has_winter_gear") and 8 <= win_start.hour <= 16 and max_rain < 1.0:
@@ -3969,23 +4235,23 @@ class LifeStep:
                         "- 单衣过冬与请示当家人：天已骤冷，船屋里还没有厚冬衣和厚棉被——未经主人点头不许擅自动家底买大件！白天可先去半淹商店街旧衣铺或集市布摊打听好厚棉衣与旧棉被的价钱，并在 ask_master 里填 kind=\"decision\", topic=\"winter_gear\" 报给主人拍板先买哪样。"
                     )
             elif chilly and cabin_cool and not recent_wood:
-                if inv["wood_bundles"] > 0:
+                if inv["wood_kg"] > 0:
                     nudges.append(
                         "- 天凉生炉暖舱：这阵子船舱返潮发冷（最低约 %.0f℃），别写成全知提前预判，写成坐着觉得手脚发凉时起身抱干柴把铁桶柴炉生起来暖舱（该段必填 \"stove\": \"wood\"），睡前记得压火看炉。"
                         % min_temp
                     )
                 else:
                     nudges.append(
-                        "- 天凉缺柴转折：这阵子船舱发冷（约 %.0f℃），想生铁桶柴炉去摸干燥架却发现干柴烧空了——若在白天且无大雨就临时%s（items 写 new 燃柴入库），夜深了就多裹铺盖、记着明早先去弄柴。"
+                        "- 天凉缺柴转折：这阵子船舱发冷（约 %.0f℃），想生铁桶柴炉去摸干燥架却发现干柴烧空了——若在白天且无大雨就临时%s（items 写 new 燃柴入库，amount 写公斤），夜深了就多裹铺盖、记着明早先去弄柴。"
                         % (min_temp, wood_ways)
                     )
-            # 提前留安全余粮（不锁死 6℃，也不被上面生炉分支吞掉）：干柴安全线 2.0 捆、闷炭安全线 500 克
+            # 提前留安全余粮（不锁死 6℃，也不被上面生炉分支吞掉）：干柴安全线 30 公斤、闷炭安全线 500 克
             if 7 <= win_start.hour <= 16 and max_rain < 2.5:
-                if (chilly or min_temp <= 15.0) and 0 < inv["wood_bundles"] < 2.0:
+                if (chilly or min_temp <= 15.0) and 0 < inv["wood_kg"] < 30.0:
                     unsplit_tip = "屋里已堆着未劈大圆木/大木头，可以直接花大半天一口气劈成硬木劈柴码满棚下；" if ctx.get("has_unsplit_wood") else ""
                     nudges.append(
-                        "- 提前囤满过冬大柴垛（安全线 2 捆）：家里可用干柴现只剩 %.2g 捆，别等彻底烧光才临时捡半捆枯枝！%s趁白天没大雨，优先当成一件「大活」集中拉一批大圆木或粗硬木回来、花大半天锯劈码满棚下柴垛（一次囤足 4~8 捆够烧好几天，%s；items 写 new 燃柴入库，优先硬木 `fuel_size=\"split\"`）。"
-                        % (inv["wood_bundles"], unsplit_tip, wood_ways)
+                        "- 提前囤满过冬大柴垛（安全线 30 公斤）：家里可用干柴现只剩 %.1f 公斤，别等彻底烧光才临时捡几公斤枯枝！%s趁白天没大雨，优先当成一件「大活」集中拉一批大圆木或粗硬木回来、花大半天锯劈码满棚下大柴垛（一次囤足 80~150 公斤够烧十天半月，%s；items 写 new 燃柴入库，amount 写公斤，优先硬木 `fuel_size=\"split\"`）。"
+                        % (inv["wood_kg"], unsplit_tip, wood_ways)
                     )
                 if 0 < inv["charcoal_g"] < 500.0:
                     nudges.append(
@@ -4096,6 +4362,7 @@ class LifeStep:
             }
         merged["together"] = list(dict.fromkeys(list(win_seed.get("together") or []) + list(day_seed.get("together") or [])))
         merged["accident"] = win_seed.get("accident") or day_seed.get("accident") or ""
+        merged["wx_hints"] = dict(win_seed.get("wx_hints") or {})
         return merged
 
     def _record_used_origins(

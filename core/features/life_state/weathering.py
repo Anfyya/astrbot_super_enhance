@@ -59,6 +59,7 @@ WEIGHT_WORDS = (
     (6, ("帕", "巾", "衣", "衫", "褂", "袍", "袜", "帽", "裙", "裤", "布偶", "围巾", "扇", "风筝", "绳结", "布", "本", "日志", "日记")),
     (8, ("罐", "盆", "桶", "篮", "筐", "碗", "盘", "碟", "瓶", "凳", "鞋", "屐", "伞", "书", "管")),
     (10, ("箱", "锅", "板", "桌", "椅")),
+    (12, ("原木", "圆木", "大木头", "木料", "劈柴", "柴垛", "硬柴", "硬木", "木柴", "燃柴", "薪柴", "引火料", "柴炉", "铁桶", "水缸", "砖")),
     (99, ("石", "铁锭", "锚", "潜水艇")),
 )
 RESET_DRY = ("晾干", "擦干", "烘干", "烤干", "吹干", "晒干", "晒透", "干了", "干透")
@@ -194,13 +195,8 @@ def usable_stove_wood(item: dict, now: datetime.datetime, day_text, home_at, fir
     if _is_legacy_item(item) and not has_fuel_purpose and any(w in label_text for w in ("修补", "补船")):
         return False
     flat = now.replace(tzinfo=None)
-    declared_split = None
-    for s in sorted((x for x in stages if _parse(x.get("at")) is not None and _parse(x.get("at")) <= flat),
-                    key=lambda x: str(x.get("at"))):
-        w = clean_conditions(s.get("weather"))
-        if "split" in w:
-            declared_split = w["split"]
-    if declared_split is False:
+    meta = wood_fuel_meta(item, flat)
+    if meta["split"] is False and meta["tier"] == "unsplit_log":
         return False
     st = simulate(item, flat, day_text, home_at, food=False, fire_lit_fn=fire_lit_fn)
     if not st or st.get("fuel_safe") is False:
@@ -241,11 +237,13 @@ def wood_fuel_meta(item: dict, now: datetime.datetime | None = None) -> dict:
         if "split" in w:
             declared_split = w["split"]
 
-    if declared_split is False or (size == "log" and declared_split is not True):
+    if size == "kindling" or (not size and kind == "引火料"):
+        tier = "kindling"
+    elif declared_split is False or (size == "log" and declared_split is not True):
         tier = "unsplit_log"
     elif size == "split" or (size == "log" and declared_split is True):
         tier = "hardwood"
-    elif size == "kindling" or kind == "引火料":
+    elif kind == "引火料":
         tier = "kindling"
     else:
         tier = "unknown"
@@ -525,17 +523,25 @@ def simulate(item: dict, now: datetime.datetime, day_text, home_at, food: bool =
             exposure = "covered"
         if st["moved"] and not st["moved"]["sea"]:
             exposure = "semi"
+        wind, rain = hour["wind"], hour["rain"]
+        is_snow = bool(hour.get("snow"))
+        hour_temp = float(hour.get("temp")) if hour.get("temp") is not None else _month_temp(home, cur)
         if exposure == "carried":
-            if st["wet"] > 0:
-                st["wet"] = max(0.0, st["wet"] - 0.35 * dt)
-                if st["wet"] < 0.25:
-                    st["wet_from"] = None
+            if rain <= 0 or conditions.get("rain_cover"):
+                if st["wet"] > 0:
+                    dry_spd = 0.03 if hour_temp <= 0.0 else 0.12
+                    st["wet"] = max(0.0, st["wet"] - dry_spd * dt)
+                    if st["wet"] < 0.25:
+                        st["wet_from"] = None
+            elif rain >= 2.5 and not is_snow:
+                st["wet"] = min(1.0, st["wet"] + 0.15 * dt)
+                if st["wet"] >= 0.3 and st["wet_from"] is None:
+                    st["wet_from"] = cur
             cur = nxt
             continue
-        wind, rain = hour["wind"], hour["rain"]
         daytime = 8 <= cur.hour < 17
         sunny = hour["cloud"] == 0 and hour["fog"] == 0 and rain <= 0 and daytime
-        temp = _month_temp(home, cur)
+        temp = hour_temp
         mid_t = cur + (nxt - cur) / 2
         stove_active = near_stove and (fire_lit_fn is None or bool(fire_lit_fn(mid_t)))
         if exposure == "sea":
@@ -553,42 +559,46 @@ def simulate(item: dict, now: datetime.datetime, day_text, home_at, food: bool =
                 st["soaked"] = True
             cur = nxt
             continue
-        # 淋雨 vs 晾干/炉边烘烤
+        # 淋雨 vs 晾干/炉边烘烤（仅真生着火的炉边 stove_active 才防淋防潮；干雪浸湿远慢于雨；零下不速干）
         catch = {"open": 1.0, "semi": 0.8 if wind >= 6 else 0.35, "covered": 0.1 if wind >= 8 else 0.0,
                  "inside": 0.01 if wind >= 10 and rain >= 8 else 0.0}.get(exposure, 0.0)
-        if rain > 0 and catch > 0 and not near_stove:
+        if rain > 0 and catch > 0 and not stove_active:
             soak = (0.3 if rain < 1 else 2.0 if rain < 2.5 else 6.0 if rain < 8 else 15.0) * catch
+            if is_snow:
+                soak *= 0.18 if temp <= 0.0 else 0.55
             if st["wet"] < 0.3 and soak * dt >= 0.3:
                 st["wet_from"] = cur
             st["wet"] = min(1.0, st["wet"] + soak * dt)
-            if food and st["wet"] >= 0.7 and not st.get("rained"):
+            if food and not is_snow and st["wet"] >= 0.7 and not st.get("rained"):
                 st["rained"] = cur
-            if exposure == "open" and rain >= 1:
+            if exposure == "open" and not is_snow and rain >= 1:
                 st["salt"] = max(0.0, st["salt"] - 0.3 * dt)
         elif st["wet"] > 0:
             if stove_active:
                 # 炭炉边、柴炉旁、灶旁真生着火烘烤：潮柴、湿鞋袜、湿衣 2～3 小时快速烘干
                 speed = 0.45
             else:
-                # 木柴表皮淋雨受潮吹风 2～4 小时即干，不再卡在 0.07/h
-                speed = {"布": 0.25, "纸": 0.22, "木": 0.30, "铁": 0.6, "铜": 0.6, "石": 1.2, "吃的": 0.3}.get(material, 0.4)
-                speed *= 1 + 0.14 * wind
+                speed = {"布": 0.22, "纸": 0.20, "木": 0.12, "铁": 0.5, "铜": 0.5, "石": 1.0, "吃的": 0.25}.get(material, 0.3)
+                speed *= 1 + 0.10 * wind
                 speed *= (1.6 if sunny else 1.0) if exposure in ("open", "semi") else (0.85 if conditions.get("ventilated") else 0.55)
                 if conditions.get("ventilated") is False:
                     speed *= 0.2
                 speed *= 0.35 if hour["fog"] else 1.0
-                speed *= 0.6 if temp < 5 else 1.0
+                if temp <= 0.0 and exposure in ("open", "semi", "covered"):
+                    speed *= 0.15
+                elif temp < 5:
+                    speed *= 0.55
             st["wet"] = max(0.0, st["wet"] - speed * dt)
             if st["wet"] < 0.25:
                 st["wet_from"] = None
-        # 木芯内部水分：只有真点着火的炉边才按 0.25/h 快速烘透，冷炉边按自然风干算
+        # 木芯内部水分：只有真点着火的炉边才按 0.25/h 快速烘透；中大雨淋透木柴真实渗湿木芯
         if fuel and st.get("fuel_wet") is not None:
             if stove_active:
                 st["fuel_wet"] = max(0.08, st["fuel_wet"] - 0.25 * dt)
                 if st["fuel_wet"] <= 0.2:
                     st["seasoning"] = "seasoned"
-            elif rain > 0 and catch > 0.3:
-                st["fuel_wet"] = min(0.85, st["fuel_wet"] + min(rain, 8.0) * catch * 0.002 * dt)
+            elif rain > 0 and catch > 0.3 and not is_snow:
+                st["fuel_wet"] = min(0.85, st["fuel_wet"] + min(rain, 10.0) * catch * 0.015 * dt)
             elif st["wet"] < 0.5 and conditions.get("ventilated") is not False:
                 size = conditions.get("fuel_size") or ("split" if conditions.get("split") else "log")
                 if st["seasoning"] == "green":
@@ -634,9 +644,9 @@ def simulate(item: dict, now: datetime.datetime, day_text, home_at, food: bool =
                 if hour["fog"] and exposure in ("open", "semi"):
                     rate += 0.008 * hour["fog"]
             st["rust"] += rate * (0.5 if material == "铜" else 1.0) * dt
-        # 发霉、泡软、泡胀：发霉与温度+闷捂挂钩（通风晾晒不发霉，闷捂 > 48h 才发霉）；木器浸泡 > 48h 才 swollen
+        # 发霉、泡软、泡胀：发霉与温度+闷捂挂钩（冷炉边不再免疫发霉，仅真点着火 stove_active 才防霉）
         if material in ("布", "纸", "木"):
-            if st["wet"] > 0.5 and not near_stove:
+            if st["wet"] > 0.5 and not stove_active:
                 st["wet_hours"] += dt
                 ventilated_airing = (
                     conditions.get("ventilated") is True
@@ -659,9 +669,10 @@ def simulate(item: dict, now: datetime.datetime, day_text, home_at, food: bool =
                 st["swollen"] = True
             if sunny and exposure == "open":
                 st["fade"] += 0.01 * dt
-        # 被风吹走：晾衣绳衣物默认夹牢（gate = 6 + 2 = 8），甲板吹落入海门槛提至 ≥8 级狂风
+        # 被风吹走：晾衣绳衣物默认夹牢（gate = 6 + 2 = 8），大件木柴/重物至少 12 级强台风才吹得动
         if exposure in ("open", "semi") and not st["moved"]:
-            gate = weight + tied + (2 if exposure == "semi" else 0)
+            eff_weight = max(weight, 12) if fuel else weight
+            gate = eff_weight + tied + (2 if exposure == "semi" else 0)
             if wind >= gate:
                 chance = min(0.95, 0.15 * (2.2 ** (wind - gate)))
                 if _hash01(item.get("id"), cur.isoformat()) < chance:

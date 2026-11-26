@@ -1083,68 +1083,149 @@
     .ed-h .r{flex-basis:100%;margin-left:0;padding-left:0}
   }
 
-  /* 钱匣与账本 */
-  .mhero{border:1px solid var(--line);border-radius:12px;background:var(--bg);overflow:hidden}
-  .mhero-head{padding:18px var(--card-x) 14px}
-  .mhero-top{display:flex;align-items:flex-end;justify-content:space-between;gap:12px 16px;flex-wrap:wrap;margin-bottom:12px}
-  .mhero-kpi{display:flex;flex-direction:column;gap:2px}
-  .mhero-kpi.r{text-align:right;align-items:flex-end}
-  .mhero-kpi .k{font-size:12px;color:var(--t3)}
-  .mhero-kpi .v{font-size:26px;font-weight:700;line-height:32px;color:var(--t1);font-variant-numeric:tabular-nums;letter-spacing:-.02em}
-  .mhero-kpi .v.sub{font-size:20px;font-weight:700;color:var(--t1)}
-  .mhero-kpi .v small{font-size:12px;font-weight:500;color:var(--t3);margin-left:3px}
-  .mrows{border-top:1px solid var(--line)}
-  .mwal{padding:14px var(--card-x);border-top:1px solid var(--line);transition:background .12s;cursor:pointer}
-  .mwal:first-child{border-top:0}
-  .mwal:hover{background:color-mix(in srgb,var(--line) 24%,transparent)}
-  .mwal.filt{background:color-mix(in srgb,var(--accent-soft) 55%,var(--bg));box-shadow:inset 3px 0 0 var(--accent)}
-  .mwal-main{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
-  .mwal-left{min-width:0;flex:1}
-  .mwal-t{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-  .mwal-t b{font-size:14px;font-weight:600;color:var(--t1)}
-  .mwal-t .role{font-size:12px;color:var(--t3)}
-  .mwal-desc{font-size:12px;line-height:1.6;color:var(--t3);margin-top:4px;word-break:break-word}
-  .mwal-right{flex:none;text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:4px}
-  .mwal-bal{font-size:16px;line-height:22px;font-weight:700;color:var(--t1);font-variant-numeric:tabular-nums;white-space:nowrap}
-  .mwal-bal .pct{font-size:12px;font-weight:400;color:var(--t3);margin-left:6px}
-  .mwal-acts{display:flex;align-items:center;gap:10px}
-  .mwal-btn{background:none;border:0;padding:2px 4px;margin:0;cursor:pointer;display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--t3);border-radius:6px}
-  .mwal-btn:hover{color:var(--t1);background:color-mix(in srgb,var(--line) 45%,transparent)}
-  .mwal-btn svg.i{width:13px;height:13px}
-  .mguide{padding:10px var(--card-x) 12px;border-top:1px solid var(--line)}
-  .mguide summary{list-style:none;cursor:pointer;font-size:12px;color:var(--t3);display:inline-flex;align-items:center;gap:4px;user-select:none}
-  .mguide summary::-webkit-details-marker{display:none}
-  .mguide summary:hover{color:var(--t1)}
-  .mguide[open] summary svg.i{transform:rotate(90deg)}
-  .mguide summary svg.i{width:13px;height:13px;transition:transform .15s}
-  .mguide-body{margin-top:8px;font-size:12px;line-height:1.75;color:var(--t2);display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 16px}
-  @media (max-width:720px){.mguide-body{grid-template-columns:minmax(0,1fr)}}
+  /* 钱匣与账本：统一单列上下排布，统一 8px 卡片 / 6px 控件几何圆角，无框套框 */
+  .mstack{display:flex;flex-direction:column;gap:28px}
+  #moneyView .btn,#moneyView .inp,#moneyView .seg,#moneyView .addlink:not(.fold){border-radius:6px}
+  #moneyView .seg button{border-radius:4px}
+  .mswatch{display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--t4);flex:none}
 
-  .mfilt{display:flex;flex-wrap:wrap;gap:8px 10px;align-items:center;margin:0 0 12px}
-  .mfilt .seg{max-width:100%;overflow-x:auto}
-  .mfilt .search{flex:1 1 180px;max-width:260px}
+  /* 1. 家底总览与四个钱袋一体卡 */
+  .mov{border:1px solid var(--line);border-radius:8px;background:var(--bg);overflow:hidden}
+  .mov-top{padding:16px var(--card-x);display:flex;flex-direction:column;gap:12px}
+  .mov-kpis{display:flex;align-items:flex-end;justify-content:space-between;gap:10px 20px;flex-wrap:wrap}
+  .mov-kpi{display:flex;flex-direction:column;gap:2px}
+  .mov-kpi.right{align-items:flex-end;text-align:right;margin-left:auto}
+  .mov-kpi .k{font-size:12px;line-height:18px;color:var(--t3);font-variant-numeric:tabular-nums}
+  .mov-kpi .v{font-size:26px;font-weight:700;line-height:30px;color:var(--t1);font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+  .mov-kpi .v.sub{font-size:22px;font-weight:650;line-height:28px;color:var(--t1);letter-spacing:-.01em}
+  .mov-kpi .v small{font-size:12px;font-weight:500;color:var(--t3);margin-left:3px;letter-spacing:0}
+  .mov .comp{height:8px;border-radius:3px}
+  .maccs{border-top:1px solid var(--line);display:flex;flex-direction:column}
+  .macc-wrap{border-top:1px solid var(--line);transition:background-color .12s}
+  .macc-wrap:first-child{border-top:0}
+  .macc-wrap.on{background:color-mix(in srgb,var(--accent-soft) 65%,var(--bg))}
+  .macc{display:flex;flex-direction:column;gap:4px;padding:12px var(--card-x);cursor:pointer;transition:background-color .12s}
+  .macc:hover{background:var(--hover)}
+  .macc-wrap.on > .macc:hover{background:transparent}
+  .macc-h{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+  .macc-name{display:flex;align-items:center;gap:8px;min-width:0}
+  .macc-name b{font-size:14px;font-weight:600;line-height:20px;color:var(--t1);white-space:nowrap}
+  .macc-role{font-size:12px;line-height:18px;color:var(--t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .macc-wrap.on .macc-role{color:var(--accent);font-weight:500}
+  .macc-bal{display:flex;align-items:baseline;gap:6px;flex:none;font-variant-numeric:tabular-nums}
+  .macc-bal b{font-size:16px;font-weight:700;line-height:20px;color:var(--t1)}
+  .macc-bal span{font-size:12px;color:var(--t3);min-width:30px;text-align:right}
+  .macc-sub{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:28px}
+  .macc-info{font-size:12px;line-height:18px;color:var(--t3);min-width:0;flex:1;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .macc-info .plc{color:var(--t2)}
+  .macc-acts{display:flex;align-items:center;gap:4px;flex:none;margin-right:-4px}
+  .macc-acts .btn.on{background:var(--accent-soft);color:var(--accent)}
+  @media (hover:hover){.macc-acts{opacity:.78;transition:opacity .12s}.macc-wrap:hover .macc-acts,.macc-acts:focus-within{opacity:1}}
 
-  .mrow{display:grid;grid-template-columns:86px 72px minmax(0,1fr) minmax(112px,auto) auto;column-gap:12px;align-items:start;padding:12px 0;border-top:1px solid var(--line)}
-  .mrow:first-child{border-top:0;padding-top:0}
-  .mrow:last-child{padding-bottom:0}
+  /* 就地平铺展开条：贴边通栏、无嵌套外框、统一 32px 高控件 */
+  .mpane{border-top:1px solid var(--line);background:var(--side);padding:14px var(--card-x);display:flex;flex-direction:column;gap:10px;animation:wfin .14s ease-out}
+  .mdebts > .mpane:first-child{border-top:0;border-bottom:1px solid var(--line)}
+  .mdebts > .mpane:only-child{border-bottom:0}
+  .mpane-h{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;font-size:12px;line-height:18px;color:var(--t3)}
+  .mpane-h b{font-size:13px;font-weight:600;color:var(--t1)}
+  .mpane-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .mpane-bar .inp{background:var(--bg)}
+  .mpane-bar .num{width:148px;flex:0 0 auto}
+  .mpane-bar .sel{width:200px;flex:0 1 200px}
+  .mpane-bar .txt{flex:1 1 180px;min-width:140px}
+  .mpane-acts{display:flex;align-items:center;gap:6px;margin-left:auto;flex:none}
+  .mpane-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 12px;align-items:end}
+  .mpane-grid .inp{width:100%;background:var(--bg)}
+  .mpane-grid > .wide{grid-column:1 / -1}
+  .mpane-foot{display:flex;align-items:center;justify-content:flex-end;gap:8px;padding-top:2px}
+  @container main (max-width:600px){
+    .mpane-grid{grid-template-columns:minmax(0,1fr)}
+    .mpane-bar .num,.mpane-bar .sel{flex:1 1 100%;width:100%}
+    .mpane-acts{width:100%;justify-content:flex-end}
+  }
+
+  /* 2. 区块头、赊账与待收常驻卡、物价折叠卡 */
+  .msec{display:flex;flex-direction:column;min-width:0}
+  .msec-h{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 10px}
+  .msec-t{display:flex;align-items:baseline;gap:8px;min-width:0;flex-wrap:wrap}
+  .msec-t h3{margin:0;font-size:15px;font-weight:600;line-height:22px;color:var(--t1);white-space:nowrap}
+  .msec-t .sub{font-size:12px;line-height:18px;color:var(--t3);font-variant-numeric:tabular-nums}
+  .msec-t .sub.warn{color:var(--warn);font-weight:500}
+  .mdebts{border:1px solid var(--line);border-radius:8px;background:var(--bg);overflow:hidden;display:flex;flex-direction:column}
+  .md-list{display:flex;flex-direction:column}
+  .md-item{border-top:1px solid var(--line)}
+  .md-list > .md-item:first-child{border-top:0}
+  .mdrow{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:10px;align-items:center;padding:11px var(--card-x)}
+  .md-main{min-width:0;display:flex;flex-direction:column;gap:2px}
+  .md-top{display:flex;align-items:center;gap:7px;flex-wrap:wrap;line-height:20px}
+  .md-cp{font-size:14px;font-weight:600;color:var(--t1)}
+  .md-dir{font-size:12px;color:var(--t3)}
+  .mdrow.off .md-cp{color:var(--t3);text-decoration:line-through;text-decoration-color:var(--line2)}
+  .md-sub{font-size:12px;line-height:18px;color:var(--t3);display:flex;flex-wrap:wrap;gap:2px 8px;font-variant-numeric:tabular-nums}
+  .md-r{display:flex;align-items:center;gap:6px;flex:none}
+  .md-amt{font-size:14px;font-weight:700;line-height:22px;font-variant-numeric:tabular-nums;white-space:nowrap;margin-right:4px}
+  .md-amt.pos{color:var(--ok)}.md-amt.neg{color:var(--danger)}.md-amt.warn{color:var(--warn)}.md-amt.neu{color:var(--t3);font-weight:500}
+  @media (hover:hover){.md-del{opacity:0;transition:opacity .12s}.mdrow:hover .md-del,.md-del:focus-visible,.md-del.armed{opacity:1}}
+  .md-past{border-top:1px solid var(--line);padding:8px var(--card-x)}
+  .md-past-list{margin:6px calc(var(--card-x) * -1) -8px;border-top:1px solid var(--line)}
+  .mempty{font-size:13px;line-height:20px;color:var(--t3);padding:14px var(--card-x)}
+
+  details.mguide-card{border:1px solid var(--line);border-radius:8px;background:var(--side);overflow:hidden}
+  details.mguide-card > summary{list-style:none;cursor:pointer;padding:11px var(--card-x);font-size:13px;font-weight:500;color:var(--t2);display:flex;align-items:center;gap:6px;user-select:none;transition:color .12s,background-color .12s}
+  details.mguide-card > summary::-webkit-details-marker{display:none}
+  details.mguide-card > summary:hover{color:var(--t1);background:var(--hover)}
+  details.mguide-card > summary svg.i{width:14px;height:14px;color:var(--t3);transition:transform .15s}
+  details.mguide-card[open] > summary{border-bottom:1px solid var(--line);color:var(--t1)}
+  details.mguide-card[open] > summary svg.i{transform:rotate(90deg)}
+  .mguide-dl{margin:0;padding:12px var(--card-x) 14px;display:grid;grid-template-columns:max-content minmax(0,1fr);gap:8px 14px;font-size:12px;line-height:1.65}
+  .mguide-dl dt{color:var(--t3);font-weight:500}
+  .mguide-dl dd{margin:0;color:var(--t2)}
+
+  /* 3. 收支账本主区：就地记账卡、单行筛选、按日分组对齐流水 */
+  .mrec-panel{border:1px solid var(--line2);border-radius:8px;background:var(--side);padding:14px var(--card-x);margin:0 0 14px;display:flex;flex-direction:column;gap:12px;animation:wfin .14s ease-out}
+  .mrec-kinds{display:flex}
+  .mrec-kinds .seg{width:100%;display:flex;background:var(--sunk)}
+  .mrec-kinds .seg button{flex:1;min-width:0;padding:0 8px}
+  .mfilt{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 14px}
+  .mfilt .seg{overflow-x:auto}
+  .mfilt-acc{flex:0 1 156px;min-width:120px}
+  .mfilt .search{flex:1 1 180px;min-width:150px;max-width:none}
+  @container main (max-width:640px){
+    .mfilt .seg{flex:1 1 100%;display:flex}
+    .mfilt .seg button{flex:1;min-width:0;padding:0 8px}
+    .mfilt-acc{flex:0 1 136px}
+    .mfilt .search{flex:1 1 140px}
+  }
+  .mfilt-sum{display:flex;align-items:center;justify-content:space-between;gap:8px 12px;flex-wrap:wrap;padding:8px 14px;margin:0 0 14px;border-radius:6px;background:var(--side);border:1px solid var(--line);font-size:12px;line-height:18px;color:var(--t2);font-variant-numeric:tabular-nums}
+  .mfilt-sum .nums{display:flex;align-items:center;gap:6px 14px;flex-wrap:wrap}
+  .mfilt-sum .pos{color:var(--ok);font-weight:600}
+  .mfilt-sum .neg{color:var(--danger);font-weight:600}
+
+  .mdays{display:flex;flex-direction:column;gap:18px}
+  .mday{display:flex;flex-direction:column;gap:6px}
+  .mday-h{display:flex;align-items:baseline;justify-content:space-between;gap:8px 12px;padding:0 2px;font-variant-numeric:tabular-nums}
+  .mday-d{display:flex;align-items:baseline;gap:6px;font-size:13px;font-weight:600;line-height:20px;color:var(--t1)}
+  .mday-d small{font-size:12px;font-weight:400;color:var(--t3)}
+  .mday-s{display:flex;align-items:baseline;gap:10px;font-size:12px;line-height:18px;color:var(--t3)}
+  .mday-s .pos{color:var(--ok);font-weight:500}
+  .mday-s .neg{color:var(--danger);font-weight:500}
+  .mday-card{border:1px solid var(--line);border-radius:8px;background:var(--bg);padding:2px var(--card-x)}
+
+  .mrow{display:grid;grid-template-columns:44px minmax(0,1fr) auto minmax(28px,auto);column-gap:12px;align-items:start;padding:11px 0;border-top:1px solid var(--line)}
+  .mrow:first-child{border-top:0}
   .mrow-at{font-size:12px;line-height:22px;color:var(--t3);font-variant-numeric:tabular-nums;white-space:nowrap}
-  .mrow-kind{padding-top:1px}
-  .mrow-kind .tag{width:100%;justify-content:center;font-weight:500}
   .mrow-body{min-width:0}
   .mrow-what{font-size:14px;line-height:22px;color:var(--t1);font-weight:500;word-break:break-word}
-  .mrow-meta{font-size:12px;line-height:18px;color:var(--t3);margin-top:3px;display:flex;flex-wrap:wrap;gap:2px 8px;align-items:center}
+  .mrow-meta{font-size:12px;line-height:18px;color:var(--t3);margin-top:2px;display:flex;flex-wrap:wrap;gap:2px 6px;align-items:center}
   .mrow-meta .sep{color:var(--t4)}
-  .mrow-amt{font-size:15px;line-height:22px;font-weight:700;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
-  .mrow-bal{font-size:11px;line-height:16px;font-weight:500;color:var(--t3);margin-top:2px}
+  .mrow-meta .flow{color:var(--t2);font-weight:500}
+  .mrow-amt{font-size:15px;line-height:22px;font-weight:700;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;display:inline-flex;align-items:baseline;justify-content:flex-end;gap:5px}
+  .mrow-amt i{font-style:normal;font-size:11px;font-weight:400;color:var(--t3)}
   .mrow-amt.pos{color:var(--ok)}.mrow-amt.neg{color:var(--danger)}.mrow-amt.mid{color:var(--accent)}.mrow-amt.neu{color:var(--t2)}
-  .mrow-acts{margin-top:-2px}
-  @media (max-width:680px){
-    .mrow{grid-template-columns:minmax(0,1fr) auto auto;row-gap:4px;column-gap:8px}
-    .mrow-at{grid-column:1;grid-row:1}
-    .mrow-kind{grid-column:1;grid-row:1;margin-left:82px;width:auto}
-    .mrow-amt{grid-column:2;grid-row:1}
-    .mrow-acts{grid-column:3;grid-row:1}
-    .mrow-body{grid-column:1 / -1;grid-row:2}
+  .mrow-acts{margin-top:-3px;justify-self:end}
+  @media (hover:hover){.mrow-acts{opacity:0;transition:opacity .12s}.mrow:hover .mrow-acts,.mrow:focus-within .mrow-acts,.mrow-acts.armed{opacity:1}}
+  @container main (max-width:520px){
+    .mrow{grid-template-columns:40px minmax(0,1fr) auto auto;column-gap:8px}
   }
 
   /* 整屏断点（和脚本里 insOverlay / isNarrow 一致，不要改数字） */
@@ -1338,6 +1419,49 @@
     .hlog-kind{grid-column:1 / -1}
     .hlog-do{grid-column:1 / -1}
   }
+
+  /* ============ 世界线内联主人情绪条（无弹窗、无框套框、就地展开） ============ */
+  .wmood-host{margin:0 0 14px}
+  .wmood-box{border:1px solid var(--line);border-radius:8px;background:var(--bg);overflow:hidden}
+  .wmood-head{
+    display:flex;align-items:center;gap:10px;min-height:40px;padding:6px 14px;cursor:pointer;
+    user-select:none;transition:background-color .12s;
+  }
+  .wmood-head:hover{background:var(--hover)}
+  .wmood-dot{width:7px;height:7px;border-radius:50%;flex:none;background:var(--t4)}
+  .wmood-box.tone-happy .wmood-dot{background:var(--ok)}
+  .wmood-box.tone-lv1 .wmood-dot{background:var(--warn)}
+  .wmood-box.tone-lv2 .wmood-dot,.wmood-box.tone-lv3 .wmood-dot{background:var(--danger)}
+  .wmood-k{font-size:13px;font-weight:600;color:var(--t1);flex:none;white-space:nowrap}
+  .wmood-v{font-size:13px;color:var(--t2);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .wmood-box.tone-happy .wmood-v{color:var(--ok)}
+  .wmood-box.tone-lv1 .wmood-v{color:var(--warn)}
+  .wmood-box.tone-lv2 .wmood-v,.wmood-box.tone-lv3 .wmood-v{color:var(--danger);font-weight:500}
+  .wmood-head-acts{display:flex;align-items:center;gap:4px;flex:none;margin-right:-4px}
+  .wmood-chev{font-size:12px;color:var(--t3);padding:0 4px;line-height:1;transition:transform .14s ease}
+  .wmood-box.open .wmood-chev{transform:rotate(180deg)}
+
+  .wmood-pane{border-top:1px solid var(--line);background:var(--side)}
+  .wmood-row{padding:11px 14px;display:flex;flex-direction:column;gap:8px}
+  .wmood-row + .wmood-row{border-top:1px solid var(--line)}
+  .wmood-row-h{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+  .wmood-row-t{font-size:13px;font-weight:600;color:var(--t1)}
+  .wmood-row-m{font-size:12px;color:var(--t3);font-variant-numeric:tabular-nums}
+  .wmood-seg{width:100%;display:flex;border-radius:6px}
+  .wmood-seg button{flex:1;min-width:0;padding:0 6px;border-radius:4px;font-size:12.5px}
+  .wmood-seg button.on.tone-happy{color:var(--ok)}
+  .wmood-seg button.on.tone-lv1{color:var(--warn)}
+  .wmood-seg button.on.tone-lv2,.wmood-seg button.on.tone-lv3{color:var(--danger)}
+  .wmood-extra{display:flex;flex-direction:column;gap:8px}
+  .wmood-extra .inp{width:100%;background:var(--bg);border-radius:6px}
+  .wmood-chk{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--t2);cursor:pointer;user-select:none;align-self:flex-start}
+  .wmood-chk input{width:14px;height:14px;accent-color:var(--accent);cursor:pointer}
+  .wmood-inc{border-top:1px solid var(--line);padding:8px 14px;font-size:12px;line-height:1.5;color:var(--t3)}
+  .wmood-foot{
+    border-top:1px solid var(--line);padding:10px 14px;
+    display:flex;align-items:center;justify-content:space-between;gap:8px;
+  }
+  .wmood-foot-r{display:flex;align-items:center;gap:6px;margin-left:auto}
 </style>
 </head>
 <body>
@@ -1784,7 +1908,7 @@
     edits: {}, auto: true,
     heat: null, heatErr: "", heatLoading: false, heatBusy: false, heatWoodPick: "", heatCharPick: "", heatWoodAmt: null, heatCharAmt: null, heatPop: "", heatTab: "curve", heatBatchOpen: "",
     money: null, moneyErr: "", moneyLoading: false, moneyBalEdit: {}, moneyAccEdit: {}, moneyRecForm: null, moneyDebtForm: null, moneySettle: null,
-    moneyAccFilter: "all", moneyKindFilter: "all", moneyQ: "", moneyShowAll: false,
+    moneyAccFilter: "all", moneyKindFilter: "all", moneyQ: "", moneyShowAll: false, moneyShowSettled: false, moneyGuideOpen: false,
     ledger: null, ledgerErr: "", ledgerLoading: false, ledEdit: {}, ledShowPast: false, trEdit: {},
     pools: null, poolsErr: "", poolsLoading: false, poolEdit: {}, poolQ: "",
     poolWho: "", poolKind: "twists", poolSort: store.get("poolSort", "chance"), poolZero: false, poolFlash: "",
@@ -1794,7 +1918,8 @@
     thingsCat: "food", objFilter: "now", objQ: "",
     // 筛选面板里那几组：排序（默认新到旧）、在哪、状态（只有吃的）、类别；「什么时候」在标题旁边，还是 thingsFilter / objFilter
     tPick: { food: { where: "here", state: "", kind: "", sort: "new" }, item: { where: "here", state: "", kind: "", sort: "new" } },
-    tPanel: false
+    tPanel: false,
+    masterMood: null, moodOpen: false, moodDraft: null, moodDirty: false, moodSaving: false
   };
 
   function curConv() {
@@ -4697,11 +4822,11 @@
   function heatSliderSpec(kind, d) {
     var isW = kind === "wood";
     var sl = (d.slider && d.slider[kind]) || (isW
-      ? { min: 0.05, max: 2.0, step: 0.05, default: 0.5, refuel_default: 0.25, min_per_unit: 240, unit: "捆" }
+      ? { min: 0.5, max: 12.0, step: 0.5, default: 3.0, refuel_default: 1.5, min_per_unit: 40, unit: "公斤" }
       : { min: 30, max: 400, step: 10, default: 100, refuel_default: 80, min_per_unit: 0.3, unit: "克" });
     var fuel = d.fuel || {};
     var cur = (d.stoves && d.stoves[kind]) || {};
-    var avail = isW ? Number(fuel.wood_total_bundles || 0) : Number(fuel.charcoal_total_g || 0);
+    var avail = isW ? Number(fuel.wood_total_kg || 0) : Number(fuel.charcoal_total_g || 0);
     var minV = Number(sl.min);
     var step = Number(sl.step);
     var cap = Math.min(Number(sl.max), avail);
@@ -4724,7 +4849,7 @@
     }
     return {
       isW: isW, kind: kind, min: minV, max: Math.max(minV, maxV), step: step,
-      rate: Number(sl.min_per_unit), unit: sl.unit || (isW ? "捆" : "克"),
+      rate: Number(sl.min_per_unit), unit: sl.unit || (isW ? "公斤" : "克"),
       avail: avail, canBurn: canBurn, burning: !!cur.burning, cur: cur, val: val
     };
   }
@@ -4809,7 +4934,7 @@
         stove: kind,
         item_id: spec.isW ? S.heatWoodPick : S.heatCharPick
       };
-      if (spec.isW) { body.bundles = chosen; } else { body.grams = chosen; }
+      if (spec.isW) { body.kg = chosen; } else { body.grams = chosen; }
       runHeatAction(body);
     }
 
@@ -5654,7 +5779,7 @@
     if (S.heatPop === "wood" || S.heatPop === "charcoal") {
       var isW = S.heatPop === "wood";
       var cur = isW ? (st.wood || {}) : (st.charcoal || {});
-      var availText = isW ? ("可用干柴 " + Number(fuel.wood_total_bundles || 0) + " 捆") : ("可用闷炭 " + Number(fuel.charcoal_total_g || 0) + " 克");
+      var availText = isW ? ("可用干柴 " + Number(fuel.wood_total_kg || 0) + " 公斤") : ("可用闷炭 " + Number(fuel.charcoal_total_g || 0) + " 克");
       var pop = h("div", {
         class: "hpop",
         style: isW ? "left:58%;top:18%" : "left:34%;top:36%",
@@ -5779,17 +5904,17 @@
 
     if (d.seaside) {
       var woodBatches = fuel.wood_batches || [], charBatches = fuel.charcoal_batches || [];
-      var woodTot = Number(fuel.wood_total_bundles || 0), charTot = Number(fuel.charcoal_total_g || 0);
+      var woodTot = Number(fuel.wood_total_kg || 0), charTot = Number(fuel.charcoal_total_g || 0);
       if (S.heatWoodPick && !woodBatches.some(function (b) { return b.id === S.heatWoodPick; })) { S.heatWoodPick = ""; }
       if (S.heatCharPick && !charBatches.some(function (b) { return b.id === S.heatCharPick; })) { S.heatCharPick = ""; }
 
       var leftItems = [
         h("button", {
           type: "button",
-          class: "hmeta-btn" + (woodTot < 0.5 ? " low" : ""),
+          class: "hmeta-btn" + (woodTot < 15 ? " low" : ""),
           title: "点击切换干柴扣减批次",
           onclick: function () { S.heatBatchOpen = S.heatBatchOpen === "wood" ? "" : "wood"; renderHeat(); }
-        }, "干柴 ", h("b", { text: woodTot + " 捆" }), (S.heatWoodPick ? " · 指定" : "")),
+        }, "干柴 ", h("b", { text: woodTot + " 公斤" }), (S.heatWoodPick ? " · 指定" : "")),
         h("button", {
           type: "button",
           class: "hmeta-btn" + (charTot < 200 ? " low" : ""),
@@ -5887,6 +6012,13 @@
 
   $("heatRefresh").addEventListener("click", function () { loadHeat().then(function () { if (!S.heatErr) { toast("已刷新"); } }); });
   /* ================= 钱匣与账本 ================= */
+  var MONEY_COLORS = { master: "var(--c1)", tin_box: "var(--c2)", napcat2: "var(--c4)", napcat: "var(--c3)" };
+  var MONEY_ROLES = { master: "船长管着", tin_box: "家用铁盒", napcat2: "随身携款", napcat: "仅可代花" };
+  var MONEY_WEEKS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+
+  function moneyEditing() {
+    return !!(Object.keys(S.moneyBalEdit).length || Object.keys(S.moneyAccEdit).length || S.moneyRecForm || S.moneyDebtForm || S.moneySettle);
+  }
   function loadMoney(silent) { return loadAuxPage("ctx/money", "money", "money", renderMoney, silent); }
   function moneyPost(body, okMsg, done) { return resourcePost("ctx/money/edit", loadMoney, body, okMsg, done); }
 
@@ -5895,109 +6027,161 @@
     return String(v);
   }
 
+  function moneyDayInfo(dayStr, todayStr) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dayStr || "");
+    if (!m) { return { main: dayStr || "未标日期", sub: "" }; }
+    var y = +m[1], mo = +m[2], da = +m[3];
+    var wk = MONEY_WEEKS[new Date(y, mo - 1, da).getDay()] || "";
+    var tm = /^(\d{4})-(\d{2})-(\d{2})$/.exec(todayStr || "");
+    var sameYear = tm ? (+tm[1] === y) : true;
+    var md = (sameYear ? "" : y + "年") + mo + "月" + da + "日";
+    if (tm) {
+      var d0 = Date.UTC(+tm[1], +tm[2] - 1, +tm[3]) / 86400000;
+      var d1 = Date.UTC(y, mo - 1, da) / 86400000;
+      var diff = Math.round(d0 - d1);
+      if (diff === 0) { return { main: "今天", sub: md + " " + wk }; }
+      if (diff === 1) { return { main: "昨天", sub: md + " " + wk }; }
+      if (diff === 2) { return { main: "前天", sub: md + " " + wk }; }
+    }
+    return { main: md, sub: wk };
+  }
+
   function renderMoney() {
     var box = clear($("moneyBody"));
     var d = S.money;
     if (!d) {
       if (S.moneyErr) { box.appendChild(errState("读取失败", S.moneyErr, function () { loadMoney(); })); }
-      else { box.appendChild(skeleton("people", ["height:130px", "height:180px"])); }
+      else { box.appendChild(skeleton("people", ["height:180px", "height:240px"])); }
       return;
     }
     var accs = d.accounts || [];
     var debts = d.debts || [];
     var openDebts = debts.filter(function (x) { return x.status === "open"; });
-    $("moneySub").textContent = "日常可花 ¥" + fmtYuan(d.home_and_girls_cash) + " · 含主人共 ¥" + fmtYuan(d.total_cash) + " · " + (d.today || "").slice(5);
+    $("moneySub").textContent = "日常可花 ¥" + fmtYuan(d.home_and_girls_cash) + " · 总家底 ¥" + fmtYuan(d.total_cash)
+      + (openDebts.length ? " · " + openDebts.length + " 笔挂账" : "")
+      + (d.today ? " · " + d.today.slice(5) : "");
 
-    // 1. 家底与钱袋（单卡合一：顶部日常/储备 KPI + 比例条 + 4 条整行钱袋列表）
-    var colors = { master: "var(--c1)", tin_box: "var(--c2)", napcat2: "var(--c4)", napcat: "var(--c3)" };
-    var roles = { master: "船长管着", tin_box: "家用铁盒", napcat2: "随身携款", napcat: "仅可代花" };
-    var orderRank = { tin_box: 0, napcat2: 1, napcat: 2, master: 3 };
-    var orderedAccs = accs.slice().sort(function (a, b) {
-      return (orderRank[a.id] !== undefined ? orderRank[a.id] : 9) - (orderRank[b.id] !== undefined ? orderRank[b.id] : 9);
-    });
-    var total = Math.max(0.01, Number(d.total_cash) || 0);
-    var dailyCash = Number(d.home_and_girls_cash) || 0;
-    var masterAcc = accs.find(function (x) { return x.id === "master"; });
-    var masterCash = masterAcc ? Number(masterAcc.balance) || 0 : 0;
-    var dailyPct = Math.round(dailyCash / total * 100);
-    var masterPct = Math.max(0, 100 - dailyPct);
+    var stack = h("div", { class: "mstack" });
+    stack.appendChild(moneyOverviewCard(d, accs));
+    stack.appendChild(moneyDebtSection(d, accs));
+    stack.appendChild(moneyRecordSection(d, accs));
+    stack.appendChild(moneyGuideCard());
+    box.appendChild(stack);
+  }
 
-    var secAcc = h("div", { class: "lsec" }, lsecHead("家底与钱袋", "总家底 ¥" + fmtYuan(d.total_cash) + " 元 · 点任意钱袋筛选下方流水"));
-    var hero = h("div", { class: "mhero" });
+  function moneyOverviewCard(d, accs) {
+    var sec = h("div", { class: "msec" });
+    var clearFilt = S.moneyAccFilter !== "all" ? h("button", {
+      class: "tlink", type: "button", text: "显示全部钱袋",
+      onclick: function () { S.moneyAccFilter = "all"; renderMoney(); }
+    }) : null;
+    sec.appendChild(h("div", { class: "msec-h" },
+      h("div", { class: "msec-t" },
+        h("h3", { text: "家底与钱袋" }),
+        h("span", { class: "sub", text: "总家底 ¥" + fmtYuan(d.total_cash) + " 元 · 点任意钱袋筛选下方流水" })),
+      clearFilt));
 
-    var head = h("div", { class: "mhero-head" },
-      h("div", { class: "mhero-top" },
-        h("div", { class: "mhero-kpi" },
-          h("span", { class: "k", text: "日常随时可花（铁盒 + 口袋 · 占 " + dailyPct + "%）" }),
-          h("span", { class: "v" }, "¥" + fmtYuan(dailyCash), h("small", { text: "元" }))),
-        h("div", { class: "mhero-kpi r" },
-          h("span", { class: "k", text: "主人钱包储备（占 " + masterPct + "%）" }),
-          h("span", { class: "v sub" }, "¥" + fmtYuan(masterCash), h("small", { text: "元" })))));
+    // 将日常随时可花的钱袋排在左/前，主人钱包排在右/后，使上方左右数字与占比条左右长度严格一一对应
+    var dailyAccs = accs.filter(function (a) { return a.id !== "master"; });
+    var masterAccs = accs.filter(function (a) { return a.id === "master"; });
+    var orderedAccs = dailyAccs.concat(masterAccs);
+
+    var dailyVal = Math.max(0, Number(d.home_and_girls_cash) || 0);
+    var masterVal = masterAccs.reduce(function (s, a) { return s + Math.max(0, Number(a.balance) || 0); }, 0);
+    var rawTotal = Number(d.total_cash) || (dailyVal + masterVal);
+    var total = Math.max(0.01, rawTotal);
+    var dailyPct = rawTotal > 0 ? Math.round(dailyVal / total * 100) : 0;
+    var masterPct = rawTotal > 0 ? Math.max(0, 100 - dailyPct) : 0;
+
+    var card = h("div", { class: "mov" });
 
     var bar = h("div", { class: "comp" });
     orderedAccs.forEach(function (a) {
       var val = Math.max(0, Number(a.balance) || 0);
-      var pct = total > 0 ? Math.max(val > 0 ? 2 : 0, Math.round(val / total * 1000) / 10) : 0;
+      var pct = rawTotal > 0 ? Math.max(val > 0 ? 1.5 : 0, Math.round(val / total * 1000) / 10) : 0;
       if (val > 0) {
-        bar.appendChild(h("i", { style: "width:" + pct + "%;background:" + (colors[a.id] || "var(--c3)"), title: a.label + " ¥" + fmtYuan(val) + " (" + Math.round(val / total * 100) + "%)" }));
+        bar.appendChild(h("i", {
+          style: "width:" + pct + "%;background:" + (MONEY_COLORS[a.id] || "var(--c3)"),
+          title: (a.label || a.id) + " ¥" + fmtYuan(val) + " (" + Math.round(val / total * 100) + "%)"
+        }));
       }
     });
-    head.appendChild(bar);
-    hero.appendChild(head);
 
-    var mrows = h("div", { class: "mrows" });
+    card.appendChild(h("div", { class: "mov-top" },
+      h("div", { class: "mov-kpis" },
+        h("div", { class: "mov-kpi" },
+          h("span", { class: "k", text: "日常随时可花（铁盒 + 口袋 · 占 " + dailyPct + "%）" }),
+          h("span", { class: "v" }, "¥" + fmtYuan(dailyVal), h("small", { text: "元" }))),
+        masterAccs.length ? h("div", { class: "mov-kpi right" },
+          h("span", { class: "k", text: (masterAccs[0].label || "主人钱包") + "储备（占 " + masterPct + "%）" }),
+          h("span", { class: "v sub" }, "¥" + fmtYuan(masterVal), h("small", { text: "元" }))) : null),
+      bar));
+
+    var list = h("div", { class: "maccs" });
     orderedAccs.forEach(function (a) {
-      var active = S.moneyAccFilter === a.id;
+      var isOn = S.moneyAccFilter === a.id;
+      var balEditing = S.moneyBalEdit[a.id] !== undefined;
+      var metaEditing = !!S.moneyAccEdit[a.id];
       var val = Math.max(0, Number(a.balance) || 0);
-      var pct = Math.round(val / total * 100);
-      var row = h("div", {
-        class: "mwal" + (active ? " filt" : ""),
-        title: active ? "点击取消筛选" : "点击只看该账户流水",
-        onclick: function () { S.moneyAccFilter = active ? "all" : a.id; renderMoney(); }
-      });
+      var share = rawTotal > 0 ? Math.round(val / total * 100) + "%" : "0%";
+      var wrap = h("div", { class: "macc-wrap" + (isOn ? " on" : "") });
 
-      var descBits = [];
-      if (a.place) { descBits.push(a.place); }
-      if (a.note) { descBits.push(a.note); }
-
-      var btnBal = h("button", { class: "mwal-btn", type: "button" }, icon("edit"), "调余额");
+      var btnBal = h("button", { class: "btn quiet sm" + (balEditing ? " on" : ""), type: "button", title: "直接手调该钱袋实际余额" }, icon("edit"), "调余额");
       btnBal.addEventListener("click", function (ev) {
         ev.stopPropagation();
-        S.moneyBalEdit[a.id] = { val: String(a.balance || 0), note: "" };
+        delete S.moneyAccEdit[a.id];
+        if (balEditing) { delete S.moneyBalEdit[a.id]; }
+        else { S.moneyBalEdit[a.id] = { val: String(a.balance || 0), note: "" }; }
         renderMoney();
       });
-      var btnMeta = h("button", { class: "mwal-btn", type: "button", title: "修改位置与说明" }, icon("tool"));
+
+      var btnMeta = h("button", { class: "btn quiet sm" + (metaEditing ? " on" : ""), type: "button", title: "修改存放位置与用途说明" }, icon("tool"));
       btnMeta.addEventListener("click", function (ev) {
         ev.stopPropagation();
-        S.moneyAccEdit[a.id] = { label: a.label || "", place: a.place || "", note: a.note || "" };
+        delete S.moneyBalEdit[a.id];
+        if (metaEditing) { delete S.moneyAccEdit[a.id]; }
+        else { S.moneyAccEdit[a.id] = { label: a.label || "", place: a.place || "", note: a.note || "" }; }
         renderMoney();
       });
 
-      row.appendChild(h("div", { class: "mwal-main" },
-        h("div", { class: "mwal-left" },
-          h("div", { class: "mwal-t" },
-            h("span", { class: "dot", style: "width:8px;height:8px;border-radius:50%;flex:none;background:" + (colors[a.id] || "var(--c3)") }),
-            h("b", { text: a.label || a.id }),
-            h("span", { class: "role", text: roles[a.id] || a.id }),
-            active ? h("span", { class: "tag acc", text: "筛选中" }) : null),
-          h("div", { class: "mwal-desc", text: descBits.join(" · ") || "暂无说明" })),
-        h("div", { class: "mwal-right" },
-          h("div", { class: "mwal-bal" }, "¥" + (a.balance_text || fmtYuan(a.balance)), h("span", { class: "pct", text: pct + "%" })),
-          h("div", { class: "mwal-acts" }, btnBal, btnMeta))));
+      var infoEl = h("div", { class: "macc-info", title: (a.place ? "放在 " + a.place : "") + (a.note ? " · " + a.note : "") });
+      if (a.place) {
+        infoEl.appendChild(h("span", { class: "plc", text: a.place }));
+        if (a.note) { infoEl.appendChild(document.createTextNode(" · " + a.note)); }
+      } else {
+        infoEl.textContent = a.note || "未填位置与说明";
+      }
 
-      if (S.moneyBalEdit[a.id] !== undefined) {
+      var row = h("div", {
+        class: "macc",
+        title: isOn ? "再次点击恢复显示全部钱袋流水" : "点击只看「" + (a.label || a.id) + "」相关流水",
+        onclick: function () {
+          S.moneyAccFilter = isOn ? "all" : a.id;
+          renderMoney();
+        }
+      },
+        h("div", { class: "macc-h" },
+          h("div", { class: "macc-name" },
+            h("span", { class: "mswatch", style: "background:" + (MONEY_COLORS[a.id] || "var(--c3)") }),
+            h("b", { text: a.label || a.id }),
+            h("span", { class: "macc-role", text: isOn ? "正在筛选流水" : (MONEY_ROLES[a.id] || a.id) })),
+          h("div", { class: "macc-bal" },
+            h("b", { text: "¥" + (a.balance_text || fmtYuan(a.balance)) }),
+            h("span", { text: share }))),
+        h("div", { class: "macc-sub" },
+          infoEl,
+          h("div", { class: "macc-acts" }, btnBal, btnMeta)));
+      wrap.appendChild(row);
+
+      if (balEditing) {
         var bState = S.moneyBalEdit[a.id];
-        var bf = h("div", { class: "wform tform", style: "margin-top:10px", onclick: function (ev) { ev.stopPropagation(); } },
-          h("div", { class: "wform-h" }, h("span", { class: "t", text: "调成实际数" }), h("span", { class: "m", text: "自动记一笔校准流水" })));
-        var bInp = h("input", { class: "inp", type: "number", step: "0.01", min: "0" });
+        var bInp = h("input", { class: "inp num", type: "number", step: "0.01", min: "0", placeholder: "实际余额（元）" });
         bInp.value = bState.val; bInp.addEventListener("input", function () { bState.val = bInp.value; });
-        bf.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "新余额（元）" }), bInp));
-        var bNote = h("input", { class: "inp", type: "text", maxlength: "80", placeholder: "备注（可不填）" });
+        var bNote = h("input", { class: "inp txt", type: "text", maxlength: "80", placeholder: "校准说明（可不填，自动记一笔校准流水）" });
         bNote.value = bState.note; bNote.addEventListener("input", function () { bState.note = bNote.value; });
-        bf.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "说明" }), bNote));
-        var bCan = h("button", { class: "btn sm", type: "button", text: "取消" });
+        var bCan = h("button", { class: "btn", type: "button", text: "取消" });
         bCan.addEventListener("click", function () { delete S.moneyBalEdit[a.id]; renderMoney(); });
-        var bOk = h("button", { class: "btn pri sm", type: "button", text: "保存" });
+        var bOk = h("button", { class: "btn pri", type: "button", text: "保存" });
         bOk.addEventListener("click", function () {
           var v = Number(bState.val);
           if (!isFinite(v) || v < 0) { toast("填个大于等于 0 的数", { err: true }); return; }
@@ -6006,57 +6190,61 @@
             delete S.moneyBalEdit[a.id];
           }).then(function () { bOk.disabled = false; });
         });
-        bf.appendChild(h("div", { class: "wform-f" }, bCan, bOk));
-        row.appendChild(bf);
-      } else if (S.moneyAccEdit[a.id]) {
+        wrap.appendChild(h("div", { class: "mpane" },
+          h("div", { class: "mpane-h" }, h("b", { text: "校准实际余额" }), h("span", { text: "单位：元 · 保存后自动生成差额校准记录" })),
+          h("div", { class: "mpane-bar" }, bInp, bNote, h("div", { class: "mpane-acts" }, bCan, bOk))));
+      } else if (metaEditing) {
         var ae = S.moneyAccEdit[a.id];
-        var af = h("div", { class: "wform tform", style: "margin-top:10px", onclick: function (ev) { ev.stopPropagation(); } },
-          h("div", { class: "wform-h" }, h("span", { class: "t", text: "改位置与说明" })));
         var eLbl = h("input", { class: "inp", type: "text", maxlength: "20" });
         eLbl.value = ae.label; eLbl.addEventListener("input", function () { ae.label = eLbl.value; });
-        af.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "名字" }), eLbl));
         var ePlc = h("input", { class: "inp", type: "text", maxlength: "60" });
         ePlc.value = ae.place; ePlc.addEventListener("input", function () { ae.place = ePlc.value; });
-        af.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "在哪放着" }), ePlc));
         var eNot = h("input", { class: "inp", type: "text", maxlength: "160" });
         eNot.value = ae.note; eNot.addEventListener("input", function () { ae.note = eNot.value; });
-        af.appendChild(h("label", { class: "wfld wide" }, h("span", { class: "wfld-l", text: "用途说明" }), eNot));
-        var aCan = h("button", { class: "btn sm", type: "button", text: "取消" });
+        var aCan = h("button", { class: "btn", type: "button", text: "取消" });
         aCan.addEventListener("click", function () { delete S.moneyAccEdit[a.id]; renderMoney(); });
-        var aSave = h("button", { class: "btn pri sm", type: "button", text: "保存" });
+        var aSave = h("button", { class: "btn pri", type: "button", text: "保存" });
         aSave.addEventListener("click", function () {
           aSave.disabled = true;
           moneyPost({ action: "edit_account", account: a.id, label: ae.label.trim(), place: ae.place.trim(), note: ae.note.trim() }, "说明已保存", function () {
             delete S.moneyAccEdit[a.id];
           }).then(function () { aSave.disabled = false; });
         });
-        af.appendChild(h("div", { class: "wform-f" }, aCan, aSave));
-        row.appendChild(af);
+        wrap.appendChild(h("div", { class: "mpane" },
+          h("div", { class: "mpane-h" }, h("b", { text: "修改钱袋位置与说明" })),
+          h("div", { class: "mpane-grid" },
+            h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "名字" }), eLbl),
+            h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "在哪放着" }), ePlc),
+            h("label", { class: "wfld wide" }, h("span", { class: "wfld-l", text: "用途说明" }), eNot)),
+          h("div", { class: "mpane-foot" }, aCan, aSave)));
       }
 
-      mrows.appendChild(row);
+      list.appendChild(wrap);
     });
-    hero.appendChild(mrows);
 
-    hero.appendChild(h("details", { class: "mguide" },
-      h("summary", null, icon("chev"), "小镇物价与用钱规矩参考"),
-      h("div", { class: "mguide-body" },
-        h("div", { text: "日常吃食：海鱼 6~15 · 蔬菜豆腐 3~8 · 五斤米面 15~25 · 食用油 20~35 · 小吃 5~15" }),
-        h("div", { text: "燃料与大件：干柴 10~20 · 闷炭 15~30 · 煤油 18~30 · 澡堂 6~10 · 棉衣 35~60 · 棉被 20~40" }),
-        h("div", { text: "赚钱门路：零工修物 10~35 · 卖废铁铜 15~120 · 打捞委单 30~150 · 福记寄卖 200~800" }),
-        h("div", { text: "携带与权责：出门摸不到铁盒（须先取现），大头 master 须主人发话，50 元以上进账习惯上交" }))));
-    secAcc.appendChild(hero);
-    box.appendChild(secAcc);
-
-    // 3. 赊账与待收（放到它自己的区块里，带「+ 记赊欠 / 待收」按钮）
-    box.appendChild(moneyDebtSection(d, accs));
-
-    // 4. 收支明细账单
-    box.appendChild(moneyRecordSection(d, accs));
+    card.appendChild(list);
+    sec.appendChild(card);
+    return sec;
   }
 
-  function moneyAccSelect(accs, val, onChange) {
-    var sel = h("select", { class: "inp" });
+  function moneyGuideCard() {
+    var det = h("details", { class: "mguide-card", open: S.moneyGuideOpen },
+      h("summary", null, icon("chev"), "小镇物价与用钱规矩参考"),
+      h("dl", { class: "mguide-dl" },
+        h("dt", { text: "日常吃食" }),
+        h("dd", { text: "海鱼 6~15 · 蔬菜豆腐 3~8 · 五斤米面 15~25 · 食用油 20~35 · 小吃 5~15" }),
+        h("dt", { text: "燃料大件" }),
+        h("dd", { text: "干柴 10~20 · 闷炭 15~30 · 煤油 18~30 · 澡堂 6~10 · 棉衣 35~60 · 棉被 20~40" }),
+        h("dt", { text: "赚钱门路" }),
+        h("dd", { text: "零工修物 10~35 · 卖废铁铜 15~120 · 打捞委单 30~150 · 福记寄卖 200~800" }),
+        h("dt", { text: "携带权责" }),
+        h("dd", { text: "出门摸不到铁盒（须先取现），大头钱包须主人发话，50 元以上进账习惯上交" })));
+    det.addEventListener("toggle", function () { S.moneyGuideOpen = det.open; });
+    return det;
+  }
+
+  function moneyAccSelect(accs, val, onChange, cls) {
+    var sel = h("select", { class: "inp" + (cls ? " " + cls : "") });
     accs.forEach(function (a) { sel.appendChild(h("option", { value: a.id, text: a.label + " (¥" + fmtYuan(a.balance) + ")", selected: a.id === val })); });
     sel.addEventListener("change", function () { onChange(sel.value); });
     return sel;
@@ -6064,87 +6252,164 @@
 
   function moneyRecordForm(accs) {
     var f = S.moneyRecForm;
-    var box = h("div", { class: "wform tform" },
-      h("div", { class: "wform-h" }, h("span", { class: "t", text: "记一笔进出或互转" }), h("span", { class: "m", text: "直接写进钱匣账本并更新余额" })));
-    var kSel = h("select", { class: "inp" });
-    [["transfer", "存取 / 拨款互转"], ["earn", "进账收入 (+)"], ["spend", "花钱支出 (-)"], ["adjust", "差额调账"]].forEach(function (pair) {
-      kSel.appendChild(h("option", { value: pair[0], text: pair[1], selected: pair[0] === f.kind }));
-    });
-    kSel.addEventListener("change", function () { f.kind = kSel.value; renderMoney(); });
-    box.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "类型" }), kSel));
+    var box = h("div", { class: "mrec-panel" },
+      h("div", { class: "mpane-h" }, h("b", { text: "记一笔进出或互转" }), h("span", { text: "直接写进账本并同步钱袋余额" })));
 
-    var amtInp = h("input", { class: "inp", type: "number", step: "0.01", placeholder: "金额（元）" });
+    var kindSeg = h("div", { class: "seg" });
+    [["transfer", "存取互转"], ["spend", "花钱支出"], ["earn", "进账收入"], ["adjust", "差额调账"]].forEach(function (pair) {
+      kindSeg.appendChild(h("button", {
+        type: "button", class: f.kind === pair[0] ? "on" : "", text: pair[1],
+        onclick: function () { f.kind = pair[0]; renderMoney(); }
+      }));
+    });
+    box.appendChild(h("div", { class: "mrec-kinds" }, kindSeg));
+
+    var grid = h("div", { class: "mpane-grid" });
+    var amtInp = h("input", { class: "inp", type: "number", step: "0.01", placeholder: f.kind === "adjust" ? "可填正负数（元）" : "金额（元）" });
     amtInp.value = f.amount; amtInp.addEventListener("input", function () { f.amount = amtInp.value; });
-    box.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "金额（元）" }), amtInp));
+
+    var atInp = h("input", { class: "inp", type: "text", maxlength: "20", placeholder: "留空取当前时间" });
+    atInp.value = f.at; atInp.addEventListener("input", function () { f.at = atInp.value; });
 
     if (f.kind === "transfer") {
-      box.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "从哪拿出" }),
+      grid.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "从哪拿出" }),
         moneyAccSelect(accs, f.from_account, function (v) { f.from_account = v; })));
-      box.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "放到哪去" }),
+      grid.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "放到哪去" }),
         moneyAccSelect(accs, f.to_account, function (v) { f.to_account = v; })));
+      grid.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "金额（元）" }), amtInp));
+      grid.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "时间", title: "格式 YYYY-MM-DD HH:MM，留空默认当前时间" }, h("span", { class: "n", text: "选填" })), atInp));
     } else {
-      box.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "哪个账户" }),
+      grid.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "哪个钱袋" }),
         moneyAccSelect(accs, f.account, function (v) { f.account = v; })));
+      grid.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "金额（元）" }), amtInp));
       var cpInp = h("input", { class: "inp", type: "text", maxlength: "40", placeholder: "摊铺或对方（可选）" });
       cpInp.value = f.counterparty; cpInp.addEventListener("input", function () { f.counterparty = cpInp.value; });
-      box.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "对方" }), cpInp));
+      grid.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "对方" }), cpInp));
+      grid.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "时间" }, h("span", { class: "n", text: "选填" })), atInp));
     }
 
     var wInp = h("input", { class: "inp", type: "text", maxlength: "120", placeholder: "例如：主人往铁盒补两百块家用 / 集市买两条海鱼" });
     wInp.value = f.what; wInp.addEventListener("input", function () { f.what = wInp.value; });
-    box.appendChild(h("label", { class: "wfld wide" }, h("span", { class: "wfld-l", text: "事由" }), wInp));
+    grid.appendChild(h("label", { class: "wfld wide" }, h("span", { class: "wfld-l", text: "事由说明" }), wInp));
+    box.appendChild(grid);
 
     var stop = function () { S.moneyRecForm = null; };
-    var can = h("button", { class: "btn sm", type: "button", text: "取消" });
+    var can = h("button", { class: "btn", type: "button", text: "取消" });
     can.addEventListener("click", function () { stop(); renderMoney(); });
-    var save = h("button", { class: "btn pri sm", type: "button", text: "记入账本" });
+    var save = h("button", { class: "btn pri", type: "button", text: "记入账本" });
     save.addEventListener("click", function () {
       var amt = Number(f.amount);
-      if (!isFinite(amt) || (f.kind !== "adjust" && amt <= 0)) { toast("填写合法金额", { err: true }); return; }
+      if (!isFinite(amt) || (f.kind !== "adjust" && amt <= 0) || (f.kind === "adjust" && amt === 0)) { toast("填写合法金额", { err: true }); return; }
+      if (f.kind === "transfer" && f.from_account === f.to_account) { toast("转出和转入不能是同一个钱袋", { err: true }); return; }
       save.disabled = true;
       moneyPost({
         action: "add_record", kind: f.kind, account: f.account, from_account: f.from_account, to_account: f.to_account,
         amount: amt, counterparty: f.counterparty.trim(), what: f.what.trim(), at: f.at.trim()
       }, "已记账", stop).then(function () { save.disabled = false; });
     });
-    box.appendChild(h("div", { class: "wform-f" }, can, save));
+    box.appendChild(h("div", { class: "mpane-foot" }, can, save));
     return box;
   }
 
+  function moneyDebtRow(x, accs, container) {
+    var open = x.status === "open";
+    var isPay = x.direction === "payable";
+    var dirTxt = isPay ? "我方赊欠" : "待收对方";
+    var rem = x.remaining !== undefined ? x.remaining : x.amount;
+    var hasAmt = Number(rem || 0) > 0;
+    var amtTxt = hasAmt ? ((isPay ? "-¥" : "+¥") + fmtYuan(rem)) : "待估";
+    var amtCls = !open ? "neu" : (!hasAmt ? "warn" : (isPay ? "neg" : "pos"));
+    var settling = open && S.moneySettle && S.moneySettle.id === x.id;
+
+    var item = h("div", { class: "md-item" });
+    var row = h("div", { class: "mdrow" + (open ? "" : " off") });
+    var subItems = [h("span", { text: "#" + x.id })];
+    if (x.about) { subItems.push(h("span", { text: x.about })); }
+    if (!open) { subItems.push(h("span", { text: "已结清" })); }
+
+    row.appendChild(h("div", { class: "md-main" },
+      h("div", { class: "md-top" },
+        h("span", { class: "mswatch", style: "background:" + (!open ? "var(--t4)" : (isPay ? "var(--danger)" : "var(--ok)")) }),
+        h("span", { class: "md-cp", text: x.counterparty || "未填对方" }),
+        h("span", { class: "md-dir", text: dirTxt })),
+      h("div", { class: "md-sub" }, subItems)));
+
+    var right = h("div", { class: "md-r" },
+      h("span", { class: "md-amt " + amtCls, text: amtTxt }));
+    if (open) {
+      var stBtn = h("button", { class: "btn sm" + (settling ? " armed" : ""), type: "button" }, isPay ? "还款" : "收款");
+      stBtn.addEventListener("click", function () {
+        if (settling) { S.moneySettle = null; }
+        else { S.moneySettle = { id: x.id, account: isPay ? "tin_box" : "master", amount: hasAmt ? String(rem) : "", what: "" }; }
+        renderMoney();
+      });
+      right.appendChild(stBtn);
+    }
+    var delBtn = h("button", { class: "btn quiet sm danger md-del", type: "button", title: "删除该笔挂账" }, icon("trash"));
+    armed(delBtn, "确认删除", function () { moneyPost({ action: "delete_debt", id: x.id }, "已删除"); });
+    right.appendChild(delBtn);
+    row.appendChild(right);
+    item.appendChild(row);
+
+    if (settling) {
+      var sf = S.moneySettle;
+      var accSel = moneyAccSelect(accs, sf.account, function (v) { sf.account = v; }, "sel");
+      var sa = h("input", { class: "inp txt", type: "number", step: "0.01", placeholder: "结算金额（元）" });
+      sa.value = sf.amount; sa.addEventListener("input", function () { sf.amount = sa.value; });
+      var sc = h("button", { class: "btn", type: "button", text: "取消" });
+      sc.addEventListener("click", function () { S.moneySettle = null; renderMoney(); });
+      var sok = h("button", { class: "btn pri", type: "button", text: "确认结账" });
+      sok.addEventListener("click", function () {
+        sok.disabled = true;
+        moneyPost({ action: "settle_debt", id: x.id, account: sf.account, amount: sf.amount === "" ? 0 : Number(sf.amount) }, "已结账", function () {
+          S.moneySettle = null;
+        }).then(function () { sok.disabled = false; });
+      });
+      item.appendChild(h("div", { class: "mpane" },
+        h("div", { class: "mpane-h" },
+          h("b", { text: (isPay ? "还清赊账：" : "收回待收：") + (x.counterparty || "#" + x.id) }),
+          h("span", { text: isPay ? "选择付款钱袋与实际金额" : "选择收款钱袋与实际金额" })),
+        h("div", { class: "mpane-bar" }, accSel, sa, h("div", { class: "mpane-acts" }, sc, sok))));
+    }
+    container.appendChild(item);
+  }
+
   function moneyDebtSection(d, accs) {
-    var addDebtBtn = h("button", { class: "btn sm", type: "button" }, icon("plus"), "记赊欠 / 待收");
-    addDebtBtn.addEventListener("click", function () {
+    var debts = d.debts || [];
+    var openDebts = debts.filter(function (x) { return x.status === "open"; });
+    var pastDebts = debts.filter(function (x) { return x.status !== "open"; });
+
+    var sec = h("div", { class: "msec" });
+    var addBtn = h("button", { class: "btn sm", type: "button" }, S.moneyDebtForm ? null : icon("plus"), S.moneyDebtForm ? "收起" : "记挂账");
+    addBtn.addEventListener("click", function () {
       S.moneyDebtForm = S.moneyDebtForm ? null : { direction: "payable", counterparty: "", amount: "", about: "" };
       renderMoney();
     });
-    var sec = h("div", { class: "lsec" }, lsecHead("赊账与待收", "欠熟摊的赊账（payable）会优先还清；寄卖待收（receivable）随补给船或交货结算", addDebtBtn));
-    var debts = d.debts || [];
-    if (!debts.length && !S.moneyDebtForm) {
-      sec.appendChild(h("div", { class: "muted", style: "font-size:13px", text: "目前没有赊欠或待收挂账。" }));
-      return sec;
-    }
+
+    sec.appendChild(h("div", { class: "msec-h" },
+      h("div", { class: "msec-t" },
+        h("h3", { text: "赊账与待收" }),
+        h("span", { class: "sub" + (openDebts.length ? " warn" : ""), text: openDebts.length ? openDebts.length + " 笔未结" : "无未结挂账" })),
+      addBtn));
+
+    var card = h("div", { class: "mdebts" });
+
     if (S.moneyDebtForm) {
       var df = S.moneyDebtForm;
-      var dbox = h("div", { class: "wform tform" },
-        h("div", { class: "wform-h" }, h("span", { class: "t", text: "新记挂账 / 待收" })));
       var dSel = h("select", { class: "inp" });
       [["payable", "我方赊欠别人"], ["receivable", "待收对方款（如寄卖）"]].forEach(function (pair) {
         dSel.appendChild(h("option", { value: pair[0], text: pair[1], selected: pair[0] === df.direction }));
       });
       dSel.addEventListener("change", function () { df.direction = dSel.value; });
-      dbox.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "类型" }), dSel));
       var dcp = h("input", { class: "inp", type: "text", maxlength: "40", placeholder: "对方（杂货铺 / 福记旧物行）" });
       dcp.value = df.counterparty; dcp.addEventListener("input", function () { df.counterparty = dcp.value; });
-      dbox.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "对方" }), dcp));
       var damt = h("input", { class: "inp", type: "number", step: "0.01", placeholder: "0 表示待估" });
       damt.value = df.amount; damt.addEventListener("input", function () { df.amount = damt.value; });
-      dbox.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "金额（元）" }), damt));
       var dab = h("input", { class: "inp", type: "text", maxlength: "120", placeholder: "说明（如：赊了一瓶酱油）" });
       dab.value = df.about; dab.addEventListener("input", function () { df.about = dab.value; });
-      dbox.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "说明" }), dab));
-      var dcan = h("button", { class: "btn sm", type: "button", text: "取消" });
+      var dcan = h("button", { class: "btn", type: "button", text: "取消" });
       dcan.addEventListener("click", function () { S.moneyDebtForm = null; renderMoney(); });
-      var dsav = h("button", { class: "btn pri sm", type: "button", text: "添加" });
+      var dsav = h("button", { class: "btn pri", type: "button", text: "添加" });
       dsav.addEventListener("click", function () {
         if (!df.counterparty.trim()) { toast("填写对方名称", { err: true }); return; }
         dsav.disabled = true;
@@ -6152,140 +6417,145 @@
           S.moneyDebtForm = null;
         }).then(function () { dsav.disabled = false; });
       });
-      dbox.appendChild(h("div", { class: "wform-f" }, dcan, dsav));
-      sec.appendChild(dbox);
+      card.appendChild(h("div", { class: "mpane" },
+        h("div", { class: "mpane-h" }, h("b", { text: "新记挂账 / 待收" })),
+        h("div", { class: "mpane-grid" },
+          h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "类型" }), dSel),
+          h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "对方" }), dcp),
+          h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "金额（元）" }), damt),
+          h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "说明" }), dab)),
+        h("div", { class: "mpane-foot" }, dcan, dsav)));
     }
-    if (!debts.length) { return sec; }
-    var card = h("div", { class: "pc" });
-    var rows = h("div", { class: "lrows" });
-      debts.forEach(function (x) {
-        var open = x.status === "open";
-        var dirTxt = x.direction === "payable" ? "我方赊欠" : "待收对方";
-        var tagCls = !open ? "tag" : (x.direction === "payable" ? "tag bad" : "tag up");
-        var rem = x.remaining !== undefined ? x.remaining : x.amount;
-        var row = h("div", { class: "lrow" + (open ? "" : " off") });
-        row.appendChild(h("div", { class: "lt" },
-          h("div", { style: "display:flex;align-items:center;gap:8px;flex-wrap:wrap" },
-            h("span", { class: tagCls, text: dirTxt }),
-            h("span", { class: "what", style: "font-weight:600", text: x.counterparty || "" }),
-            h("span", { class: "mrow-amt " + (open ? (x.direction === "payable" ? "neg" : "pos") : "neu"), text: Number(rem || 0) > 0 ? "¥" + fmtYuan(rem) : "待估" })),
-          h("div", { class: "lm" },
-            h("span", { text: "#" + x.id }),
-            x.about ? h("span", { text: x.about }) : null,
-            h("span", { text: open ? "未结清" : "已结清" }))));
-        var acts = h("div", { class: "la" });
-        if (open) {
-          var stBtn = h("button", { class: "btn sm", type: "button" }, icon("check"), x.direction === "payable" ? "还款" : "收款");
-          stBtn.addEventListener("click", function () {
-            S.moneySettle = { id: x.id, account: x.direction === "payable" ? "tin_box" : "master", amount: String(rem || ""), what: "" };
-            renderMoney();
-          });
-          acts.appendChild(stBtn);
-        }
-        var delBtn = h("button", { class: "btn quiet sm danger", type: "button", title: "删除" }, icon("trash"));
-        armed(delBtn, "确认删除", function () { moneyPost({ action: "delete_debt", id: x.id }, "已删除"); });
-        acts.appendChild(delBtn);
-        row.appendChild(acts);
-        rows.appendChild(row);
-        if (S.moneySettle && S.moneySettle.id === x.id) {
-          var sf = S.moneySettle;
-          var sbox = h("div", { class: "wform tform" }, h("div", { class: "wform-h" }, h("span", { class: "t", text: "结清 #" + x.id })));
-          sbox.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: x.direction === "payable" ? "从哪个账户付" : "收到哪个账户" }),
-            moneyAccSelect(accs, sf.account, function (v) { sf.account = v; })));
-          var sa = h("input", { class: "inp", type: "number", step: "0.01", placeholder: "结算金额（元）" });
-          sa.value = sf.amount; sa.addEventListener("input", function () { sf.amount = sa.value; });
-          sbox.appendChild(h("label", { class: "wfld" }, h("span", { class: "wfld-l", text: "金额" }), sa));
-          var sc = h("button", { class: "btn sm", type: "button", text: "取消" });
-          sc.addEventListener("click", function () { S.moneySettle = null; renderMoney(); });
-          var sok = h("button", { class: "btn pri sm", type: "button", text: "确认结账" });
-          sok.addEventListener("click", function () {
-            sok.disabled = true;
-            moneyPost({ action: "settle_debt", id: x.id, account: sf.account, amount: sf.amount === "" ? 0 : Number(sf.amount) }, "已结账", function () {
-              S.moneySettle = null;
-            }).then(function () { sok.disabled = false; });
-          });
-          sbox.appendChild(h("div", { class: "wform-f" }, sc, sok));
-          rows.appendChild(sbox);
-        }
-      });
-      card.appendChild(rows);
+
+    if (openDebts.length) {
+      var openRows = h("div", { class: "md-list" });
+      openDebts.forEach(function (x) { moneyDebtRow(x, accs, openRows); });
+      card.appendChild(openRows);
+    } else if (!S.moneyDebtForm) {
+      card.appendChild(h("div", { class: "mempty", text: "眼下没有未结清的赊账或待收款。" }));
+    }
+
+    if (pastDebts.length) {
+      var pastWrap = h("div", { class: "md-past" });
+      var foldBtn = h("button", {
+        class: "addlink fold" + (S.moneyShowSettled ? " open" : ""),
+        type: "button",
+        onclick: function () { S.moneyShowSettled = !S.moneyShowSettled; renderMoney(); }
+      }, icon("chev"), "已结清 " + pastDebts.length + " 笔");
+      pastWrap.appendChild(foldBtn);
+      if (S.moneyShowSettled) {
+        var pastRows = h("div", { class: "md-list md-past-list" });
+        pastDebts.forEach(function (x) { moneyDebtRow(x, accs, pastRows); });
+        pastWrap.appendChild(pastRows);
+      }
+      card.appendChild(pastWrap);
+    }
+
     sec.appendChild(card);
     return sec;
   }
 
-  function moneyRecordSection(d, accs) {
+  function drawMoneyRecords(d, listHost, sumHost) {
+    clear(listHost);
+    clear(sumHost);
     var all = d.records || [];
-    var q = (S.moneyQ || "").trim().toLowerCase();
+    var q = (S.moneyQ || "").trim();
+    var ql = q.toLowerCase();
+    var isFiltered = S.moneyAccFilter !== "all" || S.moneyKindFilter !== "all" || !!ql;
+
     var recs = all.filter(function (r) {
       if (S.moneyAccFilter !== "all") {
         if (r.account !== S.moneyAccFilter && r.from_account !== S.moneyAccFilter && r.to_account !== S.moneyAccFilter) { return false; }
       }
       if (S.moneyKindFilter !== "all" && r.kind !== S.moneyKindFilter) { return false; }
-      if (q) {
+      if (ql) {
         var hay = [r.what, r.counterparty, r.account_label, r.from_label, r.to_label, r.who_label, r.at].join(" ").toLowerCase();
-        if (hay.indexOf(q) < 0) { return false; }
+        if (hay.indexOf(ql) < 0) { return false; }
       }
       return true;
     });
 
-    var addRecBtn = h("button", { class: "btn pri sm", type: "button" }, icon("plus"), "记一笔收支 / 转钱");
-    addRecBtn.addEventListener("click", function () {
-      S.moneyRecForm = S.moneyRecForm ? null : { kind: "transfer", from_account: "master", to_account: "tin_box", account: "tin_box", amount: "", counterparty: "", what: "", at: "" };
-      renderMoney();
-    });
-    var sec = h("div", { class: "lsec" }, lsecHead("收支明细", "显示每笔变动与变后结余；删流水默认回退对应账户余额", addRecBtn));
-    if (S.moneyRecForm) {
-      sec.appendChild(moneyRecordForm(accs));
+    if (isFiltered) {
+      sumHost.hidden = false;
+      var earnSum = 0, spendSum = 0, transCnt = 0;
+      recs.forEach(function (r) {
+        var amt = Math.abs(Number(r.amount) || 0);
+        if (r.kind === "earn") { earnSum += amt; }
+        else if (r.kind === "spend") { spendSum += amt; }
+        else if (r.kind === "transfer") { transCnt += 1; }
+      });
+      var nums = h("div", { class: "nums" }, h("span", { text: "筛选出 " + recs.length + " 笔" }));
+      if (earnSum > 0) { nums.appendChild(h("span", { class: "pos", text: "进账 +¥" + fmtYuan(earnSum) })); }
+      if (spendSum > 0) { nums.appendChild(h("span", { class: "neg", text: "花销 -¥" + fmtYuan(spendSum) })); }
+      if (transCnt > 0) { nums.appendChild(h("span", { text: "互转 " + transCnt + " 笔" })); }
+      var rst = h("button", {
+        class: "tlink", type: "button", text: "清除筛选",
+        onclick: function () { S.moneyAccFilter = "all"; S.moneyKindFilter = "all"; S.moneyQ = ""; renderMoney(); }
+      });
+      sumHost.appendChild(nums);
+      sumHost.appendChild(rst);
+    } else {
+      sumHost.hidden = true;
     }
 
-    // 筛选工具栏
-    var filt = h("div", { class: "mfilt" });
-    var accSeg = h("div", { class: "seg" });
-    [["all", "全部账户"]].concat(accs.map(function (a) { return [a.id, a.label]; })).forEach(function (pair) {
-      accSeg.appendChild(h("button", {
-        type: "button", class: S.moneyAccFilter === pair[0] ? "on" : "",
-        text: pair[1],
-        onclick: function () { S.moneyAccFilter = pair[0]; renderMoney(); }
-      }));
-    });
-    var kindSeg = h("div", { class: "seg" });
-    [["all", "全部"], ["earn", "进账"], ["spend", "花销"], ["transfer", "互转"]].forEach(function (pair) {
-      kindSeg.appendChild(h("button", {
-        type: "button", class: S.moneyKindFilter === pair[0] ? "on" : "",
-        text: pair[1],
-        onclick: function () { S.moneyKindFilter = pair[0]; renderMoney(); }
-      }));
-    });
-    var sInp = h("input", { class: "inp search", type: "search", placeholder: "搜事由、摊位或人…" });
-    sInp.value = S.moneyQ || "";
-    sInp.addEventListener("input", function () { S.moneyQ = sInp.value; renderMoney(); });
-    filt.appendChild(accSeg);
-    filt.appendChild(kindSeg);
-    filt.appendChild(sInp);
-    sec.appendChild(filt);
-
-    var card = h("div", { class: "pc" });
     if (!recs.length) {
-      card.appendChild(h("div", { class: "muted", style: "font-size:13px", text: all.length ? "当前筛选条件下没有流水。" : "还没有流水记录。" }));
-    } else {
-      var showList = S.moneyShowAll ? recs : recs.slice(0, 60);
-      var rows = h("div", { class: "lrows" });
-      showList.forEach(function (r) {
+      listHost.appendChild(h("div", { class: "pc" },
+        h("div", { class: "muted", style: "font-size:13px", text: all.length ? "当前筛选条件下没有匹配的流水记录。" : "还没有收支流水记录。" })));
+      return;
+    }
+
+    var showList = S.moneyShowAll ? recs : recs.slice(0, 60);
+    var dayOrder = [], dayMap = {};
+    showList.forEach(function (r) {
+      var dayKey = (r.at || "").slice(0, 10) || "未标日期";
+      if (!dayMap[dayKey]) {
+        dayMap[dayKey] = { key: dayKey, list: [], earn: 0, spend: 0, trans: 0 };
+        dayOrder.push(dayKey);
+      }
+      var g = dayMap[dayKey];
+      g.list.push(r);
+      var amt = Math.abs(Number(r.amount) || 0);
+      if (r.kind === "earn") { g.earn += amt; }
+      else if (r.kind === "spend") { g.spend += amt; }
+      else if (r.kind === "transfer") { g.trans += 1; }
+    });
+
+    var daysWrap = h("div", { class: "mdays" });
+    dayOrder.forEach(function (dk) {
+      var g = dayMap[dk];
+      var info = moneyDayInfo(dk, d.today);
+      var sumParts = [];
+      if (g.earn > 0) { sumParts.push(h("span", { class: "pos", text: "进 +¥" + fmtYuan(g.earn) })); }
+      if (g.spend > 0) { sumParts.push(h("span", { class: "neg", text: "支 -¥" + fmtYuan(g.spend) })); }
+      if (!sumParts.length && g.trans > 0) { sumParts.push(h("span", { text: "互转 " + g.trans + " 笔" })); }
+      if (!sumParts.length) { sumParts.push(h("span", { text: g.list.length + " 笔" })); }
+
+      var dayCard = h("div", { class: "mday-card" });
+      g.list.forEach(function (r) {
         var k = r.kind;
-        var sign = k === "earn" ? "+" : (k === "spend" ? "-" : (k === "adjust" && Number(r.amount) > 0 ? "+" : ""));
-        var amtCls = (k === "earn" || (k === "adjust" && Number(r.amount) > 0)) ? "pos"
-          : ((k === "spend" || (k === "adjust" && Number(r.amount) < 0)) ? "neg" : (k === "transfer" ? "mid" : "neu"));
-        var tagCls = k === "earn" ? "tag up" : (k === "spend" ? "tag bad" : (k === "transfer" ? "tag acc" : (k === "adjust" ? "tag warn" : "tag")));
-        var whereAcc = k === "transfer" ? ((r.from_label || r.from_account) + " → " + (r.to_label || r.to_account)) : (r.account_label || r.account || "");
+        var numAmt = Number(r.amount) || 0;
+        var sign = k === "earn" ? "+" : (k === "spend" ? "-" : (k === "adjust" && numAmt > 0 ? "+" : (k === "adjust" && numAmt < 0 ? "-" : "")));
+        var dispAmt = k === "adjust" ? fmtYuan(Math.abs(numAmt)) : (r.amount_text || fmtYuan(Math.abs(numAmt)));
+        var amtCls = (k === "earn" || (k === "adjust" && numAmt > 0)) ? "pos"
+          : ((k === "spend" || (k === "adjust" && numAmt < 0)) ? "neg" : (k === "transfer" ? "mid" : "neu"));
+        var kindNote = k === "transfer" ? "互转" : (k === "adjust" ? (r.kind_label || "校准") : "");
+
+        var isTrans = k === "transfer";
+        var whereAcc = isTrans ? ((r.from_label || r.from_account) + " → " + (r.to_label || r.to_account)) : (r.account_label || r.account || "");
         var srcName = r.source === "web" ? "网页" : (r.source === "recorder" ? "对话" : (r.source === "world" || r.source === "step" ? "世界线" : (r.source === "init" ? "初始" : (r.source || ""))));
 
+        var whatText = r.what || r.counterparty || whereAcc || (r.kind_label || k);
         var metas = [];
         var addMeta = function (el) {
           if (metas.length) { metas.push(h("span", { class: "sep", text: "·" })); }
           metas.push(el);
         };
-        if (whereAcc) { addMeta(h("span", { text: whereAcc })); }
-        if (r.counterparty) { addMeta(h("span", { text: r.counterparty })); }
+        if (whereAcc && whereAcc !== whatText) {
+          addMeta(h("span", { class: isTrans ? "flow" : "", text: whereAcc }));
+        }
+        if (r.counterparty && r.counterparty !== whatText) {
+          addMeta(h("span", { text: r.counterparty }));
+        }
         if (r.who_label) { addMeta(h("span", { text: "经手 " + r.who_label })); }
         if (srcName) { addMeta(h("span", { text: srcName })); }
         if (r.wl) {
@@ -6295,38 +6565,125 @@
           }));
         }
 
-        var row = h("div", { class: "mrow" });
-        row.appendChild(h("div", { class: "mrow-at", text: (r.at || "").slice(5, 16) }));
-        row.appendChild(h("div", { class: "mrow-kind" }, h("span", { class: tagCls, text: r.kind_label || k })));
-        row.appendChild(h("div", { class: "mrow-body" },
-          h("div", { class: "mrow-what", text: r.what || r.counterparty || whereAcc }),
-          metas.length ? h("div", { class: "mrow-meta" }, metas) : null));
-        var balText = "";
-        if (k === "transfer") {
-          var fb = r.from_after_text !== undefined ? "¥" + r.from_after_text : "";
-          var tb = r.to_after_text !== undefined ? "¥" + r.to_after_text : "";
-          if (fb && tb) { balText = "余 " + fb + " → " + tb; }
-        } else if (r.after_balance_text !== undefined) {
-          balText = "余 ¥" + r.after_balance_text;
-        }
-        row.appendChild(h("div", { class: "mrow-amt " + amtCls },
-          h("div", { text: sign + "¥" + (r.amount_text || fmtYuan(r.amount)) }),
-          balText ? h("div", { class: "mrow-bal", text: balText }) : null));
-        var del = h("button", { class: "btn quiet sm danger mrow-acts", type: "button", title: r.wl_key && r.source === "world" ? "作废该世界线流水" : "删除并回退余额" }, icon("trash"));
+        var whatEl = h("div", { class: "mrow-what" });
+        setHL(whatEl, whatText, q);
+
+        var timeTxt = (r.at || "").length >= 16 ? r.at.slice(11, 16) : ((r.at || "").slice(5) || "--:--");
+        var amtEl = h("div", { class: "mrow-amt " + amtCls },
+          kindNote ? h("i", { text: kindNote }) : null,
+          sign + "¥" + dispAmt);
+
+        var del = h("button", {
+          class: "btn quiet sm danger mrow-acts", type: "button",
+          title: r.wl_key && r.source === "world" ? "作废该世界线流水" : "删除并回退对应余额"
+        }, icon("trash"));
         armed(del, r.wl_key && r.source === "world" ? "作废" : "回退删除", function () {
           moneyPost({ action: "delete_record", id: r.id, revert: true }, "已处理");
         });
-        row.appendChild(del);
-        rows.appendChild(row);
+
+        dayCard.appendChild(h("div", { class: "mrow" },
+          h("div", { class: "mrow-at", text: timeTxt }),
+          h("div", { class: "mrow-body" }, whatEl, metas.length ? h("div", { class: "mrow-meta" }, metas) : null),
+          amtEl,
+          del));
       });
-      card.appendChild(rows);
-      if (recs.length > 60 && !S.moneyShowAll) {
-        var more = h("button", { class: "addlink", style: "margin-top:12px", type: "button", text: "展开其余 " + (recs.length - 60) + " 笔流水" });
-        more.addEventListener("click", function () { S.moneyShowAll = true; renderMoney(); });
-        card.appendChild(more);
-      }
+
+      daysWrap.appendChild(h("div", { class: "mday" },
+        h("div", { class: "mday-h" },
+          h("div", { class: "mday-d" }, info.main, info.sub ? h("small", { text: info.sub }) : null),
+          h("div", { class: "mday-s" }, sumParts)),
+        dayCard));
+    });
+
+    listHost.appendChild(daysWrap);
+
+    if (recs.length > 60) {
+      var more = h("button", {
+        class: "addlink", style: "margin-top:14px", type: "button",
+        text: S.moneyShowAll ? "收起较早流水（只显示最近 60 笔）" : "展开其余 " + (recs.length - 60) + " 笔较早流水"
+      });
+      more.addEventListener("click", function () { S.moneyShowAll = !S.moneyShowAll; drawMoneyRecords(d, listHost, sumHost); });
+      listHost.appendChild(more);
     }
-    sec.appendChild(card);
+  }
+
+  function moneyRecordSection(d, accs) {
+    var all = d.records || [];
+    var sec = h("div", { class: "msec" });
+
+    var addRecBtn = h("button", { class: S.moneyRecForm ? "btn sm" : "btn pri sm", type: "button" },
+      S.moneyRecForm ? null : icon("plus"),
+      S.moneyRecForm ? "收起记账" : "记一笔");
+    addRecBtn.addEventListener("click", function () {
+      S.moneyRecForm = S.moneyRecForm ? null : {
+        kind: "transfer", from_account: "master",
+        to_account: S.moneyAccFilter !== "all" && S.moneyAccFilter !== "master" ? S.moneyAccFilter : "tin_box",
+        account: S.moneyAccFilter !== "all" ? S.moneyAccFilter : "tin_box",
+        amount: "", counterparty: "", what: "", at: ""
+      };
+      renderMoney();
+    });
+
+    sec.appendChild(h("div", { class: "msec-h" },
+      h("div", { class: "msec-t" },
+        h("h3", { text: "收支账本" }),
+        h("span", { class: "sub", text: all.length ? "共 " + all.length + " 笔 · 删流水默认回退余额" : "暂无流水" })),
+      addRecBtn));
+
+    if (S.moneyRecForm) {
+      sec.appendChild(moneyRecordForm(accs));
+    }
+
+    var hasAdjust = S.moneyKindFilter === "adjust" || all.some(function (r) { return r.kind === "adjust"; });
+    var kindOpts = [["all", "全部"], ["earn", "进账"], ["spend", "花销"], ["transfer", "互转"]];
+    if (hasAdjust) { kindOpts.push(["adjust", "调账"]); }
+
+    var filt = h("div", { class: "mfilt" });
+    var kindSeg = h("div", { class: "seg" });
+    kindOpts.forEach(function (pair) {
+      kindSeg.appendChild(h("button", {
+        type: "button", class: S.moneyKindFilter === pair[0] ? "on" : "", text: pair[1],
+        onclick: function () { S.moneyKindFilter = pair[0]; renderMoney(); }
+      }));
+    });
+
+    var accSel = h("select", { class: "inp mfilt-acc", title: "按钱袋筛选流水" });
+    accSel.appendChild(h("option", { value: "all", text: "全部钱袋", selected: S.moneyAccFilter === "all" }));
+    accs.forEach(function (a) {
+      accSel.appendChild(h("option", { value: a.id, text: a.label || a.id, selected: S.moneyAccFilter === a.id }));
+    });
+    accSel.addEventListener("change", function () { S.moneyAccFilter = accSel.value; renderMoney(); });
+
+    var sumHost = h("div", { class: "mfilt-sum", hidden: true });
+    var listHost = h("div");
+
+    var sInp = h("input", { class: "inp", type: "text", placeholder: "搜事由、对方或经手人…", autocomplete: "off" });
+    sInp.value = S.moneyQ || "";
+    var sClr = h("button", { class: "clr", type: "button", title: "清除搜索", hidden: !S.moneyQ }, icon("x"));
+    sInp.addEventListener("input", function () {
+      S.moneyQ = sInp.value;
+      sClr.hidden = !S.moneyQ;
+      drawMoneyRecords(d, listHost, sumHost);
+    });
+    sClr.addEventListener("click", function () {
+      S.moneyQ = "";
+      sInp.value = "";
+      sClr.hidden = true;
+      drawMoneyRecords(d, listHost, sumHost);
+      sInp.focus();
+    });
+
+    var searchWrap = document.createElement("span");
+    searchWrap.innerHTML = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg>';
+    var searchLbl = h("label", { class: "search" }, searchWrap.firstChild, sInp, sClr);
+    filt.appendChild(kindSeg);
+    filt.appendChild(accSel);
+    filt.appendChild(searchLbl);
+
+    sec.appendChild(filt);
+    sec.appendChild(sumHost);
+    sec.appendChild(listHost);
+    drawMoneyRecords(d, listHost, sumHost);
     return sec;
   }
 
@@ -6653,7 +7010,7 @@
 
 
   function worldEditing() {
-    return Object.keys(S.wEdit).length || Object.keys(S.cEdit).length || Object.keys(S.iEdit).length || Object.keys(S.rEdit).length || Object.keys(S.nEdit).length;
+    return S.moodOpen || Object.keys(S.wEdit).length || Object.keys(S.cEdit).length || Object.keys(S.iEdit).length || Object.keys(S.rEdit).length || Object.keys(S.nEdit).length;
   }
 
   /* ---------- 编辑框：同一时间只开一个 ---------- */
@@ -6791,6 +7148,7 @@
       S.worldOffset = serverMs === null ? 0 : serverMs - Date.now();
       S.worldLoadedAt = Date.now();
       S.worldErr = "";
+      if (d && d.master_mood) { setMasterMood(d.master_mood); }
       (d.bots || []).forEach(function (bot) { if (bot.key) { S.labels[bot.key] = bot.label; } });
       if (!S.worldDate) { S.worldDate = d.date; }
       // 后台在跑的手动补写：刷新页面后照样显示在跑；推送没连上时靠这里知道它跑完了
@@ -7020,6 +7378,9 @@
     }
     var who = worldPerson(d);
     renderWorldPeople(d, who);
+    var moodHost = h("div", { class: "wmood-host", id: "worldMoodHost" });
+    box.appendChild(moodHost);
+    renderWorldMood(moodHost);
     box.appendChild(worldToolbar(d, who));
     if (who !== "master") { box.appendChild(worldJump(d, who)); }
     if (who === "master") {
@@ -9475,6 +9836,10 @@
       if (ev.key === "Escape" && modalDone) { modalDone(false); }
       return;
     }
+    if (S.view === "world" && S.moodOpen) {
+      if (ev.key === "Escape") { ev.preventDefault(); toggleWorldMood(false); return; }
+      if ((ev.metaKey || ev.ctrlKey) && ev.key === "Enter" && !S.moodSaving && S.moodDirty) { ev.preventDefault(); saveWorldMood(false); return; }
+    }
     if (ev.key === "Escape") {
         if (S.insp) { closeInsp(); return; }
       if (S.multi) { setMulti(false); return; }
@@ -9618,8 +9983,12 @@
     if (type === "hello") {
       LIVE.on = true;
       LIVE.retry = 0;
-      // 头一回连上时首屏刚读完；断了重连的，断着那阵子可能漏了，正在看的这页整个重读
-      liveRefresh(LIVE.opened ? ["conv", "world", "things", "pools", "ledger", "money", "requests"] : ["conv"]);
+      if (LIVE.opened) {
+        // 断线重连后只补刷当前正在看的视图，避免瞬间打穿一堆接口
+        var viewTopic = { conv: "conv", world: "world", things: "things", heat: "things", pool: "pools", ledger: "ledger", money: "money" }[S.view];
+        if (viewTopic) { liveRefresh([viewTopic]); }
+        else { loadSide(); }
+      }
       LIVE.opened = true;
       return;
     }
@@ -9666,8 +10035,430 @@
     if (p.money) {
       if (S.view !== "money") { drop("money"); } else if (S.moneyLoading) { later = true; } else { drop("money"); loadMoney(true); }
     }
+    if (p.master_mood) {
+      drop("master_mood");
+      loadMasterMood(true);
+    }
     if (LIVE.side) { LIVE.side = false; loadSide(); }
     if (later) { LIVE.flushT = setTimeout(liveFlush, 1500); }
+  }
+
+  /* ================= 世界线内联主人情绪条 ================= */
+  var MOOD_OWNER_OPTS = [
+    { v: -1, text: "开心", tone: "tone-happy" },
+    { v: 0, text: "平常", tone: "" },
+    { v: 1, text: "烦累", tone: "tone-lv1" },
+    { v: 2, text: "气着", tone: "tone-lv2" },
+    { v: 3, text: "崩了", tone: "tone-lv3" }
+  ];
+  var MOOD_BOT_OPTS = [
+    { v: 0, text: "平常", tone: "" },
+    { v: 1, text: "微凉", tone: "tone-lv1" },
+    { v: 2, text: "生气", tone: "tone-lv2" },
+    { v: 3, text: "严重", tone: "tone-lv3" }
+  ];
+
+  function moodOwnerWord(level) {
+    var lv = Number(level || 0);
+    for (var i = 0; i < MOOD_OWNER_OPTS.length; i++) {
+      if (MOOD_OWNER_OPTS[i].v === lv) { return MOOD_OWNER_OPTS[i].text; }
+    }
+    return "平常";
+  }
+
+  function moodBotWord(level) {
+    var lv = Number(level || 0);
+    for (var i = 0; i < MOOD_BOT_OPTS.length; i++) {
+      if (MOOD_BOT_OPTS[i].v === lv) { return MOOD_BOT_OPTS[i].text; }
+    }
+    return "平常";
+  }
+
+  function moodShort(text, max) {
+    var s = String(text || "").replace(/\s+/g, " ").trim();
+    if (!s) { return ""; }
+    return s.length > max ? s.slice(0, max) + "…" : s;
+  }
+
+  function moodKnownBots(m) {
+    var out = [], seen = {};
+    function pushBot(key, label) {
+      var k = String(key || "").trim();
+      if (!k || seen[k]) { return; }
+      seen[k] = true;
+      out.push({ key: k, label: label || S.labels[k] || k });
+    }
+    if (m && Array.isArray(m.bots)) {
+      m.bots.forEach(function (b) { if (b && b.key) { pushBot(b.key, b.label); } });
+    }
+    if (m && m.per_bot) {
+      Object.keys(m.per_bot).forEach(function (k) {
+        var row = m.per_bot[k] || {};
+        pushBot(k, row.label);
+      });
+    }
+    Object.keys(S.labels || {}).forEach(function (k) { pushBot(k, S.labels[k]); });
+    if (!out.length) {
+      pushBot("napcat", "丛雨");
+      pushBot("napcat2", "亚托莉");
+    }
+    return out;
+  }
+
+  function moodNorm(raw) {
+    var src = raw && typeof raw === "object" ? raw : {};
+    var o = src.owner && typeof src.owner === "object" ? src.owner : {};
+    var bots = moodKnownBots(src);
+    var pb = {};
+    bots.forEach(function (b) {
+      var r = (src.per_bot && src.per_bot[b.key]) || {};
+      pb[b.key] = {
+        label: r.label || b.label,
+        level: Number(r.level || 0),
+        phase: String(r.phase || ""),
+        peak: Number(r.peak || 0),
+        reason: String(r.reason || ""),
+        peer_aware: !!r.peer_aware,
+        updated_at: String(r.updated_at || ""),
+        code: String(r.code || "")
+      };
+    });
+    return {
+      owner: {
+        level: Number(o.level || 0),
+        phase: String(o.phase || ""),
+        peak: Number(o.peak || 0),
+        reason: String(o.reason || ""),
+        updated_at: String(o.updated_at || ""),
+        source: String(o.source || "")
+      },
+      per_bot: pb,
+      incidents: src.incidents && typeof src.incidents === "object" ? src.incidents : {},
+      bots: bots
+    };
+  }
+
+  function moodSummaryInfo(raw) {
+    var m = moodNorm(raw);
+    var ownerLv = m.owner.level;
+    var activeBots = [];
+    m.bots.forEach(function (b) {
+      var row = m.per_bot[b.key];
+      if (row && row.level > 0) {
+        activeBots.push({ key: b.key, label: row.label, level: row.level, phase: row.phase, reason: row.reason, peer_aware: row.peer_aware, updated_at: row.updated_at });
+      }
+    });
+    activeBots.sort(function (a, b) { return b.level - a.level; });
+
+    var incKeys = Object.keys(m.incidents || {}).filter(function (k) { return m.incidents[k]; });
+    var maxPos = Math.max(ownerLv > 0 ? ownerLv : 0, activeBots.length ? activeBots[0].level : 0);
+    var hasNonZero = ownerLv !== 0 || activeBots.length > 0;
+    var tone = "calm";
+    if (maxPos >= 3) { tone = "lv3"; }
+    else if (maxPos === 2) { tone = "lv2"; }
+    else if (maxPos === 1) { tone = "lv1"; }
+    else if (ownerLv === -1) { tone = "happy"; }
+
+    var parts = [];
+    activeBots.forEach(function (b) {
+      var w = moodBotWord(b.level);
+      parts.push("对" + b.label + w + (b.phase === "easing" ? "（缓和中）" : ""));
+    });
+    if (ownerLv > 0) {
+      parts.push("自己" + moodOwnerWord(ownerLv) + (m.owner.phase === "easing" ? "（缓和中）" : ""));
+    } else if (ownerLv === -1) {
+      parts.push("开心");
+    }
+
+    var text = "平常";
+    if (hasNonZero) {
+      if (parts.length === 1) {
+        var singleReason = activeBots.length === 1 ? activeBots[0].reason : m.owner.reason;
+        var sr = moodShort(singleReason, 14);
+        text = parts[0] + (sr ? " · " + sr : "");
+      } else {
+        text = parts.join(" / ");
+      }
+    } else if (incKeys.length) {
+      text = "平常 · 刚翻篇";
+    }
+    return { text: text, tone: tone, hasNonZero: hasNonZero, norm: m, incKeys: incKeys };
+  }
+
+  function cloneMoodDraft(raw) {
+    var m = moodNorm(raw);
+    var pb = {};
+    m.bots.forEach(function (b) {
+      var r = m.per_bot[b.key] || {};
+      pb[b.key] = {
+        label: r.label || b.label,
+        level: Number(r.level || 0),
+        phase: String(r.phase || ""),
+        reason: String(r.reason || ""),
+        peer_aware: !!r.peer_aware,
+        updated_at: String(r.updated_at || "")
+      };
+    });
+    return {
+      owner: {
+        level: Number(m.owner.level || 0),
+        phase: String(m.owner.phase || ""),
+        reason: String(m.owner.reason || ""),
+        updated_at: String(m.owner.updated_at || "")
+      },
+      per_bot: pb,
+      bots: m.bots,
+      incidents: m.incidents || {}
+    };
+  }
+
+  function setMasterMood(raw) {
+    if (!raw || typeof raw !== "object") { return; }
+    var sig = JSON.stringify(moodNorm(raw));
+    if (sig === S.moodSig) { return; }
+    S.moodSig = sig;
+    S.masterMood = raw;
+    if (S.moodOpen && !S.moodDirty && !S.moodSaving) {
+      S.moodDraft = cloneMoodDraft(raw);
+    }
+    renderWorldMood();
+  }
+
+  function loadMasterMood(silent) {
+    return api("ctx/master_mood").then(function (d) {
+      if (d) { setMasterMood(d); }
+    }).catch(function (e) {
+      if (!silent) { toast("读取主人情绪失败：" + errMsg(e), { err: true }); }
+    });
+  }
+
+  function toggleWorldMood(open) {
+    var next = typeof open === "boolean" ? open : !S.moodOpen;
+    if (next) {
+      S.moodOpen = true;
+      S.moodDirty = false;
+      S.moodSaving = false;
+      S.moodDraft = cloneMoodDraft(S.masterMood);
+      renderWorldMood();
+      loadMasterMood(true);
+    } else {
+      S.moodOpen = false;
+      S.moodDraft = null;
+      S.moodDirty = false;
+      S.moodSaving = false;
+      renderWorldMood();
+    }
+  }
+
+  function saveWorldMood(isReset) {
+    if (S.moodSaving) { return; }
+    var body;
+    if (isReset) {
+      body = { action: "reset" };
+    } else {
+      var d = S.moodDraft;
+      if (!d) { return; }
+      var pb = {};
+      d.bots.forEach(function (b) {
+        var r = d.per_bot[b.key] || {};
+        pb[b.key] = {
+          level: Number(r.level || 0),
+          reason: String(r.reason || "").trim(),
+          peer_aware: !!r.peer_aware
+        };
+      });
+      body = {
+        owner: { level: Number(d.owner.level || 0), reason: String(d.owner.reason || "").trim() },
+        per_bot: pb
+      };
+    }
+    S.moodSaving = true;
+    renderWorldMood();
+    post("ctx/master_mood", body).then(function (res) {
+      S.moodSaving = false;
+      if (res) { S.masterMood = res; S.moodSig = JSON.stringify(moodNorm(res)); }
+      S.moodOpen = false;
+      S.moodDraft = null;
+      S.moodDirty = false;
+      renderWorldMood();
+      toast(isReset ? "已恢复平常" : "已保存");
+      if (S.view === "world" && !worldEditing()) { loadWorld(true); }
+    }).catch(function (e) {
+      S.moodSaving = false;
+      renderWorldMood();
+      toast("保存失败：" + errMsg(e), { err: true });
+    });
+  }
+
+  function renderWorldMood(hostEl) {
+    var host = hostEl || $("worldMoodHost");
+    if (!host) { return; }
+    var info = moodSummaryInfo(S.masterMood);
+    clear(host);
+
+    var quickReset = (!S.moodOpen && info.hasNonZero) ? h("button", {
+      class: "btn quiet sm",
+      type: "button",
+      disabled: S.moodSaving,
+      text: "恢复平常",
+      onclick: function (ev) { ev.stopPropagation(); saveWorldMood(true); }
+    }) : null;
+
+    var head = h("div", {
+      class: "wmood-head",
+      role: "button",
+      tabindex: "0",
+      "aria-expanded": S.moodOpen ? "true" : "false",
+      onclick: function () { if (!S.moodSaving) { toggleWorldMood(); } },
+      onkeydown: function (ev) {
+        if ((ev.key === "Enter" || ev.key === " ") && !S.moodSaving) {
+          ev.preventDefault();
+          toggleWorldMood();
+        }
+      }
+    },
+      h("span", { class: "wmood-dot", "aria-hidden": "true" }),
+      h("span", { class: "wmood-k", text: "主人情绪" }),
+      h("span", { class: "wmood-v", text: info.text }),
+      h("div", { class: "wmood-head-acts" },
+        quickReset,
+        h("span", { class: "wmood-chev", "aria-hidden": "true", text: "▾" })
+      )
+    );
+
+    var box = h("div", { class: "wmood-box tone-" + info.tone + (S.moodOpen ? " open" : "") }, head);
+
+    if (S.moodOpen) {
+      var d = S.moodDraft || cloneMoodDraft(S.masterMood);
+      S.moodDraft = d;
+      var curNorm = info.norm;
+      var pane = h("div", { class: "wmood-pane" });
+
+      var ownerSeg = h("div", { class: "seg wmood-seg" });
+      MOOD_OWNER_OPTS.forEach(function (opt) {
+        var on = d.owner.level === opt.v;
+        ownerSeg.appendChild(h("button", {
+          type: "button",
+          class: on ? ("on" + (opt.tone ? " " + opt.tone : "")) : "",
+          disabled: S.moodSaving,
+          text: opt.text,
+          onclick: function () {
+            if (d.owner.level === opt.v) { return; }
+            d.owner.level = opt.v;
+            if (opt.v === 0) { d.owner.reason = ""; }
+            S.moodDirty = true;
+            renderWorldMood();
+          }
+        }));
+      });
+      var ownerMeta = curNorm.owner.level !== 0
+        ? (curNorm.owner.phase === "easing" ? "缓和中" : (curNorm.owner.updated_at ? curNorm.owner.updated_at.slice(5, 16) : ""))
+        : "";
+      var ownerRow = h("div", { class: "wmood-row" },
+        h("div", { class: "wmood-row-h" },
+          h("span", { class: "wmood-row-t", text: "我自己" }),
+          ownerMeta ? h("span", { class: "wmood-row-m", text: ownerMeta }) : null
+        ),
+        ownerSeg
+      );
+      if (d.owner.level !== 0) {
+        ownerRow.appendChild(h("div", { class: "wmood-extra" },
+          h("input", {
+            class: "inp",
+            type: "text",
+            placeholder: "起因（可选）",
+            value: d.owner.reason,
+            disabled: S.moodSaving,
+            oninput: function (ev) { d.owner.reason = ev.target.value; S.moodDirty = true; }
+          })
+        ));
+      }
+      pane.appendChild(ownerRow);
+
+      d.bots.forEach(function (b) {
+        var row = d.per_bot[b.key];
+        if (!row) { return; }
+        var seg = h("div", { class: "seg wmood-seg" });
+        MOOD_BOT_OPTS.forEach(function (opt) {
+          var on = row.level === opt.v;
+          seg.appendChild(h("button", {
+            type: "button",
+            class: on ? ("on" + (opt.tone ? " " + opt.tone : "")) : "",
+            disabled: S.moodSaving,
+            text: opt.text,
+            onclick: function () {
+              if (row.level === opt.v) { return; }
+              row.level = opt.v;
+              if (opt.v === 0) { row.reason = ""; row.peer_aware = false; }
+              S.moodDirty = true;
+              renderWorldMood();
+            }
+          }));
+        });
+        var curBot = (curNorm.per_bot && curNorm.per_bot[b.key]) || {};
+        var meta = curBot.level > 0
+          ? (curBot.phase === "easing" ? "缓和中" : (curBot.updated_at ? curBot.updated_at.slice(5, 16) : ""))
+          : "";
+        var botRow = h("div", { class: "wmood-row" },
+          h("div", { class: "wmood-row-h" },
+            h("span", { class: "wmood-row-t", text: "对" + row.label }),
+            meta ? h("span", { class: "wmood-row-m", text: meta }) : null
+          ),
+          seg
+        );
+        if (row.level > 0) {
+          botRow.appendChild(h("div", { class: "wmood-extra" },
+            h("input", {
+              class: "inp",
+              type: "text",
+              placeholder: "起因（可选）",
+              value: row.reason,
+              disabled: S.moodSaving,
+              oninput: function (ev) { row.reason = ev.target.value; S.moodDirty = true; }
+            }),
+            h("label", { class: "wmood-chk" },
+              h("input", {
+                type: "checkbox",
+                checked: !!row.peer_aware,
+                disabled: S.moodSaving,
+                onchange: function (ev) { row.peer_aware = !!ev.target.checked; S.moodDirty = true; }
+              }),
+              h("span", { text: "另一人知情" })
+            )
+          ));
+        }
+        pane.appendChild(botRow);
+      });
+
+      var incKeys = Object.keys(d.incidents || {}).filter(function (k) { return d.incidents[k]; });
+      if (incKeys.length) {
+        var incParts = incKeys.map(function (k) {
+          var inc = d.incidents[k] || {};
+          var lbl = (d.per_bot[k] && d.per_bot[k].label) || S.labels[k] || k;
+          return lbl + (inc.reason ? "（" + inc.reason + "）" : "");
+        });
+        pane.appendChild(h("div", { class: "wmood-inc", text: "刚翻篇余波：" + incParts.join("、") }));
+      }
+
+      var hasDraftNonZero = d.owner.level !== 0 || d.bots.some(function (b) { return (d.per_bot[b.key] || {}).level > 0; });
+      pane.appendChild(h("div", { class: "wmood-foot" },
+        (info.hasNonZero || hasDraftNonZero) ? h("button", {
+          class: "btn quiet sm",
+          type: "button",
+          disabled: S.moodSaving,
+          text: "恢复平常",
+          onclick: function () { saveWorldMood(true); }
+        }) : null,
+        h("div", { class: "wmood-foot-r" },
+          h("button", { class: "btn quiet sm", type: "button", disabled: S.moodSaving, text: "收起", onclick: function () { toggleWorldMood(false); } }),
+          h("button", { class: "btn pri sm", type: "button", disabled: S.moodSaving || !S.moodDirty, text: S.moodSaving ? "保存中…" : "保存", onclick: function () { saveWorldMood(false); } })
+        )
+      ));
+
+      box.appendChild(pane);
+    }
+
+    host.appendChild(box);
   }
 
 
@@ -9691,11 +10482,21 @@
     });
   }
 
-  // 侧栏那几项的小字（不打开那一页也显示个数）：首屏画完后取一次，切回页面时超过一分钟再取
-  var sideAt = 0;
-  function loadSide() {
+  // 侧栏那几项的小字（不打开那一页也显示个数）：首屏画完后取一次，切回页面时超过一分钟再取；在途去重 + 5 秒防抖
+  var sideAt = 0, sideFlight = null;
+  function loadSide(force) {
+    if (sideFlight) { return sideFlight; }
+    if (!force && sideAt && Date.now() - sideAt < 5000) { return Promise.resolve(); }
     sideAt = Date.now();
-    return api("ctx/side").then(function (d) { S.side = d || {}; renderSide(); }).catch(function () { /* 小字取不到就先显示读取中 */ });
+    sideFlight = api("ctx/side").then(function (d) {
+      sideAt = Date.now();
+      S.side = d || {};
+      if (S.side.master_mood) { setMasterMood(S.side.master_mood); }
+      renderSide();
+    }).catch(function () { /* 小字取不到就先显示读取中 */ }).then(function () {
+      sideFlight = null;
+    });
+    return sideFlight;
   }
 
   function start() {
@@ -9709,6 +10510,7 @@
       var list = setConvs(d);
       S.labels = {};
       (d.bots || []).forEach(function (x) { S.labels[x.id] = x.label; });
+      if (d && d.master_mood) { setMasterMood(d.master_mood); } else { renderWorldMood(); }
       renderSide();
       showView();
       liveStart();

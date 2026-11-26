@@ -245,7 +245,7 @@ WEATHER_SHIFT = (
     ("台风", -2, 1.5), ("冷雨", -3, 1.5), ("连着下雨", -2, 1.5), ("海上起雾", -1, 2),
     ("晴热", 4, 4), ("闷热", 5, 2.5), ("回暖", 3, 4), ("暖阳", 2, 4), ("晴冷", -1, 4),
     ("大风降温", -5, 3), ("寒风", -3, 3), ("降温", -4, 3),
-    ("雨夹雪", -2, 1.5), ("小雪", -2, 1.5), ("暴雨", -2, 1.5), ("雷阵雨", -1, 2), ("春雨", -1, 1.5),
+    ("大雪", -3, 1.5), ("雨夹雪", -2, 1.5), ("小雪", -2, 1.5), ("暴雨", -2, 1.5), ("雷阵雨", -1, 2), ("春雨", -1, 1.5),
     ("小雨", -2, 1.5), ("雨", -2, 1.5), ("起雾", -1, 2.5), ("阴天微凉", -2, 2), ("阴", -1, 2),
     ("凉风", -1, 2.5), ("起风", -1, 2.5), ("大风", -2, 3), ("多云", 0, 2.5), ("晴", 1, 4),
 )
@@ -280,13 +280,37 @@ def _weather_kind(text: str) -> str:
     return m.group(1) if m else text
 
 
-def weather_shift(text) -> tuple:
-    # 冷热按当天那句天气算（「晴热」「大风降温」），钟头那句不管冷热
-    kind = weather_kind(str(text or "").split("|", 1)[0])
+def _shift_for_kind(kind: str) -> tuple:
     for key, shift, amp in WEATHER_SHIFT:
         if key in kind:
             return shift, amp
     return DEFAULT_SHIFT
+
+
+def weather_shift(text) -> tuple:
+    # 冷热按当天那句天气算（「晴热」「大风降温」），钟头那句不管冷热
+    kind = weather_kind(str(text or "").split("|", 1)[0])
+    return _shift_for_kind(kind)
+
+
+def weather_shift_at(moment: datetime.datetime, text) -> tuple:
+    """按时刻平滑过渡跨日转天气的温度偏移：00:00 承接昨天，00:00~12:00 按余弦曲线平滑转到今天。"""
+    raw = split_home(str(text or ""))[1].split("|", 1)[0]
+    m = re.search(r"昨天是「([^」]+)」，今天慢慢转成「([^」]+)」", raw)
+    if not m:
+        return weather_shift(text)
+    s0, a0 = _shift_for_kind(m.group(1))
+    s1, a1 = _shift_for_kind(m.group(2))
+    if s0 == s1 and a0 == a1:
+        return s1, a1
+    h = moment.hour + moment.minute / 60.0
+    if h <= 0.0:
+        frac = 0.0
+    elif h >= 12.0:
+        frac = 1.0
+    else:
+        frac = 0.5 - 0.5 * math.cos(math.pi * (h / 12.0))
+    return s0 + (s1 - s0) * frac, a0 + (a1 - a0) * frac
 
 
 def wet_weather(text) -> bool:
@@ -322,7 +346,7 @@ def _swing(moment: datetime.datetime) -> float:
 
 def _compute_room_temp(moment: datetime.datetime, weather_text) -> float:
     home = split_home(weather_text)[0]
-    shift, amp = weather_shift(weather_text)
+    shift, amp = weather_shift_at(moment, weather_text)
     raw = month_temp(moment, _table_of(weather_text, moment)) + shift + amp * _swing(moment)
     if home == "海边小镇" and moment >= SEA_COLD_SNAP_START:
         # 船屋浮在不结冰的港湾海水上且有木舱遮挡，未生火时舱内最低约 3.5℃，水缸蔬菜不结冰
@@ -332,7 +356,7 @@ def _compute_room_temp(moment: datetime.datetime, weather_text) -> float:
 
 def _compute_outdoor_temp(moment: datetime.datetime, weather_text) -> float:
     home = split_home(weather_text)[0]
-    shift, amp = weather_shift(weather_text)
+    shift, amp = weather_shift_at(moment, weather_text)
     sw = _swing(moment)
     if home == "海边小镇" and moment >= SEA_COLD_SNAP_START:
         base = month_temp(moment, SEA_MONTH_TEMP) + shift
@@ -398,6 +422,14 @@ def spot_temp(spot: str, moment: datetime.datetime, weather_text, warm_hours=Non
         base = max(4.0, 12.0 + (month_temp(moment, _table_of(weather_text, moment)) - 14.5) * 0.45)
         return max(4.0, min(room_temp(moment, weather_text) - 1.5, base))
     if spot in ("海水/冷水镇着", "船舷海里活养"):
+        if split_home(weather_text)[0] == "海边小镇":
+            try:
+                from . import weather as _wmod
+                st_val = _wmod.sea_temp(moment, "海边小镇")
+                if st_val is not None:
+                    return float(st_val)
+            except Exception:
+                pass
         base = max(4.2, 12.5 + (month_temp(moment, _table_of(weather_text, moment)) - 14.5) * 0.5)
         return max(4.2, min(room_temp(moment, weather_text) - 1.5, base))
     if spot == "屋外":
@@ -419,9 +451,15 @@ def spot_temp(spot: str, moment: datetime.datetime, weather_text, warm_hours=Non
 
 
 def heat_rate(temp: float) -> float:
-    """这个温度下坏得多快：20 度 = 1，每高 10 度乘 2.5；55 度以上热着放，几乎不坏。"""
+    """这个温度下坏得多快：20 度 = 1，每高 10 度乘 2.5；55 度以上热着放几乎不坏；零下结冻微生物基本休眠。"""
     if temp >= 55:
         return 0.05
+    if temp <= -10.0:
+        return 0.0005
+    if temp <= -2.0:
+        return 0.005
+    if temp <= 0.0:
+        return 0.04
     return 2.5 ** ((temp - 20.0) / 10.0)
 
 
@@ -677,12 +715,12 @@ SPROUT = (
 )
 POTATO = ("土豆", "马铃薯", "洋芋")
 CHILL_INJURY = (
-    (("香蕉",), 12.0, "皮冻得有点发黑", "皮全黑了，里面发软"),
-    (("芒果", "菠萝", "木瓜", "牛油果"), 10.0, "冻得有点没味", "冻伤了，发软没味"),
-    (("番茄", "西红柿"), 10.0, "冻得有点发面没味", "冻得发面，没番茄味了"),
-    (("黄瓜", "茄子", "青椒", "苦瓜", "西葫芦"), 7.0, "冻得起了点水泡", "冻得发软起水泡"),
-    (("红薯", "地瓜", "芋头"), 10.0, "冻得有点发硬心", "冻坏了，心发硬"),
-    (("土豆", "马铃薯", "洋芋"), 6.0, "冻得有点发甜", "冻得发甜，一炒就发黑"),
+    (("香蕉",), 6.0, "皮冻得有点发黑", "皮全黑了，里面发软"),
+    (("芒果", "菠萝", "木瓜", "牛油果"), 5.0, "冻得有点没味", "冻伤了，发软没味"),
+    (("番茄", "西红柿"), 3.0, "冻得有点发面没味", "冻得发面，没番茄味了"),
+    (("黄瓜", "茄子", "青椒", "苦瓜", "西葫芦"), 3.0, "冻得起了点水泡", "冻得发软起水泡"),
+    (("红薯", "地瓜", "芋头"), 3.5, "冻得有点发硬心", "冻坏了，心发硬"),
+    (("土豆", "马铃薯", "洋芋"), 1.5, "冻得有点发甜", "冻得发甜，一炒就发黑"),
 )
 BROWN_NAMES = ("苹果", "梨", "土豆", "马铃薯", "藕", "茄子", "牛油果", "香蕉", "桃", "山药", "芋头", "红薯", "地瓜", "蘑菇", "生菜")
 BITTER_CARROT = ("胡萝卜", "红萝卜")
@@ -1174,12 +1212,13 @@ class Sim:
                 self.reheats += 1
                 if self.state == "没熟透":
                     self.state = DEFAULT_STATE  # 回锅煎透、煮透了
-                # 烧滚杀菌回拨：尚未彻底腐败（frac < 0.85）时，前 3 次回锅有效回拨腐败度，第 4 次轻微抑菌
-                if self.frac < 0.85:
-                    if self.reheats <= 3:
-                        self.frac = min(self.frac, max(0.12, self.frac * 0.35))
-                    elif self.reheats == 4 and self.frac < 0.8:
-                        self.frac = min(self.frac, max(0.30, self.frac * 0.65))
+                # 仅熟食类回锅烧滚才适度抑菌：尚未明显变质（frac < 0.55）最多回拨到 0.25；临界酸败菜（0.55~0.85）绝不起死回生
+                is_cooked_dish = self.kind in COOKED + ("馒头面包主食", "鲜肉软点心")
+                if is_cooked_dish and self.reheats <= 2:
+                    if self.frac < 0.55:
+                        self.frac = min(self.frac, max(0.25, self.frac - 0.20))
+                    elif self.frac < 0.85:
+                        self.frac = min(self.frac, self.frac * 0.85)
                 # 热一热：凉了的热回来、发硬的饭软回来、回软的炸物复脆、稠了的粥加水
                 for key in ("cool", "stale"):
                     self.acc[key] = 0.0
@@ -1199,17 +1238,27 @@ class Sim:
                 self._activate_salt(light=_has(stage_text, LIGHT_SALT_WORDS) and "重盐" not in stage_text)
             elif salt_hint and what not in ("糖渍", "醋泡", "酱渍", "油封", "灰沙埋"):
                 self._activate_salt(light=True)
-        # 5) 晴天晾晒 或 柴炉边烘干（结构化 what == "炉烘" / "晒上了" 优先）
+        # 5) 晴天晾晒 或 柴炉边烘干（结构化 what == "炉烘" / "晒上了" 优先；后续收进舱底/密封盒/柜格自动停止烘干）
         stove_drying_hint = what == "炉烘" or (
             what != "做好了" and _has(stage_text, ("烘鱼", "烘干", "炉边烘", "柴炉边烘", "烟管旁烘", "挂在炉边"))
         )
-        if what in ("晒上了", "炉烘") or stove_drying_hint or (
+        sun_drying_hint = what == "晒上了" or (
             what != "做好了" and _has(stage_text, ("晒上", "晾晒", "晒鱼", "一夜干")) and self.spot in ("太阳底下", "屋外")
-        ):
+        )
+        if stove_drying_hint or sun_drying_hint:
             self.drying = True
             self.stove_drying = (what == "炉烘") or (
                 _has(self.place + " " + stage_text, STOVE_DRY_WORDS) and self.spot not in ("太阳底下", "屋外")
             )
+        elif not first and (self.drying or self.stove_drying):
+            in_closed_storage = (
+                self.spot in ("舱底阴凉处", "冰箱", "冻着", "地窖", "井里", "海水/冷水镇着", "船舷海里活养", "阴凉处")
+                or self.cover in ("收着放", "泡在水里", "活养着")
+                or (what == "挪地方" and not _has(self.place + " " + stage_text, STOVE_DRY_WORDS + ("太阳", "甲板", "晾", "晒")))
+            )
+            if in_closed_storage:
+                self.drying = False
+                self.stove_drying = False
         if what == "熏上了":
             self.smoking = True
         elif not first:
@@ -1455,7 +1504,7 @@ class Sim:
         if "burn" in p and temp <= -10:
             self._add("burn", (0.3 if cover == "收着放" else 1.0) * dt)
         if "chill_inj" in p and not frozen and temp <= p["chill_inj"]["below"]:
-            self._add("chill_inj", (1.0 if temp <= p["chill_inj"]["below"] - 4 else 0.4) * dt)
+            self._add("chill_inj", (0.6 if temp <= p["chill_inj"]["below"] - 2.0 else 0.25) * dt)
         if "stale" in p:
             self._add("stale", _stale_rate(temp) * (0.8 if cover == "收着放" else (1.1 if cover == "敞着放" else 1.0)) * dt)
         if "rancid" in p:

@@ -57,6 +57,7 @@ CHARACTER_ALIASES = {  # 她填的名字 → 立绘文件名（不含扩展名�
 PREVIEW_SIDE = 768  # 给她看的预览最长边
 EXT = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
 EXTRA_KEY = "super_enhance_drawn"  # 这一轮画好、还没给她看的图（挂在事件上，不会串到别的轮次）
+TURN_LAST_KEY = "super_enhance_turn_last_image"  # 仅本轮内最近呈现的画面编号（跨轮次自动清空，禁止沿用上一轮的图）
 TARGET = "_iter_llm_responses_with_fallback"
 VIEW_SUFFIX = ".view.jpg"  # 回看用的小图：<原图名去掉扩展名>.view.jpg
 MAX_IMAGE_SIDE = 1024  # 锁定 1K：最长边超过 1024 时按比例缩到 1024 以下
@@ -228,14 +229,19 @@ class ImageGenFeature:
             if not refs:
                 notes.append("主人最近没发图（或者图读不出来），没带参考图")
         if use_last:
-            index = self._load_index()
-            last = self._latest(index, bot)
-            path = self.dir / index["items"][last]["file"] if last else None
+            turn_last = str(event.get_extra(TURN_LAST_KEY) or "").strip() if event is not None and hasattr(event, "get_extra") else ""
+            index = self._load_index() if turn_last else {}
+            item = (index.get("items") or {}).get(turn_last) if turn_last else None
+            path = (
+                self.dir / str(item.get("file") or "")
+                if isinstance(item, dict) and item.get("bot") == bot and not item.get("deleted") and item.get("file")
+                else None
+            )
             data = path.read_bytes() if path is not None and path.exists() else b""
             if mime_of(data):
                 refs.append((mime_of(data), base64.b64encode(data).decode()))
             else:
-                notes.append("你之前没呈现过画面，没法接着改")
+                notes.append("本轮还没有呈现过画面（跨轮次不允许沿用上一轮的图），已改为不带上一张图重新呈现")
         return refs
 
     def _character_refs(self, characters, notes: list) -> tuple[list, list]:
@@ -594,12 +600,14 @@ class ImageGenFeature:
         self._save_index(index)
         if hasattr(event, "set_extra"):
             event.set_extra(EXTRA_KEY, drawn)
+            if ids:
+                event.set_extra(TURN_LAST_KEY, ids[-1])
         extra_note = ("，透传=%s" % sent_extra) if sent_extra else ""
         usage_note = ("，usage=%s" % usage) if usage else "，usage=未返回"
         logger.info("[super_enhance/image] [%s] 呈现了 %s（%s，%s，参考图 %d 张，%.0f 秒%s%s）：%s", bot, "、".join(ids),
                     "、".join(sizes), used, len(refs), time.time() - began, extra_note, usage_note, prompt[:40])
         return ("画面已就绪：%s（%s）。图在下一条消息里给你看，主人还没看到。满意就用 send_view 发给他（id 填编号）；"
-                "不满意就改 prompt 重新呈现，或者 use_last_image=true 在这张上接着改，满意了再发%s。") % (
+                "不满意就改 prompt 重新呈现，或者仅限本轮内用 use_last_image=true 在这张上接着改（下一次新对话不可再用），满意了再发%s。") % (
             "、".join(ids), "、".join(sizes), "；" + "；".join(notes) if notes else "")
 
     async def send(self, event, image_id: str = "") -> str:

@@ -270,15 +270,26 @@ def build_world_text(
     else:
         masters = world.master_trail(date_text)
         item, text = _latest_visible(masters, viewer, now)
+        used_yesterday = False
+        if item is None:
+            yday_text = (today - datetime.timedelta(days=1)).isoformat()
+            y_masters = world.master_trail(yday_text)
+            y_item, y_text = _latest_visible(y_masters, viewer, now)
+            if y_item is not None:
+                y_anchor = parse_time(y_item.get("end")) if y_item.get("end") else parse_time(y_item.get("start"))
+                if y_anchor is not None and (now - y_anchor).total_seconds() <= 8 * 3600:
+                    item, text = y_item, y_text
+                    masters = y_masters
+                    used_yesterday = True
         if item is not None:
             moment = is_event(item) or (
                 str(item.get("who") or "") == "master" and not item.get("end") and not str(item.get("place") or "").strip())
             if str(item.get("who") or "") == "master" and is_sleep(item) and not item.get("end"):
-                sleep_hm = str(item.get("start") or "")[11:16] or timeutil.day_hm(item.get("start"))
+                sleep_hm = timeutil.day_hm(item.get("start")) if used_yesterday else (str(item.get("start") or "")[11:16] or timeutil.day_hm(item.get("start")))
                 line = "主人：%s（%s 入睡，还在睡）" % (_master_text(item, text, label, viewer), sleep_hm)
             else:
-                line = "主人：%s（%s）" % (
-                    _master_text(item, text, label, viewer), str(item.get("start"))[11:16] if moment else _when(item))
+                when_s = (timeutil.day_hm(item.get("start")) if used_yesterday else str(item.get("start"))[11:16]) if moment else (timeutil.day_hm(item.get("start")) if used_yesterday else _when(item))
+                line = "主人：%s（%s）" % (_master_text(item, text, label, viewer), when_s)
             if not str(item.get("place") or "").strip():
                 placed = [x for x in masters if str(x.get("place") or "").strip()]
                 where, _text = _latest_visible(placed, viewer, now)
@@ -399,6 +410,13 @@ def split_world_text(service, bot: str, now: datetime.datetime) -> tuple[str, st
             dynamic_blocks.append(mood_now_text(service, bot, now))
         except Exception:
             logger.warning("[super_enhance/life] 心情注入失败", exc_info=True)
+    if companion is not None:
+        try:
+            bots = service.enabled_bots() if hasattr(service, "enabled_bots") else None
+            dynamic_blocks.append(companion.safe("render_master_mood_chat", bot, now, bots=bots, default=""))
+        except Exception:
+            logger.warning("[super_enhance/life] 主人情绪注入失败", exc_info=True)
+    if head:
         try:
             dynamic_blocks.append(weather_now_text(service, now, bot=bot))
         except Exception:
@@ -436,14 +454,19 @@ def _is_outside_place(place: str, at_home, home: str) -> bool:
 
 
 def _cabin_zone_of(place: str, *, sleeping: bool = False) -> str:
-    """根据当前地点判定船舱内四个热区之一：kang / near / far / mid。"""
+    """根据当前地点判定船舱内热区：kang / near_wood / near_charcoal / far / mid。
+    仅明确在砖炕/火炕上才归 kang；通用睡觉段（未写明在炕上）按船舱地铺/中段 mid 算；柴炉与小灶台分属独立温区。"""
     p = str(place or "")
     if any(k in p for k in ("地铺", "地板", "吊床")):
         return "mid"
-    if sleeping or any(k in p for k in ("炕", "床", "被窝", "褥子", "铺位")):
+    if any(k in p for k in ("炕",)):
         return "kang"
-    if any(k in p for k in ("柴炉", "炭炉", "灶", "炉")):
-        return "near"
+    if sleeping:
+        return "mid"
+    if any(k in p for k in ("炭炉", "灶台", "灶边", "灶上", "灶")):
+        return "near_charcoal"
+    if any(k in p for k in ("柴炉", "火炉", "炉边", "炉旁", "柴架", "炉")):
+        return "near_wood"
     if any(k in p for k in ("舱门", "门边", "门口", "角落", "墙角", "储物", "舷窗", "书桌", "海图")):
         return "far"
     return "mid"
@@ -455,10 +478,12 @@ def _local_cabin_temp_line(place: str, th: dict, *, sleeping: bool = False, _deg
     loc = place or "船屋·船舱"
     mode = th.get("mode", "cold")
     stove = th.get("stove", "")
+    wood_mode = th.get("wood_mode") or (mode if stove == "wood" else "cold")
+    charcoal_mode = th.get("charcoal_mode") or (mode if stove == "charcoal" else "cold")
     d_kang = float(th.get("kang_delta") or 0.0)
 
     if zone == "kang":
-        if mode == "burning" and stove == "wood":
+        if wood_mode == "burning":
             hint = "（铁桶柴炉正烧着，砖炕%s）" % ("已烧透暖和" if d_kang >= 10.0 else ("渐渐烘暖" if d_kang >= 4.0 else "热气还没全透上来"))
         elif d_kang >= 2.0:
             hint = "（砖炕里还留着柴炉余温）"
@@ -466,14 +491,27 @@ def _local_cabin_temp_line(place: str, th: dict, *, sleeping: bool = False, _deg
             hint = "（砖炕已凉）" if float(th.get("kang") or 0.0) <= 13.0 else ""
         return "你此刻在%s，砖炕炕面温度约 %s 度%s。" % (loc, _deg(th["kang"]), hint)
 
-    if zone == "near":
-        if mode == "burning":
-            hint = "（%s正烧着）" % ("铁桶柴炉" if stove == "wood" else "小炭炉")
-        elif mode == "cooling":
-            hint = "（刚停火，炉边还留着余温）"
+    if zone == "near_wood":
+        t_val = float(th.get("near_wood", th["near"]))
+        if wood_mode == "burning":
+            hint = "（铁桶柴炉正烧着）"
+        elif wood_mode == "cooling":
+            hint = "（柴炉刚停火，炉边还留着余温）"
         else:
-            hint = "（炉子没点，已凉透）" if float(th["near"]) <= 12.0 else ""
-        return "你此刻在%s，炉边温度约 %s 度%s。" % (loc, _deg(th["near"]), hint)
+            hint = "（铁桶柴炉没点，已凉透）" if t_val <= 12.0 else ""
+        return "你此刻在%s，炉边温度约 %s 度%s。" % (loc, _deg(t_val), hint)
+
+    if zone == "near_charcoal":
+        t_val = float(th.get("near_charcoal", th["mid"]))
+        if charcoal_mode == "burning":
+            hint = "（小炭炉正烧着）"
+        elif charcoal_mode == "cooling":
+            hint = "（小炭炉刚停火，灶边留着余温）"
+        elif wood_mode == "burning":
+            hint = "（小炭炉没点，只借着舱里铁桶柴炉的一点暖气）"
+        else:
+            hint = "（小炭炉没点，灶边偏凉）" if t_val <= 12.0 else ""
+        return "你此刻在%s，灶台边温度约 %s 度%s。" % (loc, _deg(t_val), hint)
 
     if zone == "far":
         return "你此刻在%s，身边温度约 %s 度。" % (loc, _deg(th["far"]))
@@ -516,6 +554,14 @@ def weather_now_text(service, now: datetime.datetime, bot: str = "") -> str:
     outdoors = _is_outside_place(place, at_home, home) or is_deck_out
 
     sky_wind = weather_mod.sky_wind_text(flat, text_of, home)
+    if home == "海边小镇":
+        try:
+            from . import tide as tide_mod
+            t_txt = tide_mod.tide_now_text(flat, home)
+            if t_txt:
+                sky_wind = sky_wind + "，" + t_txt
+        except Exception:
+            pass
     out_deg = weather_mod._deg(th["outdoor"])
     feels_deg = weather_mod._deg(th["feels"])
     out_str = "约 %s 度" % out_deg + ("（体感 %s 度）" % feels_deg if th["outdoor"] - th["feels"] >= 1.5 else "")
@@ -531,7 +577,17 @@ def weather_now_text(service, now: datetime.datetime, bot: str = "") -> str:
             flat.strftime("%H:%M"), sky_wind, weather_mod._deg(th["cabin"])
         )
 
-    return line + "说到冷暖、穿衣或添柴时照你此刻身边这个实际温度说。"
+    smell_line = ""
+    if not outdoors and not sleeping:
+        store = getattr(service, "things", None)
+        if store is not None:
+            try:
+                from . import smell as smell_mod
+                smell_line = smell_mod.cabin_smell_text(flat, store, None, world, home, temp_info=th)
+            except Exception:
+                smell_line = ""
+
+    return line + smell_line + "说到冷暖、穿衣或添柴时照你此刻身边这个实际温度说。"
 
 
 DEFAULT_OUTFITS = {
@@ -585,7 +641,8 @@ OUTFIT_STATIC_GENERIC = "（关于身上穿的衣裳与体感：结合当下穿�
 _WINTER_COAT_WORDS = ("厚棉衣", "棉衣", "棉袄", "厚棉服", "棉服", "厚外套", "棉外套", "大衣")
 _PAJAMA_WORDS = ("睡衣", "睡裙", "吊带睡裙", "灯笼短裤", "和式睡衣")
 _PINK_KIMONO_WORDS = ("粉白", "粉白色", "樱花粉", "和式女仆", "复活后的常服", "复活后常服")
-_OUTFIT_OFF_WORDS = ("没", "无", "未", "脱", "搁", "放", "搭在主人", "给主人", "收好", "叠好", "挂", "换下")
+_OUTFIT_PRE_OFF = ("没", "无", "未", "不", "脱", "换下", "收起", "搁下", "放下")
+_OUTFIT_POST_OFF = ("脱下", "脱了", "换下", "搁", "放", "搭在主人", "给主人", "收好", "叠好", "挂")
 
 
 def _clause_matches_any(outfit: str, words: tuple[str, ...]) -> bool:
@@ -596,8 +653,14 @@ def _clause_matches_any(outfit: str, words: tuple[str, ...]) -> bool:
         c = clause.strip()
         if not c:
             continue
-        if any(w in c for w in words) and not any(off in c for off in _OUTFIT_OFF_WORDS):
-            return True
+        for w in words:
+            pos = c.find(w)
+            while pos != -1:
+                prefix = c[max(0, pos - 6):pos]
+                suffix = c[pos + len(w):pos + len(w) + 6]
+                if not any(off in prefix for off in _OUTFIT_PRE_OFF) and not any(off in suffix for off in _OUTFIT_POST_OFF):
+                    return True
+                pos = c.find(w, pos + len(w))
     return False
 
 
@@ -651,27 +714,56 @@ def outfit_now_text(service, bot: str, now: datetime.datetime) -> str:
 
 
 def mood_now_text(service, bot: str, now: datetime.datetime) -> str:
-    """她现在的心情：补写给每段写了「这段她什么心情」，取已经开始的最近一段写了的那句；
+    """她现在的心情：补写给每段写了「这段她什么心情」，取已经开始（含正在进行中）的最近一段写了的那句；
     今天一段都没写（刚上线、补写还没写到），退回每天 0 点抽的起床时的心情。
 
     11-07 以前是一整天都给 0 点抽的那句：世界线里补写早让她消了气（「腮帮子慢慢松开了」），
     聊天这边还一直是「有点小脾气」，一晚上都冲着主人。
+
+    2026-11-26 修复 1–2 小时滞后：之前跳过了进行中的段（ended is None or ended > flat），
+    导致补写已经重排出新心情段时聊天还卡在上一段；同时接入主人情绪更新时间戳校验，
+    若主人刚发火/闹情绪且 updated_ts 晚于该段 start 时间戳，说明该 mood 是发火前写的过期「美滋滋」，
+    直接跳过不注入（也不退回 0 点起床心情）。
 
     心情得连着由头写明白（补写第 23 条）：11-07 21:54、22:05 亚托莉看到的是「有点不服气，还想接着捣鼓」，
     补写那段写的是她在跟收音机较劲，聊天只看得到这一句，冲着主人说「会忍不住笑话你的」「可要说你了」。
     起床时的心情是 0 点抽的，本来就说不上由头，这里也照实说不是冲着谁来的。"""
     flat = now.replace(tzinfo=None)
     today = flat.date().isoformat()
+    tz = getattr(service, "timezone", None) or getattr(getattr(service, "world", None), "tz", None)
     latest = ""
+    latest_start = None
     for item in service.world.activities(bot, flat):
         start = parse_time(item.get("start"))
         if start is None or start > flat or str(item.get("start") or "")[:10] != today:
             continue
-        if str(item.get("mood") or "").strip():
-            ended = parse_time(item.get("end"))
-            if ended is None or ended > flat:
-                continue
-            latest = str(item["mood"]).strip()
+        mood_val = str(item.get("mood") or "").strip()
+        if mood_val:
+            latest = mood_val
+            latest_start = start
+
+    # 主人生气/情绪紧张且状态更新时间晚于该段 start（发火前写的过期 mood）：跳过不注入
+    companion = getattr(service, "companionship", None)
+    if companion is not None:
+        bots = service.enabled_bots() if hasattr(service, "enabled_bots") else None
+        mv = companion.safe("mood_view_for", bot, now, bots=bots, default=None)
+        if isinstance(mv, dict):
+            self_level = int(mv.get("self_level") or 0)
+            owner_level = int(mv.get("owner_level") or 0)
+            peer_level = int(mv.get("peer_level") or 0)
+            is_peer_tense = str(mv.get("rel") or "") == "other" and peer_level >= 2
+            ref_ts = max(float(mv.get("level_changed_ts") or 0.0), float(mv.get("updated_ts") or 0.0))
+            if (self_level >= 1 or owner_level >= 2 or is_peer_tense) and ref_ts > 0:
+                if latest and latest_start is not None:
+                    start_dt = latest_start.replace(tzinfo=tz) if tz is not None else latest_start
+                    if ref_ts > start_dt.timestamp():
+                        return ""
+                else:
+                    day_start = datetime.datetime.combine(flat.date(), datetime.time.min)
+                    day_dt = day_start.replace(tzinfo=tz) if tz is not None else day_start
+                    if ref_ts > day_dt.timestamp():
+                        return ""
+
     if latest:
         return "你现在的心情：%s。自然地透在说话的语气里，用不着说出来。" % latest
     seeds = service.seed_log.load() or {}
@@ -765,6 +857,8 @@ NO_REPEAT_NOTE = (
 # 只写「带一点就行、低一点蔫一点」语气就平得像交代，所以挨说时写明要露心意，明说不要她时写明放开。
 # 「说话收着点、没有平常那股得意劲」是管亚托莉受罚时「去就去……全挣回来！」那种活泼（去掉每天的心情那句试过，不是心情的事）。
 # 已知没压住的：gemini 还会冒「怎么骂都行、打我骂我都行」，偶尔没说赶她也求「别赶」，「不想看到你」时会说躲到甲板上；不再往这里加句子压
+# 2026-11-26 拔除 0/1 开关与「罚站等待发落」根因：删掉「这时候就留在主人跟前，等他发落」与「等主人消了气再照常」，
+# 改为正面活人原则（就事论事认错并对症落到实处、有话好好说清楚；主人换回平常话题或语气缓和就算没明说消气也顺着接住，不反复追着认错或反问）。
 _VOICE_HEAD = (
     "（说话别带 AI 腔：不用破折号「——」；不要换行输出；别先甩一句结论再接着解释为什么；"
     "别在后面补「要是猜岔了」「如果不是……就……」这种兜底。"
@@ -773,8 +867,9 @@ _VOICE_ANGER = (
     "主人真生气了，就别嘴硬了：想清楚是哪件事、错在哪，说出来；再说你打算怎么补上，或者直接去做能补上这件事的事，"
     "补救要对得上这件事，不是拿吃的、捶肩、撒娇去哄。只是挨说的时候，心里的愧疚、想让主人消气高兴的那份心意要露出来，"
     "补救也是为了这个，不是平平地交代一句；他没说不要你，就别往赶你走、不要你、卖掉你上想，也别一条接一条地慌、掉眼泪。"
-    "主人叫你滚、叫你走、说不想看见你、说不要你了，难过、舍不得就放开，眼眶红、话说不利索都行，再问他哪里没做好、你改；"
-    "这时候就留在主人跟前，等他发落。这阵子说话收着点，没有平常那股得意劲，等主人消了气再照常。"
+    "主人叫你滚、叫你走、说不想看见你、说不要你了，难过、舍不得就放开，眼眶红、话说不利索都行，再问他哪里没做好、你改。"
+    "主人还在气头上时，说话收着点、没有平常那股得意劲，专心把该补的事落到实处、有话好好同他说清楚；"
+    "之后只要主人不再追究、换了平常话题或语气缓和了，就算他没明说「不生气了」，也顺着他的话照常接住，心里松口气带点乖巧，别反复追着认错，也别反问他还生不生气。"
     "只有一条：别冲着主人，不说主人的不是，不把错推到主人身上，不跟主人讲道理争对错。"
     "认错别老是同一套说法，也别写检讨、别保证往后再也不，别说「该罚、认罪、不争、不绕、不躲不藏、稳稳接住你、不还嘴」这类话。"
     "称呼他：叫「主人」，不用「你」指他。{own}"

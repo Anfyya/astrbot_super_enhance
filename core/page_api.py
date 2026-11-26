@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import datetime
+import inspect
 import io
 import json
 import hashlib
@@ -68,11 +69,12 @@ _ROUTE_SPECS = (
     ("money/edit", "money_edit", ("POST",), "上下文页面：手动调账 / 增删流水 / 管欠账"),
     ("heat", "heat_view", ("GET",), "上下文页面：家里热源分布、温区温度与燃料余量"),
     ("heat/action", "heat_action", ("POST",), "上下文页面：手动点火 / 添料续烧 / 提前熄火（实扣库存）"),
+    ("master_mood", "master_mood_api", ("GET", "POST"), "上下文页面：主人情绪状态查看与手调"),
 )
 
 _MAX_BACKUP_FILES = 30
-# 实时推送：没动静时隔这么久发一条心跳（网页按它判断连接还活着）。EdgeOne 空闲约 15 秒就掐断，要比它短
-LIVE_PING_SECONDS = 10
+# 实时推送：没动静时隔这么久发一条心跳（网页按它判断连接还活着）。EdgeOne 空闲约 15 秒就掐断，8 秒更稳
+LIVE_PING_SECONDS = 8
 # 一批写入（记录员一次会存好几份文件）攒这么久合成一条再推
 LIVE_BATCH_SECONDS = 0.3
 # AstrBot 数据库里写会话的方法：包一层，写完喊一声
@@ -425,6 +427,7 @@ class ContextPageApi:
         self._token_cache = {}
         self._pool_cache: tuple[Any, dict] | None = None
         self._things_cache: tuple[Any, dict] | None = None
+        self._things_lock = asyncio.Lock()
         self._sched_job: dict[str, Any] | None = None
         self._runs: dict[str, asyncio.Task] = {}
         self._live_patches = PatchSet()
@@ -639,6 +642,7 @@ class ContextPageApi:
                 "bots": [
                     {"key": bot, "label": self._world_label(life, bot)} for bot in bots
                 ],
+                "master_mood": self._master_mood_summary(life, life._now()),
                 "status": {
                     "mode": "live",
                     "last_step": world.last_step(),
@@ -1001,191 +1005,206 @@ class ContextPageApi:
             from .features.life_state import things as things_mod
 
             store = life.things
-            now = life._now().replace(tzinfo=None)
-            world_stamp = tuple(
-                sorted((path.name, _mtime_ns(path)) for path in life.world.dir.glob("*.json"))
-            ) if life.world.dir.exists() else ()
-            key = (
-                now.strftime("%Y-%m-%d %H:%M"),
-                _mtime_ns(store.path),
-                _mtime_ns(life.data_dir / "daily_seeds.json"),
-                _mtime_ns(life.world.root / "world_state.json"),
-                world_stamp,
-            )
+            now = life._now().replace(tzinfo=None, second=0, microsecond=0)
+
+            def _cache_key() -> tuple:
+                world_stamp = tuple(
+                    sorted((path.name, _mtime_ns(path)) for path in life.world.dir.glob("*.json"))
+                ) if life.world.dir.exists() else ()
+                return (
+                    now.strftime("%Y-%m-%d %H:%M"),
+                    _mtime_ns(store.path),
+                    _mtime_ns(life.data_dir / "daily_seeds.json"),
+                    _mtime_ns(life.world.root / "world_state.json"),
+                    world_stamp,
+                )
+
+            key = _cache_key()
             cached = getattr(self, "_things_cache", None)
             if cached is not None and cached[0] == key:
                 return _ok(cached[1])
-            shelf = await asyncio.to_thread(store.view, now)
-            # 在哪一处（分两处以后才有）：where 空 = 带在身上，跟着人走；没记过住处变更时 homes 空，网页不显示这一组
-            home_rows = life.world.homes() if hasattr(life.world, "homes") else []
-            here_home = life.world.home_at(now) if home_rows else ""
 
-            def where_text(item: dict) -> str:
-                if not home_rows:
-                    return ""
-                return store.where_of(item, now) or "带在身上"
+            async with self._things_lock:
+                # 二次检查缓存，并发请求单飞防击穿
+                key = _cache_key()
+                cached = getattr(self, "_things_cache", None)
+                if cached is not None and cached[0] == key:
+                    return _ok(cached[1])
 
-            def name_of(tid) -> dict:
-                found = shelf.find(tid)
-                return {"id": str(found.get("id")) if found else str(tid), "name": str(found.get("name") or "") if found else ""}
+                def _build() -> dict:
+                    shelf = store.view(now)
+                    # 在哪一处（分两处以后才有）：where 空 = 带在身上，跟着人走；没记过住处变更时 homes 空，网页不显示这一组
+                    home_rows = life.world.homes() if hasattr(life.world, "homes") else []
+                    here_home = life.world.home_at(now) if home_rows else ""
 
-            counted = {}  # 按量记的那几件：每一步现算的用了多少、之后剩多少（网页上显示 left_shown）
+                    def where_text(item: dict) -> str:
+                        if not home_rows:
+                            return ""
+                        return store.where_of(item, now) or "带在身上"
 
-            def stage_row(stage: dict) -> dict:
-                row = {k: stage.get(k) for k in ("at", "what", "left", "amount", "used", "place", "keep", "spot", "state", "holder", "owner",
-                                                  "by", "note", "wl", "src", "recorded", "edited", "void_why", "void_at",
-                                                  "fresh_note", "taste_note")}
-                row["by_label"] = self._thing_who(life, stage.get("by"))
-                row["idx"] = stage.get("_i")
-                if stage.get("into"):
-                    row["into"] = name_of(stage["into"])
-                for key in ("holder", "owner"):
-                    if stage.get(key):
-                        row[key + "_label"] = self._thing_who(life, stage.get(key))
-                if id(stage) in counted:
-                    used, left, unit = counted[id(stage)]
-                    if stage.get("what") in things_mod.START_STEPS:
-                        row["left_shown"] = "一共 " + things_mod.fmt_amount(left, unit)
-                    elif stage.get("what") == "清点":
-                        row["left_shown"] = "清点出还有 " + things_mod.fmt_amount(left, unit)
-                    elif used is not None:
-                        row["left_shown"] = "用了 %s，剩 %s" % (things_mod.fmt_amount(used, unit), things_mod.fmt_amount(left, unit))
-                return row
+                    def name_of(tid) -> dict:
+                        found = shelf.find(tid)
+                        return {"id": str(found.get("id")) if found else str(tid), "name": str(found.get("name") or "") if found else ""}
 
-            # 「用它做的」：先扫一遍记下每个编号被哪几件当成用料（按 shelf 原先后），别每一件都把整个 shelf 再扫一遍。
-            # from 不全是字符串列表的（理论上没有）就照原来的写法每件现扫，结果一样
-            made_by: dict = {}
-            plain_from = True
-            for x in shelf.values():
-                sources = x.get("from") or []
-                if not isinstance(sources, list) or not all(isinstance(s, str) for s in sources):
-                    plain_from = False
-                    break
-                for s in dict.fromkeys(sources):
-                    made_by.setdefault(s, []).append(x)
+                    counted = {}  # 按量记的那几件：每一步现算的用了多少、之后剩多少（网页上显示 left_shown）
 
-            def made_list(item: dict) -> list:
-                if not plain_from:
-                    return [name_of(x.get("id")) for x in shelf.values() if str(item.get("id")) in (x.get("from") or [])]
-                return [name_of(x.get("id")) for x in made_by.get(str(item.get("id")), ())]
+                    def stage_row(stage: dict) -> dict:
+                        row = {k: stage.get(k) for k in ("at", "what", "left", "amount", "used", "place", "keep", "spot", "state", "holder", "owner",
+                                                          "by", "note", "wl", "src", "recorded", "edited", "void_why", "void_at",
+                                                          "fresh_note", "taste_note")}
+                        row["by_label"] = self._thing_who(life, stage.get("by"))
+                        row["idx"] = stage.get("_i")
+                        if stage.get("into"):
+                            row["into"] = name_of(stage["into"])
+                        for k2 in ("holder", "owner"):
+                            if stage.get(k2):
+                                row[k2 + "_label"] = self._thing_who(life, stage.get(k2))
+                        if id(stage) in counted:
+                            used, left, unit = counted[id(stage)]
+                            if stage.get("what") in things_mod.START_STEPS:
+                                row["left_shown"] = "一共 " + things_mod.fmt_amount(left, unit)
+                            elif stage.get("what") == "清点":
+                                row["left_shown"] = "清点出还有 " + things_mod.fmt_amount(left, unit)
+                            elif used is not None:
+                                row["left_shown"] = "用了 %s，剩 %s" % (things_mod.fmt_amount(used, unit), things_mod.fmt_amount(left, unit))
+                        return row
 
-            items, objects = [], []
-            for item in shelf.values():
-                if things_mod.cat_of(item) == things_mod.CAT_ITEM:
-                    objects.append(item)
-                    continue
-                info = things_mod.measure(item)
-                for stage, used, left in (info or {}).get("rows") or []:
-                    counted[id(stage)] = (used, left, info["unit"])
-                stored = store.get(item.get("id"))
-                profile = store.profile(item, now, shelf)
-                fresh = profile["fresh"]
-                stages = item.get("stages") or []
-                last = stages[-1] if stages else {}
-                keep, spot = things_mod.split_keep(last.get("keep"), last.get("spot"), last.get("place"))
-                end = things_mod.is_ended(item)
-                share = things_mod.share_left(item)  # 还剩一开始的几成（余量条）；说不准是 None
-                taste = profile["taste"]
-                items.append({
-                    "id": item.get("id"),
-                    "name": item.get("name"),
-                    "kind": item.get("kind"),
-                    "where": where_text(item),
-                    "origin": item.get("origin") or "",
-                    "created": item.get("created"),
-                    "virtual": bool(item.get("virtual")),
-                    "wl": item.get("wl") or "",
-                    "from": [name_of(x) for x in item.get("from") or []],
-                    "made": made_list(item),
-                    "stages": [stage_row(x) for x in stages],
-                    "voided": [dict(stage_row(x), vidx=i) for i, x in enumerate((stored or {}).get("voided") or [])],
-                    "ended": stage_row(end) if end else None,
-                    "left": things_mod.ThingStore.left_text(item),
-                    "share": share,
-                    # 余量不多（排到前面）：按量记的看快用完了，别的看剩到一开始的几成以下
-                    "low": bool(info["low"]) if info else (share is not None and 0 < share <= things_mod.LOW_LEFT_SHARE),
-                    "place": last.get("place") or "",
-                    "keep": keep or "",
-                    "spot": spot or things_mod.DEFAULT_SPOT,
-                    "state": last.get("state") or "",
-                    # 口感（蔫了、串味、凉了、熟过头……）：[{key, level, text, fix, danger}]，毛病在前、变好了的在后；
-                    # texture 是口感还剩几成（0～1，口感条），没了的是 None
-                    "quality": taste["rows"],
-                    "texture": taste["left"],
-                    "fresh": {
-                        "level": fresh["level"], "x": fresh["x"], "word": fresh["word"],
-                        "text": store.fresh_text(item, now, fresh),
-                        "bad_since": things_mod.fmt_time(fresh["bad_since"]) if fresh["bad_since"] else "",
-                        "hurry_at": things_mod.fmt_time(fresh["hurry_at"]) if fresh["hurry_at"] else "",
-                        "bad_at": things_mod.fmt_time(fresh["bad_at"]) if fresh["bad_at"] else "",
-                    },
-                    "measured": {"unit": info["unit"], "pack": info["pack"], "per_use": info["per_use"], "left": info["left"],
-                                 "low": info["low"], "per_use_text": things_mod.fmt_amount(info["per_use"], info["unit"])} if info else None,
-                })
-            items.sort(key=lambda x: str(x.get("created") or ""))
-            # 吃的以外的东西：每一步在哪、谁手上、什么样、归谁；同一种（kind 一样）有几件
-            kinds_count = {}
-            for item in objects:
-                if things_mod.is_ended(item) is None:
-                    kinds_count[str(item.get("kind") or "")] = kinds_count.get(str(item.get("kind") or ""), 0) + 1
-            obj_rows = []
-            for item in objects:
-                stored = store.get(item.get("id"))
-                stages = item.get("stages") or []
-                last = stages[-1] if stages else {}
-                end = things_mod.is_ended(item)
-                owner = store.owner_of(item)
-                obj_rows.append({
-                    "id": item.get("id"),
-                    "name": item.get("name"),
-                    "kind": item.get("kind") or "",
-                    "where": where_text(item),
-                    "look": item.get("look") or "",
-                    "inside": item.get("inside") or "",
-                    "opened": item.get("_opened") or None,
-                    "secret": store.is_secret(item),
-                    "weather": item.get("_weather") or "",
-                    "owner": owner,
-                    "owner_label": self._thing_who(life, owner) if owner else "",
-                    "origin": item.get("origin") or "",
-                    "note": item.get("note") or "",
-                    "created": item.get("created"),
-                    "virtual": bool(item.get("virtual")),
-                    "wl": item.get("wl") or "",
-                    "from": [name_of(x) for x in item.get("from") or []],
-                    "made": made_list(item),
-                    "stages": [stage_row(x) for x in stages],
-                    "voided": [dict(stage_row(x), vidx=i) for i, x in enumerate((stored or {}).get("voided") or [])],
-                    "ended": stage_row(end) if end else None,
-                    "place": last.get("place") or "",
-                    "holder": last.get("holder") or "",
-                    "holder_label": self._thing_who(life, last.get("holder")) if last.get("holder") else "",
-                    "state": last.get("state") or "",
-                    "same": kinds_count.get(str(item.get("kind") or ""), 0),
-                })
-            obj_rows.sort(key=lambda x: str(x.get("created") or ""))
-            future = self._things_future(life, store, shelf, now)
-            bots = list(life.enabled_bots() or [])
-            data = {
-                "now": now.strftime("%Y-%m-%d %H:%M:%S"),
-                "home": here_home,
-                "homes": list(dict.fromkeys(str(r["home"]) for r in home_rows)),
-                "items": items,
-                "future": future,
-                "kinds": [{"key": k, "hours": v[0], "word": v[1]} for k, v in things_mod.KINDS.items()],
-                "keeps": list(things_mod.KEEPS),
-                "spots": list(things_mod.SPOTS),
-                "states": list(things_mod.STATES),
-                "steps": {"start": list(things_mod.START_STEPS), "mid": list(things_mod.MID_STEPS), "end": list(things_mod.END_STEPS)},
-                "objects": obj_rows,
-                "item_steps": {"start": list(things_mod.ITEM_START_STEPS), "mid": list(things_mod.ITEM_MID_STEPS),
-                               "end": list(things_mod.ITEM_END_STEPS)},
-                "measured_kinds": list(things_mod.MEASURED_KINDS),
-                "people": [{"key": b, "label": self._thing_who(life, b)} for b in bots] + [{"key": "master", "label": "主人"}],
-                "settle_days": things_mod.SETTLE_DAYS,
-            }
-            self._things_cache = (key, data)
-            return _ok(data)
+                    # 「用它做的」：先扫一遍记下每个编号被哪几件当成用料（按 shelf 原先后），别每一件都把整个 shelf 再扫一遍。
+                    # from 不全是字符串列表的（理论上没有）就照原来的写法每件现扫，结果一样
+                    made_by: dict = {}
+                    plain_from = True
+                    for x in shelf.values():
+                        sources = x.get("from") or []
+                        if not isinstance(sources, list) or not all(isinstance(s, str) for s in sources):
+                            plain_from = False
+                            break
+                        for s in dict.fromkeys(sources):
+                            made_by.setdefault(s, []).append(x)
+
+                    def made_list(item: dict) -> list:
+                        if not plain_from:
+                            return [name_of(x.get("id")) for x in shelf.values() if str(item.get("id")) in (x.get("from") or [])]
+                        return [name_of(x.get("id")) for x in made_by.get(str(item.get("id")), ())]
+
+                    items, objects = [], []
+                    for item in shelf.values():
+                        if things_mod.cat_of(item) == things_mod.CAT_ITEM:
+                            objects.append(item)
+                            continue
+                        info = things_mod.measure(item)
+                        for stage, used, left in (info or {}).get("rows") or []:
+                            counted[id(stage)] = (used, left, info["unit"])
+                        stored = store.get(item.get("id"))
+                        profile = store.profile(item, now, shelf)
+                        fresh = profile["fresh"]
+                        stages = item.get("stages") or []
+                        last = stages[-1] if stages else {}
+                        keep, spot = things_mod.split_keep(last.get("keep"), last.get("spot"), last.get("place"))
+                        end = things_mod.is_ended(item)
+                        share = things_mod.share_left(item)  # 还剩一开始的几成（余量条）；说不准是 None
+                        taste = profile["taste"]
+                        items.append({
+                            "id": item.get("id"),
+                            "name": item.get("name"),
+                            "kind": item.get("kind"),
+                            "where": where_text(item),
+                            "origin": item.get("origin") or "",
+                            "created": item.get("created"),
+                            "virtual": bool(item.get("virtual")),
+                            "wl": item.get("wl") or "",
+                            "from": [name_of(x) for x in item.get("from") or []],
+                            "made": made_list(item),
+                            "stages": [stage_row(x) for x in stages],
+                            "voided": [dict(stage_row(x), vidx=i) for i, x in enumerate((stored or {}).get("voided") or [])],
+                            "ended": stage_row(end) if end else None,
+                            "left": things_mod.ThingStore.left_text(item),
+                            "share": share,
+                            # 余量不多（排到前面）：按量记的看快用完了，别的看剩到一开始的几成以下
+                            "low": bool(info["low"]) if info else (share is not None and 0 < share <= things_mod.LOW_LEFT_SHARE),
+                            "place": last.get("place") or "",
+                            "keep": keep or "",
+                            "spot": spot or things_mod.DEFAULT_SPOT,
+                            "state": last.get("state") or "",
+                            # 口感（蔫了、串味、凉了、熟过头……）：[{key, level, text, fix, danger}]，毛病在前、变好了的在后；
+                            # texture 是口感还剩几成（0～1，口感条），没了的是 None
+                            "quality": taste["rows"],
+                            "texture": taste["left"],
+                            "fresh": {
+                                "level": fresh["level"], "x": fresh["x"], "word": fresh["word"],
+                                "text": store.fresh_text(item, now, fresh),
+                                "bad_since": things_mod.fmt_time(fresh["bad_since"]) if fresh["bad_since"] else "",
+                                "hurry_at": things_mod.fmt_time(fresh["hurry_at"]) if fresh["hurry_at"] else "",
+                                "bad_at": things_mod.fmt_time(fresh["bad_at"]) if fresh["bad_at"] else "",
+                            },
+                            "measured": {"unit": info["unit"], "pack": info["pack"], "per_use": info["per_use"], "left": info["left"],
+                                         "low": info["low"], "per_use_text": things_mod.fmt_amount(info["per_use"], info["unit"])} if info else None,
+                        })
+                    items.sort(key=lambda x: str(x.get("created") or ""))
+                    # 吃的以外的东西：每一步在哪、谁手上、什么样、归谁；同一种（kind 一样）有几件
+                    kinds_count = {}
+                    for item in objects:
+                        if things_mod.is_ended(item) is None:
+                            kinds_count[str(item.get("kind") or "")] = kinds_count.get(str(item.get("kind") or ""), 0) + 1
+                    obj_rows = []
+                    for item in objects:
+                        stored = store.get(item.get("id"))
+                        stages = item.get("stages") or []
+                        last = stages[-1] if stages else {}
+                        end = things_mod.is_ended(item)
+                        owner = store.owner_of(item)
+                        obj_rows.append({
+                            "id": item.get("id"),
+                            "name": item.get("name"),
+                            "kind": item.get("kind") or "",
+                            "where": where_text(item),
+                            "look": item.get("look") or "",
+                            "inside": item.get("inside") or "",
+                            "opened": item.get("_opened") or None,
+                            "secret": store.is_secret(item),
+                            "weather": item.get("_weather") or "",
+                            "owner": owner,
+                            "owner_label": self._thing_who(life, owner) if owner else "",
+                            "origin": item.get("origin") or "",
+                            "note": item.get("note") or "",
+                            "created": item.get("created"),
+                            "virtual": bool(item.get("virtual")),
+                            "wl": item.get("wl") or "",
+                            "from": [name_of(x) for x in item.get("from") or []],
+                            "made": made_list(item),
+                            "stages": [stage_row(x) for x in stages],
+                            "voided": [dict(stage_row(x), vidx=i) for i, x in enumerate((stored or {}).get("voided") or [])],
+                            "ended": stage_row(end) if end else None,
+                            "place": last.get("place") or "",
+                            "holder": last.get("holder") or "",
+                            "holder_label": self._thing_who(life, last.get("holder")) if last.get("holder") else "",
+                            "state": last.get("state") or "",
+                            "same": kinds_count.get(str(item.get("kind") or ""), 0),
+                        })
+                    obj_rows.sort(key=lambda x: str(x.get("created") or ""))
+                    future = self._things_future(life, store, shelf, now)
+                    bots = list(life.enabled_bots() or [])
+                    return {
+                        "now": now.strftime("%Y-%m-%d %H:%M:%S"),
+                        "home": here_home,
+                        "homes": list(dict.fromkeys(str(r["home"]) for r in home_rows)),
+                        "items": items,
+                        "future": future,
+                        "kinds": [{"key": k, "hours": v[0], "word": v[1]} for k, v in things_mod.KINDS.items()],
+                        "keeps": list(things_mod.KEEPS),
+                        "spots": list(things_mod.SPOTS),
+                        "states": list(things_mod.STATES),
+                        "steps": {"start": list(things_mod.START_STEPS), "mid": list(things_mod.MID_STEPS), "end": list(things_mod.END_STEPS)},
+                        "objects": obj_rows,
+                        "item_steps": {"start": list(things_mod.ITEM_START_STEPS), "mid": list(things_mod.ITEM_MID_STEPS),
+                                       "end": list(things_mod.ITEM_END_STEPS)},
+                        "measured_kinds": list(things_mod.MEASURED_KINDS),
+                        "people": [{"key": b, "label": self._thing_who(life, b)} for b in bots] + [{"key": "master", "label": "主人"}],
+                        "settle_days": things_mod.SETTLE_DAYS,
+                    }
+
+                data = await asyncio.to_thread(_build)
+                self._things_cache = (key, data)
+                return _ok(data)
         except Exception as exc:
             logger.error("[super_enhance/ctx] 读取家里的吃的失败", exc_info=True)
             return _err(exc)
@@ -1620,41 +1639,33 @@ class ContextPageApi:
         return limit
 
     async def boot(self):
-        """首屏一次取回会话、机器人和第一页历史。"""
-        global request
-        old = request
+        """首屏一次取回会话、机器人和第一页历史（严禁修改模块全局 request）。"""
         try:
-            request = SimpleNamespace(args={}, get_json=lambda *a, **k: None)
             conv_resp = await self.list_conversations()
             if conv_resp.get("status") != "ok":
                 return conv_resp
             conversations = (conv_resp.get("data") or {}).get("conversations") or []
             history = None
             if conversations:
-                request = SimpleNamespace(args={"cid": conversations[0]["cid"], "limit": "200"}, get_json=lambda *a, **k: None)
-                hist_resp = await self.get_history()
+                hist_resp = await self.get_history(cid=conversations[0]["cid"], limit=200)
                 if hist_resp.get("status") == "ok":
                     history = hist_resp.get("data")
             life = self.plugin.life
             bots = [{"id": b, "label": life.bots.label_for(b)} for b in life.enabled_bots()]
-            return _ok({"conversations": conversations, "history": history, "bots": bots})
+            master_mood = self._master_mood_summary(life, life._now())
+            return _ok({"conversations": conversations, "history": history, "bots": bots, "master_mood": master_mood})
         except Exception as exc:
             logger.error("[super_enhance/ctx] 首屏读取失败", exc_info=True)
             return _err(exc)
-        finally:
-            request = old
 
     async def side_view(self):
         """侧栏那几项的小字：世界线、家里的吃的和东西（件数）、能力与约定、插曲与消遣（总条数），不打开那一页也显示。
-        首屏画完以后再取，不挡首屏；吃的那份走 things_view 自己的缓存。口径和网页打开那一页时算的一样。"""
-        global request
+        首屏画完以后再取，不挡首屏；吃的那份走 things_view 自己的后台线程与单飞缓存，严禁修改模块全局 request。"""
         life = getattr(self.plugin, "life", None)
         if life is None:
             return _err("动态生活状态未加载")
         out: dict[str, Any] = {}
-        old = request
         try:
-            request = SimpleNamespace(args={}, get_json=lambda *a, **k: None)
             try:
                 out["world"] = {"mode": "live", "last_step": life.world.last_step()}
             except Exception:
@@ -1680,27 +1691,35 @@ class ContextPageApi:
                                     if x.get("status") == "open" and str(x.get("date") or "") >= today),
                     "trainings": sum(1 for x in data.get("trainings") or [] if x.get("status") == "open"),
                 }
-            pools = life.pool_store.load()
-            out["pools"] = {"n": sum(len(pools.get(k) or []) for k in
-                                     ("twists", "night_twists", "together", "pastimes", "idles", "night_idles"))}
-            if getattr(life, "money", None) is not None:
-                from .features.life_state.money import round_yuan
-                msnap = life.money.snapshot(life._now(), life.world)
-                out["money"] = {
-                    "accounts": {k: round_yuan(v.get("balance")) for k, v in msnap["accounts"].items()},
-                    "open_debts": sum(1 for d in msnap["debts"] if d.get("status") == "open"),
-                }
-            try:
-                from .features.life_state.heat import heat_side_summary
-                out["heat"] = heat_side_summary(life, life._now())
-            except Exception:
-                logger.warning("[super_enhance/ctx] 侧栏：家里热源状态没取到", exc_info=True)
+
+            def _sync_tail() -> dict[str, Any]:
+                tail: dict[str, Any] = {}
+                pools = life.pool_store.load()
+                tail["pools"] = {"n": sum(len(pools.get(k) or []) for k in
+                                          ("twists", "night_twists", "together", "pastimes", "idles", "night_idles"))}
+                if getattr(life, "money", None) is not None:
+                    from .features.life_state.money import round_yuan
+                    msnap = life.money.snapshot(life._now(), life.world)
+                    tail["money"] = {
+                        "accounts": {k: round_yuan(v.get("balance")) for k, v in msnap["accounts"].items()},
+                        "open_debts": sum(1 for d in msnap["debts"] if d.get("status") == "open"),
+                    }
+                try:
+                    from .features.life_state.heat import heat_side_summary
+                    tail["heat"] = heat_side_summary(life, life._now())
+                except Exception:
+                    logger.warning("[super_enhance/ctx] 侧栏：家里热源状态没取到", exc_info=True)
+                try:
+                    tail["master_mood"] = self._master_mood_summary(life, life._now())
+                except Exception:
+                    logger.warning("[super_enhance/ctx] 侧栏：主人情绪状态没取到", exc_info=True)
+                return tail
+
+            out.update(await asyncio.to_thread(_sync_tail))
             return _ok(out)
         except Exception as exc:
             logger.error("[super_enhance/ctx] 侧栏读取失败", exc_info=True)
             return _err(exc)
-        finally:
-            request = old
 
     async def pulse(self):
         args = request.args if request is not None else {}
@@ -1915,20 +1934,27 @@ class ContextPageApi:
                 "editable": editable,
         }
 
-    async def get_history(self):
+    async def get_history(self, *, cid: str | None = None, limit: int | None = None, end: int | None = None):
         args = request.args if request is not None else {}
-        cid = str(args.get("cid") or "").strip()
+        if cid is None:
+            cid = str(args.get("cid") or "").strip()
+        else:
+            cid = str(cid or "").strip()
         if not cid:
             return _err("缺少 cid")
-        try:
-            limit = int(args.get("limit") or _DEFAULT_PAGE_SIZE)
-        except Exception:
-            limit = _DEFAULT_PAGE_SIZE
-        limit = max(1, min(2000, limit))
-        try:
-            end = int(args.get("end") or 0)
-        except Exception:
-            end = 0
+        if limit is None:
+            try:
+                limit = int(args.get("limit") or _DEFAULT_PAGE_SIZE)
+            except Exception:
+                limit = _DEFAULT_PAGE_SIZE
+        limit = max(1, min(2000, int(limit)))
+        if end is None:
+            try:
+                end = int(args.get("end") or 0)
+            except Exception:
+                end = 0
+        else:
+            end = int(end or 0)
 
         try:
             conv, history = await self._load(cid)
@@ -2747,4 +2773,250 @@ class ContextPageApi:
                 res["snapshot"] = await asyncio.to_thread(heat_snapshot, life, now)
             return _ok(res)
         except Exception as exc:
+            return _err(exc)
+
+    # ---------- 主人情绪 ----------
+
+    def _master_mood_summary(self, life, now=None) -> dict[str, Any]:
+        """读取主人情绪状态摘要，用于侧栏/世界线胶囊展示与手调表单回填；缺失或未升级时安全兜底。"""
+        bots: list[str] = []
+        try:
+            bots = [str(b) for b in (life.enabled_bots() or []) if b]
+        except Exception:
+            bots = []
+
+        def _empty_owner() -> dict[str, Any]:
+            return {
+                "level": 0,
+                "phase": "",
+                "peak": 0,
+                "reason": "",
+                "updated_at": "",
+                "source": "",
+            }
+
+        def _empty_bot(bot_id: str) -> dict[str, Any]:
+            return {
+                "label": self._world_label(life, bot_id),
+                "level": 0,
+                "phase": "",
+                "peak": 0,
+                "reason": "",
+                "peer_aware": False,
+                "updated_at": "",
+                "code": "",
+            }
+
+        fallback: dict[str, Any] = {
+            "owner": _empty_owner(),
+            "per_bot": {b: _empty_bot(b) for b in bots},
+            "incidents": {},
+            "bots": [{"key": b, "label": self._world_label(life, b)} for b in bots],
+        }
+        if life is None:
+            return fallback
+        companion = getattr(life, "companionship", None)
+        if companion is None or not hasattr(companion, "render_master_mood_summary"):
+            return fallback
+        try:
+            moment = now or life._now()
+            raw = companion.safe("render_master_mood_summary", moment, bots=bots, default=None)
+            if not isinstance(raw, dict):
+                return fallback
+            owner_raw = raw.get("owner") if isinstance(raw.get("owner"), dict) else {}
+            owner = {**_empty_owner(), **owner_raw}
+            owner["level"] = max(-1, min(3, _as_int(owner.get("level"), 0)))
+            owner["peak"] = max(0, min(3, _as_int(owner.get("peak"), 0)))
+            owner["phase"] = str(owner.get("phase") or "")
+            owner["reason"] = str(owner.get("reason") or "")
+            owner["updated_at"] = str(owner.get("updated_at") or "")
+            owner["source"] = str(owner.get("source") or "")
+
+            per_bot_in = raw.get("per_bot") if isinstance(raw.get("per_bot"), dict) else {}
+            ordered_bots = list(bots)
+            for k in per_bot_in.keys():
+                ks = str(k)
+                if ks and ks not in ordered_bots:
+                    ordered_bots.append(ks)
+            per_bot: dict[str, dict[str, Any]] = {}
+            for b in ordered_bots:
+                item = per_bot_in.get(b) if isinstance(per_bot_in.get(b), dict) else {}
+                row = {**_empty_bot(b), **item}
+                row["label"] = str(row.get("label") or self._world_label(life, b))
+                row["level"] = max(0, min(3, _as_int(row.get("level"), 0)))
+                row["peak"] = max(0, min(3, _as_int(row.get("peak"), 0)))
+                row["phase"] = str(row.get("phase") or "")
+                row["reason"] = str(row.get("reason") or "")
+                row["peer_aware"] = bool(row.get("peer_aware"))
+                row["updated_at"] = str(row.get("updated_at") or "")
+                row["code"] = str(row.get("code") or "")
+                per_bot[b] = row
+
+            incidents = raw.get("incidents") if isinstance(raw.get("incidents"), dict) else {}
+            return {
+                "owner": owner,
+                "per_bot": per_bot,
+                "incidents": incidents,
+                "bots": [{"key": b, "label": per_bot[b]["label"]} for b in ordered_bots],
+            }
+        except Exception:
+            logger.warning("[super_enhance/ctx] 读取主人情绪摘要失败", exc_info=True)
+            return fallback
+
+    async def master_mood_api(self):
+        """统一分发 GET / POST /ctx/master_mood，避免同路径重复注册冲突。"""
+        method = str(getattr(request, "method", "GET") or "GET").upper()
+        if method == "POST":
+            return await self.master_mood_edit()
+        return await self.master_mood_view()
+
+    async def master_mood_view(self):
+        """GET /ctx/master_mood：返回最新主人情绪状态摘要。"""
+        life = getattr(self.plugin, "life", None)
+        if life is None:
+            return _err("动态生活状态未加载")
+        try:
+            return _ok(self._master_mood_summary(life, life._now()))
+        except Exception as exc:
+            logger.error("[super_enhance/ctx] 读取主人情绪状态失败", exc_info=True)
+            return _err(exc)
+
+    async def master_mood_edit(self):
+        """POST /ctx/master_mood：支持一键清零（action=reset）或按对象手调，并按需触发重排与 SSE 广播。"""
+        life = getattr(self.plugin, "life", None)
+        if life is None:
+            return _err("动态生活状态未加载")
+        companion = getattr(life, "companionship", None)
+        if companion is None or not hasattr(companion, "set_master_mood_manual"):
+            return _err("主人情绪状态机未就绪")
+        payload = await request.get_json(silent=True) or {}
+        if not isinstance(payload, dict):
+            return _err("请求体格式错误")
+        try:
+            now = life._now()
+            bots = [str(b) for b in (life.enabled_bots() or []) if b]
+            before_summary = self._master_mood_summary(life, now)
+            all_bots = list(dict.fromkeys(bots + list((before_summary.get("per_bot") or {}).keys())))
+            before_views = {
+                b: (companion.safe("mood_view_for", b, now, bots=all_bots, default={}) or {})
+                for b in all_bots
+            }
+
+            action = str(payload.get("action") or "").strip().lower()
+            lock_minutes = max(0, min(1440, _as_int(payload.get("lock_minutes"), 10)))
+            owner_level: int | None = None
+            owner_reason: str | None = None
+            per_bot: dict[str, dict[str, Any]] | None = None
+
+            if action == "reset":
+                owner_level = 0
+                owner_reason = ""
+                per_bot = {
+                    b: {"level": 0, "reason": "", "peer_aware": False}
+                    for b in all_bots
+                }
+            else:
+                owner_raw = payload.get("owner")
+                if isinstance(owner_raw, dict):
+                    if "level" in owner_raw and owner_raw.get("level") is not None:
+                        owner_level = max(-1, min(3, _as_int(owner_raw.get("level"), 0)))
+                    if "reason" in owner_raw and owner_raw.get("reason") is not None:
+                        owner_reason = str(owner_raw.get("reason") or "").strip()
+                else:
+                    if "owner_level" in payload and payload.get("owner_level") is not None:
+                        owner_level = max(-1, min(3, _as_int(payload.get("owner_level"), 0)))
+                    if "owner_reason" in payload and payload.get("owner_reason") is not None:
+                        owner_reason = str(payload.get("owner_reason") or "").strip()
+
+                per_bot_raw = payload.get("per_bot")
+                if isinstance(per_bot_raw, dict):
+                    per_bot = {}
+                    for b_key, item in per_bot_raw.items():
+                        if not isinstance(item, dict):
+                            continue
+                        entry: dict[str, Any] = {}
+                        if "level" in item and item.get("level") is not None:
+                            entry["level"] = max(0, min(3, _as_int(item.get("level"), 0)))
+                        if "reason" in item and item.get("reason") is not None:
+                            entry["reason"] = str(item.get("reason") or "").strip()
+                        if "peer_aware" in item and item.get("peer_aware") is not None:
+                            entry["peer_aware"] = bool(item.get("peer_aware"))
+                        if entry:
+                            per_bot[str(b_key)] = entry
+
+            raw_res = companion.set_master_mood_manual(
+                owner_level=owner_level,
+                owner_reason=owner_reason,
+                per_bot=per_bot,
+                now=now,
+                lock_minutes=lock_minutes,
+            )
+
+            after_views = {
+                b: (companion.safe("mood_view_for", b, now, bots=all_bots, default={}) or {})
+                for b in all_bots
+            }
+            transition: dict[str, Any] | None = None
+            if isinstance(raw_res, dict) and isinstance(raw_res.get("transition"), dict):
+                transition = dict(raw_res["transition"])
+            elif isinstance(raw_res, dict) and ("need_replan" in raw_res or "need_interrupt" in raw_res):
+                transition = dict(raw_res)
+            else:
+                need_interrupt = False
+                need_replan = False
+                affected: list[str] = []
+                max_prev = 0
+                max_new = 0
+                for b in all_bots:
+                    bv = before_views.get(b) or {}
+                    av = after_views.get(b) or {}
+                    old_lvl = _as_int(bv.get("level"), 0)
+                    new_lvl = _as_int(av.get("level"), 0)
+                    old_self = _as_int(bv.get("self_level"), 0)
+                    new_self = _as_int(av.get("self_level"), 0)
+                    old_code = str(bv.get("code") or "")
+                    new_code = str(av.get("code") or "")
+                    max_prev = max(max_prev, old_lvl)
+                    max_new = max(max_new, new_lvl)
+                    if (old_self < 2 and new_self >= 2) or (old_lvl < 2 and new_lvl >= 2):
+                        need_interrupt = True
+                        need_replan = True
+                        affected.append(b)
+                    elif old_code != new_code or old_lvl != new_lvl:
+                        if (old_lvl >= 2) != (new_lvl >= 2) or (old_lvl > 0) != (new_lvl > 0) or bv.get("phase") != av.get("phase"):
+                            need_replan = True
+                            affected.append(b)
+                if need_interrupt or need_replan:
+                    transition = {
+                        "changed": True,
+                        "need_interrupt": need_interrupt,
+                        "need_replan": need_replan,
+                        "affected_bots": affected,
+                        "prev_level": max_prev,
+                        "new_level": max_new,
+                        "source": "manual",
+                    }
+
+            if transition and (transition.get("need_interrupt") or transition.get("need_replan")):
+                handler = getattr(life, "handle_mood_transition", None)
+                if callable(handler):
+                    try:
+                        ret = handler(transition, now)
+                        if inspect.isawaitable(ret):
+                            await ret
+                    except Exception:
+                        logger.warning("[super_enhance/ctx] 手调主人情绪触发重排回调失败", exc_info=True)
+
+            live.notify("world")
+            live.notify("master_mood")
+            summary = self._master_mood_summary(life, now)
+            logger.info(
+                "[super_enhance/ctx] 网页%s主人情绪：owner=%s per_bot=%s",
+                "清零" if action == "reset" else "手调",
+                (summary.get("owner") or {}).get("level"),
+                {k: v.get("level") for k, v in (summary.get("per_bot") or {}).items()},
+            )
+            return _ok(summary)
+        except Exception as exc:
+            logger.error("[super_enhance/ctx] 手调主人情绪失败", exc_info=True)
             return _err(exc)

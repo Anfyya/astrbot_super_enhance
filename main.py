@@ -34,7 +34,7 @@ from mcp.types import CallToolResult
 
 from .core.config_view import SectionConfig
 from .core.web_settings import WebSettings
-from .core.common import llm as common_llm
+from .core.common import live as common_live, llm as common_llm
 from .core.common.bots import identify_event
 from .core.features.context import ContextToolsFeature
 from .core.features.history_merge import HistoryMergeFeature
@@ -112,6 +112,8 @@ class SuperEnhance(Star):
         self.life = LifeStateService(
             context, SectionConfig(raw, "life_state"), data_dir
         )
+        # 裁判/记录员情绪变档时实时推送 WebUI 胶囊刷新（未开网页时 notify 自动静默空操作）
+        self.life.on_mood_notify = lambda: common_live.notify("master_mood")
         # 发给模型时把历史写成一段「最近的聊天记录」（存档不动）；两个机器人私聊时对面写对方的名字，前面带上她和主人最近 20 条
         self.transcript = HistoryTranscriptFeature(
             SectionConfig(raw, "history_transcript"), life=self.life,
@@ -498,6 +500,7 @@ class SuperEnhance(Star):
             event.stop_event()
             return
         raw_log.record_incoming(self.life, event)
+        self.life.on_master_message(event, bot_dialog=self.bot_dialog)
         self.image_gen.note_incoming(event)
         self.silence.note_incoming(event)
         self.bot_dialog.note_incoming(event)
@@ -701,7 +704,7 @@ class SuperEnhance(Star):
 
         先说一句话再调用（比如「等我一下」）：呈现画面要十几秒到一分钟，这期间你发不了消息。和这个工具写在同一条回复里的话，会在工具跑之前先单独发给对方；工具跑完你再说的话会另发一条。
 
-        画面会接着放进来给你看。满意了用 send_view 发给主人；不满意就改 prompt 重新呈现，或者 use_last_image=true 在这张上接着改，满意了再发。如果呈现失败（工具返回没呈现出来或出错），直接简短如实说一声这会儿发不出来就行，严禁自己用文字口述画面、「现场播报」或大段文字描写来代替图片，也别报具体错误码。
+        画面会接着放进来给你看。满意了用 send_view 发给主人；不满意就改 prompt 重新呈现，或者仅限本轮内用 use_last_image=true 在刚生成的这张上接着改（下一次新对话禁止沿用上一轮的图，必须填 false），满意了再发。如果呈现失败（工具返回没呈现出来或出错），直接简短如实说一声这会儿发不出来就行，严禁自己用文字口述画面、「现场播报」或大段文字描写来代替图片，也别报具体错误码。
 
         呈现画面的模型看不到聊天记录和你的设定，只看 prompt、参考图和分辨率：prompt 只写画面里看得见的东西（有什么、在哪、什么样、光线天色、离得多近、从高处往下看还是平着看），写具体；不写是谁在看、拿什么看的，也不写第一人称、POV 这类说法；画面里没有的东西就别提（写了「没有手」反而容易把手指带进画面）。
 
@@ -711,7 +714,7 @@ class SuperEnhance(Star):
             prompt (string): 画面描述，写具体。
             size (string): 分辨率，写成 宽x高（最高锁定 1K，超过 1024 会按原比例缩到最长边 1024；1024 以下按原样出）。常用：1024x640（16:10 横）、640x1024（竖）、1024x576（16:9 横）、1024x1024（方）。空着默认 1024x640。
             use_sent_images (boolean): true 就把主人发的图给模型参考（他这条消息里的、他回复的那条里的，没有就用他半小时内发过的最近几张）。
-            use_last_image (boolean): true 就把你上一次呈现的那张给模型，在它上面接着改。
+            use_last_image (boolean): 仅限本轮对话内对刚呈现的图不满意微调时传 true（把本轮上一张给模型接着改）；下一次新对话必须填 false，跨轮次不允许用上一轮的图。
             characters (string): 画面里出现的人，填名字，几个人用顿号隔开，比如「亚托莉」「丛雨、亚托莉」。画面里没有人就空着。
 
         Returns:

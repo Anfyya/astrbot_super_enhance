@@ -1503,11 +1503,15 @@ class WorldStore:
 
 
 def public_of(entry: dict) -> str:
-    """给别人看的粗粒度信息；没填 public 时回退地点与正在做的事（不含结果）。"""
+    """给别人看的粗粒度信息；带出地点（若 public 未写明），没填 public 时回退地点与正在做的事（不含结果）。"""
+    place = str(entry.get("place") or "").strip()
     value = str(entry.get("public") or "").strip()
     if value:
+        if place and place not in value:
+            tail = place.split("·")[-1].strip()
+            if not tail or tail not in value:
+                return "%s，%s" % (place, value)
         return value
-    place = str(entry.get("place") or "").strip()
     doing = str(entry.get("doing") or "").strip()
     return "，".join(x for x in (place, doing) if x)
 
@@ -1577,10 +1581,8 @@ def real_stop(entry: dict) -> bool:
 
 
 def stove_active_in_entry(entry: dict) -> bool:
-    """判断一条世界线段里炉火是否实际烧过（打断段若已完成 >=1 步或持续 >=5 分钟则按截断后 [start, end] 计入）。"""
+    """判断一条世界线段里炉火是否实际烧过（人在家做什么不影响炉子燃烧的客观事实；打断段若已完成 >=1 步或持续 >=5 分钟则按截断后 [start, end] 计入）。"""
     if not isinstance(entry, dict) or entry.get("kind") == "event" or entry.get("at_home") is False:
-        return False
-    if entry.get("meal") or is_sleep(entry):
         return False
     if not real_stop(entry):
         return True
