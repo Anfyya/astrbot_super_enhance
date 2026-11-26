@@ -242,7 +242,11 @@ def remove_texts_from_tail(
                 break
 
     min_t = not_before.replace(second=0, microsecond=0) if isinstance(not_before, datetime.datetime) else None
-    max_t = not_after.replace(second=0, microsecond=0) if isinstance(not_after, datetime.datetime) else None
+    max_t = (
+        not_after.replace(second=0, microsecond=0) + datetime.timedelta(minutes=2)
+        if isinstance(not_after, datetime.datetime)
+        else None
+    )
 
     removed = 0
     for i in range(hi - 1, lo - 1, -1):

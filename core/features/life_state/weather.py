@@ -608,24 +608,50 @@ _FUEL_WEIGHT_RE = re.compile(
 )
 _WOOD_HINT_RE = re.compile(r"(?:干柴|硬柴|硬木柴|劈柴|柴火|木柴|薪柴|引火柴|引火料|柴)")
 _CHARCOAL_HINT_RE = re.compile(r"(?:闷炭|木炭|炭火|炭)")
+_FUEL_STOCK_PREFIX_RE = re.compile(r"(?:还剩|剩下|余下|剩余|库存|棚下剩|屋里剩|家里剩|一共还有|还有|共有|备了|囤了|攒了)\s*$")
+_WOOD_DIRECT_RE = re.compile(
+    r"(\d+(?:\.\d+)?|半)\s*(千克|公斤|kg|斤|两|克|g)(?![A-Za-z0-9_])\s*(?:的)?(?:干柴|硬柴|硬木柴|劈柴|柴火|木柴|薪柴|引火柴|引火料|柴)",
+    re.IGNORECASE,
+)
+_CHARCOAL_DIRECT_RE = re.compile(
+    r"(\d+(?:\.\d+)?|半)\s*(千克|公斤|kg|斤|两|克|g)(?![A-Za-z0-9_])\s*(?:的)?(?:闷炭|木炭|炭块|炭)",
+    re.IGNORECASE,
+)
+
+
+def _weight_match_grams(raw_num: str, raw_unit: str) -> float:
+    val = 0.5 if raw_num == "半" else float(raw_num)
+    if val <= 0:
+        return 0.0
+    u = raw_unit.lower()
+    if u in ("千克", "公斤", "kg"):
+        return val * 1000.0
+    if u == "斤":
+        return val * 500.0
+    if u == "两":
+        return val * 50.0
+    if u in ("克", "g"):
+        return val
+    return 0.0
 
 
 def _extract_weight_grams(text: str) -> float:
-    """从文本中解析燃料重量并统一换算为克；解析不到返回 0.0。"""
+    """从结构化用量字段中解析燃料重量并统一换算为克；解析不到返回 0.0。"""
     total_g = 0.0
     for m in _FUEL_WEIGHT_RE.finditer(str(text or "")):
-        raw_num, raw_unit = m.group(1), m.group(2).lower()
-        val = 0.5 if raw_num == "半" else float(raw_num)
-        if val <= 0:
+        total_g += _weight_match_grams(m.group(1), m.group(2))
+    return total_g
+
+
+def _extract_clause_fuel_grams(clause: str, kind: str) -> float:
+    """从自然语言子句中精准提取紧邻柴/炭的投入重量，排除库存余量（「还剩 10kg 干柴」）与烤食物（「炭炉边烤 200g 红薯」）。"""
+    direct_re = _WOOD_DIRECT_RE if kind == "wood" else _CHARCOAL_DIRECT_RE
+    total_g = 0.0
+    for m in direct_re.finditer(str(clause or "")):
+        prefix = clause[max(0, m.start() - 8):m.start()]
+        if _FUEL_STOCK_PREFIX_RE.search(prefix):
             continue
-        if raw_unit in ("千克", "公斤", "kg"):
-            total_g += val * 1000.0
-        elif raw_unit == "斤":
-            total_g += val * 500.0
-        elif raw_unit == "两":
-            total_g += val * 50.0
-        elif raw_unit in ("克", "g"):
-            total_g += val
+        total_g += _weight_match_grams(m.group(1), m.group(2))
     return total_g
 
 
@@ -657,17 +683,16 @@ def estimate_open_stove_minutes(entry: dict, stove: str = "") -> int:
                 g = _extract_weight_grams(str(row.get("note") or ""))
             if g > 0:
                 total_g += g
-    # 2) 若结构化字段未写重量，再从 doing / steps 文本中匹配紧邻柴/炭词的明确用量
+    # 2) 若结构化字段未写重量，再从 doing / steps 文本中精准匹配紧邻柴/炭的投入重量（排除余量与烤食物）
     if total_g <= 0:
         parts = [str(entry.get("doing") or "")]
         if isinstance(entry.get("steps"), list):
             parts.extend(str(s or "") for s in entry["steps"])
         blob = " ".join(parts)
         for clause in re.split(r"[，。；;、\n]", blob):
-            if hint_re.search(clause):
-                g = _extract_weight_grams(clause)
-                if g > 0:
-                    total_g += g
+            g = _extract_clause_fuel_grams(clause, kind)
+            if g > 0:
+                total_g += g
     if kind == "wood":
         kg = (total_g / 1000.0) if total_g > 0 else DEFAULT_OPEN_WOOD_KG
         return max(1, min(360, int(round(kg * WOOD_MIN_PER_KG))))

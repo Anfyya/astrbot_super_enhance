@@ -978,78 +978,80 @@ def heat_action(life, payload: dict, now: datetime.datetime) -> dict[str, Any]:
         else:
             raise ValueError("请拖动到船屋任意位置，或输入想去的地方")
 
-        master_cur = life.world.current("master", flat)
-        if master_cur is not None and is_sleep(master_cur) and not master_cur.get("end"):
-            if not sleep_ok:
-                raise ValueError("主人眼下还在睡，先起床再挪去%s（睡着时只能移到砖炕、地铺或吊床）" % label)
-            sleep_day = str(master_cur.get("start") or "")[:10] or flat.date().isoformat()
-            life.world.update(sleep_day, str(master_cur.get("id")), mode="normal", place=place)
+        with _HEAT_LOCK:
+            master_cur = life.world.current("master", flat)
+            if master_cur is not None and is_sleep(master_cur) and not master_cur.get("end"):
+                if not sleep_ok:
+                    raise ValueError("主人眼下还在睡，先起床再挪去%s（睡着时只能移到砖炕、地铺或吊床）" % label)
+                sleep_day = str(master_cur.get("start") or "")[:10] or flat.date().isoformat()
+                life.world.update(sleep_day, str(master_cur.get("id")), mode="normal", place=place)
+                if pos_val is not None:
+                    life.world.patch_entry(sleep_day, str(master_cur.get("id")), {"pos": pos_val})
+                logger.info("[super_enhance/heat] 调整主人睡眠位置 -> %s (%s)", label, place)
+                return {
+                    "action": "move_master",
+                    "place": place,
+                    "pos": pos_val,
+                    "message": "已把主人的睡眠位置调到%s（对话注入已同步）" % label,
+                }
+
+            today = flat.date().isoformat()
+            trail = [
+                x for x in life.world.master_trail(today)
+                if not real_stop(x) and (parse_time(x.get("start")) is not None) and parse_time(x.get("start")) <= flat
+            ]
+            # 5 分钟内连续拖动/选位只保留最后一次，避免世界线被中间过程刷满
+            if trail:
+                last_m = trail[-1]
+                last_st = parse_time(last_m.get("start"))
+                if (
+                    str(last_m.get("who") or "") == "master"
+                    and is_event(last_m)
+                    and str(last_m.get("source") or "") == "manual"
+                    and str(last_m.get("src_quote") or "") == "heat_move"
+                    and last_st is not None
+                    and abs((flat - last_st).total_seconds()) <= 300
+                ):
+                    life.world.delete_entry(today, str(last_m.get("id")), _notify_drop=False)
+
+            entry_data: dict[str, Any] = {
+                "who": "master",
+                "kind": "event",
+                "start": fmt_time(flat),
+                "place": place,
+                "at_home": at_home,
+                "doing": doing,
+                "source": "manual",
+                "src_quote": "heat_move",
+            }
             if pos_val is not None:
-                life.world.patch_entry(sleep_day, str(master_cur.get("id")), {"pos": pos_val})
-            logger.info("[super_enhance/heat] 调整主人睡眠位置 -> %s (%s)", label, place)
+                entry_data["pos"] = pos_val
+            rec = life.world.add_entry(today, entry_data)
+            logger.info("[super_enhance/heat] 手动移动主人位置 -> %s (%s, pos=%s)", label, place, pos_val)
             return {
                 "action": "move_master",
                 "place": place,
                 "pos": pos_val,
-                "message": "已把主人的睡眠位置调到%s（对话注入已同步）" % label,
+                "record": rec,
+                "message": "主人已移到%s（对话注入已同步）" % label,
             }
 
-        today = flat.date().isoformat()
-        trail = [
-            x for x in life.world.master_trail(today)
-            if not real_stop(x) and (parse_time(x.get("start")) is not None) and parse_time(x.get("start")) <= flat
-        ]
-        # 5 分钟内连续拖动/选位只保留最后一次，避免世界线被中间过程刷满
-        if trail:
-            last_m = trail[-1]
-            last_st = parse_time(last_m.get("start"))
-            if (
-                str(last_m.get("who") or "") == "master"
-                and is_event(last_m)
-                and str(last_m.get("source") or "") == "manual"
-                and str(last_m.get("src_quote") or "") == "heat_move"
-                and last_st is not None
-                and abs((flat - last_st).total_seconds()) <= 300
-            ):
-                life.world.delete_entry(today, str(last_m.get("id")), _notify_drop=False)
-
-        entry_data: dict[str, Any] = {
-            "who": "master",
-            "kind": "event",
-            "start": fmt_time(flat),
-            "place": place,
-            "at_home": at_home,
-            "doing": doing,
-            "source": "manual",
-            "src_quote": "heat_move",
-        }
-        if pos_val is not None:
-            entry_data["pos"] = pos_val
-        rec = life.world.add_entry(today, entry_data)
-        logger.info("[super_enhance/heat] 手动移动主人位置 -> %s (%s, pos=%s)", label, place, pos_val)
-        return {
-            "action": "move_master",
-            "place": place,
-            "pos": pos_val,
-            "record": rec,
-            "message": "主人已移到%s（对话注入已同步）" % label,
-        }
-
     if action == "extinguish":
-        ms_id = str(payload.get("manual_id") or "").strip()
-        if not ms_id:
-            stoves = _active_stoves(life.world, flat, home)
-            if stove in stoves and stoves[stove].get("manual_id"):
-                ms_id = stoves[stove]["manual_id"]
-        if not ms_id:
-            raise ValueError("当前没有正在燃烧的手动炉火可熄灭")
-        stopped = life.world.stop_manual_stove(ms_id, flat)
-        if stopped is None:
-            raise ValueError("该炉火已熄灭或找不到记录")
-        st_name = "铁桶柴炉" if stopped.get("stove") == "wood" else "小炭炉"
-        _record_master_fire_event(life, flat, str(stopped.get("stove") or "wood"), "封灭了%s（开始留余温降温）" % st_name)
-        logger.info("[super_enhance/heat] 手动熄灭 %s (%s)", st_name, ms_id)
-        return {"action": "extinguish", "record": stopped, "message": "已封灭%s，炉边与砖炕转入余温阶段" % st_name}
+        with _HEAT_LOCK:
+            ms_id = str(payload.get("manual_id") or "").strip()
+            if not ms_id:
+                stoves = _active_stoves(life.world, flat, home)
+                if stove in stoves and stoves[stove].get("manual_id"):
+                    ms_id = stoves[stove]["manual_id"]
+            if not ms_id:
+                raise ValueError("当前没有正在燃烧的手动炉火可熄灭")
+            stopped = life.world.stop_manual_stove(ms_id, flat)
+            if stopped is None:
+                raise ValueError("该炉火已熄灭或找不到记录")
+            st_name = "铁桶柴炉" if stopped.get("stove") == "wood" else "小炭炉"
+            _record_master_fire_event(life, flat, str(stopped.get("stove") or "wood"), "封灭了%s（开始留余温降温）" % st_name)
+            logger.info("[super_enhance/heat] 手动熄灭 %s (%s)", st_name, ms_id)
+            return {"action": "extinguish", "record": stopped, "message": "已封灭%s，炉边与砖炕转入余温阶段" % st_name}
 
     if stove not in ("wood", "charcoal"):
         raise ValueError("请选择铁桶柴炉（wood）或小炭炉（charcoal）")

@@ -203,8 +203,7 @@ def _training_spans(service, bot: str, tid: str, date_text: str) -> list:
     for item in service.world.entries(date_text, bot):
         if is_event(item):
             continue
-        if real_stop(item):
-            continue
+        # 一步都没开始就被撤掉（stop_at_step <= 0）不算训练；中途练了一部分才被打断的按实际 [start, end] 计入
         stop_step = item.get("stop_at_step")
         if isinstance(stop_step, int) and stop_step <= 0:
             continue

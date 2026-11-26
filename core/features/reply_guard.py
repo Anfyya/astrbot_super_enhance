@@ -147,7 +147,7 @@ class ReplyGuardFeature:
         info = self._turn.get(umo)
         if info and info.get("event") is event:
             self._turn.pop(umo, None)
-        self._pending.pop(umo, None)
+            self._pending.pop(umo, None)
 
     @staticmethod
     def _finished_without_reply(previous: dict) -> bool:

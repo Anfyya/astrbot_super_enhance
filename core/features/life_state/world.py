@@ -454,7 +454,8 @@ class WorldStore:
 
     @contextmanager
     def day_transaction(self, *date_texts: str):
-        """把同一批世界线改动合并成每天一次写盘；若块内抛异常，不刷盘并回滚本次内存脏状态。"""
+        """把同一批世界线改动合并成每天一次写盘；全程持 RLock 互斥防并发线程写入被回滚抹除，放锁后再派发 on_drop。"""
+        committed = False
         with self._lock:
             for value in date_texts:
                 if str(value or "").strip():
@@ -464,25 +465,22 @@ class WorldStore:
             snap_rev = self._revision
             self._defer_depth += 1
             self.push_drop_buffer()
-        committed = False
-        try:
-            yield self
-            with self._lock:
+            try:
+                yield self
                 self._defer_depth = max(0, self._defer_depth - 1)
                 if not self._defer_depth:
                     dirty = sorted(self._dirty_days)
                     self._dirty_days.clear()
                     for key in dirty:
                         self._write_json(self._day_path(key), self._load_day(key))
-            committed = True
-        except BaseException:
-            with self._lock:
+                committed = True
+            except BaseException:
                 self._days = snap_days
                 self._dirty_days = snap_dirty
                 self._revision = snap_rev
                 self._defer_depth = max(0, self._defer_depth - 1)
-            self.pop_drop_buffer(commit=False)
-            raise
+                self.pop_drop_buffer(commit=False)
+                raise
         if committed:
             self.pop_drop_buffer(commit=True)
 
@@ -921,6 +919,8 @@ class WorldStore:
 
     def manual_update(self, date_text: str, entry_id: str, **fields):
         """网页上改一条：改完算手动（补写、记录员都改不动），和它撞上的前后条目让开。"""
+        commit_drop = False
+        record = None
         with self._lock:
             old = None
             for item in self._load_day(date_text).get("entries") or []:
@@ -946,21 +946,31 @@ class WorldStore:
             if target_date != str(date_text).strip():
                 # 跨天移动时清除旧 id，由目标日按 next_id 分配全新唯一编号，避免与目标日已有 id 撞车
                 merged.pop("id", None)
-            self.delete_entry(date_text, entry_id)
-            merged["source"] = "manual"
-            record = self.add_entry(target_date, merged)
-            if record is None:
-                # 不该发生（手动最高）：放回原样
-                self.add_entry(date_text, old)
-            elif (record.get("start") != old.get("start") or record.get("end") != old.get("end")) and (
-                fields.get("steps") is None
-                or (clean_steps(record.get("steps")), step_minutes(record)) == (clean_steps(old.get("steps")), step_minutes(old))
-            ):
-                # 网页上只改了起止、分步没动：分步按新时长对上
-                if fit_steps(record):
-                    self._save_day(str(record.get("start"))[:10])
-            self.note_manual()
-            return record
+            self.push_drop_buffer()
+            try:
+                self.delete_entry(date_text, entry_id)
+                merged["source"] = "manual"
+                record = self.add_entry(target_date, merged)
+                if record is None:
+                    # 不该发生（手动最高）：放回原样，丢弃 delete_entry 缓冲的 on_drop，不破坏既有定时任务
+                    self.add_entry(date_text, old)
+                    self.pop_drop_buffer(commit=False)
+                    return None
+                if (record.get("start") != old.get("start") or record.get("end") != old.get("end")) and (
+                    fields.get("steps") is None
+                    or (clean_steps(record.get("steps")), step_minutes(record)) == (clean_steps(old.get("steps")), step_minutes(old))
+                ):
+                    # 网页上只改了起止、分步没动：分步按新时长对上
+                    if fit_steps(record):
+                        self._save_day(str(record.get("start"))[:10])
+                self.note_manual()
+                commit_drop = True
+            except BaseException:
+                self.pop_drop_buffer(commit=False)
+                raise
+        if commit_drop:
+            self.pop_drop_buffer(commit=True)
+        return record
 
     def note_manual(self) -> None:
         """网页上刚动过世界线：补写等一会儿再看，免得改到一半它先插进来。"""

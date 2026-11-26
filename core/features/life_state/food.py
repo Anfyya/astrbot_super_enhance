@@ -1254,7 +1254,29 @@ class Sim:
         elif what == "挪地方" and stage.get("place") and not _has(str(stage.get("place") or ""), ASH_SAND_WORDS):
             if self.ash_buried:
                 self.ash_buried = False
-                self.life = self._pre_ash_life
+                # 离开草木灰/干沙时按当前仍在生效的其他保鲜工艺重算寿命，绝不擦除埋藏期间叠加的盐腌/油封/糖渍/晒干等效果
+                recalc = max(self.base_life, self._pre_ash_life)
+                if self.sugar_preserved:
+                    recalc = max(recalc, SUGAR_PRESERVE_LIFE)
+                if self.acid_pickled:
+                    recalc = max(recalc, ACID_VEG_LIFE if self.kind in PRODUCE + ("干货调料粮食", "腌菜酱菜泡菜") else ACID_PICKLE_LIFE)
+                if self.oil_sealed:
+                    recalc = max(recalc, OIL_SEAL_LIFE)
+                if self.salted:
+                    if self.kind in RAW_MEAT:
+                        recalc = max(recalc, LIGHT_SALT_LIFE)
+                    elif self.kind in PRODUCE + SOY:
+                        recalc = max(recalc, 96.0)
+                if self.salt_done:
+                    recalc = max(recalc, salt_life(self.kind, self.base_life))
+                salted_flag = self.salted or self.salt_done
+                if self.half_dry_done:
+                    recalc = max(recalc, OVERNIGHT_DRY_LIFE)
+                if self.dry_done:
+                    recalc = max(recalc, dry_life(self.kind, self.base_life, salted_flag))
+                if self.smoke_done:
+                    recalc = max(recalc, smoke_life(self.kind, self.base_life, salted_flag))
+                self.life = recalc
         heated = (first and what == "做好了") or what == "热了一下"
         if heated:
             if what == "热了一下":

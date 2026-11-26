@@ -720,6 +720,7 @@ class CompactV2:
             yield event.plain_result("最近一次压缩是在另一个对话里做的（%s），当前对话不能撤销。" % path.name)
             return
         mgr = self.context.conversation_manager
+        reply = ""
         async with history_io.hold_lock(cid):
             latest_conv = await mgr.get_conversation(umo, cid)
             if latest_conv is not None:
@@ -727,23 +728,24 @@ class CompactV2:
             history = self._history_of(conv)
             n = int(data.get("written_len") or 0)
             if len(history) < n or _fingerprint(history[:n]) != data.get("written_fp"):
-                yield event.plain_result(
+                reply = (
                     "压缩之后历史又被改过（比如又压缩了一次，或在面板里编辑过），没法自动撤销。备份还在：%s" % path
                 )
-                return
-            restored = list(data.get("history") or []) + history[n:]
-            try:
-                await mgr.update_conversation(
-                    umo, cid, history=restored, token_usage=int(data.get("token_usage") or 0) or self._estimate(restored)
-                )
-            except Exception as e:
-                yield event.plain_result("撤销失败，历史没动：%s" % e)
-                return
-            path.rename(path.with_suffix(".undone"))
-        yield event.plain_result(
-            "已撤销 %s 那次压缩：恢复成 %d 条（压缩后新聊的 %d 条接在后面）。"
-            % (data.get("created"), len(restored), len(history) - n)
-        )
+            else:
+                restored = list(data.get("history") or []) + history[n:]
+                try:
+                    await mgr.update_conversation(
+                        umo, cid, history=restored, token_usage=int(data.get("token_usage") or 0) or self._estimate(restored)
+                    )
+                except Exception as e:
+                    reply = "撤销失败，历史没动：%s" % e
+                else:
+                    path.rename(path.with_suffix(".undone"))
+                    reply = (
+                        "已撤销 %s 那次压缩：恢复成 %d 条（压缩后新聊的 %d 条接在后面）。"
+                        % (data.get("created"), len(restored), len(history) - n)
+                    )
+        yield event.plain_result(reply)
 
     @staticmethod
     def _prune(backup_dir: Path) -> None:

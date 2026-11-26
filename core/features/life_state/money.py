@@ -19,7 +19,7 @@ from typing import Iterable
 
 from astrbot.api import logger
 
-from ...common import jsonio
+from ...common import jsonio, timeutil
 from .ledger import _JsonBook
 from .things import CAT_FOOD, CAT_ITEM, norm_step
 from .world import clean_steps, clean_text, fmt_time, is_event, parse_time, step_finished_at
@@ -364,7 +364,7 @@ class MoneyBook(_JsonBook):
             data["records"].append(rec)
             if len(data["records"]) > MAX_RECORDS:
                 data["records"] = data["records"][-MAX_RECORDS:]
-        data.setdefault("settled_wl", {})[wl_key] = fmt_time(now or datetime.datetime.now())
+        data.setdefault("settled_wl", {})[wl_key] = fmt_time(now or timeutil.now())
         return debt
 
     def _ensure_shape(self) -> dict:
@@ -796,20 +796,20 @@ class MoneyBook(_JsonBook):
                     if tgt is None:
                         continue
                     direction = (tgt or {}).get("direction") or normalize_direction(op.get("direction")) or "payable"
-                    if acc in accs:
-                        if direction == "payable":
-                            if sim_bal[acc] + 1e-6 < amt:
-                                logger.info("[super_enhance/money] 跳过记录员超额还账：%s 余额 %.2f < %.2f", acc, sim_bal[acc], amt)
-                                continue
-                            sim_bal[acc] = round_yuan(sim_bal[acc] - amt)
-                        else:
-                            sim_bal[acc] = round_yuan(sim_bal[acc] + amt)
-                    # 若目标是尚未固化的世界线欠账 (wl_*)，校验通过后就地固化进 data['debts'] 再结算
+                    if acc in accs and direction == "payable" and sim_bal[acc] + 1e-6 < amt:
+                        logger.info("[super_enhance/money] 跳过记录员超额还账：%s 余额 %.2f < %.2f", acc, sim_bal[acc], amt)
+                        continue
+                    # 先就地固化未归档世界线欠账 (wl_*)，确认成功后再扣改 sim_bal，防止固化失败泄漏余额扣减
                     if did not in debts_map and did.startswith("wl_"):
                         mat = self._materialize_wl_debt(data, did, now=now, world=eff_world)
                         if mat is None:
                             continue
                         debts_map[did] = mat
+                    if acc in accs:
+                        if direction == "payable":
+                            sim_bal[acc] = round_yuan(sim_bal[acc] - amt)
+                        else:
+                            sim_bal[acc] = round_yuan(sim_bal[acc] + amt)
 
                 rec = self._apply_op_on_state(
                     accs, debts_map, op, at_str=at_str, source=source, who=str(op.get("who") or ""), allow_negative=True
@@ -944,7 +944,7 @@ class MoneyBook(_JsonBook):
             if "/" in rid and rid not in data["void_wl"]:
                 if self._find_wl_op(rid, world=eff_world, now=None) is None:
                     return False
-                data["void_wl"][rid] = fmt_time(now or datetime.datetime.now())
+                data["void_wl"][rid] = fmt_time(now or timeutil.now())
                 self._save()
                 return True
             return False
@@ -1110,9 +1110,9 @@ class MoneyBook(_JsonBook):
                 self._save()
                 return True
             if did.startswith("wl_"):
-                mat = self._materialize_wl_debt(data, did, now=now, world=eff_world)
-                if mat is not None:
-                    data["debts"] = [d for d in data["debts"] if str(d.get("id") or "") != did]
+                wl_key = did[3:]
+                if wl_key and wl_key not in data["void_wl"] and self._find_wl_op(wl_key, world=eff_world, now=None) is not None:
+                    data["void_wl"][wl_key] = fmt_time(now or timeutil.now())
                     self._save()
                     return True
             return False

@@ -234,42 +234,38 @@ class ContextToolsFeature:
 
         mgr = self.context.conversation_manager
         t0 = time.time()
+        reply = ""
         async with history_io.hold_lock(cid):
             latest_conv = await mgr.get_conversation(umo, cid)
             if latest_conv is not None:
                 conv = latest_conv
             history = self._history_of(conv)
             if len(history) <= 2:
-                yield event.plain_result("历史已经很短，不需要压缩")
-                return
+                reply = "历史已经很短，不需要压缩"
+            else:
+                before_tokens = int(conv.token_usage or 0)
+                before_chars = self._count_chars(history)
+                new_history = self._strip_lossless(history)
+                if not new_history:
+                    reply = "压缩没有产出内容，历史未改动"
+                else:
+                    after_chars = self._count_chars(new_history)
+                    if after_chars >= before_chars:
+                        reply = "没有可精简的内容（%d -> %d 字符），历史未改动" % (before_chars, after_chars)
+                    else:
+                        new_tokens = self._estimate_tokens(new_history)
+                        try:
+                            await mgr.update_conversation(
+                                umo, cid, history=new_history, token_usage=new_tokens
+                            )
+                        except Exception as e:
+                            logger.error("[super_enhance/context] save failed: %s", e, exc_info=True)
+                            reply = "写回失败 " + str(e)
+                        else:
+                            reply = (
+                                "压缩完成\n"
+                                "从 {:.1f}k 缩减到 {:.1f}k\n".format(before_tokens / 1000, new_tokens / 1000)
+                                + "耗时 {:.1f}s".format(time.time() - t0)
+                            )
 
-            before_tokens = int(conv.token_usage or 0)
-            before_chars = self._count_chars(history)
-
-            new_history = self._strip_lossless(history)
-            if not new_history:
-                yield event.plain_result("压缩没有产出内容，历史未改动")
-                return
-            after_chars = self._count_chars(new_history)
-            if after_chars >= before_chars:
-                yield event.plain_result(
-                    "没有可精简的内容（%d -> %d 字符），历史未改动"
-                    % (before_chars, after_chars)
-                )
-                return
-
-            new_tokens = self._estimate_tokens(new_history)
-            try:
-                await mgr.update_conversation(
-                    umo, cid, history=new_history, token_usage=new_tokens
-                )
-            except Exception as e:
-                logger.error("[super_enhance/context] save failed: %s", e, exc_info=True)
-                yield event.plain_result("写回失败 " + str(e))
-                return
-
-        yield event.plain_result(
-            "压缩完成\n"
-            "从 {:.1f}k 缩减到 {:.1f}k\n".format(before_tokens / 1000, new_tokens / 1000)
-            + "耗时 {:.1f}s".format(time.time() - t0)
-        )
+        yield event.plain_result(reply)

@@ -315,21 +315,23 @@ class PromiseBook(_JsonBook):
 # ---------------------------------------------------------------- 事件
 
 
-def parse_hours(value, field: str = "时长") -> float | None:
-    """「12」「12.5」「12小时」「30分钟」「1小时30分钟」→ 小时数；空串返回 0；负数或非有限值返回 None。"""
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
+def parse_hours(value, field: str = "时长") -> float:
+    """「12」「12.5」「12小时」「30分钟」「1小时30分钟」→ 小时数；空串返回 0；负数或非有限值抛 ValueError。"""
+    if isinstance(value, bool):
+        raise ValueError("%s要写成非负小时数：%s" % (field, value))
+    if isinstance(value, (int, float)):
         val = float(value)
         if not math.isfinite(val) or val < 0:
-            return None
+            raise ValueError("%s不能为负数或无效数字：%s" % (field, value))
         return val
     text = str(value if value is not None else "").strip()
     if not text:
         return 0.0
     if re.search(r"(?:^|[\s:：=])-\s*\d", text) or text.startswith(("负", "−")):
-        return None
+        raise ValueError("%s不能为负数：%s" % (field, text))
     low_txt = text.lower()
     if low_txt in ("nan", "inf", "+inf", "-inf", "infinity", "+infinity", "-infinity"):
-        return None
+        raise ValueError("%s不能为无效数字：%s" % (field, text))
     if "天" in text and "小时" not in text and "分" not in text:
         raise ValueError("%s要写成小时数（一天练几小时自己算好），不要写天数：%s" % (field, text))
     # 组合格式：如 "1小时30分钟" / "1个小时30分"
@@ -351,7 +353,7 @@ def parse_hours(value, field: str = "时长") -> float | None:
         raise ValueError("%s要写成小时数，例如 12：%s" % (field, text))
     hours = float(match.group(0))
     if not math.isfinite(hours):
-        return None
+        raise ValueError("%s不能为无效数字：%s" % (field, text))
     if "时辰" in text:
         hours *= 2
     return hours

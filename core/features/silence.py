@@ -123,7 +123,7 @@ class SilenceFeature:
             return
         if self._latest_event.get(umo) is event:
             self._latest_event.pop(umo, None)
-        self._pending.pop(umo, None)
+            self._pending.pop(umo, None)
 
     @staticmethod
     def _detach_runner(old_event) -> None:

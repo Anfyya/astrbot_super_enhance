@@ -146,10 +146,6 @@ def _call_with_optional_kwargs(fn, *args, **kwargs):
     return fn(*args, **kwargs)
 
 
-class _NoArchiveChange(Exception):
-    """内部控制流：archive_settled 无新增归档变动时取消暂存写入。"""
-
-
 def _history_of(raw: Any) -> list[dict]:
     """把 conv.history（字符串或列表）统一成 list[dict]。"""
     return history_io.history_of(raw)
@@ -2166,23 +2162,24 @@ class ContextPageApi:
         if not indexes:
             return _err("没有选中任何条目")
 
-        try:
-            conv, history = await self._load(cid)
-        except Exception as exc:
-            return _err(exc)
-        total = len(history)
-        bad = sorted(i for i in indexes if i < 0 or i >= total)
-        if bad:
-            return _err("序号越界: %s" % bad)
+        async with history_io.hold_lock(cid):
+            try:
+                conv, history = await self._load(cid)
+            except Exception as exc:
+                return _err(exc)
+            total = len(history)
+            bad = sorted(i for i in indexes if i < 0 or i >= total)
+            if bad:
+                return _err("序号越界: %s" % bad)
 
-        backup = self._backup(cid, history)
-        kept = [item for idx, item in enumerate(history) if idx not in indexes]
-        extra, kept = _prune_orphans(kept)
-        try:
-            tokens = await self._save(conv, kept)
-        except Exception as exc:
-            logger.error("[super_enhance/ctx] 删除写回失败", exc_info=True)
-            return _err(exc)
+            backup = self._backup(cid, history)
+            kept = [item for idx, item in enumerate(history) if idx not in indexes]
+            extra, kept = _prune_orphans(kept)
+            try:
+                tokens = await self._save(conv, kept)
+            except Exception as exc:
+                logger.error("[super_enhance/ctx] 删除写回失败", exc_info=True)
+                return _err(exc)
         forgot = self._forget_raw(conv, [history[i] for i in sorted(indexes)])
         logger.info(
             "[super_enhance/ctx] 删除 %d 条（连带 %d），%s 现存 %d 条；原始消息副本跟着删 %d 条",
@@ -2249,44 +2246,45 @@ class ContextPageApi:
         if has_images and len(images) > _IMAGES_PER_ITEM:
             return _err("一条最多放 %d 张图" % _IMAGES_PER_ITEM)
 
-        try:
-            conv, history = await self._load(cid)
-        except Exception as exc:
-            return _err(exc)
-        if index < 0 or index >= len(history):
-            return _err("序号越界: %d" % index)
+        async with history_io.hold_lock(cid):
+            try:
+                conv, history = await self._load(cid)
+            except Exception as exc:
+                return _err(exc)
+            if index < 0 or index >= len(history):
+                return _err("序号越界: %d" % index)
 
-        item = dict(history[index])
-        if has_images:
-            if str(item.get("role") or "") not in ("user", "assistant"):
-                return _err("只有主人和她的消息能放图")
-            # 留着的图网页只传编号，按这条自己存着的图认回来；新加的才是 data URI
-            own = {_picture_id(url): url for url in _pictures(item)}
-            kept = []
-            for raw in images:
-                ref = str((raw.get("id") if isinstance(raw, dict) else raw) or "")
-                url = own.get(ref) or _shrink_image(ref)
-                if url is None:
-                    return _err("有一张图认不出来（只认 jpg / png / webp 这类图片），刷新页面再改")
-                kept.append(url)
-            images = kept
-        changed = False
-        if has_text:
-            changed = _apply_text(item, text) or changed
-        if has_think:
-            changed = _apply_think(item, think) or changed
-        if has_images:
-            changed = _apply_images(item, images) or changed
-        if not changed:
-            return _err("这条没有可改的内容")
+            item = dict(history[index])
+            if has_images:
+                if str(item.get("role") or "") not in ("user", "assistant"):
+                    return _err("只有主人和她的消息能放图")
+                # 留着的图网页只传编号，按这条自己存着的图认回来；新加的才是 data URI
+                own = {_picture_id(url): url for url in _pictures(item)}
+                kept = []
+                for raw in images:
+                    ref = str((raw.get("id") if isinstance(raw, dict) else raw) or "")
+                    url = own.get(ref) or _shrink_image(ref)
+                    if url is None:
+                        return _err("有一张图认不出来（只认 jpg / png / webp 这类图片），刷新页面再改")
+                    kept.append(url)
+                images = kept
+            changed = False
+            if has_text:
+                changed = _apply_text(item, text) or changed
+            if has_think:
+                changed = _apply_think(item, think) or changed
+            if has_images:
+                changed = _apply_images(item, images) or changed
+            if not changed:
+                return _err("这条没有可改的内容")
 
-        self._backup(cid, history)
-        history[index] = item
-        try:
-            tokens = await self._save(conv, history)
-        except Exception as exc:
-            logger.error("[super_enhance/ctx] 编辑写回失败", exc_info=True)
-            return _err(exc)
+            self._backup(cid, history)
+            history[index] = item
+            try:
+                tokens = await self._save(conv, history)
+            except Exception as exc:
+                logger.error("[super_enhance/ctx] 编辑写回失败", exc_info=True)
+                return _err(exc)
         logger.info(
             "[super_enhance/ctx] 编辑第 %d 条（正文=%s 思考链=%s 图=%s），%s",
             index,
@@ -2339,33 +2337,34 @@ class ContextPageApi:
         cid = str((payload or {}).get("cid") or "").strip() if isinstance(payload, dict) else ""
         if not cid:
             return _err("缺少 cid")
-        try:
-            conv, history = await self._load(cid)
-        except Exception as exc:
-            return _err(exc)
-        wanted = None
-        if isinstance(payload.get("indexes"), list):
-            wanted = {_as_int(x, -1) for x in payload["indexes"]}
-            if not wanted or any(i < 0 or i >= len(history) for i in wanted):
-                return _err("序号越界，刷新一下再试")
-        cleared = 0
-        new_history = []
-        for pos, raw in enumerate(history):
-            item = dict(raw)
-            if (wanted is None or pos in wanted) and _apply_think(item, ""):
-                cleared += 1
-                # 只剩思考的条目删完会变空：带 tool_calls 的置 None，其余留一段空正文
-                if isinstance(item.get("content"), list) and not item["content"]:
-                    item["content"] = None if item.get("tool_calls") else [{"type": "text", "text": ""}]
-            new_history.append(item)
-        if not cleared:
-            return _err("选中的条目里没有思考链" if wanted is not None else "这段对话里没有思考链")
-        self._backup(cid, history)
-        try:
-            tokens = await self._save(conv, new_history)
-        except Exception as exc:
-            logger.error("[super_enhance/ctx] 清空思考链写回失败", exc_info=True)
-            return _err(exc)
+        async with history_io.hold_lock(cid):
+            try:
+                conv, history = await self._load(cid)
+            except Exception as exc:
+                return _err(exc)
+            wanted = None
+            if isinstance(payload.get("indexes"), list):
+                wanted = {_as_int(x, -1) for x in payload["indexes"]}
+                if not wanted or any(i < 0 or i >= len(history) for i in wanted):
+                    return _err("序号越界，刷新一下再试")
+            cleared = 0
+            new_history = []
+            for pos, raw in enumerate(history):
+                item = dict(raw)
+                if (wanted is None or pos in wanted) and _apply_think(item, ""):
+                    cleared += 1
+                    # 只剩思考的条目删完会变空：带 tool_calls 的置 None，其余留一段空正文
+                    if isinstance(item.get("content"), list) and not item["content"]:
+                        item["content"] = None if item.get("tool_calls") else [{"type": "text", "text": ""}]
+                new_history.append(item)
+            if not cleared:
+                return _err("选中的条目里没有思考链" if wanted is not None else "这段对话里没有思考链")
+            self._backup(cid, history)
+            try:
+                tokens = await self._save(conv, new_history)
+            except Exception as exc:
+                logger.error("[super_enhance/ctx] 清空思考链写回失败", exc_info=True)
+                return _err(exc)
         logger.info("[super_enhance/ctx] 清空思考链：%d 条，%s", cleared, cid)
         return _ok({"cleared": cleared, "estimate_tokens": tokens})
 
@@ -2393,89 +2392,90 @@ class ContextPageApi:
         except Exception:
             after = -1
 
-        try:
-            conv, history = await self._load(cid)
-        except Exception as exc:
-            return _err(exc)
-        total = len(history)
-        if after < -1 or after >= total:
-            return _err("插入位置越界: %d" % after)
+        async with history_io.hold_lock(cid):
+            try:
+                conv, history = await self._load(cid)
+            except Exception as exc:
+                return _err(exc)
+            total = len(history)
+            if after < -1 or after >= total:
+                return _err("插入位置越界: %d" % after)
 
-        # 现有还没配对的 tool_call（给 role=tool 用）
-        open_ids = _open_tool_calls(history)
+            # 现有还没配对的 tool_call（给 role=tool 用）
+            open_ids = _open_tool_calls(history)
 
-        new_items: list[dict] = []
-        if role == "user":
-            if not text:
-                return _err("user 消息得有正文")
-            new_items.append({"role": "user", "content": [{"type": "text", "text": text}]})
-        elif role == "assistant":
-            content: list[dict] = []
-            if think:
-                content.append({"type": "think", "think": think})
-            if text:
-                content.append({"type": "text", "text": text})
-            item: dict = {"role": "assistant", "content": content}
-            made_calls = []
-            for raw in calls[:1]:
-                if not isinstance(raw, dict):
-                    continue
-                name = str(raw.get("name") or "").strip()
-                if not name:
-                    continue
-                call_id = str(raw.get("id") or "").strip() or _new_tool_call_id()
-                made_calls.append(
-                    {
-                        "id": call_id,
-                        "type": "function",
-                        "function": {
-                            "name": name,
-                            "arguments": str(raw.get("arguments") or "{}"),
-                        },
-                    }
-                )
-            if made_calls:
-                item["tool_calls"] = made_calls
-            if not content and not made_calls:
-                return _err("assistant 消息得有点内容")
-            new_items.append(item)
-            for call in made_calls:
-                if tool_output:
-                    new_items.append(
+            new_items: list[dict] = []
+            if role == "user":
+                if not text:
+                    return _err("user 消息得有正文")
+                new_items.append({"role": "user", "content": [{"type": "text", "text": text}]})
+            elif role == "assistant":
+                content: list[dict] = []
+                if think:
+                    content.append({"type": "think", "think": think})
+                if text:
+                    content.append({"type": "text", "text": text})
+                item: dict = {"role": "assistant", "content": content}
+                made_calls = []
+                for raw in calls[:1]:
+                    if not isinstance(raw, dict):
+                        continue
+                    name = str(raw.get("name") or "").strip()
+                    if not name:
+                        continue
+                    call_id = str(raw.get("id") or "").strip() or _new_tool_call_id()
+                    made_calls.append(
                         {
-                            "role": "tool",
-                            "tool_call_id": call["id"],
-                            "content": [{"type": "text", "text": tool_output}],
+                            "id": call_id,
+                            "type": "function",
+                            "function": {
+                                "name": name,
+                                "arguments": str(raw.get("arguments") or "{}"),
+                            },
                         }
                     )
-        else:  # tool
-            if not text:
-                return _err("tool 回包得有正文")
-            if not tool_call_id:
-                if len(open_ids) == 1:
-                    tool_call_id = open_ids[0]["id"]
-                elif not open_ids:
-                    return _err("没有等待回包的 toolcall，先加一条 assistant 的 toolcall")
-                else:
-                    return _err("有好几个等待回包的 toolcall，得指定配哪一个")
-            if tool_call_id not in {x["id"] for x in open_ids}:
-                return _err("tool_call_id 找不到对应的 toolcall：%s" % tool_call_id)
-            new_items.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call_id,
-                    "content": [{"type": "text", "text": text}],
-                }
-            )
+                if made_calls:
+                    item["tool_calls"] = made_calls
+                if not content and not made_calls:
+                    return _err("assistant 消息得有点内容")
+                new_items.append(item)
+                for call in made_calls:
+                    if tool_output:
+                        new_items.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": call["id"],
+                                "content": [{"type": "text", "text": tool_output}],
+                            }
+                        )
+            else:  # tool
+                if not text:
+                    return _err("tool 回包得有正文")
+                if not tool_call_id:
+                    if len(open_ids) == 1:
+                        tool_call_id = open_ids[0]["id"]
+                    elif not open_ids:
+                        return _err("没有等待回包的 toolcall，先加一条 assistant 的 toolcall")
+                    else:
+                        return _err("有好几个等待回包的 toolcall，得指定配哪一个")
+                if tool_call_id not in {x["id"] for x in open_ids}:
+                    return _err("tool_call_id 找不到对应的 toolcall：%s" % tool_call_id)
+                new_items.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "content": [{"type": "text", "text": text}],
+                    }
+                )
 
-        backup = self._backup(cid, history)
-        pos = total if after < 0 else after + 1
-        merged = history[:pos] + new_items + history[pos:]
-        try:
-            tokens = await self._save(conv, merged)
-        except Exception as exc:
-            logger.error("[super_enhance/ctx] 新增写回失败", exc_info=True)
-            return _err(exc)
+            backup = self._backup(cid, history)
+            pos = total if after < 0 else after + 1
+            merged = history[:pos] + new_items + history[pos:]
+            try:
+                tokens = await self._save(conv, merged)
+            except Exception as exc:
+                logger.error("[super_enhance/ctx] 新增写回失败", exc_info=True)
+                return _err(exc)
         logger.info(
             "[super_enhance/ctx] 新增 %d 条（%s）到第 %d 条后，%s 现存 %d 条",
             len(new_items),
@@ -2515,27 +2515,28 @@ class ContextPageApi:
             cid = _validate_safe_cid(cid)
         except ValueError as exc:
             return _err(exc)
-        try:
-            conv, _ = await self._load(cid)
-        except Exception as exc:
-            return _err(exc)
-        files = self._backups_of(cid)
-        if not files:
-            return _err("没有可撤销的备份")
-        path = files[-1]
-        try:
-            history = _history_of(path.read_text(encoding="utf-8"))
-        except Exception as exc:
-            return _err("备份读取失败: %s" % exc)
-        try:
-            tokens = await self._save(conv, history)
-        except Exception as exc:
-            logger.error("[super_enhance/ctx] 撤销写回失败", exc_info=True)
-            return _err(exc)
-        try:
-            path.unlink()
-        except Exception:
-            logger.warning("[super_enhance/ctx] 删除已用备份失败: %s", path)
+        async with history_io.hold_lock(cid):
+            try:
+                conv, _ = await self._load(cid)
+            except Exception as exc:
+                return _err(exc)
+            files = self._backups_of(cid)
+            if not files:
+                return _err("没有可撤销的备份")
+            path = files[-1]
+            try:
+                history = _history_of(path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                return _err("备份读取失败: %s" % exc)
+            try:
+                tokens = await self._save(conv, history)
+            except Exception as exc:
+                logger.error("[super_enhance/ctx] 撤销写回失败", exc_info=True)
+                return _err(exc)
+            try:
+                path.unlink()
+            except Exception:
+                logger.warning("[super_enhance/ctx] 删除已用备份失败: %s", path)
         logger.info("[super_enhance/ctx] 撤销删除，%s 恢复 %d 条", cid, len(history))
         return _ok(
             {
@@ -2739,7 +2740,10 @@ class ContextPageApi:
             raw = payload.get(key)
             if raw is None or str(raw).strip() == "":
                 return None
-            return parse_hours(raw, label)
+            val = parse_hours(raw, label)
+            if val is None:
+                raise ValueError("%s格式不对：%s" % (label, raw))
+            return val
 
         tid = str(payload.get("id") or "")
         if action == "add":
@@ -2811,25 +2815,8 @@ class ContextPageApi:
         try:
             from .features.life_state.money import ACCOUNT_ORDER, KIND_LABELS, fmt_yuan
             now = life._now()
-            archived = 0
-            staged_money_write = False
-            has_cache = hasattr(life.money, "_data")
-            data_before = copy.deepcopy(getattr(life.money, "_data")) if has_cache else None
-            try:
-                with jsonio.staged_writes():
-                    archived = int(life.money.archive_settled(now, life.world) or 0)
-                    if archived <= 0:
-                        raise _NoArchiveChange()
-                    pending_map = jsonio._pending_writes.get() or {}
-                    staged_money_write = any(
-                        (not quiet) and ("money" in live.topics_of(p))
-                        for p, (_b, _e, quiet) in pending_map.items()
-                    )
-            except _NoArchiveChange:
-                if has_cache:
-                    life.money._data = data_before
-            if archived > 0 and not staged_money_write:
-                live.notify("money")
+            # archive_settled 内部持 MoneyBook._lock 且仅当确有归档变更时才落盘并由 jsonio.save 触发 live 通知，绝不无锁覆写 _data
+            life.money.archive_settled(now, life.world)
             snap = life.money.snapshot(now, life.world)
             accs = snap["accounts"]
             acc_labels = {k: str((accs.get(k) or {}).get("label") or k) for k in ACCOUNT_ORDER}
