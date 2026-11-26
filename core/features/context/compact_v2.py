@@ -26,7 +26,7 @@ from pathlib import Path
 
 from astrbot.api import logger
 
-from ...common import jsonio, llm, text as text_utils, timeutil
+from ...common import history_io, jsonio, llm, text as text_utils, timeutil
 from astrbot.core.message.components import Node, Plain
 
 from ...common.text import strip_inline_system
@@ -188,19 +188,25 @@ class CompactV2:
 
     def _boundary(self, history: list, keep: str) -> tuple[int, str]:
         """返回原文区起点下标（从它开始原样保留）和一句人话说明。"""
-        num, unit = int(_KEEP_RE.match(keep).group(1)), keep[-1].lower()
+        match = _KEEP_RE.match(str(keep or "").strip())
+        if not match:
+            raise ValueError("保留范围格式不对：%r（应如 2d、12h、40m）" % (keep,))
+        num, unit = int(match.group(1)), match.group(2).lower()
         n = len(history)
         if unit == "m":
-            count, idx = 0, n
-            for i in range(n - 1, -1, -1):
-                m = history[i]
-                if isinstance(m, dict) and m.get("role") in ("user", "assistant") and _text_of(m).strip():
-                    count += 1
-                    if count >= num:
-                        idx = i
-                        break
+            if num <= 0:
+                idx = n
             else:
-                idx = 0
+                count, idx = 0, n
+                for i in range(n - 1, -1, -1):
+                    m = history[i]
+                    if isinstance(m, dict) and m.get("role") in ("user", "assistant") and _text_of(m).strip():
+                        count += 1
+                        if count >= num:
+                            idx = i
+                            break
+                else:
+                    idx = 0
             desc = "最近 %d 条消息" % num
         else:
             now = self._now()
@@ -601,52 +607,65 @@ class CompactV2:
         yield event.plain_result(text)
 
     async def _commit(self, umo, cid, conv, state) -> tuple[bool, str]:
-        """备份 + 写入。返回 (写没写成, 给人看的话)。"""
-        history = self._history_of(conv)
-        end = state["end"]
-        if len(history) < end or _fingerprint(history[:end]) != state["fp"]:
-            state["_stale"] = True
-            return False, "预览之后压缩区的历史被改过了（比如在面板里编辑过），这版作废，请重新 /compact v2。"
-        new_history = self._assemble(history, state)
-        backup_dir = self._backup_dir(umo)
-        if backup_dir is None:
-            return False, "找不到插件数据目录，没法备份，所以没有写入。"
-        stamp = self._now().strftime("%Y%m%d-%H%M%S")
-        backup = backup_dir / ("%s.json" % stamp)
-        try:
-            jsonio.save(
-                backup,
-                {
-                    "umo": umo, "cid": cid, "created": stamp,
-                    "history": history,
-                    "token_usage": int(getattr(conv, "token_usage", 0) or 0),
-                    "written_len": len(new_history),
-                    "written_fp": _fingerprint(new_history),
-                },
+        """备份 + 写入（在会话写锁里重读最新历史，防止覆写并发新消息）。返回 (写没写成, 给人看的话)。"""
+        mgr = self.context.conversation_manager
+        async with history_io.hold_lock(cid):
+            latest_conv = await mgr.get_conversation(umo, cid)
+            if latest_conv is not None:
+                conv = latest_conv
+            history = self._history_of(conv)
+            end = state["end"]
+            if len(history) < end or _fingerprint(history[:end]) != state["fp"]:
+                state["_stale"] = True
+                return False, "预览之后压缩区的历史被改过了（比如在面板里编辑过），这版作废，请重新 /compact v2。"
+            new_history = self._assemble(history, state)
+            backup_dir = self._backup_dir(umo)
+            if backup_dir is None:
+                return False, "找不到插件数据目录，没法备份，所以没有写入。"
+            stamp = self._now().strftime("%Y%m%d-%H%M%S")
+            backup = backup_dir / ("%s.json" % stamp)
+            try:
+                jsonio.save(
+                    backup,
+                    {
+                        "umo": umo, "cid": cid, "created": stamp,
+                        "history": history,
+                        "token_usage": int(getattr(conv, "token_usage", 0) or 0),
+                        "written_len": len(new_history),
+                        "written_fp": _fingerprint(new_history),
+                    },
+                )
+            except Exception as e:
+                logger.error("[super_enhance/compact_v2] 备份失败", exc_info=True)
+                return False, "备份失败，没有写入：%s" % e
+            tokens = self._estimate(new_history)
+            try:
+                await mgr.update_conversation(
+                    umo, cid, history=new_history, token_usage=tokens
+                )
+            except Exception as e:
+                try:
+                    backup.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                logger.error("[super_enhance/compact_v2] 写入失败", exc_info=True)
+                return False, "写入失败，历史没动：%s" % e
+            self._prune(backup_dir)
+            logger.info(
+                "[super_enhance/compact_v2] %s 写入：%d → %d 条，备份 %s", umo, len(history), len(new_history), backup,
             )
-        except Exception as e:
-            logger.error("[super_enhance/compact_v2] 备份失败", exc_info=True)
-            return False, "备份失败，没有写入：%s" % e
-        tokens = self._estimate(new_history)
-        try:
-            await self.context.conversation_manager.update_conversation(
-                umo, cid, history=new_history, token_usage=tokens
+            return True, (
+                "已写入：%d 条 → %d 条，约 %.1fk tokens。\n备份：%s\n后悔了发 /compact v2 undo。"
+                % (len(history), len(new_history), tokens / 1000, backup.name)
             )
-        except Exception as e:
-            logger.error("[super_enhance/compact_v2] 写入失败", exc_info=True)
-            return False, "写入失败，历史没动：%s" % e
-        self._prune(backup_dir)
-        logger.info(
-            "[super_enhance/compact_v2] %s 写入：%d → %d 条，备份 %s", umo, len(history), len(new_history), backup,
-        )
-        return True, (
-            "已写入：%d 条 → %d 条，约 %.1fk tokens。\n备份：%s\n后悔了发 /compact v2 undo。"
-            % (len(history), len(new_history), tokens / 1000, backup.name)
-        )
 
     # ---------- 自动压缩（每天定时，不出预览直接写；写前照样整份备份，/compact v2 undo 能撤） ----------
 
     async def auto_compact(self, umo: str, keep: str) -> tuple[bool, str]:
+        keep_str = str(keep or "").strip()
+        if not _KEEP_RE.match(keep_str):
+            logger.error("[super_enhance/compact_v2] 自动压缩 %s 保留参数不合法：%r", umo, keep)
+            return False, "保留范围格式不对：%r（应如 2d、12h、40m）" % (keep,)
         if umo in self._busy:
             return False, "上一次压缩还在跑"
         manager = self.context.conversation_manager
@@ -655,7 +674,7 @@ class CompactV2:
         if not conv:
             return False, "没有会话"
         role = await self._role_name(umo, conv)
-        state, note = self._prepare(self._history_of(conv), keep, role, cid)
+        state, note = self._prepare(self._history_of(conv), keep_str, role, cid)
         if state is None:
             return False, note
         self._busy.add(umo)
@@ -666,6 +685,10 @@ class CompactV2:
             if not isinstance(result, dict) or not str(result.get("memo") or "").strip():
                 return False, "模型没给出可用的 JSON（结束原因 %s），历史没动" % out["info"].get("finish")
             excerpts, whys, dropped = self._validate(result, state["usable"], state["end"])
+            if not excerpts:
+                reason = "；".join(dropped) if dropped else "模型未返回任何摘录"
+                logger.error("[super_enhance/compact_v2] 自动压缩 %s 摘录全部无效（0 段），放弃写入：%s", umo, reason)
+                return False, "模型返回的摘录全部无效（0 段），历史没动：%s" % reason
             state.update(memo=str(result["memo"]).strip(), excerpts=excerpts, whys=whys, dropped=dropped, info=out["info"])
             conv = await manager.get_conversation(umo, cid)  # 等模型这一两分钟里可能又聊了几句：重新读，接在后面
             if not conv:
@@ -696,22 +719,27 @@ class CompactV2:
         if data.get("cid") != cid:
             yield event.plain_result("最近一次压缩是在另一个对话里做的（%s），当前对话不能撤销。" % path.name)
             return
-        history = self._history_of(conv)
-        n = int(data.get("written_len") or 0)
-        if len(history) < n or _fingerprint(history[:n]) != data.get("written_fp"):
-            yield event.plain_result(
-                "压缩之后历史又被改过（比如又压缩了一次，或在面板里编辑过），没法自动撤销。备份还在：%s" % path
-            )
-            return
-        restored = list(data.get("history") or []) + history[n:]
-        try:
-            await self.context.conversation_manager.update_conversation(
-                umo, cid, history=restored, token_usage=int(data.get("token_usage") or 0) or self._estimate(restored)
-            )
-        except Exception as e:
-            yield event.plain_result("撤销失败，历史没动：%s" % e)
-            return
-        path.rename(path.with_suffix(".undone"))
+        mgr = self.context.conversation_manager
+        async with history_io.hold_lock(cid):
+            latest_conv = await mgr.get_conversation(umo, cid)
+            if latest_conv is not None:
+                conv = latest_conv
+            history = self._history_of(conv)
+            n = int(data.get("written_len") or 0)
+            if len(history) < n or _fingerprint(history[:n]) != data.get("written_fp"):
+                yield event.plain_result(
+                    "压缩之后历史又被改过（比如又压缩了一次，或在面板里编辑过），没法自动撤销。备份还在：%s" % path
+                )
+                return
+            restored = list(data.get("history") or []) + history[n:]
+            try:
+                await mgr.update_conversation(
+                    umo, cid, history=restored, token_usage=int(data.get("token_usage") or 0) or self._estimate(restored)
+                )
+            except Exception as e:
+                yield event.plain_result("撤销失败，历史没动：%s" % e)
+                return
+            path.rename(path.with_suffix(".undone"))
         yield event.plain_result(
             "已撤销 %s 那次压缩：恢复成 %d 条（压缩后新聊的 %d 条接在后面）。"
             % (data.get("created"), len(restored), len(history) - n)

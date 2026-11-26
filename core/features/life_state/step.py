@@ -2159,7 +2159,7 @@ class LifeStep:
                         timeutil.span_text(item.get("start"), item.get("end"), date_prefix=True, ongoing="~…"),
                         item.get("place") or "",
                         event_text_at(item, item_end),
-                        "（和%s）" % "、".join(self.label(x) or x for x in item["with"]) if item.get("with") else "",
+                        "（和%s）" % "、".join("主人" if x == "master" else (self.label(x) or x) for x in item["with"]) if item.get("with") else "",
                         ops_brief,
                     ))
         if planned:
@@ -2840,11 +2840,15 @@ class LifeStep:
         since = time.time()
         if not await planner.ask_now(who, question, invitation_id=dec_id):
             return data, text
-        if companion is not None and dec_id:
-            companion.safe("mark_decision_asked", dec_id, now)
         asked = await self._wait_asked(umo, since)
         if asked is None:
+            logger.info(
+                "[super_enhance/world] %s 请示 %s 未在等待窗内确认发出，暂不标为 asked（保留 idea 状态，不占配额）",
+                self.label(who) or who, dec_id,
+            )
             return data, text
+        if companion is not None and dec_id:
+            companion.safe("mark_decision_asked", dec_id, self._now().replace(tzinfo=None))
         replies = await self._wait_replies(umo, float(asked.get("ts") or since))
         name = self.label(who) or who
         if not replies:
@@ -2939,6 +2943,63 @@ class LifeStep:
         if end is None or end <= start:
             return start + datetime.timedelta(minutes=45)
         return min(end, start + cap)
+
+    def _resolve_open_end(
+        self,
+        bot: str,
+        info: dict,
+        end_current: dict,
+        raw_list: list,
+        date_text: str,
+        flat: datetime.datetime,
+    ) -> tuple[datetime.datetime, bool]:
+        """统一计算 open 模式下当前开口段的结束时刻（validate_payload 与 _apply 共用）。
+        按 cur_start 封顶，但绝不截到当前时刻 flat 之前（至少延续到 floor = flat + 5 分钟，
+        消除超 4 小时开口段被截到 now 之前导致 world.current(bot, now) is None 的时间真空）。"""
+        cur = info.get("cur") if isinstance(info.get("cur"), dict) else {}
+        cur_start = parse_time(cur.get("start")) or flat
+        end = parse_time(norm_time(end_current.get(bot), date_text)) if end_current.get(bot) else None
+        if end is None and raw_list and isinstance(raw_list[0], dict):
+            end = parse_time(norm_time(raw_list[0].get("start"), date_text))
+        has_end = end is not None
+        floor = flat + datetime.timedelta(minutes=5)
+        if end is None or end < floor:
+            end = floor
+        capped = self._limit(cur_start, end, is_sleep(cur))
+        resolved = max(capped, floor)
+        if resolved <= cur_start:
+            resolved = cur_start + datetime.timedelta(minutes=1)
+        return resolved, has_end
+
+    def _collect_timed_master_info(self, date_text: str) -> tuple[set[str], list[int]]:
+        """提取当天（date 为空或等于 date_text）带具体钟点的主人相关打算编号与约定分钟列表，
+        严格过滤非当天日期的打算，避免拿未来日期的打算放行今天带主人出门。"""
+        timed_ids: set[str] = set()
+        timed_minutes: list[int] = []
+        for it in (self.world.intentions() or []):
+            it_date = str(it.get("date") or "").strip()[:10]
+            if it_date and it_date != date_text:
+                continue
+            win_txt = str(it.get("window") or "").strip()
+            has_clock = bool(re.search(r"\d{1,2}:\d{2}|\d{1,2}\s*点|[一二两三四五六七八九十]+点", win_txt))
+            if has_clock and (str(it.get("who") or "") == "master" or "master" in (it.get("with") or [])):
+                if it.get("id"):
+                    timed_ids.add(str(it["id"]))
+                for hm in re.findall(r"(\d{1,2}):(\d{2})", win_txt):
+                    timed_minutes.append(int(hm[0]) * 60 + int(hm[1]))
+        book = getattr(self, "promises", None)
+        if book is not None:
+            try:
+                for pr in (book.items() or []):
+                    if str(pr.get("status") or "") != "open" or str(pr.get("date") or "") != date_text:
+                        continue
+                    pt = str(pr.get("time") or "").strip()
+                    m_hm = re.search(r"(\d{1,2}):(\d{2})", pt)
+                    if m_hm:
+                        timed_minutes.append(int(m_hm.group(1)) * 60 + int(m_hm.group(2)))
+            except Exception:
+                pass
+        return timed_ids, timed_minutes
 
     @staticmethod
     def _normalize_proactive_fields(raw: dict, prev_entry: dict | None = None) -> dict:
@@ -3052,28 +3113,7 @@ class LifeStep:
             view_mod._is_outside_place(m_where.get("place"), m_where.get("at_home"), self.home)
             if m_where is not None else False
         )
-        timed_master_intent_ids: set[str] = set()
-        timed_master_minutes: list[int] = []
-        for it in (self.world.intentions() or []):
-            win_txt = str(it.get("window") or "").strip()
-            has_clock = bool(re.search(r"\d{1,2}:\d{2}|\d{1,2}\s*点|[一二两三四五六七八九十]+点", win_txt))
-            if has_clock and (str(it.get("who") or "") == "master" or "master" in (it.get("with") or [])):
-                if it.get("id"):
-                    timed_master_intent_ids.add(str(it["id"]))
-                for hm in re.findall(r"(\d{1,2}):(\d{2})", win_txt):
-                    timed_master_minutes.append(int(hm[0]) * 60 + int(hm[1]))
-        book = getattr(self, "promises", None)
-        if book is not None:
-            try:
-                for pr in (book.items() or []):
-                    if str(pr.get("status") or "") != "open" or str(pr.get("date") or "") != date_text:
-                        continue
-                    pt = str(pr.get("time") or "").strip()
-                    m_hm = re.search(r"(\d{1,2}):(\d{2})", pt)
-                    if m_hm:
-                        timed_master_minutes.append(int(m_hm.group(1)) * 60 + int(m_hm.group(2)))
-            except Exception:
-                pass
+        timed_master_intent_ids, timed_master_minutes = self._collect_timed_master_info(date_text)
 
         def _valid_place_struct(val) -> bool:
             if isinstance(val, dict):
@@ -3176,14 +3216,12 @@ class LifeStep:
                 continue
             start = info["start"]
             if info["mode"] == "open":
-                cur_end = parse_time(norm_time(end_current.get(bot), date_text)) if end_current.get(bot) else None
-                if cur_end is None and isinstance(raw_list[0], dict):
-                    cur_end = parse_time(norm_time(raw_list[0].get("start"), date_text))
-                if cur_end is None:
+                resolved_open, has_open_end = self._resolve_open_end(
+                    bot, info, end_current, raw_list, date_text, flat
+                )
+                if not has_open_end:
                     errors.append(f"{who_lbl}（{bot}）：手上未定结束时刻的段必须在 end_current.{bot} 给出结束时间")
-                    start = flat + datetime.timedelta(minutes=5)
-                else:
-                    start = max(cur_end, flat + datetime.timedelta(minutes=5))
+                start = resolved_open
             dict_items = [x for x in raw_list if isinstance(x, dict)]
             dict_items.sort(key=lambda x: str(norm_time(x.get("start"), date_text) or ""))
             cursor = start
@@ -3496,7 +3534,8 @@ class LifeStep:
                 ):
                     brought_home_earlier = any(
                         p_raw.get("at_home") is False and "master" in [str(x) for x in (p_raw.get("with") or [])]
-                        for _, p_raw, p_s, _, _ in bot_kept
+                        for _, (other_kept, _, _) in kept_by_bot.items()
+                        for _, p_raw, p_s, _, _ in other_kept
                         if p_s < seg_start
                     )
                     if not brought_home_earlier:
@@ -3514,7 +3553,8 @@ class LifeStep:
                     near_timed = any(abs(seg_min - tm) <= 20 for tm in timed_master_minutes)
                     prior_master_out = any(
                         p_raw.get("at_home") is False and "master" in [str(x) for x in (p_raw.get("with") or [])]
-                        for _, p_raw, p_s, _, _ in bot_kept
+                        for _, (other_kept, _, _) in kept_by_bot.items()
+                        for _, p_raw, p_s, _, _ in other_kept
                         if p_s < seg_start
                     )
                     if not (raw_i in timed_master_intent_ids or near_timed or prior_master_out):
@@ -4147,6 +4187,7 @@ class LifeStep:
             view_mod._is_outside_place(m_where_apply.get("place"), m_where_apply.get("at_home"), self.home)
             if m_where_apply is not None else False
         )
+        timed_master_intent_ids, timed_master_minutes = self._collect_timed_master_info(date_text)
 
         ask_raw = data.get("ask_master") if isinstance(data.get("ask_master"), dict) else {}
         ask_q = clean_text(ask_raw.get("question"), 160) if ask_raw else ""
@@ -4165,15 +4206,10 @@ class LifeStep:
             if info["mode"] == "open":
                 cur = info["cur"]
                 cur_start = parse_time(cur.get("start")) or flat
-                end = parse_time(norm_time(end_current.get(bot), date_text)) if end_current.get(bot) else None
-                if end is None:
-                    raw = (segments.get(bot) or [None])[0]
-                    if isinstance(raw, dict):
-                        end = parse_time(norm_time(raw.get("start"), date_text))
-                floor = flat + datetime.timedelta(minutes=5)
-                if end is None or end < floor:
-                    end = floor
-                end = self._limit(cur_start, end, is_sleep(cur))
+                raw_list_open = segments.get(bot) if isinstance(segments.get(bot), list) else []
+                end, _ = self._resolve_open_end(
+                    bot, info, end_current, raw_list_open, date_text, flat
+                )
                 self.world.update(
                     self.world.date_of(cur.get("id"), bot, flat) or cur_start.date().isoformat(),
                     cur.get("id"), end=fmt_time(end),
@@ -4241,24 +4277,40 @@ class LifeStep:
                             self._claim(item_keys, str(effect["new"]).strip(), clean_text(effect["name"], 30), bot,
                                         lambda: store.reserve_id(CAT_ITEM))
 
-        # 第三遍：组装条目、规整主动消息与 step_no 夹紧、落库
+        # 第三遍：组装条目、对齐双人同行 master 对称性、规整主动消息与 step_no 夹紧、落库
+        def _has_prior_master_out(before_dt: datetime.datetime) -> bool:
+            for _ob, (o_plan, _oc, _ou) in kept_plans.items():
+                for o_raw, o_start, _o_end, _o_st, _o_id, _o_sl, _o_t, _o_ps in o_plan:
+                    if o_start < before_dt and o_raw.get("at_home") is False and "master" in [str(x) for x in (o_raw.get("with") or [])]:
+                        return True
+            return False
+
+        staged_by_bot: dict[str, tuple[list[dict], list[dict], datetime.datetime, datetime.datetime | None]] = {}
         for bot, (bot_plan, final_cursor, until) in kept_plans.items():
             staged_entries = []
+            staged_meta = []
             for raw, seg_start, seg_end, state, idle, sleep, _texts, parsed_steps in bot_plan:
                 raw_with = [str(x) for x in (raw.get("with") or [])]
                 with_list = [x for x in raw_with if x in bots and x != bot]
+                raw_intent = str(raw.get("intent") or "").strip()
                 intent = "" if idle else self.intent_id(raw.get("intent"), bot, raw_with)
                 if intent in moves and not moves[intent]["done"]:
                     intent = ""
                 training = self.training_id(raw.get("training"), bot)
                 prev = staged_entries[-1] if staged_entries else self.world.latest_for(bot, before=fmt_time(seg_start))
                 prev_with_master = bool(prev) and "master" in (prev.get("with") or []) and not prev.get("sleep")
+                prev_out_with_master = bool(prev_with_master and prev.get("at_home") is False)
                 origin_val = origin_of(
                     raw.get("from"), bot, seed, intent=intent, training=training,
                     pools_data=pools_data, cand_map=cand_map,
                 )
                 is_meal_with_master = bool(raw.get("meal") is True and raw.get("at_home") is True and not master_outside_apply)
                 is_promise_with_master = origin_val.get("kind") == "promise"
+                seg_min = seg_start.hour * 60 + seg_start.minute
+                near_timed = any(abs(seg_min - tm) <= 20 for tm in timed_master_minutes)
+                prior_master_out = _has_prior_master_out(seg_start)
+                brought_home_earlier = prior_master_out
+                allow_home_master = not (master_outside_apply and not master_replied and not brought_home_earlier)
                 # 主人此刻在睡时：近期（<2h）或深夜/凌晨（<06:00 / >=22:00）的段视为仍在睡；
                 # 跨到白天 06:00–22:00 且距今 >=2h 的预排段（如凌晨 04:00 预排 07:30 早饭或 08:00 约定）正常保留合法 master
                 is_future_daytime = (
@@ -4266,14 +4318,35 @@ class LifeStep:
                     and (seg_start - flat).total_seconds() >= 2 * 3600
                 )
                 seg_master_sleeping = bool(master_sleeping and not is_future_daytime)
-                if not seg_master_sleeping and not idle and not sleep and "master" in raw_with and (
-                    self._intent_with_master(intent)
-                    or prev_with_master
-                    or is_meal_with_master
-                    or is_promise_with_master
-                    or master_replied
-                ):
-                    with_list.append("master")
+                if not seg_master_sleeping and not idle and not sleep and "master" in raw_with:
+                    if raw.get("at_home") is False:
+                        keep_master = bool(
+                            master_replied
+                            or master_outside_apply
+                            or (intent in timed_master_intent_ids)
+                            or (raw_intent in timed_master_intent_ids)
+                            or near_timed
+                            or prior_master_out
+                            or prev_out_with_master
+                            or self._intent_with_master(intent)
+                            or is_promise_with_master
+                        )
+                    else:
+                        keep_master = bool(
+                            allow_home_master and (
+                                self._intent_with_master(intent)
+                                or (intent in timed_master_intent_ids)
+                                or (raw_intent in timed_master_intent_ids)
+                                or near_timed
+                                or prev_with_master
+                                or is_meal_with_master
+                                or is_promise_with_master
+                                or master_replied
+                                or brought_home_earlier
+                            )
+                        )
+                    if keep_master:
+                        with_list.append("master")
                 origin_mood_states = None
                 if isinstance(origin_val, dict) and origin_val.get("text"):
                     o_txt = str(origin_val["text"])
@@ -4314,7 +4387,11 @@ class LifeStep:
                         else:
                             effect["step"] = max(1, min(raw_no, len(_texts)))
                 raw_stove = str(raw.get("stove") or "").strip().lower()
-                stove_val = raw_stove if raw_stove in ("charcoal", "wood") and not sleep and not idle else ""
+                stove_val = (
+                    raw_stove
+                    if raw_stove in ("charcoal", "wood") and raw.get("at_home") is not False and self.home == "海边小镇"
+                    else ""
+                )
                 entry = {
                     "who": bot,
                     "kind": "activity",
@@ -4351,7 +4428,72 @@ class LifeStep:
                     "created": fmt_time(flat),
                 }
                 staged_entries.append(entry)
+                staged_meta.append({
+                    "raw_with": raw_with,
+                    "seg_master_sleeping": seg_master_sleeping,
+                    "allow_home_master": allow_home_master,
+                })
+            staged_by_bot[bot] = (staged_entries, staged_meta, final_cursor, until)
 
+        # 双人同行汇合时同步保留 master，避免一侧保留而另一侧被静默剥离破坏对称性
+        for _ in range(max(1, len(staged_by_bot))):
+            synced_any = False
+            for bot, (staged_entries, staged_meta, _fc, _un) in staged_by_bot.items():
+                for entry, meta in zip(staged_entries, staged_meta):
+                    if (
+                        "master" in entry["with"]
+                        or "master" not in meta["raw_with"]
+                        or meta["seg_master_sleeping"]
+                        or entry.get("idle")
+                        or entry.get("sleep")
+                    ):
+                        continue
+                    if entry.get("at_home") is not False and not meta["allow_home_master"]:
+                        continue
+                    partner_has_master = False
+                    for partner in entry["with"]:
+                        if partner not in bots or partner == bot:
+                            continue
+                        if partner in staged_by_bot:
+                            for p_entry in staged_by_bot[partner][0]:
+                                if (
+                                    p_entry["start"] == entry["start"]
+                                    and p_entry["end"] == entry["end"]
+                                    and bot in p_entry["with"]
+                                    and "master" in p_entry["with"]
+                                ):
+                                    partner_has_master = True
+                                    break
+                        else:
+                            seg_s = parse_time(entry["start"])
+                            seg_e = parse_time(entry["end"])
+                            if seg_s is not None and seg_e is not None:
+                                for d_txt in sorted({seg_s.date().isoformat(), seg_e.date().isoformat()}):
+                                    for item in self.world.entries(d_txt, partner):
+                                        if is_event(item):
+                                            continue
+                                        p_w = [str(x) for x in (item.get("with") or [])]
+                                        if bot not in p_w or "master" not in p_w:
+                                            continue
+                                        es = parse_time(item.get("start"))
+                                        ee = parse_time(item.get("end")) if item.get("end") else None
+                                        if es is not None and es <= seg_s and (ee is None or ee >= seg_e):
+                                            partner_has_master = True
+                                            break
+                                    if partner_has_master:
+                                        break
+                        if partner_has_master:
+                            break
+                    if partner_has_master:
+                        entry["with"].append("master")
+                        if "master" not in entry["seen_by"]:
+                            entry["seen_by"].append("master")
+                        synced_any = True
+            if not synced_any:
+                break
+
+        for bot, (staged_entries, _staged_meta, final_cursor, until) in staged_by_bot.items():
+            bot_plan = kept_plans[bot][0]
             _sanitize_proactive_nodes(staged_entries)
             if ask_q and ask_who == bot and ask_at_dt is not None:
                 for entry in staged_entries:

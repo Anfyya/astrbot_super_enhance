@@ -8,21 +8,24 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import copy
 import datetime
+import hashlib
 import inspect
 import io
 import json
-import hashlib
+import math
 import random
 import re
 import time
+from collections import OrderedDict
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 from astrbot.api import logger
 
-from .common import history_io, live, text as text_utils
+from .common import history_io, jsonio, live, text as text_utils
 from .common.patching import PatchSet
 from .common.text import clean_message, text_of, time_of
 from .features.life_state import loop as life_loop
@@ -63,7 +66,7 @@ _ROUTE_SPECS = (
     ("requests", "list_requests", ("GET",), "上下文页面：真实请求快照列表"),
     ("request_tools", "request_tools", ("GET",), "上下文页面：请求里的工具定义"),
     ("request", "get_request", ("GET",), "上下文页面：某一份真实请求快照"),
-    ("ledger", "get_ledger", ("GET",), "上下文页面：能力清单 / 约定 / 事件"),
+    ("ledger", "get_ledger", ("GET",), "上下文页面：能力清单 / 在练的事 / 约定"),
     ("ledger/edit", "edit_ledger", ("POST",), "上下文页面：编辑能力清单 / 约定"),
     ("money", "money_view", ("GET",), "上下文页面：船屋钱匣与账本流水"),
     ("money/edit", "money_edit", ("POST",), "上下文页面：手动调账 / 增删流水 / 管欠账"),
@@ -73,6 +76,9 @@ _ROUTE_SPECS = (
 )
 
 _MAX_BACKUP_FILES = 30
+_PIC_CACHE_MAX = 200
+_SAFE_CID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+_BACKUP_STAMP_RE = re.compile(r"^(\d{8}-\d{6})(?:_(\d{3,6}))?(?:_(\d+))?$")
 # 实时推送：没动静时隔这么久发一条心跳（网页按它判断连接还活着）。EdgeOne 空闲约 15 秒就掐断，8 秒更稳
 LIVE_PING_SECONDS = 8
 # 一批写入（记录员一次会存好几份文件）攒这么久合成一条再推
@@ -104,6 +110,44 @@ def _as_int(value: Any, default: int = 0) -> int:
         return int(value)
     except Exception:
         return default
+
+
+def _validate_iso_date(value: Any) -> str:
+    """严格校验 YYYY-MM-DD 格式日期，防止路径穿越或非标准日期。"""
+    text = str(value or "").strip()
+    if len(text) != 10 or text[4:5] != "-" or text[7:8] != "-":
+        raise ValueError("日期格式必须为 YYYY-MM-DD：%s" % text)
+    try:
+        parsed = datetime.date.fromisoformat(text)
+    except Exception:
+        raise ValueError("日期不合法：%s" % text)
+    if parsed.isoformat() != text:
+        raise ValueError("日期格式必须为 YYYY-MM-DD：%s" % text)
+    return text
+
+
+def _validate_safe_cid(cid: Any) -> str:
+    """校验会话 cid 仅包含安全文件名字符，拒绝路径分隔符、.. 与通配符。"""
+    text = str(cid or "").strip()
+    if not text or ".." in text or not _SAFE_CID_RE.fullmatch(text):
+        raise ValueError("cid 格式非法")
+    return text
+
+
+def _call_with_optional_kwargs(fn, *args, **kwargs):
+    """按目标函数签名安全传入可选关键字参数（如 world / now），兼容新旧签名。"""
+    try:
+        sig = inspect.signature(fn)
+        has_varkw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+        if not has_varkw:
+            kwargs = {k: v for k, v in kwargs.items() if k in sig.parameters}
+    except (TypeError, ValueError):
+        pass
+    return fn(*args, **kwargs)
+
+
+class _NoArchiveChange(Exception):
+    """内部控制流：archive_settled 无新增归档变动时取消暂存写入。"""
 
 
 def _history_of(raw: Any) -> list[dict]:
@@ -383,8 +427,11 @@ def _apply_think(item: dict, new_think: str) -> bool:
             changed = True
         if changed:
             item["content"] = rebuilt
-    elif not isinstance(content, (str, type(None))) and new_think:
-        item["content"] = [{"type": "think", "think": new_think}, content]
+    elif isinstance(content, (str, type(None))) and new_think and not isinstance(item.get("reasoning_content"), str):
+        parts: list[Any] = [{"type": "think", "think": new_think}]
+        if isinstance(content, str):
+            parts.append({"type": "text", "text": content})
+        item["content"] = parts
         changed = True
     if isinstance(item.get("reasoning_content"), str):
         if item.get("reasoning_content") != new_think:
@@ -422,7 +469,7 @@ class ContextPageApi:
         self.context = plugin.context
         self.data_dir = self._resolve_data_dir()
         self.backup_dir = self.data_dir / "context_backups"
-        self._pic_cache = {}
+        self._pic_cache: OrderedDict[str, str] = OrderedDict()
         self._pulse_cache = {}
         self._token_cache = {}
         self._pool_cache: tuple[Any, dict] | None = None
@@ -442,16 +489,27 @@ class ContextPageApi:
         except Exception:
             return Path("data") / PLUGIN_NAME
 
+    def _ensure_pic_cache(self) -> OrderedDict[str, str]:
+        cache = getattr(self, "_pic_cache", None)
+        if not isinstance(cache, OrderedDict):
+            cache = OrderedDict(cache.items() if isinstance(cache, dict) else ())
+            while len(cache) > _PIC_CACHE_MAX:
+                cache.popitem(last=False)
+            self._pic_cache = cache
+        return cache
+
     def _picture_refs(self, urls: list[str]) -> list[dict]:
-        if not hasattr(self, "_pic_cache"):
-            self._pic_cache = {}
+        cache = self._ensure_pic_cache()
         out = []
         for url in urls:
             text = str(url or "")
             if not text:
                 continue
             pic_id = _picture_id(text)
-            self._pic_cache[pic_id] = text
+            cache[pic_id] = text
+            cache.move_to_end(pic_id)
+            while len(cache) > _PIC_CACHE_MAX:
+                cache.popitem(last=False)
             mime = "image/*"
             if text.startswith("data:") and ";" in text:
                 mime = text[5:text.index(";")]
@@ -461,7 +519,10 @@ class ContextPageApi:
     async def get_picture(self):
         args = request.args if request is not None else {}
         pic_id = str(args.get("id") or "").strip()
-        url = self._pic_cache.get(pic_id, "")
+        cache = self._ensure_pic_cache()
+        url = cache.get(pic_id, "")
+        if url:
+            cache.move_to_end(pic_id)
         if not url and pic_id.startswith(DRAWN_PIC_PREFIX):
             # 她画的图：按编号现取存着的小图（不进缓存，换过图下次取的就是新的）
             drawer = getattr(self.plugin, "image_gen", None)
@@ -550,6 +611,7 @@ class ContextPageApi:
             world = life.world
             if not date_text:
                 date_text = life._today()
+            date_text = _validate_iso_date(date_text)
             base = datetime.date.fromisoformat(date_text)
             days = []
             for offset in (0,):
@@ -707,7 +769,12 @@ class ContextPageApi:
             world = life.world
             kind = str(body.get("kind") or "")
             action = str(body.get("action") or "add")
-            date_text = str(body.get("date") or life._today())
+            raw_date = body.get("date")
+            date_text = str(raw_date).strip() if raw_date is not None and str(raw_date).strip() != "" else life._today()
+            try:
+                date_text = _validate_iso_date(date_text)
+            except ValueError as exc:
+                return _err(exc)
             ok = False
             from .features.life_state.recorder import norm_time
 
@@ -717,6 +784,10 @@ class ContextPageApi:
             if kind == "entry" and action != "delete" and body.get("start"):
                 # 条目按开始时间所在的那天存
                 date_text = str(body["start"])[:10] if action == "add" else date_text
+                try:
+                    date_text = _validate_iso_date(date_text)
+                except ValueError as exc:
+                    return _err(exc)
             if kind == "entry":
                 if action == "delete":
                     ok = world.delete_entry(date_text, str(body.get("id") or ""))
@@ -799,14 +870,6 @@ class ContextPageApi:
                 elif iid:
                     ok = world.update_intention(
                         iid, text=body.get("text"), window=body.get("window"), why=body.get("why")
-                    )
-                elif len(world.intentions(who)) == 1:
-                    # 只有一条时，网页的「保存」还是改那一条（老习惯）
-                    ok = world.update_intention(
-                        str(world.intentions(who)[0].get("id") or ""),
-                        text=body.get("text"),
-                        window=body.get("window"),
-                        why=body.get("why"),
                     )
                 else:
                     ok = bool(
@@ -1352,8 +1415,25 @@ class ContextPageApi:
             now_flat = life._now().replace(tzinfo=None)
             bots = [{"id": bot, "label": life.bots.label_for(bot) or bot} for bot in life.enabled_bots() or []]
             labels = {b["id"]: b["label"] for b in bots}
+            companion = getattr(life, "companionship", None)
+            money = getattr(life, "money", None)
             things_path = getattr(getattr(life, "things", None), "path", None)
+            money_path = getattr(money, "path", None)
+            if money_path is None and getattr(life, "data_dir", None) is not None:
+                money_path = Path(life.data_dir) / "money.json"
+            money_mtime = _mtime_ns(Path(money_path)) if money_path else 0
             world_rev = life.world.revision() if hasattr(life.world, "revision") else 0
+            life_mood_rev = (
+                life.mood_revision()
+                if callable(getattr(life, "mood_revision", None))
+                else getattr(life, "mood_revision", 0)
+            )
+            comp_mood_rev = (
+                companion.mood_revision()
+                if callable(getattr(companion, "mood_revision", None))
+                else getattr(companion, "mood_revision", 0)
+            ) if companion is not None else 0
+            mood_rev = (life_mood_rev, comp_mood_rev)
             key = (
                 today,
                 now_flat.hour,
@@ -1362,7 +1442,9 @@ class ContextPageApi:
                 _mtime_ns(life.pool_store.path),
                 _mtime_ns(life.seed_log.path),
                 _mtime_ns(things_path) if things_path else 0,
+                money_mtime,
                 world_rev,
+                mood_rev,
                 life.life_step.home,
             )
             cached = getattr(self, "_pool_cache", None)
@@ -1382,6 +1464,9 @@ class ContextPageApi:
                     tone=tone_today,
                     world=life.world,
                     store=getattr(life, "things", None),
+                    companion=companion,
+                    money=money,
+                    labels=labels,
                 )
                 if now_flat.hour < 18:
                     night_start = now_flat.replace(hour=20, minute=0)
@@ -1394,6 +1479,9 @@ class ContextPageApi:
                         tone=tone_today,
                         world=life.world,
                         store=getattr(life, "things", None),
+                        companion=companion,
+                        money=money,
+                        labels=labels,
                     )
                 else:
                     night_ctx = ctx
@@ -1513,7 +1601,10 @@ class ContextPageApi:
                 raw = payload.get("item")
                 if isinstance(raw, dict):
                     raw = dict(raw)
-                    for keep_k in ("when", "where", "wx", "link", "work", "outdoor", "short", "big", "min_temp", "min_water", "bucket"):
+                    for keep_k in (
+                        "when", "where", "wx", "link", "work", "outdoor", "short", "big",
+                        "low_tide", "min_temp", "min_water", "bucket", "mood_states",
+                    ):
                         if keep_k not in raw and keep_k in rows[index]:
                             raw[keep_k] = rows[index][keep_k]
                 item = variety.clean_pool_item(kind, raw)
@@ -1545,7 +1636,7 @@ class ContextPageApi:
                 raise ValueError("不支持的操作：%s" % action)
             store.save(pools)
             logger.info("[super_enhance/ctx] 插曲与消遣池（%s）%s：%s", variety.POOL_LABELS[kind], note, item["text"])
-            return _ok(None)
+            return _ok({"text": item["text"], "item": item})
         except ValueError as exc:
             return _err(exc)
         except Exception as exc:
@@ -1587,9 +1678,19 @@ class ContextPageApi:
 
     def _backup(self, cid: str, history: list[dict]) -> str:
         try:
+            cid = _validate_safe_cid(cid)
             self.backup_dir.mkdir(parents=True, exist_ok=True)
-            name = "%s__%s.json" % (cid, time.strftime("%Y%m%d-%H%M%S"))
-            path = self.backup_dir / name
+            now_dt = datetime.datetime.now()
+            stamp = now_dt.strftime("%Y%m%d-%H%M%S")
+            ms = now_dt.microsecond // 1000
+            seq = 0
+            while True:
+                suffix = f"_{seq:02d}" if seq else ""
+                name = f"{cid}__{stamp}_{ms:03d}{suffix}.json"
+                path = self.backup_dir / name
+                if not path.exists():
+                    break
+                seq += 1
             path.write_text(
                 json.dumps(history, ensure_ascii=False), encoding="utf-8"
             )
@@ -1599,13 +1700,32 @@ class ContextPageApi:
             logger.error("[super_enhance/ctx] 备份失败", exc_info=True)
             return ""
 
+    @staticmethod
+    def _backup_sort_key(cid: str, path: Path) -> tuple[int, str, int, int, str]:
+        prefix = f"{cid}__"
+        tail = path.stem[len(prefix):] if path.stem.startswith(prefix) else path.stem
+        match = _BACKUP_STAMP_RE.fullmatch(tail)
+        if not match:
+            return (0, "", 0, 0, path.name)
+        sec = match.group(1)
+        sub_raw = match.group(2) or ""
+        sub_us = int(sub_raw.ljust(6, "0")) if sub_raw else 0
+        seq = int(match.group(3)) if match.group(3) else 0
+        return (1, sec, sub_us, seq, path.name)
+
     def _backups_of(self, cid: str) -> list[Path]:
+        try:
+            cid = _validate_safe_cid(cid)
+        except ValueError:
+            return []
         if not self.backup_dir.is_dir():
             return []
-        return sorted(
-            (p for p in self.backup_dir.glob(f"{cid}__*.json") if p.is_file()),
-            key=lambda p: p.name,
-        )
+        prefix = f"{cid}__"
+        files = [
+            p for p in self.backup_dir.iterdir()
+            if p.is_file() and p.name.startswith(prefix) and p.name.endswith(".json")
+        ]
+        return sorted(files, key=lambda p: self._backup_sort_key(cid, p))
 
     def _prune_backups(self, cid: str) -> None:
         files = self._backups_of(cid)
@@ -1638,13 +1758,31 @@ class ContextPageApi:
                 limit = 128000
         return limit
 
+    @staticmethod
+    def _conv_sig_of(convs) -> str:
+        parts = []
+        for c in sorted(convs, key=lambda x: str(getattr(x, "cid", ""))):
+            raw = getattr(c, "history", None)
+            raw_len = len(raw) if isinstance(raw, str) else ""
+            parts.append(
+                "%s:%s:%s:%s"
+                % (
+                    getattr(c, "cid", ""),
+                    _as_int(getattr(c, "updated_at", 0)),
+                    _as_int(getattr(c, "token_usage", 0)),
+                    raw_len,
+                )
+            )
+        return "|".join(parts)
+
     async def boot(self):
         """首屏一次取回会话、机器人和第一页历史（严禁修改模块全局 request）。"""
         try:
             conv_resp = await self.list_conversations()
             if conv_resp.get("status") != "ok":
                 return conv_resp
-            conversations = (conv_resp.get("data") or {}).get("conversations") or []
+            conv_data = conv_resp.get("data") or {}
+            conversations = conv_data.get("conversations") or []
             history = None
             if conversations:
                 hist_resp = await self.get_history(cid=conversations[0]["cid"], limit=200)
@@ -1653,7 +1791,13 @@ class ContextPageApi:
             life = self.plugin.life
             bots = [{"id": b, "label": life.bots.label_for(b)} for b in life.enabled_bots()]
             master_mood = self._master_mood_summary(life, life._now())
-            return _ok({"conversations": conversations, "history": history, "bots": bots, "master_mood": master_mood})
+            return _ok({
+                "conversations": conversations,
+                "conv_sig": conv_data.get("conv_sig", ""),
+                "history": history,
+                "bots": bots,
+                "master_mood": master_mood,
+            })
         except Exception as exc:
             logger.error("[super_enhance/ctx] 首屏读取失败", exc_info=True)
             return _err(exc)
@@ -1729,7 +1873,11 @@ class ContextPageApi:
         conv = await self.manager.get_conversation("", cid)
         if conv is None:
             return _err("会话不存在")
-        key = (int(conv.updated_at or 0), _as_int(conv.token_usage))
+        if not hasattr(self, "_pulse_cache"):
+            self._pulse_cache = {}
+        raw = getattr(conv, "history", None)
+        raw_mark = (len(raw), hash(raw)) if isinstance(raw, str) else None
+        key = (int(conv.updated_at or 0), _as_int(conv.token_usage), raw_mark)
         life = self.plugin.life
         data_dir = life.data_dir
         today = life._today()
@@ -1743,13 +1891,20 @@ class ContextPageApi:
             "requests": _mtime_ns(data_dir / "request_snapshots" / "index.json"),
         }
         convs = await self.manager.get_conversations()
-        conv_sig = "|".join("%s:%s" % (c.cid, c.updated_at) for c in convs)
+        conv_sig = self._conv_sig_of(convs)
         conversations_changed = getattr(self, "_conv_sig", None) != conv_sig
         self._conv_sig = conv_sig
         old = self._pulse_cache.get(cid)
-        if old is not None and old.get("key") == key:
-            return _ok({**old, "versions": versions, "changed": False, "conversations_changed": conversations_changed})
-        history = _history_of(conv.history)
+        if old is not None and raw_mark is not None and old.get("key") == key:
+            return _ok({
+                "total": old["total"],
+                "last": old["last"],
+                "versions": versions,
+                "changed": False,
+                "conv_sig": conv_sig,
+                "conversations_changed": conversations_changed,
+            })
+        history = _history_of(raw)
         last = history[-1] if history else None
         sig = ""
         if last is not None:
@@ -1758,10 +1913,17 @@ class ContextPageApi:
             "key": key,
             "total": len(history),
             "last": {"i": len(history) - 1, "sig": sig} if last is not None else None,
-            "versions": versions,
         }
-        self._pulse_cache[cid] = state
-        return _ok({**state, "changed": True, "conversations_changed": conversations_changed})
+        if raw_mark is not None:
+            self._pulse_cache[cid] = state
+        return _ok({
+            "total": state["total"],
+            "last": state["last"],
+            "versions": versions,
+            "changed": True,
+            "conv_sig": conv_sig,
+            "conversations_changed": conversations_changed,
+        })
 
     async def stream(self):
         """实时推送（SSE）：挂着等 live 的通知，来一批推一条 {topics, runs}；没动静时每 LIVE_PING_SECONDS 秒发一条 ping。
@@ -1863,7 +2025,7 @@ class ContextPageApi:
                 }
             )
         items.sort(key=lambda x: x["updated_at"], reverse=True)
-        return _ok({"conversations": items})
+        return _ok({"conversations": items, "conv_sig": self._conv_sig_of(convs)})
 
     @staticmethod
     def _tool_names(history: list[dict]) -> dict[str, str]:
@@ -2038,6 +2200,7 @@ class ContextPageApi:
                 "estimate_tokens": tokens,
                 "token_usage": tokens,
                 "last_sig": _last_sig(kept),
+                "open_tool_calls": _open_tool_calls(kept),
                 "backup": backup,
             }
         )
@@ -2141,6 +2304,7 @@ class ContextPageApi:
                 "token_usage": tokens,
                 "total": len(history),
                 "last_sig": _last_sig(history),
+                "open_tool_calls": _open_tool_calls(history),
                 "item": self._history_row(item, index, self._tool_names(history), drawer),
             }
         )
@@ -2331,6 +2495,7 @@ class ContextPageApi:
                 "estimate_tokens": tokens,
                 "token_usage": tokens,
                 "last_sig": _last_sig(merged),
+                "open_tool_calls": _open_tool_calls(merged),
                 "items": [
                     self._history_row(row, pos + offset, tool_names, drawer)
                     for offset, row in enumerate(new_items)
@@ -2346,6 +2511,14 @@ class ContextPageApi:
         cid = str(payload.get("cid") or "").strip()
         if not cid:
             return _err("缺少 cid")
+        try:
+            cid = _validate_safe_cid(cid)
+        except ValueError as exc:
+            return _err(exc)
+        try:
+            conv, _ = await self._load(cid)
+        except Exception as exc:
+            return _err(exc)
         files = self._backups_of(cid)
         if not files:
             return _err("没有可撤销的备份")
@@ -2354,10 +2527,6 @@ class ContextPageApi:
             history = _history_of(path.read_text(encoding="utf-8"))
         except Exception as exc:
             return _err("备份读取失败: %s" % exc)
-        try:
-            conv, _ = await self._load(cid)
-        except Exception as exc:
-            return _err(exc)
         try:
             tokens = await self._save(conv, history)
         except Exception as exc:
@@ -2443,14 +2612,14 @@ class ContextPageApi:
             logger.error("[super_enhance/ctx] 读取快照失败", exc_info=True)
             return _err(exc)
         if data is None:
-            return _err("快照不存在或已被清理（只保留最近 20 份）")
+            return _err("快照不存在或已被清理（只保留最近 200 份）")
         out = dict(data)
         out.pop("contexts", None)
         return _ok(out)
 
     # ------------------------------------------------------------ 能力与约定
     async def get_ledger(self):
-        """能力清单（每个角色一份）+ 最近的约定 + 事件。"""
+        """能力清单（每个角色一份）+ 在练的事 + 最近的约定（事件账本已停用，保留空列表兼容）。"""
         life = getattr(self.plugin, "life", None)
         if life is None:
             return _err("动态生活状态未加载")
@@ -2481,6 +2650,8 @@ class ContextPageApi:
                     row["progress"] = {}
                 trainings.append(row)
             trainings.sort(key=lambda x: (x.get("status") != "open", -int(str(x.get("id") or 0) or 0)))
+            events_book = getattr(life, "events", None)
+            events = list(events_book.items()) if events_book is not None and callable(getattr(events_book, "items", None)) else []
             return _ok(
                 {
                     "today": today,
@@ -2490,6 +2661,7 @@ class ContextPageApi:
                     "bots": bots,
                     "promises": promises,
                     "trainings": trainings,
+                    "events": events,
                 }
             )
         except Exception as exc:
@@ -2639,7 +2811,25 @@ class ContextPageApi:
         try:
             from .features.life_state.money import ACCOUNT_ORDER, KIND_LABELS, fmt_yuan
             now = life._now()
-            life.money.archive_settled(now, life.world)
+            archived = 0
+            staged_money_write = False
+            has_cache = hasattr(life.money, "_data")
+            data_before = copy.deepcopy(getattr(life.money, "_data")) if has_cache else None
+            try:
+                with jsonio.staged_writes():
+                    archived = int(life.money.archive_settled(now, life.world) or 0)
+                    if archived <= 0:
+                        raise _NoArchiveChange()
+                    pending_map = jsonio._pending_writes.get() or {}
+                    staged_money_write = any(
+                        (not quiet) and ("money" in live.topics_of(p))
+                        for p, (_b, _e, quiet) in pending_map.items()
+                    )
+            except _NoArchiveChange:
+                if has_cache:
+                    life.money._data = data_before
+            if archived > 0 and not staged_money_write:
+                live.notify("money")
             snap = life.money.snapshot(now, life.world)
             accs = snap["accounts"]
             acc_labels = {k: str((accs.get(k) or {}).get("label") or k) for k in ACCOUNT_ORDER}
@@ -2692,9 +2882,19 @@ class ContextPageApi:
         now = life._now()
         try:
             if action == "set_balance":
-                res = life.money.set_balance_to(
+                raw_bal = payload.get("balance")
+                if raw_bal is None or isinstance(raw_bal, bool) or (isinstance(raw_bal, str) and not raw_bal.strip()):
+                    return _err("账户余额不能为空")
+                try:
+                    bal = float(raw_bal)
+                except (TypeError, ValueError):
+                    return _err("账户余额必须是合法数字")
+                if not math.isfinite(bal) or bal < 0:
+                    return _err("账户余额必须是非负有限数字")
+                res = _call_with_optional_kwargs(
+                    life.money.set_balance_to,
                     payload.get("account"),
-                    float(payload.get("balance")),
+                    bal,
                     now=now,
                     note=str(payload.get("note") or ""),
                     world=life.world,
@@ -2709,7 +2909,8 @@ class ContextPageApi:
             elif action == "add_record":
                 res = life.money.add_web_record(payload, now=now)
             elif action == "delete_record":
-                ok = life.money.delete_record(
+                ok = _call_with_optional_kwargs(
+                    life.money.delete_record,
                     payload.get("id"),
                     revert_balance=bool(payload.get("revert", True)),
                     now=now,
@@ -2721,19 +2922,42 @@ class ContextPageApi:
             elif action == "add_debt":
                 res = life.money.add_debt(payload, now=now)
             elif action == "update_debt":
-                res = life.money.update_debt(str(payload.get("id") or ""), payload, now=now)
+                res = _call_with_optional_kwargs(
+                    life.money.update_debt,
+                    str(payload.get("id") or ""),
+                    payload,
+                    now=now,
+                    world=life.world,
+                )
             elif action == "settle_debt":
                 raw_amt = payload.get("amount")
-                amt = float(raw_amt) if raw_amt not in (None, "") else None
-                res = life.money.settle_debt(
+                if raw_amt is None or (isinstance(raw_amt, str) and not raw_amt.strip()):
+                    amt = None
+                elif isinstance(raw_amt, bool):
+                    return _err("结算金额必须是大于 0 的有限数字")
+                else:
+                    try:
+                        amt = float(raw_amt)
+                    except (TypeError, ValueError):
+                        return _err("结算金额必须是合法数字")
+                    if not math.isfinite(amt) or amt <= 0:
+                        return _err("结算金额必须大于 0（留空表示全额结清）")
+                res = _call_with_optional_kwargs(
+                    life.money.settle_debt,
                     str(payload.get("id") or ""),
                     account=str(payload.get("account") or ""),
                     amount=amt,
                     now=now,
                     what=str(payload.get("what") or ""),
+                    world=life.world,
                 )
             elif action == "delete_debt":
-                if not life.money.delete_debt(str(payload.get("id") or "")):
+                if not _call_with_optional_kwargs(
+                    life.money.delete_debt,
+                    str(payload.get("id") or ""),
+                    now=now,
+                    world=life.world,
+                ):
                     raise ValueError("找不到这一条欠账")
                 res = {"deleted": payload.get("id")}
             else:

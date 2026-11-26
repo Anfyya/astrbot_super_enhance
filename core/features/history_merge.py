@@ -34,6 +34,7 @@ import contextvars
 
 from astrbot.api import logger
 
+from ..common import history_io
 from ..common.history_io import ORIG_HISTORY_ATTR, history_of
 from ..common.patching import PatchSet
 from .turn_state import INTERRUPTION_ASSISTANT, INTERRUPTION_USER, body_text
@@ -69,6 +70,52 @@ def _roles(items: list) -> list:
     return [x.get("role") if isinstance(x, dict) else None for x in items]
 
 
+def _msg_sig(item) -> tuple:
+    if not isinstance(item, dict):
+        return (None, "")
+    return (item.get("role"), body_text(item.get("content")))
+
+
+def _extract_own_tail(base: list, new: list) -> list:
+    """基准与本轮前缀对不上时，从 new 末尾提取本轮新增消息，避免整份回滚覆盖 current。"""
+    if not new:
+        return []
+    if not base:
+        return list(new)
+
+    def find_anchor(eq_fn) -> int | None:
+        max_anchor = min(len(base), 5)
+        for back in range(1, max_anchor + 1):
+            b_idx = len(base) - back
+            target = base[b_idx]
+            best_pos = None
+            best_run = 0
+            for i in range(len(new)):
+                if not eq_fn(new[i], target):
+                    continue
+                run = 1
+                while i - run >= 0 and b_idx - run >= 0 and eq_fn(new[i - run], base[b_idx - run]):
+                    run += 1
+                if run > best_run or (run == best_run and best_pos is not None and abs(i - b_idx) < abs(best_pos - b_idx)):
+                    best_run = run
+                    best_pos = i
+            if best_pos is not None:
+                return best_pos
+        return None
+
+    anchor = find_anchor(lambda a, b: a == b)
+    if anchor is None:
+        anchor = find_anchor(lambda a, b: _msg_sig(a) == _msg_sig(b))
+    if anchor is not None:
+        return list(new[anchor + 1:])
+
+    # 完全找不到公共锚点时：只取 new 最后一条 user 起的本轮对话，绝不把旧历史整份拼回
+    for i in range(len(new) - 1, -1, -1):
+        if isinstance(new[i], dict) and new[i].get("role") == "user":
+            return list(new[i:])
+    return list(new[-1:])
+
+
 def merge_history(base: list, new: list, current: list) -> tuple[list, str]:
     """返回 (要写入的历史, 说明)。说明为空表示没有并发写入。"""
     if current == base:
@@ -82,8 +129,12 @@ def merge_history(base: list, new: list, current: list) -> tuple[list, str]:
     if aligned:
         return current + own, "期间历史被整体改过（%d → %d 条），保留改动后接上本轮新增 %d 条" % (
             n, len(current), len(own))
-    extra = current[n:] if current[:n] == base else []
-    return new + extra, "本轮历史和基准对不上，按本轮写入并把期间追加的 %d 条接在末尾" % len(extra)
+    if current[:n] == base:
+        extra = current[n:]
+        return new + extra, "本轮历史和基准对不上，按本轮写入并把期间追加的 %d 条接在末尾" % len(extra)
+    own = _extract_own_tail(base, new)
+    return current + own, "期间历史被整体改过且本轮基准对不上（%d → %d 条），保留改动后接上本轮新增 %d 条" % (
+        n, len(current), len(own))
 
 
 class HistoryMergeFeature:
@@ -91,13 +142,9 @@ class HistoryMergeFeature:
 
     def __init__(self) -> None:
         self.patches = PatchSet()
-        self._locks: dict = {}
 
     def _lock(self, cid: str) -> asyncio.Lock:
-        lock = self._locks.get(cid)
-        if lock is None:
-            lock = self._locks[cid] = asyncio.Lock()
-        return lock
+        return history_io.lock_for(cid)
 
     @staticmethod
     def _clean(umo: str, history: list) -> list:
@@ -117,7 +164,7 @@ class HistoryMergeFeature:
             return False
         update = type(mgr).update_conversation
         orig = getattr(update, "_super_enhance_orig", None) or update
-        async with self._lock(cid):
+        async with history_io.hold_lock(cid):
             conv = await mgr.db.get_conversation_by_id(cid=cid)
             if conv is None:
                 return False
@@ -146,7 +193,7 @@ class HistoryMergeFeature:
                 if not conversation_id:
                     history = feature._clean(unified_msg_origin, history)
                     return await orig(mgr, unified_msg_origin, conversation_id, history, *args, **kwargs)
-                async with feature._lock(conversation_id):
+                async with history_io.hold_lock(conversation_id):
                     base = _BASE.get()
                     if base is not None and base[0] == conversation_id:
                         try:

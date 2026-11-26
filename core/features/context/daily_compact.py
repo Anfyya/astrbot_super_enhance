@@ -65,6 +65,8 @@ class DailyCompact:
 
     async def _run_due(self) -> bool:
         """把今天还没跑成的会话跑一遍；返回还有没有失败待重试的。"""
+        if not self.enabled:
+            return False
         state = self._load()
         today = _today().date().isoformat()
         pending = False

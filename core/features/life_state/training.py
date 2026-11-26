@@ -7,12 +7,13 @@
 """
 
 import datetime
+from pathlib import Path
 
 from astrbot.api import logger
 
 from . import loop, raw_log
 from .ledger import parse_id_list
-from .world import is_event, parse_time
+from .world import is_event, parse_time, real_stop
 
 # 练成后「刚练成」提示最多挂这么久（她一直没跟主人说话也不再提）
 TRAINING_NOTICE_HOURS = 48
@@ -20,10 +21,55 @@ TRAINING_NOTICE_HOURS = 48
 LOOKBACK_DAYS = 30
 
 
+def _merge_spans(spans: list[tuple[int, int]] | None) -> list[tuple[int, int]]:
+    """合并重叠或首尾相接的分钟区间，防止重复段双倍计入训练时长。"""
+    valid = sorted((int(a), int(b)) for a, b in (spans or []) if b > a)
+    if not valid:
+        return []
+    merged: list[tuple[int, int]] = [valid[0]]
+    for a, b in valid[1:]:
+        pa, pb = merged[-1]
+        if a <= pb:
+            merged[-1] = (pa, max(pb, b))
+        else:
+            merged.append((a, b))
+    return merged
+
+
+def _world_has_day(world, date_text: str) -> bool:
+    """判断某个历史日期的世界线文件是否仍然存在（文件已被 keep_days 清理时返回 False，避免清零已归档 log）。"""
+    if world is None:
+        return False
+    day_path_fn = getattr(world, "_day_path", None)
+    if callable(day_path_fn):
+        try:
+            if day_path_fn(date_text).exists():
+                return True
+        except Exception:
+            pass
+        days_cache = getattr(world, "_days", None)
+        if isinstance(days_cache, dict):
+            cached = days_cache.get(str(date_text).strip())
+            if isinstance(cached, dict) and cached.get("entries"):
+                return True
+        return False
+    world_dir = getattr(world, "dir", None)
+    if world_dir is not None:
+        if (Path(world_dir) / ("%s.json" % str(date_text).strip())).exists():
+            return True
+        days_cache = getattr(world, "_days", None)
+        if isinstance(days_cache, dict):
+            cached = days_cache.get(str(date_text).strip())
+            if isinstance(cached, dict) and cached.get("entries"):
+                return True
+        return False
+    return True
+
+
 def minutes_between(spans: list[tuple[int, int]], low: int, high: int) -> int:
     """spans 落在 [low, high) 里的分钟数。"""
     total = 0
-    for a, b in spans:
+    for a, b in _merge_spans(spans):
         a, b = max(a, low), min(b, high)
         if b > a:
             total += b - a
@@ -33,7 +79,7 @@ def minutes_between(spans: list[tuple[int, int]], low: int, high: int) -> int:
 def crossing_minute(spans: list[tuple[int, int]], low: int, need: float) -> int | None:
     """从 low 起顺着时段往下练，攒够 need 分钟的那一分钟；今天攒不够返回 None。"""
     left = need
-    for a, b in spans:
+    for a, b in _merge_spans(spans):
         a = max(a, low)
         if b <= a:
             continue
@@ -96,14 +142,20 @@ def compute(item: dict, now: datetime.datetime, spans_fn) -> Progress:
     log = {str(k): int(v) for k, v in (item.get("log") or {}).items() if str(k) < today.isoformat()}
     day = max(start.date(), today - datetime.timedelta(days=LOOKBACK_DAYS))
     while day < today:
-        spans = spans_fn(day.isoformat())
+        day_str = day.isoformat()
+        spans = spans_fn(day_str)
+        if spans is None:
+            day += datetime.timedelta(days=1)
+            continue
+        merged_day = _merge_spans(spans)
         low = start.hour * 60 + start.minute if day == start.date() else 0
-        log[day.isoformat()] = minutes_between(spans, low, 1440)
+        log[day_str] = minutes_between(merged_day, low, 1440)
         day += datetime.timedelta(days=1)
     prog.log = log
     before_today = base + sum(log.values())
 
-    spans = spans_fn(today.isoformat())
+    today_spans = spans_fn(today.isoformat())
+    spans = _merge_spans(today_spans) if today_spans is not None else []
     low = start.hour * 60 + start.minute if start.date() == today else 0
     if start.date() > today:
         spans = []
@@ -133,10 +185,17 @@ def training_progress(service, item: dict, now: datetime.datetime | None = None)
     moment = now or service._now()
     bot = str(item.get("bot"))
     tid = str(item.get("id"))
-    return compute(item, moment, lambda date_text: service._training_spans(bot, tid, date_text))
+    today_str = moment.date().isoformat()
+
+    def _spans_for(date_text: str):
+        if date_text < today_str and not _world_has_day(getattr(service, "world", None), date_text):
+            return None
+        return service._training_spans(bot, tid, date_text)
+
+    return compute(item, moment, _spans_for)
 
 def _training_spans(service, bot: str, tid: str, date_text: str) -> list:
-    """世界线里标了这件事的时段（分钟区间）。开口的一条算到现在。"""
+    """世界线里标了这件事的全天有效时段（已合并重叠区间；不提前按 now 截断，由 compute 按传入 now 切分已练与待练）。"""
     spans = []
     want = str(tid).lstrip("#＃")
     now = service._now()
@@ -144,22 +203,30 @@ def _training_spans(service, bot: str, tid: str, date_text: str) -> list:
     for item in service.world.entries(date_text, bot):
         if is_event(item):
             continue
+        if real_stop(item):
+            continue
+        stop_step = item.get("stop_at_step")
+        if isinstance(stop_step, int) and stop_step <= 0:
+            continue
         got = str(item.get("training") or "").strip().lstrip("#＃")
         if not got or got != want:
             continue
         start = parse_time(item.get("start"))
-        if start is None or start > flat_now:
+        if start is None:
             continue
         end = parse_time(item.get("end"))
         if end is None:
-            end = flat_now if start.date() == flat_now.date() else start.replace(hour=23, minute=59)
-        # 补写提前写好了结束时间：没到的那部分还没练
-        end = min(end, flat_now)
+            if start.date() == flat_now.date():
+                end = flat_now
+            elif start.date() < flat_now.date():
+                end = start.replace(hour=23, minute=59)
+            else:
+                continue
         low = start.hour * 60 + start.minute
         high = (end.hour * 60 + end.minute) if end.date() == start.date() else 1440
         if high > low:
             spans.append((low, high))
-    return sorted(spans)
+    return _merge_spans(spans)
 
 async def settle_trainings(service, bot: str) -> list[dict]:
     """结一遍账：把以前每天练的分钟数记进 log；够数的标成练成并写进能力清单。返回这次练成的。"""

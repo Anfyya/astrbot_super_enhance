@@ -45,7 +45,7 @@ from .core.features.tool_cap import ToolCapFeature
 from .core.features.image_gen import ImageGenFeature
 from .core.features.feature_group import FeatureGroup, FeatureHandle
 from .core.features import error_voice
-from .core.features.cron_context import CronContextFeature
+from .core.features.cron_context import CronContextFeature, forget_event as forget_cron_event
 from .core.features.cross_session import CrossSessionFeature
 from .core.features.life_state import LifeStateService
 from .core.features.life_state import operations as life_ops, raw_log, view as life_view
@@ -105,10 +105,25 @@ class SuperEnhance(Star):
             context, SectionConfig(raw, "reply_guard")
         )
         self.reply_guard.history = self.history_merge
+
+        def _on_overflow_intercept(ev) -> None:
+            self.reply_guard.discard_turn(ev)
+            self.silence.discard_turn(ev)
+
+        self.context_tools.overflow.on_intercept = _on_overflow_intercept
+        plugin_tz = ""
         try:
-            set_timezone(str((context.get_config() or {}).get("timezone") or ""))
+            plugin_tz = str(SectionConfig(raw, "basic").get("timezone") or "").strip()
         except Exception:
             pass
+        global_tz = ""
+        if not plugin_tz:
+            try:
+                global_tz = str((context.get_config() or {}).get("timezone") or "").strip()
+            except Exception:
+                pass
+        if plugin_tz or global_tz:
+            set_timezone(plugin_tz or global_tz)
         self.life = LifeStateService(
             context, SectionConfig(raw, "life_state"), data_dir
         )
@@ -255,10 +270,11 @@ class SuperEnhance(Star):
     # ------------------------------------------------------------------
     @filter.on_agent_done()
     async def on_agent_done_main(self, event: AstrMessageEvent, run_context, response) -> None:
-        """轮次结束后盖发送时间；主动对话再把她这轮的思考挂回历史。"""
+        """轮次结束后盖发送时间；主动对话再把她这轮的思考挂回历史并释放登记会话。"""
         await run_steps(event, (
             ("发送时间", lambda: self.msg_time.on_agent_done(event, run_context, response)),
             ("主动对话思考", lambda: self.cross_session.attach_cron_thinking(event, run_context)),
+            ("主动对话会话释放", lambda: forget_cron_event(event)),
         ), "轮次结束钩子")
 
     @filter.on_llm_request(priority=100000)
@@ -573,7 +589,7 @@ class SuperEnhance(Star):
         """工具结果同优先级的两项：原始消息副本、bot↔bot 委托回报。"""
         await run_steps(event, (
             ("原始消息副本", lambda: raw_log.record_tool_message(self.life, event, tool, tool_args, tool_result)),
-            ("委托回报", lambda: self.bot_dialog.note_delegation(event, tool, tool_args)),
+            ("委托回报", lambda: self.bot_dialog.note_delegation(event, tool, tool_args, tool_result)),
         ), "工具结果钩子")
 
     # ------------------------------------------------------------------

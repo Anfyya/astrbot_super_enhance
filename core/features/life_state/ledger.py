@@ -10,7 +10,9 @@
 """
 
 import datetime
+import math
 import re
+import threading
 from pathlib import Path
 
 from ...common import jsonio, timeutil
@@ -61,24 +63,28 @@ class _JsonBook:
         self.path = Path(path)
         self._blank = blank
         self._data: dict | None = None
+        self._lock = threading.RLock()
 
     def _load(self) -> dict:
-        if self._data is not None:
+        with self._lock:
+            if self._data is not None:
+                return self._data
+            self._data = jsonio.load_object(self.path, self._blank, merge=True)
             return self._data
-        self._data = jsonio.load_object(self.path, self._blank, merge=True)
-        return self._data
 
     def _save(self) -> None:
-        jsonio.save(self.path, self._load(), indent=2)
+        with self._lock:
+            jsonio.save(self.path, self._load(), indent=2)
 
     def _next_id(self) -> int:
-        data = self._load()
-        try:
-            value = int(data.get("next_id") or 1)
-        except Exception:
-            value = 1
-        data["next_id"] = value + 1
-        return value
+        with self._lock:
+            data = self._load()
+            try:
+                value = int(data.get("next_id") or 1)
+            except Exception:
+                value = 1
+            data["next_id"] = value + 1
+            return value
 
 
 # ---------------------------------------------------------------- 能力清单
@@ -113,7 +119,7 @@ class AbilityBook(_JsonBook):
         item = {
             "id": str(self._next_id()),
             "text": text,
-            "since": _clean(since, 10) or datetime.date.today().isoformat(),
+            "since": _clean(since, 10) or timeutil.now(_TZ).date().isoformat(),
             "source": source,
             "updated": _now_text(),
         }
@@ -135,8 +141,9 @@ class AbilityBook(_JsonBook):
         text = _clean(text, MAX_ABILITY_LEN)
         if not text:
             raise ValueError("内容是空的")
+        wanted = str(item_id or "").strip().lstrip("#＃")
         for item in self.entries(bot):
-            if str(item.get("id")) == str(item_id):
+            if str(item.get("id")) == wanted:
                 item["text"] = text
                 if since:
                     item["since"] = _clean(since, 10)
@@ -148,8 +155,9 @@ class AbilityBook(_JsonBook):
         raise ValueError("找不到这一条")
 
     def delete(self, bot: str, item_id: str) -> bool:
+        wanted = str(item_id or "").strip().lstrip("#＃")
         items = self.entries(bot)
-        kept = [x for x in items if str(x.get("id")) != str(item_id)]
+        kept = [x for x in items if str(x.get("id")) != wanted]
         if len(kept) == len(items):
             return False
         self._load()["bots"][str(bot)] = kept
@@ -264,8 +272,9 @@ class PromiseBook(_JsonBook):
         return item
 
     def delete(self, item_id: str) -> bool:
+        wanted = str(item_id or "").strip().lstrip("#＃")
         items = self.items()
-        kept = [x for x in items if str(x.get("id")) != str(item_id)]
+        kept = [x for x in items if str(x.get("id")) != wanted]
         if len(kept) == len(items):
             return False
         self._load()["items"] = kept
@@ -306,19 +315,45 @@ class PromiseBook(_JsonBook):
 # ---------------------------------------------------------------- 事件
 
 
-def parse_hours(value, field: str = "时长") -> float:
-    """「12」「12.5」「12小时」→ 12.5；空串返回 0。"""
+def parse_hours(value, field: str = "时长") -> float | None:
+    """「12」「12.5」「12小时」「30分钟」「1小时30分钟」→ 小时数；空串返回 0；负数或非有限值返回 None。"""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        val = float(value)
+        if not math.isfinite(val) or val < 0:
+            return None
+        return val
     text = str(value if value is not None else "").strip()
     if not text:
         return 0.0
+    if re.search(r"(?:^|[\s:：=])-\s*\d", text) or text.startswith(("负", "−")):
+        return None
+    low_txt = text.lower()
+    if low_txt in ("nan", "inf", "+inf", "-inf", "infinity", "+infinity", "-infinity"):
+        return None
+    if "天" in text and "小时" not in text and "分" not in text:
+        raise ValueError("%s要写成小时数（一天练几小时自己算好），不要写天数：%s" % (field, text))
+    # 组合格式：如 "1小时30分钟" / "1个小时30分"
+    hm = re.search(r"(\d+(?:\.\d+)?)\s*(?:个)?小时\s*(\d+(?:\.\d+)?)\s*分(?:钟)?", text)
+    if hm:
+        return float(hm.group(1)) + float(hm.group(2)) / 60.0
+    # 含 "半小时" / "1个半小时"
+    if "半小时" in text or "半个小时" in text:
+        pre = re.search(r"(\d+(?:\.\d+)?)\s*个?半(?:个)?小时", text)
+        return (float(pre.group(1)) + 0.5) if pre else 0.5
+    # 纯分钟：如 "30分钟" / "45分" / "90min"
+    if ("分钟" in text or "分" in text or re.search(r"\bmins?\b", low_txt)) and "小时" not in text and "时辰" not in text:
+        mm = re.search(r"\d+(?:\.\d+)?", text)
+        if not mm:
+            raise ValueError("%s要写成小时数，例如 12：%s" % (field, text))
+        return float(mm.group(0)) / 60.0
     match = re.search(r"\d+(?:\.\d+)?", text)
     if not match:
         raise ValueError("%s要写成小时数，例如 12：%s" % (field, text))
     hours = float(match.group(0))
+    if not math.isfinite(hours):
+        return None
     if "时辰" in text:
         hours *= 2
-    elif "天" in text and "小时" not in text:
-        raise ValueError("%s要写成小时数（一天练几小时自己算好），不要写天数：%s" % (field, text))
     return hours
 
 
@@ -463,8 +498,9 @@ class TrainingBook(_JsonBook):
         self._save()
 
     def delete(self, item_id: str) -> bool:
+        wanted = str(item_id or "").strip().lstrip("#＃")
         items = self.items()
-        kept = [x for x in items if str(x.get("id")) != str(item_id).lstrip("#＃")]
+        kept = [x for x in items if str(x.get("id")) != wanted]
         if len(kept) == len(items):
             return False
         self._load()["items"] = kept

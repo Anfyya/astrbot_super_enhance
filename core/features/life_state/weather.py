@@ -596,6 +596,85 @@ def _merge_single_stove_spans(raw_spans: list, kind: str) -> list[tuple[datetime
     return merged
 
 
+# 与 heat.py / things.py 统一：炉火持续时间由投入燃料重量 ÷ 燃烧速率决定
+WOOD_MIN_PER_KG = 40.0       # 1 公斤干柴烧 40 分钟（1.5kg = 1h，3kg = 2h，1g ≈ 1 分钟）
+CHARCOAL_MIN_PER_GRAM = 0.3  # 100 克闷炭烧 30 分钟（200g = 1h）
+DEFAULT_OPEN_WOOD_KG = 1.5   # 未写明投入柴量时的默认单次添柴基准（60 分钟）
+DEFAULT_OPEN_CHARCOAL_G = 100.0  # 未写明投入炭量时的默认单次添炭基准（30 分钟）
+
+_FUEL_WEIGHT_RE = re.compile(
+    r"(\d+(?:\.\d+)?|半)\s*(千克|公斤|kg|斤|两|克|g)(?![A-Za-z0-9_])",
+    re.IGNORECASE,
+)
+_WOOD_HINT_RE = re.compile(r"(?:干柴|硬柴|硬木柴|劈柴|柴火|木柴|薪柴|引火柴|引火料|柴)")
+_CHARCOAL_HINT_RE = re.compile(r"(?:闷炭|木炭|炭火|炭)")
+
+
+def _extract_weight_grams(text: str) -> float:
+    """从文本中解析燃料重量并统一换算为克；解析不到返回 0.0。"""
+    total_g = 0.0
+    for m in _FUEL_WEIGHT_RE.finditer(str(text or "")):
+        raw_num, raw_unit = m.group(1), m.group(2).lower()
+        val = 0.5 if raw_num == "半" else float(raw_num)
+        if val <= 0:
+            continue
+        if raw_unit in ("千克", "公斤", "kg"):
+            total_g += val * 1000.0
+        elif raw_unit == "斤":
+            total_g += val * 500.0
+        elif raw_unit == "两":
+            total_g += val * 50.0
+        elif raw_unit in ("克", "g"):
+            total_g += val
+    return total_g
+
+
+def estimate_open_stove_minutes(entry: dict, stove: str = "") -> int:
+    """对尚未写 end 的进行中生火段，按投入炉子的柴/炭重量折算燃烧时长（weather / heat 同源共用）。
+    未写明燃料重量时，按统一默认单次添料基准（1.5kg 柴 = 60 分钟，100g 炭 = 30 分钟）折算。"""
+    kind = str(stove or entry.get("stove") or "").strip().lower()
+    if kind not in ("wood", "charcoal"):
+        return 0
+    hint_re = _WOOD_HINT_RE if kind == "wood" else _CHARCOAL_HINT_RE
+    total_g = 0.0
+    # 1) 优先从结构化 things / items 中的燃料消耗量提取
+    for key in ("things", "items"):
+        rows = entry.get(key)
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            what = str(row.get("what") or "").strip()
+            if what and what not in ("用掉一部分", "用完了", "用了", "烧了"):
+                continue
+            label = "%s %s %s" % (row.get("name") or "", row.get("kind") or "", row.get("note") or "")
+            if not hint_re.search(label):
+                continue
+            qty_txt = " ".join(str(row.get(k) or "") for k in ("used", "amount", "qty"))
+            g = _extract_weight_grams(qty_txt)
+            if g <= 0:
+                g = _extract_weight_grams(str(row.get("note") or ""))
+            if g > 0:
+                total_g += g
+    # 2) 若结构化字段未写重量，再从 doing / steps 文本中匹配紧邻柴/炭词的明确用量
+    if total_g <= 0:
+        parts = [str(entry.get("doing") or "")]
+        if isinstance(entry.get("steps"), list):
+            parts.extend(str(s or "") for s in entry["steps"])
+        blob = " ".join(parts)
+        for clause in re.split(r"[，。；;、\n]", blob):
+            if hint_re.search(clause):
+                g = _extract_weight_grams(clause)
+                if g > 0:
+                    total_g += g
+    if kind == "wood":
+        kg = (total_g / 1000.0) if total_g > 0 else DEFAULT_OPEN_WOOD_KG
+        return max(1, min(360, int(round(kg * WOOD_MIN_PER_KG))))
+    grams = total_g if total_g > 0 else DEFAULT_OPEN_CHARCOAL_G
+    return max(1, min(240, int(round(grams * CHARCOAL_MIN_PER_GRAM))))
+
+
 def _split_stove_tracks(world, start_day: datetime.date, end_day: datetime.date, clip_until: datetime.datetime | None = None) -> tuple[list, list, list]:
     """返回 (merged_spans, wood_spans, charcoal_spans) 三条炉火轨道：合并轨道供整体描述，独立轨道防双炉同燃互吞。"""
     if world is None:
@@ -620,8 +699,8 @@ def _split_stove_tracks(world, start_day: datetime.date, end_day: datetime.date,
             if entry.get("end"):
                 en = _parse_time(entry.get("end"))
             else:
-                cap_en = st + datetime.timedelta(hours=3)
-                en = min(cap_en, clip_until + datetime.timedelta(minutes=5)) if clip_until else (st + datetime.timedelta(minutes=45))
+                burn_mins = estimate_open_stove_minutes(entry, stove)
+                en = st + datetime.timedelta(minutes=burn_mins)
             if en is None or en <= st:
                 continue
             if has_homes and world.home_at(st) != "海边小镇":
@@ -865,10 +944,24 @@ def cabin_temp_info(moment: datetime.datetime, world, text_of, home: str) -> dic
     far_t = min(15.0, base_cabin + d_far) if out_t <= 14.0 else base_cabin + d_far
     kang_t = min(34.0, base_cabin + d_kang)
 
-    # 用 near 的状态识别刚点火/刚停火（因为炉边最先热、最后彻底凉）
-    mode = st_near["mode"] if d_near >= 0.8 else st_mid["mode"]
-    kind = st_near["stove"] or st_mid["stove"]
-    mins = st_near["minutes"]
+    # 用独立炉边轨道识别主炉状态（避免柴炉刚灭后短暂点小炭炉，合并轨道用炭炉短常数吞没柴炉余温）；
+    # 炉边余温不足 0.8℃ 时回退 st_mid，并同步更新 mode / kind / mins 防止字段串台
+    if st_wood.get("mode") == "burning":
+        chosen_st = st_wood
+    elif st_charcoal.get("mode") == "burning":
+        chosen_st = st_charcoal
+    else:
+        if d_near_wood >= d_char_own:
+            best_d, best_st = d_near_wood, st_wood
+        else:
+            best_d, best_st = d_char_own, st_charcoal
+        if best_d >= 0.8 and best_st.get("mode") != "cold":
+            chosen_st = best_st
+        else:
+            chosen_st = st_mid
+    mode = chosen_st["mode"]
+    kind = chosen_st["stove"]
+    mins = chosen_st["minutes"]
 
     if mode == "burning":
         if kind == "wood":

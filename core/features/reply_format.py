@@ -108,10 +108,11 @@ def build_rejection_prompt(reasons: list[str], from_send_tool: bool, has_other_t
     """构造打回给模型看的要求说明。"""
     label = "和".join(reasons)
     if from_send_tool:
+        tail = "如果本轮还需要调用其他工具，请一并正常带上工具调用。" if has_other_tools else ""
         return (
             "【格式打回】你刚才调用 send_message_to_user 发出的正文里含有%s。"
-            "这里绝对不能有%s，请去掉所有%s、合成一整行后，立即重新调用 send_message_to_user 发给对方，不要解释或道歉。"
-            % (label, label, label)
+            "这里绝对不能有%s，请去掉所有%s、合成一整行后，立即重新调用 send_message_to_user 发给对方，不要解释或道歉。%s"
+            % (label, label, label, tail)
         )
     tail = "如果本轮还需要调用工具，请一并正常带上工具调用。" if has_other_tools else ""
     return (

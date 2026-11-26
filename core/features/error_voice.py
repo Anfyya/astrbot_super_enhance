@@ -31,9 +31,9 @@ from collections.abc import Mapping
 from astrbot.api import logger
 
 from ..common import history_io
+from ..common.bots import platform_of as bot_of_umo
 from ..common.patching import PatchSet
 from ..config_view import SectionConfig
-from .life_state.models import bot_of_umo
 from .turn_state import local_stamp
 
 try:
@@ -126,11 +126,15 @@ def _dump(message):
     data = dump()
     content = getattr(message, "content", None)
     if isinstance(content, list):
-        data["content"] = [
-            part.model_dump()
-            for part in content
-            if not getattr(part, "_no_save", False)
-        ]
+        parts = []
+        for part in content:
+            if isinstance(part, dict):
+                if not part.get("_no_save"):
+                    parts.append(part)
+            elif not getattr(part, "_no_save", False):
+                part_dump = getattr(part, "model_dump", None)
+                parts.append(part_dump() if callable(part_dump) else part)
+        data["content"] = parts
     return data
 
 

@@ -371,9 +371,24 @@ class Recorder:
             old.cancel()
         self._proposal_tasks[umo] = loop.create_task(self._delayed_proposal_run(umo, max(1.0, float(delay))))
 
+    def cancel_proposal_tasks(self) -> list[asyncio.Task]:
+        """取消并清理所有待执行的 start_doing 延迟裁定任务（停机/重载时由 service.terminate 调用）。"""
+        cancelled: list[asyncio.Task] = []
+        for _umo, task in list(self._proposal_tasks.items()):
+            if task is not None and not task.done():
+                task.cancel()
+                cancelled.append(task)
+        self._proposal_tasks.clear()
+        return cancelled
+
     async def _delayed_proposal_run(self, umo: str, delay: float) -> None:
         try:
             await asyncio.sleep(delay)
+            # 若此刻该会话正在跑记录员，等待本轮跑完后再重检未消费提议，绝不直接丢弃导致饿死
+            waited = 0.0
+            while umo in self._running and waited < 180.0:
+                await asyncio.sleep(0.5)
+                waited += 0.5
             if not bool(self.cfg.get("recorder_enable", True)):
                 return
             if umo in self._running or not self.peek_proposals(umo):
@@ -384,6 +399,13 @@ class Recorder:
             return
         except Exception:
             logger.warning("[super_enhance/world] start_doing 延迟唤醒记录员出错", exc_info=True)
+        finally:
+            try:
+                cur_task = asyncio.current_task()
+                if cur_task is not None and self._proposal_tasks.get(umo) is cur_task:
+                    self._proposal_tasks.pop(umo, None)
+            except Exception:
+                pass
 
     # ---------- 配置 ----------
 
@@ -740,8 +762,9 @@ class Recorder:
     async def run(self, umo: str, now: datetime.datetime | None = None, *, force_proposal: bool = False) -> bool:
         moment = now or self._now()
         items = self.pending(umo, moment)
-        proposals = self.peek_proposals(umo) if (force_proposal or self.due_proposals(umo) or items) else []
-        if not items and not (force_proposal and proposals):
+        has_due = bool(self.due_proposals(umo))
+        proposals = self.peek_proposals(umo) if (force_proposal or has_due or items) else []
+        if not items and not ((force_proposal or has_due) and proposals):
             return False
         if items and not proposals and all(str(x.get("src") or "") == "proactive" for x in items):
             # 单纯主动消息先轻量登记邀请，不额外调用模型或让她自己的话改写事实。
@@ -814,7 +837,7 @@ class Recorder:
             did = 0
             for umo in self.sessions():
                 if self.ready(umo, moment):
-                    if await self.run(umo, moment):
+                    if await self.run(umo, moment, force_proposal=bool(self.due_proposals(umo))):
                         count += 1
                         did += 1
             if not did:
@@ -1006,9 +1029,10 @@ class Recorder:
             ready = free_at.get(who)
             if kind == "activity" and ready is not None and parse_time(start) < ready \
                     and parse_time(start) >= flat_now - datetime.timedelta(minutes=FREE_SHIFT_MINUTES):
-                # 她得先收完尾、做完、交接完手上的事才去做这件：开始往后挪到那时（结束跟着挪）
+                # 她得先收完尾、做完、交接完手上的事才去做这件：开始往后挪到那时（结束跟着挪；跨午夜同步更新 date_text）
                 shift = ready - parse_time(start)
                 start = fmt_time(ready)
+                date_text = start[:10]
                 if end:
                     end = fmt_time(parse_time(end) + shift)
             mine = self._by_start_doing(who, start, end) if kind == "activity" and who != "master" else None
@@ -1048,7 +1072,18 @@ class Recorder:
                 entry.update(moved)
                 if outfit_val:
                     entry["outfit"] = outfit_val
-            record = self.world.add_entry(date_text, entry)
+            target_day = str(entry.get("start") or start)[:10] or date_text
+            record = self.world.add_entry(target_day, entry)
+            if record is None and moved:
+                mf = moved.get("moved_from") if isinstance(moved.get("moved_from"), dict) else None
+                orig_entry = mf.get("entry") if isinstance(mf, dict) else None
+                orig_date = str((mf or {}).get("date") or "")
+                if isinstance(orig_entry, dict) and orig_date:
+                    self.world.add_entry(orig_date, copy.deepcopy(orig_entry))
+                    logger.warning(
+                        "[super_enhance/world] same_as 挪段写入失败（%s %s），已恢复原补写段 %s/%s",
+                        who, start, orig_date, orig_entry.get("id"),
+                    )
             if record is not None and kind == "event" and outfit_val and who in bots:
                 # 聊天里当场换衣若被记成 event，同步刷新她此刻正在进行的活动段 outfit，确保聊天/生图即时生效
                 ev_t = parse_time(start) or flat_now
@@ -1861,6 +1896,7 @@ class Recorder:
             "send_msg": bool(planned.get("send_msg")),
             "msg_at": planned.get("msg_at") or "",
             "msg_purpose": planned.get("msg_purpose") or "",
+            "msg_kind": planned.get("msg_kind") or "",
             "meal": planned.get("meal"),
             "at_home": planned.get("at_home"),
             "stove": planned.get("stove") or "",
@@ -2016,9 +2052,10 @@ class Recorder:
         if not p_old_date:
             return None
         p_old_start = parse_time(partner_planned.get("start"))
+        p_backup = copy.deepcopy(partner_planned)
         self.world.delete_entry(p_old_date, p_id)
         carried = self._carry(partner_planned, str(record.get("start") or ""), str(record.get("end") or ""))
-        carried["moved_from"] = {"date": p_old_date, "entry": dict(partner_planned)}
+        carried["moved_from"] = {"date": p_old_date, "entry": p_backup}
         seen = sorted((set(record.get("seen_by") or []) | {who}) - {other})
         partner_with = [who] + [x for x in (record.get("with") or []) if x not in (who, other)]
         p_date = str(record.get("start") or "")[:10]
@@ -2043,6 +2080,11 @@ class Recorder:
         twin_entry.update(carried)
         twin = self.world.add_entry(p_date, twin_entry)
         if twin is None:
+            self.world.add_entry(p_old_date, copy.deepcopy(p_backup))
+            logger.warning(
+                "[super_enhance/world] same_as 对称承接写入失败（%s %s），已恢复原补写段 %s/%s",
+                other, p_date, p_old_date, p_id,
+            )
             return None
         t_id = str(twin.get("id") or "")
         self.batch.written.append(twin)
@@ -2123,9 +2165,10 @@ class Recorder:
             logger.info("[super_enhance/world] 记录员说%s这会儿做的是 %s，可那段不是还没做完的补写段，照常另记", who, entry_id)
             return None
         date_text, planned = ref
+        backup = copy.deepcopy(planned)
         self.world.delete_entry(date_text, entry_id)
         out = self._carry(planned, start, end)
-        out["moved_from"] = {"date": date_text, "entry": dict(planned)}
+        out["moved_from"] = {"date": date_text, "entry": backup}
         return out
 
     def _fit_moved(self, record: dict) -> None:
@@ -2321,6 +2364,7 @@ class Recorder:
             "send_msg": bool(after.get("send_msg")) and after.get("msg_at") == "end",
             "msg_at": "end" if bool(after.get("send_msg")) and after.get("msg_at") == "end" else "",
             "msg_purpose": (after.get("msg_purpose") or "") if bool(after.get("send_msg")) and after.get("msg_at") == "end" else "",
+            "msg_kind": (after.get("msg_kind") or "") if bool(after.get("send_msg")) and after.get("msg_at") == "end" else "",
             "origin": {"kind": "continue", "text": str(after.get("doing") or "")}, "created": fmt_time(now),
         })
         if record is not None:
@@ -2707,12 +2751,13 @@ class Recorder:
             if not involves_master and not allow_master_transfer:
                 logger.info("[super_enhance/money] 记录员跳过非主人钱包账目（归世界线）：%s %s", kind, raw.get("what"))
                 continue
-            # 防止纯机器人消息私自扣动主人钱包
+            # 防止纯机器人消息私自扣动、凭空刷钱或单方面往主人钱包塞钱（须主人当面聊到）
             if not has_master:
-                if (kind == "spend" and acc == "master") or (kind == "transfer" and fa == "master") or (
-                    kind == "debt_settle" and acc == "master"
+                if (
+                    (kind in ("spend", "earn", "debt_settle") and acc == "master")
+                    or (kind == "transfer" and (fa == "master" or ta == "master"))
                 ):
-                    logger.info("[super_enhance/money] 本批无主人发言，拦截私自动用主人钱包：%s", raw.get("what"))
+                    logger.info("[super_enhance/money] 本批无主人发言，拦截私自动用或改写主人钱包：%s", raw.get("what"))
                     continue
             op = dict(raw)
             op["who"] = str(raw.get("who") or bot_of_umo(umo) or "").strip()

@@ -240,6 +240,11 @@ class LifeStateService:
         self.mood_judge.stop()
         await self.sleep_webhook.stop()
         self.planner.uninstall_gate()
+        recorder = getattr(self, "recorder", None)
+        if recorder is not None and hasattr(recorder, "cancel_proposal_tasks"):
+            prop_tasks = recorder.cancel_proposal_tasks() or []
+            if prop_tasks:
+                await asyncio.gather(*prop_tasks, return_exceptions=True)
         if self._world_task is not None:
             self._world_task.cancel()
             try:
@@ -527,8 +532,23 @@ class LifeStateService:
             nonlocal was_asleep
             slept_minutes = 0.0
             if target == "asleep":
-                after_state = companion.set_sleep_state("asleep", moment) if companion is not None else {"state": "asleep"}
                 already_sleeping = False
+                for day in (yesterday_text, today_text):
+                    for item in self.world.entries(day, "master"):
+                        if is_event(item) or not is_sleep(item):
+                            continue
+                        end_dt = parse_time(item.get("end")) if item.get("end") else None
+                        start_dt = parse_time(item.get("start"))
+                        if (end_dt is None or end_dt > flat) and (start_dt is None or start_dt <= flat):
+                            already_sleeping = True
+                            break
+                    if already_sleeping:
+                        break
+                # 幂等防误触：本来就已经睡着时直接忽略，不截断活动也不重排计划
+                if already_sleeping and was_asleep:
+                    return owner_snapshot or {"state": "asleep"}, 0.0, True
+
+                after_state = companion.set_sleep_state("asleep", moment) if companion is not None else {"state": "asleep"}
                 for day in (yesterday_text, today_text):
                     for item in list(self.world.entries(day, "master")):
                         if is_event(item):
@@ -536,14 +556,18 @@ class LifeStateService:
                         end_dt = parse_time(item.get("end")) if item.get("end") else None
                         if end_dt is not None and end_dt <= flat:
                             continue
-                        if is_sleep(item) and end_dt is None:
-                            already_sleeping = True
-                            continue
                         start_dt = parse_time(item.get("start"))
+                        if is_sleep(item):
+                            if end_dt is None and (start_dt is None or start_dt <= flat):
+                                already_sleeping = True
+                                continue
+                            if start_dt is not None and start_dt >= flat:
+                                self.world.delete_entry(day, str(item.get("id") or ""))
+                            continue
+                        # 只管睡觉本身：保留所有未来还没开始的非睡眠日程，仅闭合此刻正在进行中的活动
                         if start_dt is not None and start_dt >= flat:
-                            self.world.delete_entry(day, str(item.get("id") or ""))
-                        else:
-                            self.world.update(day, str(item.get("id") or ""), mode="normal", end=fmt_time(flat))
+                            continue
+                        self.world.update(day, str(item.get("id") or ""), mode="normal", end=fmt_time(flat))
                 if not already_sleeping:
                     self.world.add_entry(
                         today_text,
@@ -574,18 +598,24 @@ class LifeStateService:
                 return after_state, 0.0, False
 
             # target == "awake"
+            has_active_sleep = False
             for day in (yesterday_text, today_text):
                 for item in self.world.entries(day, "master"):
-                    if is_event(item):
+                    if is_event(item) or not is_sleep(item):
                         continue
                     end_dt = parse_time(item.get("end")) if item.get("end") else None
                     if end_dt is not None and end_dt <= flat:
                         continue
-                    if is_sleep(item):
+                    start_dt = parse_time(item.get("start"))
+                    if start_dt is None or start_dt <= flat:
+                        has_active_sleep = True
                         was_asleep = True
-                        start_dt = parse_time(item.get("start"))
-                        if start_dt is not None and flat >= start_dt:
+                        if start_dt is not None:
                             slept_minutes = max(slept_minutes, (flat - start_dt).total_seconds() / 60.0)
+            # 幂等防误触：本来就醒着时直接忽略，不截断正在做的事、不造假「起床了」、不清空预排
+            if not was_asleep and not has_active_sleep:
+                return owner_snapshot or {"state": "awake"}, 0.0, False
+
             if was_asleep and slept_minutes <= 0.0 and companion is not None:
                 src_info = owner_snapshot.get("source") if isinstance(owner_snapshot, dict) else None
                 obs_dt = None
@@ -602,9 +632,10 @@ class LifeStateService:
                     slept_minutes = max(slept_minutes, (flat - obs_dt).total_seconds() / 60.0)
 
             after_state = companion.set_sleep_state("awake", moment) if companion is not None else {"state": "awake"}
+            # 只管睡觉本身：只闭合/清理睡眠段，绝不删改主人未来或正在进行的非睡眠日程
             for day in (yesterday_text, today_text):
                 for item in list(self.world.entries(day, "master")):
-                    if is_event(item):
+                    if is_event(item) or not is_sleep(item):
                         continue
                     end_dt = parse_time(item.get("end")) if item.get("end") else None
                     if end_dt is not None and end_dt <= flat:

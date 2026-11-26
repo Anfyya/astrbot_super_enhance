@@ -24,7 +24,12 @@ SEA_HOMES = weather_mod.SEA_HOMES
 CARRIED_AREAS = ("丛雨", "亚托莉", "主人", "napcat", "napcat2", "master")
 SEA_WORDS = ("海里", "水底", "海底")
 SEMI_WORDS = ("檐下", "廊下", "门口", "篷下", "棚下", "雨棚", "屋檐")
-SEALED_WORDS = ("箱", "抽屉", "柜", "罐里", "盒", "储物舱", "笸箩", "篮里", "袋里", "包里", "鞘", "刀鞘", "匣", "桶里", "铁桶")
+SEALED_WORDS = (
+    "箱里", "箱内", "木箱里", "铁箱里", "工具箱里", "工具箱内",
+    "抽屉", "柜里", "柜内", "柜格", "罐里", "罐内",
+    "盒里", "盒内", "木盒里", "铁盒里", "收纳盒里", "针线盒里",
+    "储物舱", "笸箩", "篮里", "袋里", "包里", "鞘", "刀鞘", "匣里", "桶里",
+)
 INSIDE_WORDS = ("舱", "屋里", "房", "堂屋", "卧房", "灶房", "灶台", "铺上", "店", "室", "教室", "车厢", "宿舍", "屋内", "里屋", "桌")
 OPEN_WORDS = ("甲板", "船头", "码头", "防波堤", "海堤", "屋外", "院子", "院里", "晾衣", "屋顶", "外头", "露天", "岸边", "沙滩",
               "浅滩", "礁", "木台", "船篷顶", "栏")
@@ -36,8 +41,8 @@ OIL_CARE_WORDS = ("擦油", "抹油", "上油", "涂油", "保养", "入鞘", "�
 COOKWARE_WORDS = ("锅", "壶", "铲", "勺")
 
 MATERIAL_KIND_RULES = (
+    ("别的", ("钱", "零钱", "纸币", "钞票", "人民币", "货币")),
     ("纸", ("画", "本子", "日志", "日记", "食谱", "杂志", "书", "信", "诗", "纸", "便条", "书签", "照片", "地图", "海图", "卡")),
-    ("别的", ("钱", "零钱", "纸币", "货币")),
     ("布", ("衣", "衫", "裤", "裙", "毛巾", "帕", "布", "被", "褥", "毯", "枕", "围巾", "袜", "帽", "手套", "挂饰")),
     ("木", ("木", "竹", "漂流木", "燃柴")),
     ("石", ("砖", "石", "瓷", "陶", "玻璃", "螺壳", "贝壳", "壳")),
@@ -46,6 +51,7 @@ MATERIAL_KIND_RULES = (
 )
 
 MATERIAL_WORDS = (
+    ("别的", ("纸币", "钞票", "人民币")),
     ("纸", ("画", "本子", "日志", "日记", "食谱", "杂志", "书", "信", "诗", "便条", "书签", "照片", "地图", "海图", "纸", "卡")),
     ("布", ("衣", "衫", "褂", "袍", "布", "围巾", "被", "帕", "毛巾", "袜", "手套", "帽", "裙", "裤", "绳结", "绣", "毯", "枕", "褥")),
     ("铁", ("铁", "钢", "刀", "钩", "钉", "链", "罐", "齿轮", "发条", "锅", "剪", "针", "锁", "钥匙", "锤", "凿", "钳", "扳手", "锯", "铲")),
@@ -343,7 +349,7 @@ def material_of(name: str, kind: str = "", food: bool = False) -> str:
             if any(w in k_text for w in words):
                 # 针线类若是盒/铁器（如针线盒）仍按铁算，否则按布算
                 if material == "铁" and k_text == "针线" and not any(w in n_text for w in ("铁", "盒", "针", "剪", "锥")):
-                    continue
+                    return "布"
                 return material
         # 若结构化 kind 明确为「渔网/绳子/燃料/火柴/泥土/相机」等非铁铜纸布木石类，直接不乱套
         if any(w in k_text for w in ("燃料", "火柴", "绳", "网", "泥", "相机", "旧怀表", "怀表", "钓具")):
@@ -417,7 +423,7 @@ def simulate(item: dict, now: datetime.datetime, day_text, home_at, food: bool =
         st.update(fuel_properties(item, stages))
     place, spot, keep, holder, tied, near_stove, previous_state = "", "", "", "", 0, False, None
     oil_protected_until: datetime.datetime | None = None
-    if _has(look_text, OIL_CARE_WORDS):
+    if asserted(look_text, OIL_CARE_WORDS):
         oil_protected_until = flat + datetime.timedelta(days=365)
     index = 0
     cur = start
@@ -426,6 +432,7 @@ def simulate(item: dict, now: datetime.datetime, day_text, home_at, food: bool =
             stage = stages[index]
             stage_at = _parse(stage["at"])
             index += 1
+            prev_place = place
             if stage.get("place") and stage.get("place") != place:
                 for key in ("rain_cover", "ventilated", "off_ground"):
                     conditions.pop(key, None)
@@ -454,7 +461,16 @@ def simulate(item: dict, now: datetime.datetime, day_text, home_at, food: bool =
                 tied = 2
             else:
                 tied = 0
-            st["moved"] = None
+            what_name = str(stage.get("what") or "").strip()
+            stage_place = str(stage.get("place") or "").strip()
+            relocated = (
+                index == 1
+                or bool(holder)
+                or (bool(stage_place) and stage_place != prev_place)
+                or what_name in ("挪地方", "收好了", "拿回来", "捞回来", "捡回来", "买回来", "洗干净", "烘干", "晾干")
+            )
+            if relocated:
+                st["moved"] = None
             if index == 1 and asserted(text, RESET_ALL):
                 st.update(wet=0.0, wet_from=None, rust=0.0, mold=0.0, salt=0.0, fade=0.0, soaked=False, swollen=False,
                           wet_hours=0.0)
@@ -566,7 +582,7 @@ def simulate(item: dict, now: datetime.datetime, day_text, home_at, food: bool =
             soak = (0.3 if rain < 1 else 2.0 if rain < 2.5 else 6.0 if rain < 8 else 15.0) * catch
             if is_snow:
                 soak *= 0.18 if temp <= 0.0 else 0.55
-            if st["wet"] < 0.3 and soak * dt >= 0.3:
+            if st["wet"] < 0.3 and (st["wet"] + soak * dt) >= 0.3:
                 st["wet_from"] = cur
             st["wet"] = min(1.0, st["wet"] + soak * dt)
             if food and not is_snow and st["wet"] >= 0.7 and not st.get("rained"):

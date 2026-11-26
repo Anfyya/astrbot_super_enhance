@@ -343,8 +343,10 @@ class MoodJudge:
         self.service = service
         self._pending: dict[str, list[dict]] = {}
         self._timers: dict[str, asyncio.Task] = {}
+        self._running: dict[str, asyncio.Task] = {}
         self._locks: dict[str, asyncio.Lock] = {}
         self._seen: dict[str, float] = {}
+        self._stopping: bool = False
 
     @property
     def cfg(self):
@@ -406,36 +408,50 @@ class MoodJudge:
         self._seen[key] = now_ts
         self._prune_seen(now_ts)
 
+        self._stopping = False
+        umo_key = str(umo)
         moment = now or self.service._now()
         hm = moment.strftime("%H:%M") if isinstance(moment, datetime.datetime) else time.strftime("%H:%M")
-        bucket = self._pending.setdefault(str(umo), [])
+        bucket = self._pending.setdefault(umo_key, [])
         bucket.append({"text": clean_text(body, MAX_MSG_CHARS), "ts": msg_ts, "time": hm})
         if len(bucket) > MAX_PENDING_PER_SESSION:
-            self._pending[str(umo)] = bucket[-MAX_PENDING_PER_SESSION:]
+            self._pending[umo_key] = bucket[-MAX_PENDING_PER_SESSION:]
 
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return True
 
-        old = self._timers.get(str(umo))
+        # 若该会话已有在途 evaluate_batch 任务正在调用 LLM，绝不取消它；新消息留在 _pending，由其在途结束后的 finally 自动起新防抖任务
+        running = self._running.get(umo_key)
+        if running is not None and not running.done():
+            return True
+
+        old = self._timers.get(umo_key)
         if old is not None and not old.done():
             old.cancel()
-        self._timers[str(umo)] = loop.create_task(self._debounced_run(str(umo)))
+        self._timers[umo_key] = loop.create_task(self._debounced_run(umo_key))
         return True
 
     def stop(self) -> None:
-        """插件卸载时取消所有未触发的防抖任务。"""
-        for task in list(self._timers.values()):
+        """插件卸载时取消所有防抖与在途任务。"""
+        self._stopping = True
+        for task in list(self._timers.values()) + list(self._running.values()):
             if task is not None and not task.done():
                 task.cancel()
         self._timers.clear()
+        self._running.clear()
         self._pending.clear()
 
     async def _debounced_run(self, umo: str) -> None:
         current_task = asyncio.current_task()
+        entered_running = False
         try:
             await asyncio.sleep(self.debounce_seconds)
+            if self._timers.get(umo) is current_task:
+                self._timers.pop(umo, None)
+            self._running[umo] = current_task
+            entered_running = True
             lock = self._locks.setdefault(umo, asyncio.Lock())
             async with lock:
                 batch = self._pending.pop(umo, [])
@@ -449,6 +465,19 @@ class MoodJudge:
         finally:
             if self._timers.get(umo) is current_task:
                 self._timers.pop(umo, None)
+            if entered_running and self._running.get(umo) is current_task:
+                self._running.pop(umo, None)
+            if (
+                not self._stopping
+                and self._pending.get(umo)
+                and umo not in self._timers
+                and umo not in self._running
+            ):
+                try:
+                    loop = asyncio.get_running_loop()
+                    self._timers[umo] = loop.create_task(self._debounced_run(umo))
+                except RuntimeError:
+                    pass
 
     def _recent_history_text(self, umo: str, bot: str, batch: list[dict], now: datetime.datetime) -> str:
         """读取该会话最近约 5 轮对话摘要（排除刚刚聚合的这批原话，避免重复）。"""
@@ -568,7 +597,13 @@ class MoodJudge:
         owner_state = state.get("owner") if isinstance(state, dict) else {}
         owner_level = int((owner_state or {}).get("level") or mv.get("owner_level") or 0)
         self_level = int(mv.get("self_level") or 0)
-        has_active = self_level > 0 or owner_level != 0
+        peer_level = int(mv.get("peer_level") or 0)
+        per_bot_state = state.get("per_bot") if isinstance(state, dict) else {}
+        if isinstance(per_bot_state, dict):
+            for other_b, other_row in per_bot_state.items():
+                if str(other_b) != str(bot) and isinstance(other_row, dict):
+                    peer_level = max(peer_level, int(other_row.get("level") or 0))
+        has_active = self_level > 0 or peer_level > 0 or owner_level != 0
 
         if not has_active and not self.always:
             return None
@@ -627,8 +662,12 @@ class MoodJudge:
             if level < 0:
                 return None
             level = max(0, min(3, level))
-            if self_level > 0 and level < self_level and _is_cold_dismissive_batch(batch):
-                logger.info("[super_enhance/mood_judge] 拦截单字冷敷衍误降档（%s %d -> %d）", bot, self_level, level)
+            base_level = max(self_level, peer_level) if target == "both" else self_level
+            if base_level > 0 and level < base_level and _is_cold_dismissive_batch(batch):
+                logger.info(
+                    "[super_enhance/mood_judge] 拦截单字冷敷衍误降档（%s target=%s %d -> %d）",
+                    bot, target, base_level, level,
+                )
                 return None
             scope = "both" if target == "both" else bot
             if target == "both":

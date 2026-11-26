@@ -14,6 +14,7 @@ AstrBot 的会话历史会被 ``/compact`` 压成摘要，回查前一天日程�
 import datetime
 import json
 import time
+from collections import OrderedDict
 from pathlib import Path
 from astrbot.api import logger
 from astrbot.core.platform.message_session import MessageSession
@@ -32,6 +33,8 @@ KEEP_ALL = True
 MAX_KEEP_DAYS = 7
 # 同一个会话、同一角色、同样开头的话，前后这么久里只留一条（启动回补的时间只到分钟，跟实时记的那条常差一分钟）（秒）
 DUP_SECONDS = 120
+# 内存中按天缓存的原始消息上限（LRU 淘汰，防无界增长）
+DAY_CACHE_MAX = 14
 DEFAULT_TZ = "Asia/Shanghai"
 
 
@@ -43,7 +46,7 @@ class RawMessageLog:
         self.cfg = cfg
         self.bots = BotRegistry(cfg)
         self.folder = Path(data_dir) / FOLDER_NAME
-        self._day_cache: dict[str, tuple[int, list[dict]]] = {}
+        self._day_cache: OrderedDict[str, tuple[int, list[dict]]] = OrderedDict()
         # () -> 记录员还没处理完的最早那天（YYYY-MM-DD，没有就空串）；清理旧文件时这天以后的先不删
         self.keep_from_fn = None
         self.on_record = None
@@ -229,17 +232,19 @@ class RawMessageLog:
     # ---------- 读取 ----------
 
     def read_day(self, date_text: str) -> list[dict]:
-        path = self.folder / ("%s.jsonl" % date_text)
+        key = str(date_text)
+        path = self.folder / ("%s.jsonl" % key)
         if not path.exists():
-            self._day_cache.pop(str(date_text), None)
+            self._day_cache.pop(key, None)
             return []
         try:
             version = path.stat().st_mtime_ns
         except Exception:
             version = 0
-        cached = self._day_cache.get(str(date_text))
+        cached = self._day_cache.get(key)
         if cached is not None and cached[0] == version:
-            return cached[1]
+            self._day_cache.move_to_end(key)
+            return list(cached[1])
         items: list[dict] = []
         try:
             for line in path.read_text(encoding="utf-8").splitlines():
@@ -253,11 +258,14 @@ class RawMessageLog:
                 if isinstance(item, dict):
                     items.append(item)
         except Exception as e:
-            logger.error("[super_enhance/raw_log] 读取 %s 失败：%s", date_text, e)
+            logger.error("[super_enhance/raw_log] 读取 %s 失败：%s", key, e)
             return []
         items.sort(key=lambda item: item.get("ts") or 0)
-        self._day_cache[str(date_text)] = (version, items)
-        return items
+        self._day_cache[key] = (version, items)
+        self._day_cache.move_to_end(key)
+        while len(self._day_cache) > DAY_CACHE_MAX:
+            self._day_cache.popitem(last=False)
+        return list(items)
 
     # ---------- 启动回补 ----------
 

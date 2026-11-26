@@ -24,11 +24,13 @@
 「她此刻在做什么」= 覆盖此刻的那段 activity；进度按开始到结束的时间算。
 """
 
+import copy
 import datetime
 import functools
 import hashlib
 import random
 import re
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from astrbot.api import logger
@@ -38,6 +40,7 @@ from ...common import jsonio, timeutil
 FOLDER = "world"
 STATE_NAME = "world_state.json"
 ROUTINE_NAME = "routine.json"
+_DATE_TEXT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 SOURCE_RANK = {"step": 1, "chat": 2, "manual": 3}
 DEFAULT_KEEP_DAYS = 30
@@ -114,26 +117,66 @@ class WorldStore:
         self.root = Path(data_dir)
         self.dir = self.root / FOLDER
         self.tz = None  # 由外部注入（Asia/Shanghai）；不设就用本地时区
+        self._lock = threading.RLock()
         self._state = None
         self._routine = None
         self._days = {}
         self._defer_depth = 0
         self._dirty_days: set[str] = set()
+        self._state_dirty: bool = False
         self._revision = 1
         self._fact_errors = {}
+        self._drop_buffer_stack: list[list[dict[str, set[str]]]] = []
         self.on_drop = None
 
-    def _fire_drop(self, dropped_by_who: dict) -> None:
+    def push_drop_buffer(self) -> None:
+        """开启一层 on_drop 回调缓冲（供事务 / fact_batch 延迟到提交后触发）。"""
+        with self._lock:
+            self._drop_buffer_stack.append([])
+
+    def pop_drop_buffer(self, *, commit: bool) -> None:
+        """退出一层 on_drop 缓冲：commit=True 时合并至外层或立即派发，commit=False 时丢弃。"""
+        to_dispatch: list[dict[str, set[str]]] = []
+        with self._lock:
+            if not self._drop_buffer_stack:
+                return
+            buf = self._drop_buffer_stack.pop()
+            if commit and buf:
+                if self._drop_buffer_stack:
+                    self._drop_buffer_stack[-1].extend(buf)
+                else:
+                    to_dispatch = buf
+        if to_dispatch:
+            merged: dict[str, set[str]] = {}
+            for item in to_dispatch:
+                for who, keys in item.items():
+                    merged.setdefault(who, set()).update(keys)
+            self._dispatch_drop(merged)
+
+    def _dispatch_drop(self, clean_map: dict[str, set[str]]) -> None:
         cb = getattr(self, "on_drop", None)
         if not callable(cb):
             return
+        for who, clean_keys in clean_map.items():
+            if who and clean_keys:
+                try:
+                    cb(str(who), set(clean_keys))
+                except Exception as e:
+                    logger.warning("[super_enhance/world] on_drop 回调失败 (%s): %s", who, e)
+
+    def _fire_drop(self, dropped_by_who: dict) -> None:
+        clean_map: dict[str, set[str]] = {}
         for who, keys in (dropped_by_who or {}).items():
             clean_keys = {str(k) for k in (keys or ()) if str(k).strip()}
             if who and clean_keys:
-                try:
-                    cb(str(who), clean_keys)
-                except Exception as e:
-                    logger.warning("[super_enhance/world] on_drop 回调失败 (%s): %s", who, e)
+                clean_map[str(who)] = clean_keys
+        if not clean_map:
+            return
+        with self._lock:
+            if self._drop_buffer_stack:
+                self._drop_buffer_stack[-1].append(clean_map)
+                return
+        self._dispatch_drop(clean_map)
 
     # ---------- 通用 ----------
 
@@ -150,26 +193,30 @@ class WorldStore:
         return jsonio.load_object(path, blank, merge=True)
 
     def _load_state(self) -> dict:
-        if self._state is None:
-            self._state = self._read_json(
-                self.root / STATE_NAME,
-                {"version": 1, "constraints": [], "intentions": [],
-                 "cursors": {}, "fired_msgs": {}, "last_step": "", "last_step_attempt": "", "errors": {}},
-            )
-            merged = _merge_same_constraints(self._state)
-            if merged:
-                logger.info("[super_enhance/world] 规矩存重了 %d 份，并掉了", merged)
-                self._save_state()
-        return self._state
+        with self._lock:
+            if self._state is None:
+                self._state = self._read_json(
+                    self.root / STATE_NAME,
+                    {"version": 1, "constraints": [], "intentions": [],
+                     "cursors": {}, "fired_msgs": {}, "last_step": "", "last_step_attempt": "", "errors": {}},
+                )
+                merged = _merge_same_constraints(self._state)
+                if merged:
+                    logger.info("[super_enhance/world] 规矩存重了 %d 份，并掉了", merged)
+                    self._save_state()
+            return self._state
 
     def _save_state(self, quiet: bool = False) -> None:
-        self._write_json(self.root / STATE_NAME, self._load_state(), quiet=quiet)
+        with self._lock:
+            self._write_json(self.root / STATE_NAME, self._load_state(), quiet=quiet)
+            self._state_dirty = False
 
     # ---------- 住在哪的变更历史（存货按这个分两处：住海边小镇时看不到穗织宿舍里的东西） ----------
 
     def homes(self) -> list:
         """[{"since": "YYYY-MM-DD HH:MM", "home": 住处}]，按时间排；没记过是空的。"""
-        rows = [x for x in self._load_state().get("homes") or [] if isinstance(x, dict) and x.get("home")]
+        with self._lock:
+            rows = [x for x in self._load_state().get("homes") or [] if isinstance(x, dict) and x.get("home")]
         return sorted(rows, key=lambda x: str(x.get("since") or ""))
 
     def home_at(self, moment) -> str:
@@ -241,20 +288,22 @@ class WorldStore:
         value = str(home or "").strip()
         if not value:
             return False
-        rows = self.homes()
-        if rows and rows[-1]["home"] == value:
-            return False
-        state = self._load_state()
-        stamp = fmt_time(since) if isinstance(since, datetime.datetime) else str(since)[:16]
-        state["homes"] = rows + [{"since": stamp, "home": value}]
-        self._save_state()
-        return True
+        with self._lock:
+            rows = self.homes()
+            if rows and rows[-1]["home"] == value:
+                return False
+            state = self._load_state()
+            stamp = fmt_time(since) if isinstance(since, datetime.datetime) else str(since)[:16]
+            state["homes"] = rows + [{"since": stamp, "home": value}]
+            self._save_state()
+            return True
 
     # ---------- 网页手动热源记录（纯结构化，独立于主人行程/睡眠，不触发自动双扣燃料） ----------
 
     def manual_stoves(self, start_day: datetime.date | None = None, end_day: datetime.date | None = None) -> list[dict]:
         """返回手工点火记录列表；传起止日期时仅返回区间有交集的记录。"""
-        raw = [dict(x) for x in (self._load_state().get("manual_stoves") or []) if isinstance(x, dict)]
+        with self._lock:
+            raw = [dict(x) for x in (self._load_state().get("manual_stoves") or []) if isinstance(x, dict)]
         if start_day is None and end_day is None:
             return raw
         lo = datetime.datetime.combine(start_day, datetime.time.min) if start_day is not None else None
@@ -291,31 +340,32 @@ class WorldStore:
         en = end.replace(tzinfo=None, second=0, microsecond=0)
         if en <= st:
             raise ValueError("结束时间必须晚于开始时间")
-        state = self._load_state()
-        rows = [x for x in (state.get("manual_stoves") or []) if isinstance(x, dict)]
-        seq = int(state.get("manual_stove_seq") or 0) + 1
-        state["manual_stove_seq"] = seq
-        record = {
-            "id": "ms%d" % seq,
-            "stove": kind,
-            "start": fmt_time(st),
-            "end": fmt_time(en),
-            "by": str(by or "master"),
-            "note": clean_text(note, 120),
-            "fuel": [dict(x) for x in (fuel or []) if isinstance(x, dict)],
-            "created": fmt_time(self.now_local()),
-            "stopped_at": "",
-        }
-        if paid_start is not None:
-            ps = paid_start.replace(tzinfo=None, second=0, microsecond=0)
-            record["paid_start"] = fmt_time(max(st, min(ps, en)))
-        rows.append(record)
-        cutoff = fmt_time(self.now_local() - datetime.timedelta(days=14))
-        rows = [x for x in rows if str(x.get("end") or "") >= cutoff][-200:]
-        state["manual_stoves"] = rows
-        self._revision += 1
-        self._save_state()
-        return dict(record)
+        with self._lock:
+            state = self._load_state()
+            rows = [x for x in (state.get("manual_stoves") or []) if isinstance(x, dict)]
+            seq = int(state.get("manual_stove_seq") or 0) + 1
+            state["manual_stove_seq"] = seq
+            record = {
+                "id": "ms%d" % seq,
+                "stove": kind,
+                "start": fmt_time(st),
+                "end": fmt_time(en),
+                "by": str(by or "master"),
+                "note": clean_text(note, 120),
+                "fuel": [dict(x) for x in (fuel or []) if isinstance(x, dict)],
+                "created": fmt_time(self.now_local()),
+                "stopped_at": "",
+            }
+            if paid_start is not None:
+                ps = paid_start.replace(tzinfo=None, second=0, microsecond=0)
+                record["paid_start"] = fmt_time(max(st, min(ps, en)))
+            rows.append(record)
+            cutoff = fmt_time(self.now_local() - datetime.timedelta(days=14))
+            rows = [x for x in rows if str(x.get("end") or "") >= cutoff][-200:]
+            state["manual_stoves"] = rows
+            self._revision += 1
+            self._save_state()
+            return dict(record)
 
     def extend_manual_stove(
         self,
@@ -328,92 +378,124 @@ class WorldStore:
         """给正在烧的手动炉火添柴/添炭续烧。"""
         target_id = str(ms_id or "").strip()
         en = new_end.replace(tzinfo=None, second=0, microsecond=0)
-        state = self._load_state()
-        rows = state.get("manual_stoves") or []
-        for row in rows:
-            if isinstance(row, dict) and str(row.get("id") or "") == target_id:
-                old_end = parse_time(row.get("end"))
-                if old_end is not None and en <= old_end:
-                    en = old_end
-                row["end"] = fmt_time(en)
-                row["stopped_at"] = ""
-                if fuel_extra:
-                    row["fuel"] = list(row.get("fuel") or []) + [dict(x) for x in fuel_extra if isinstance(x, dict)]
-                if note:
-                    row["note"] = clean_text(note, 120)
-                self._revision += 1
-                self._save_state()
-                return dict(row)
-        return None
+        with self._lock:
+            state = self._load_state()
+            rows = state.get("manual_stoves") or []
+            for row in rows:
+                if isinstance(row, dict) and str(row.get("id") or "") == target_id:
+                    old_end = parse_time(row.get("end"))
+                    if old_end is not None and en <= old_end:
+                        en = old_end
+                    row["end"] = fmt_time(en)
+                    row["stopped_at"] = ""
+                    if fuel_extra:
+                        row["fuel"] = list(row.get("fuel") or []) + [dict(x) for x in fuel_extra if isinstance(x, dict)]
+                    if note:
+                        row["note"] = clean_text(note, 120)
+                    self._revision += 1
+                    self._save_state()
+                    return dict(row)
+            return None
 
     def stop_manual_stove(self, ms_id: str, at: datetime.datetime) -> dict | None:
         """提前熄灭/封火一条正在燃烧的手动炉火。"""
         target_id = str(ms_id or "").strip()
         cut = at.replace(tzinfo=None, second=0, microsecond=0)
-        state = self._load_state()
-        rows = state.get("manual_stoves") or []
-        for row in rows:
-            if isinstance(row, dict) and str(row.get("id") or "") == target_id:
-                st = parse_time(row.get("start"))
-                en = parse_time(row.get("end"))
-                if st is None or en is None or cut >= en:
-                    return None
-                if cut <= st:
-                    cut = st + datetime.timedelta(minutes=1)
-                row["end"] = fmt_time(cut)
-                row["stopped_at"] = fmt_time(cut)
-                self._revision += 1
-                self._save_state()
-                return dict(row)
-        return None
+        with self._lock:
+            state = self._load_state()
+            rows = state.get("manual_stoves") or []
+            for row in rows:
+                if isinstance(row, dict) and str(row.get("id") or "") == target_id:
+                    st = parse_time(row.get("start"))
+                    en = parse_time(row.get("end"))
+                    if st is None or en is None or cut >= en:
+                        return None
+                    if cut <= st:
+                        cut = st + datetime.timedelta(minutes=1)
+                    row["end"] = fmt_time(cut)
+                    row["stopped_at"] = fmt_time(cut)
+                    self._revision += 1
+                    self._save_state()
+                    return dict(row)
+            return None
 
     def _day_path(self, date_text: str) -> Path:
-        return self.dir / ("%s.json" % str(date_text).strip())
+        key = str(date_text or "").strip()
+        if not _DATE_TEXT_RE.fullmatch(key):
+            raise ValueError("非法日期格式：%r" % (date_text,))
+        try:
+            datetime.date.fromisoformat(key)
+        except ValueError as e:
+            raise ValueError("非法日期：%r" % (date_text,)) from e
+        return self.dir / ("%s.json" % key)
 
     def _load_day(self, date_text: str) -> dict:
-        key = str(date_text).strip()
-        day = self._days.get(key)
-        if day is None:
-            day = self._read_json(
-                self._day_path(key),
-                {"version": 1, "date": key, "next_id": 1, "entries": []},
-            )
-            self._days[key] = day
-        return day
+        key = str(date_text or "").strip()
+        path = self._day_path(key)
+        with self._lock:
+            day = self._days.get(key)
+            if day is None:
+                day = self._read_json(
+                    path,
+                    {"version": 1, "date": key, "next_id": 1, "entries": []},
+                )
+                self._days[key] = day
+            return day
 
     def _save_day(self, date_text: str) -> None:
-        key = str(date_text).strip()
-        self._revision += 1
-        if self._defer_depth:
-            self._dirty_days.add(key)
-            return
-        self._write_json(self._day_path(key), self._load_day(key))
+        key = str(date_text or "").strip()
+        path = self._day_path(key)
+        with self._lock:
+            self._revision += 1
+            if self._defer_depth:
+                self._dirty_days.add(key)
+                return
+            self._write_json(path, self._load_day(key))
 
     @contextmanager
     def day_transaction(self, *date_texts: str):
-        """把同一批世界线改动合并成每天一次写盘。"""
-        for value in date_texts:
-            if str(value or "").strip():
-                self._load_day(str(value).strip())
-        self._defer_depth += 1
+        """把同一批世界线改动合并成每天一次写盘；若块内抛异常，不刷盘并回滚本次内存脏状态。"""
+        with self._lock:
+            for value in date_texts:
+                if str(value or "").strip():
+                    self._load_day(str(value).strip())
+            snap_days = copy.deepcopy(self._days)
+            snap_dirty = set(self._dirty_days)
+            snap_rev = self._revision
+            self._defer_depth += 1
+            self.push_drop_buffer()
+        committed = False
         try:
             yield self
-        finally:
-            self._defer_depth -= 1
-            if not self._defer_depth:
-                dirty = sorted(self._dirty_days)
-                self._dirty_days.clear()
-                for key in dirty:
-                    self._write_json(self._day_path(key), self._load_day(key))
+            with self._lock:
+                self._defer_depth = max(0, self._defer_depth - 1)
+                if not self._defer_depth:
+                    dirty = sorted(self._dirty_days)
+                    self._dirty_days.clear()
+                    for key in dirty:
+                        self._write_json(self._day_path(key), self._load_day(key))
+            committed = True
+        except BaseException:
+            with self._lock:
+                self._days = snap_days
+                self._dirty_days = snap_dirty
+                self._revision = snap_rev
+                self._defer_depth = max(0, self._defer_depth - 1)
+            self.pop_drop_buffer(commit=False)
+            raise
+        if committed:
+            self.pop_drop_buffer(commit=True)
 
     def revision(self) -> int:
         """本进程内世界线改动计数，给存货 / 网页缓存用。"""
-        return int(self._revision)
+        with self._lock:
+            return int(self._revision)
 
     # ---------- 条目 ----------
 
     def entries(self, date_text: str, who: str = "") -> list:
-        items = list(self._load_day(date_text).get("entries") or [])
+        with self._lock:
+            items = list(self._load_day(date_text).get("entries") or [])
         if who:
             items = [x for x in items if str(x.get("who")) == str(who)]
         items.sort(key=lambda x: str(x.get("start") or ""))
@@ -437,34 +519,44 @@ class WorldStore:
     def interrupt(self, entry, at, why_pos: str = "", *, by: str = "", why: str = "", keep_done: bool = True):
         """截停一段：还没开始就删，正在做就截到 at；手动条目不动，已经睡下的觉不动（还没睡下的觉照常撤，10-28 以前就是这样）。"""
         moment = parse_time(at) if not isinstance(at, datetime.datetime) else at.replace(tzinfo=None)
-        if isinstance(entry, str):
-            if moment is None:
+        drop_payload = None
+        with self._lock:
+            if isinstance(entry, str):
+                if moment is None:
+                    return None
+                entry = self.current(entry, moment)
+            if not isinstance(entry, dict) or is_event(entry) or str(entry.get("source") or "") == "manual":
                 return None
-            entry = self.current(entry, moment)
-        if not isinstance(entry, dict) or is_event(entry) or str(entry.get("source") or "") == "manual":
-            return None
-        if why_pos and not why:
-            why = why_pos
-        start = parse_time(entry.get("start"))
-        end = parse_time(entry.get("end")) if entry.get("end") else None
-        if is_sleep(entry) and (moment is None or start is None or start < moment):
-            return None
-        if moment is None or start is None or (end is not None and end <= moment):
-            return entry
-        date_text = start.date().isoformat()
-        entry_id = str(entry.get("id"))
-        who = str(entry.get("who") or "")
-        if start >= moment or not keep_done:
-            return self.delete_entry(date_text, entry_id) and {"id": entry.get("id"), "deleted": True}
-        fields = {"end": fmt_time(moment), "stopped": True, "intent": ""}
-        if clean_text(why, MAX_STOP_WHY):
-            fields["stop_why"] = clean_text(why, MAX_STOP_WHY)
-        elif clean_text(by, MAX_STOP_WHY):
-            fields["stop_by"] = clean_text(by, MAX_STOP_WHY)
-        updated = self.update(date_text, entry_id, mode="normal", **fields)
-        if updated is not None and who and entry_id:
-            self._fire_drop({who: {f"{date_text}/{entry_id}"}})
-        return updated
+            if why_pos and not why:
+                why = why_pos
+            start = parse_time(entry.get("start"))
+            end = parse_time(entry.get("end")) if entry.get("end") else None
+            if is_sleep(entry) and (moment is None or start is None or start < moment):
+                return None
+            if moment is None or start is None or (end is not None and end <= moment):
+                return entry
+            date_text = start.date().isoformat()
+            entry_id = str(entry.get("id"))
+            who = str(entry.get("who") or "")
+            if start >= moment or not keep_done:
+                deleted = self.delete_entry(date_text, entry_id, _notify_drop=False)
+                if not deleted:
+                    return False
+                if who and entry_id:
+                    drop_payload = {who: {f"{date_text}/{entry_id}"}}
+                result = {"id": entry.get("id"), "deleted": True}
+            else:
+                fields = {"end": fmt_time(moment), "stopped": True, "intent": ""}
+                if clean_text(why, MAX_STOP_WHY):
+                    fields["stop_why"] = clean_text(why, MAX_STOP_WHY)
+                elif clean_text(by, MAX_STOP_WHY):
+                    fields["stop_by"] = clean_text(by, MAX_STOP_WHY)
+                result = self.update(date_text, entry_id, mode="normal", **fields)
+                if result is not None and who and entry_id:
+                    drop_payload = {who: {f"{date_text}/{entry_id}"}}
+        if drop_payload:
+            self._fire_drop(drop_payload)
+        return result
 
     def clear_planned(self, who: str, after, keep=None) -> list:
         """撤掉 after 以后还没开始的补写段（今天、明天；keep 里的不撤）。还没睡下的觉也照撤（10-28 以前 start_now 就是这样，
@@ -475,35 +567,37 @@ class WorldStore:
         kept = {str(value) for value in (keep or [])}
         removed = []
         dropped_keys: set[str] = set()
-        for back in (0, 1):
-            date_text = (moment.date() + datetime.timedelta(days=back)).isoformat()
-            for item in list(self.entries(date_text, who)):
-                start = parse_time(item.get("start"))
-                if (
-                    start is not None and start >= moment and str(item.get("id")) not in kept
-                    and str(item.get("source") or "") == "step" and not is_event(item)
-                ):
-                    entry_id = str(item.get("id"))
-                    if self.delete_entry(date_text, entry_id, _notify_drop=False):
-                        removed.append(item)
-                        dropped_keys.add(f"{date_text}/{entry_id}")
+        with self._lock:
+            for back in (0, 1):
+                date_text = (moment.date() + datetime.timedelta(days=back)).isoformat()
+                for item in list(self.entries(date_text, who)):
+                    start = parse_time(item.get("start"))
+                    if (
+                        start is not None and start >= moment and str(item.get("id")) not in kept
+                        and str(item.get("source") or "") == "step" and not is_event(item)
+                    ):
+                        entry_id = str(item.get("id"))
+                        if self.delete_entry(date_text, entry_id, _notify_drop=False):
+                            removed.append(item)
+                            dropped_keys.add(f"{date_text}/{entry_id}")
         if dropped_keys:
             self._fire_drop({who: dropped_keys})
         return removed
 
     def remove_partner(self, entry: dict, who: str, note: str = "", **fields):
         """把某人从对方写的同行段里去掉，保留对方那一段；手动写的不动。"""
-        if not isinstance(entry, dict) or str(entry.get("source") or "") == "manual":
-            return None
-        people = [str(value) for value in (entry.get("with") or []) if str(value).strip()]
-        if str(who) not in people:
-            return entry
-        people = [value for value in people if value != str(who)]
-        date_text = str(entry.get("start") or "")[:10]
-        fields["with"] = people
-        if note and not entry.get("stop_why"):
-            fields["stop_why"] = note
-        return self.update(date_text, str(entry.get("id")), mode="normal", **fields)
+        with self._lock:
+            if not isinstance(entry, dict) or str(entry.get("source") or "") == "manual":
+                return None
+            people = [str(value) for value in (entry.get("with") or []) if str(value).strip()]
+            if str(who) not in people:
+                return entry
+            people = [value for value in people if value != str(who)]
+            date_text = str(entry.get("start") or "")[:10]
+            fields["with"] = people
+            if note and not entry.get("stop_why"):
+                fields["stop_why"] = note
+            return self.update(date_text, str(entry.get("id")), mode="normal", **fields)
 
     @staticmethod
     def _overlaps(a_start, a_end, b_start, b_end) -> bool:
@@ -518,6 +612,8 @@ class WorldStore:
                       start: datetime.datetime, end, source: str) -> dict:
         """把外部给的条目规整成世界线落盘格式；顺带发新编号。"""
         parsed_steps, parsed_minutes = parse_steps(entry.get("steps"))
+        send_msg = bool(clean_flag(entry.get("send_msg"))) and kind != "event"
+        raw_mk = str(entry.get("msg_kind") or "").strip().lower()
         record = {
             "id": str(entry.get("id") or ("e%d" % int(day.get("next_id") or 1))),
             "who": who,
@@ -540,17 +636,19 @@ class WorldStore:
             "steps_planned": entry.get("steps_planned") if isinstance(entry.get("steps_planned"), list) else None,
             "idle": bool(entry.get("idle")) and kind != "event",
             "importance": clean_importance(entry.get("importance")),
-            "send_msg": bool(clean_flag(entry.get("send_msg"))) and kind != "event",
+            "send_msg": send_msg,
             "msg_at": (
                 str(entry.get("msg_at") or "").strip().lower()
-                if bool(clean_flag(entry.get("send_msg"))) and kind != "event"
-                and str(entry.get("msg_at") or "").strip().lower() in ("start", "end")
+                if send_msg and str(entry.get("msg_at") or "").strip().lower() in ("start", "end")
                 else ""
             ),
             "msg_purpose": (
                 clean_text(entry.get("msg_purpose"), MAX_MSG_PURPOSE)
-                if bool(clean_flag(entry.get("send_msg"))) and kind != "event"
+                if send_msg
                 else ""
+            ),
+            "msg_kind": (
+                raw_mk if send_msg and raw_mk in ("routine", "casual", "repair") else ""
             ),
             "at_home": clean_flag(entry.get("at_home")),
             "meal": bool(clean_flag(entry.get("meal"))),
@@ -611,52 +709,55 @@ class WorldStore:
         source = str(entry.get("source") or "step")
         rank = SOURCE_RANK.get(source, 0)
         kind = "event" if str(entry.get("kind") or "") == "event" else "activity"
-        if kind == "activity" and source != "manual" and who != "master":
-            bed = self.sleep_at(who, start)
-            if bed is not None:
-                if is_sleep(entry):
-                    # 已经睡下了，又记一段睡觉：原来那段接着睡，这条不要
-                    logger.info("[super_enhance/world] %s 已经睡下了（%s 起），又一段睡觉不记：%s",
-                                who, str(bed.get("start"))[11:16], clean_text(entry.get("doing"), 30))
-                    return None
-                # 睡觉不打断：睡着中间的事记成顺带的一件事，那段觉照旧睡到起床
-                logger.info("[super_enhance/world] %s 在睡觉（%s 起），%s 的「%s」记成顺带，不截睡觉",
-                            who, str(bed.get("start"))[11:16], fmt_time(start)[11:], clean_text(entry.get("doing"), 30))
+        dropped_keys: set[str] = set()
+        with self._lock:
+            if kind == "activity" and source != "manual" and who != "master":
+                bed = self.sleep_at(who, start)
+                if bed is not None:
+                    if is_sleep(entry):
+                        # 已经睡下了，又记一段睡觉：原来那段接着睡，这条不要
+                        logger.info("[super_enhance/world] %s 已经睡下了（%s 起），又一段睡觉不记：%s",
+                                    who, str(bed.get("start"))[11:16], clean_text(entry.get("doing"), 30))
+                        return None
+                    # 睡觉不打断：睡着中间的事记成顺带的一件事，那段觉照旧睡到起床
+                    logger.info("[super_enhance/world] %s 在睡觉（%s 起），%s 的「%s」记成顺带，不截睡觉",
+                                who, str(bed.get("start"))[11:16], fmt_time(start)[11:], clean_text(entry.get("doing"), 30))
+                    kind = "event"
+            if kind == "activity" and source != "manual" and who == "master" and end is None \
+                    and not str(entry.get("place") or "").strip():
+                # 主人没说在哪、也没个结束，只是一句「吃完了」「到了」「好了」：是一刻的事，记成顺带，
+                # 不然会当成他一直在做，挂着几个钟头（2026-11-01「吃完了」13:04 起挂到 16:43）
+                logger.info("[super_enhance/world] 主人 %s 的「%s」没地点也没结束，记成顺带",
+                            fmt_time(start)[11:], clean_text(entry.get("doing"), 30))
                 kind = "event"
-        if kind == "activity" and source != "manual" and who == "master" and end is None \
-                and not str(entry.get("place") or "").strip():
-            # 主人没说在哪、也没个结束，只是一句「吃完了」「到了」「好了」：是一刻的事，记成顺带，
-            # 不然会当成他一直在做，挂着几个钟头（2026-11-01「吃完了」13:04 起挂到 16:43）
-            logger.info("[super_enhance/world] 主人 %s 的「%s」没地点也没结束，记成顺带",
-                        fmt_time(start)[11:], clean_text(entry.get("doing"), 30))
-            kind = "event"
-        if kind == "event":
-            end = None
-        day = self._load_day(date_text)
-        items = day.get("entries") or []
+            if kind == "event":
+                end = None
+            day = self._load_day(date_text)
+            items = day.get("entries") or []
 
-        kept, dropped_keys = self._trim_overlap(
-            items, date_text=date_text, who=who, kind=kind,
-            start=start, end=end, rank=rank, entry=entry,
-        )
-        if kept is None:
-            return None
+            kept, dropped_keys = self._trim_overlap(
+                items, date_text=date_text, who=who, kind=kind,
+                start=start, end=end, rank=rank, entry=entry,
+            )
+            if kept is None:
+                return None
 
-        record = self._entry_record(day, entry, who=who, kind=kind, start=start, end=end, source=source)
-        kept.append(record)
-        kept.sort(key=lambda x: str(x.get("start") or ""))
-        if len(kept) > MAX_DAY_ENTRIES:
-            logger.warning("[super_enhance/world] %s 的世界线超过 %d 条，最早的 %d 条不留了",
-                           date_text, MAX_DAY_ENTRIES, len(kept) - MAX_DAY_ENTRIES)
-        day["entries"] = kept[-MAX_DAY_ENTRIES:]
-        self._save_day(date_text)
+            record = self._entry_record(day, entry, who=who, kind=kind, start=start, end=end, source=source)
+            kept.append(record)
+            kept.sort(key=lambda x: str(x.get("start") or ""))
+            if len(kept) > MAX_DAY_ENTRIES:
+                logger.warning("[super_enhance/world] %s 的世界线超过 %d 条，最早的 %d 条不留了",
+                               date_text, MAX_DAY_ENTRIES, len(kept) - MAX_DAY_ENTRIES)
+            day["entries"] = kept[-MAX_DAY_ENTRIES:]
+            self._save_day(date_text)
         if dropped_keys:
             self._fire_drop({who: dropped_keys})
         return record
 
     def _trim_overlap(self, items: list, *, date_text: str, who: str, kind: str,
                       start: datetime.datetime, end, rank: int, entry: dict):
-        """裁掉同一个人重叠的旧段，返回 (kept, dropped_keys)；若旧段优先级更高返回 (None, set())。"""
+        """裁掉同一个人重叠的旧段，返回 (kept, dropped_keys)；若旧段优先级更高返回 (None, set())。
+        所有修改均在深拷贝上暂存，若中途因撞上高优先级返回 None，对原 items 保证 0 副作用。"""
         kept = []
         dropped_keys: set[str] = set()
         for old in items:
@@ -669,34 +770,38 @@ class WorldStore:
             if old_start is None or not self._overlaps(old_start, old_end, start, end):
                 kept.append(old)
                 continue
-            if old_end is None and old_start <= start:
-                # 旧的还没写结束时间（开口），新段从它之后开始：说明旧的到新段开始处就该结束。
-                # 直接闭合旧条目，不再走优先级拦截——否则补写永远接不上被记录员写了开口的时段。
-                old["end"] = fmt_time(start)
-                kept.append(old)
-                continue
-            old_rank = SOURCE_RANK.get(str(old.get("source") or ""), 0)
+            old_source = str(old.get("source") or "")
+            old_rank = SOURCE_RANK.get(old_source, 0)
             if rank < old_rank:
-                # 旧的更权威（比如记录员撞上手动写的）：这次写入作废
+                # 旧的更权威（比如 step/chat 撞上 manual，包括主人手动睡眠开口段）：这次写入作废
                 return None, set()
+            if old_end is None and old_start < start:
+                # 旧的还没写结束时间（开口），且新段优先级不低于旧段、开始严格晚于旧段：
+                # 正常闭合旧段（不标 stopped，且严禁 old_start == start 造出 0 分钟畸形段）。
+                updated = copy.deepcopy(old)
+                updated["end"] = fmt_time(start)
+                kept.append(updated)
+                continue
             old_id = str(old.get("id") or "")
-            # 同级或更权威：新的赢，旧的被裁短（开口的那条到此为止）
+            # 同级或更权威：新的赢，旧的被裁短或覆盖
             if old_start < start:
-                old["end"] = fmt_time(start)
+                updated = copy.deepcopy(old)
+                updated["end"] = fmt_time(start)
                 # 做到一半被打断：不算做完（那条打算不算做完，到点也不叫她说做完了）
-                old["intent"] = ""
-                old["stopped"] = True
-                if not old.get("stop_why") and not old.get("stop_by") and str(entry.get("doing") or "").strip():
+                updated["intent"] = ""
+                updated["stopped"] = True
+                if not updated.get("stop_why") and not updated.get("stop_by") and str(entry.get("doing") or "").strip():
                     then = str(entry.get("doing")).strip()
-                    old["stop_by"] = clean_text("改去" + (then[1:] if then.startswith("去") else then), MAX_STOP_WHY)
-                fit_steps(old)  # 分步跟着截，别把原定的十几分钟压进剩下的一两分钟
-                kept.append(old)
+                    updated["stop_by"] = clean_text("改去" + (then[1:] if then.startswith("去") else then), MAX_STOP_WHY)
+                fit_steps(updated)  # 分步跟着截，别把原定的十几分钟压进剩下的一两分钟
+                kept.append(updated)
                 if old_id:
                     dropped_keys.add(f"{date_text}/{old_id}")
             elif end is not None and (old_end is None or old_end > end):
-                old["start"] = fmt_time(end)
-                fit_steps(old)
-                kept.append(old)
+                updated = copy.deepcopy(old)
+                updated["start"] = fmt_time(end)
+                fit_steps(updated)
+                kept.append(updated)
             else:
                 # 整条被新的盖掉
                 if old_id:
@@ -713,161 +818,176 @@ class WorldStore:
 
     def patch_entry(self, date_text: str, entry_id: str, fields: dict):
         """原样改几个字段（收尾、做完、交给时用：分步已经按收场算好了，不再按起止重排）。"""
-        day = self._load_day(date_text)
-        for item in day.get("entries") or []:
-            if str(item.get("id")) != str(entry_id):
-                continue
-            for key, value in fields.items():
-                if value is None:
-                    item.pop(key, None)
-                else:
-                    item[key] = value
-            self._save_day(date_text)
-            return item
-        return None
+        with self._lock:
+            day = self._load_day(date_text)
+            for item in day.get("entries") or []:
+                if str(item.get("id")) != str(entry_id):
+                    continue
+                for key, value in fields.items():
+                    if value is None:
+                        item.pop(key, None)
+                    else:
+                        item[key] = value
+                self._save_day(date_text)
+                return item
+            return None
 
     def update_entry(self, date_text: str, entry_id: str, **fields):
-        day = self._load_day(date_text)
-        for item in day.get("entries") or []:
-            if str(item.get("id")) != str(entry_id):
-                continue
-            limits = {"place": MAX_PLACE, "doing": MAX_DOING, "public": MAX_PUBLIC,
-                      "src_quote": MAX_TEXT}
-            for key, limit in limits.items():
-                if fields.get(key) is not None:
-                    item[key] = clean_text(fields[key], limit)
-            for key in ("start", "end", "training", "source", "kind", "intent"):
-                if fields.get(key) is not None:
-                    item[key] = str(fields[key]).strip()
-            if fields.get("with") is not None:
-                item["with"] = [str(x) for x in fields["with"] if str(x).strip()]
-            if fields.get("seen_by") is not None:
-                item["seen_by"] = [str(x) for x in fields["seen_by"] if str(x).strip()]
-            if fields.get("steps") is not None:
-                item["steps"], item["step_minutes"] = parse_steps(fields["steps"])
-                item.pop("steps_planned", None)  # 分步重写了：原定的那份作废
-            if fields.get("idle") is not None:
-                item["idle"] = bool(fields["idle"])
-            if fields.get("stopped") is not None:
-                item["stopped"] = bool(fields["stopped"])
-            if fields.get("stop_why") is not None:
-                item["stop_why"] = clean_text(fields["stop_why"], MAX_STOP_WHY)
-            if fields.get("stop_by") is not None:
-                item["stop_by"] = clean_text(fields["stop_by"], MAX_STOP_WHY)
-            if fields.get("stop_result") is not None:
-                item["stop_result"] = clean_text(fields["stop_result"], MAX_RESULT)
-            if fields.get("sleep") is not None:
-                item["sleep"] = bool(fields["sleep"])
-            if fields.get("importance") is not None:
-                item["importance"] = clean_importance(fields["importance"])
-            if fields.get("send_msg") is not None:
-                item["send_msg"] = bool(clean_flag(fields["send_msg"])) and not is_event(item)
-                if not item["send_msg"]:
-                    item["msg_at"] = ""
-                    item["msg_purpose"] = ""
-                    item["msg_kind"] = ""
-            if fields.get("msg_at") is not None:
-                raw_at = str(fields["msg_at"] or "").strip().lower()
-                item["msg_at"] = raw_at if item.get("send_msg") and raw_at in ("start", "end") else ""
-            if fields.get("msg_purpose") is not None:
-                item["msg_purpose"] = (
-                    clean_text(fields["msg_purpose"], MAX_MSG_PURPOSE)
-                    if item.get("send_msg")
-                    else ""
-                )
-            if fields.get("at_home") is not None:
-                item["at_home"] = clean_flag(fields["at_home"])
-            if fields.get("meal") is not None:
-                item["meal"] = bool(clean_flag(fields["meal"]))
-            if fields.get("stove") is not None and not is_event(item):
-                stove_val = str(fields["stove"] or "").strip().lower()
-                item["stove"] = stove_val if stove_val in ("charcoal", "wood") else ""
-            for b_flag in ("lamp", "kerosene", "water"):
-                if fields.get(b_flag) is not None:
-                    if clean_flag(fields[b_flag]):
-                        item[b_flag] = True
+        with self._lock:
+            day = self._load_day(date_text)
+            for item in day.get("entries") or []:
+                if str(item.get("id")) != str(entry_id):
+                    continue
+                limits = {"place": MAX_PLACE, "doing": MAX_DOING, "public": MAX_PUBLIC,
+                          "src_quote": MAX_TEXT}
+                for key, limit in limits.items():
+                    if fields.get(key) is not None:
+                        item[key] = clean_text(fields[key], limit)
+                for key in ("start", "end", "training", "source", "kind", "intent"):
+                    if fields.get(key) is not None:
+                        item[key] = str(fields[key]).strip()
+                if fields.get("with") is not None:
+                    item["with"] = [str(x) for x in fields["with"] if str(x).strip()]
+                if fields.get("seen_by") is not None:
+                    item["seen_by"] = [str(x) for x in fields["seen_by"] if str(x).strip()]
+                if fields.get("steps") is not None:
+                    item["steps"], item["step_minutes"] = parse_steps(fields["steps"])
+                    item.pop("steps_planned", None)  # 分步重写了：原定的那份作废
+                if fields.get("idle") is not None:
+                    item["idle"] = bool(fields["idle"])
+                if fields.get("stopped") is not None:
+                    item["stopped"] = bool(fields["stopped"])
+                if fields.get("stop_why") is not None:
+                    item["stop_why"] = clean_text(fields["stop_why"], MAX_STOP_WHY)
+                if fields.get("stop_by") is not None:
+                    item["stop_by"] = clean_text(fields["stop_by"], MAX_STOP_WHY)
+                if fields.get("stop_result") is not None:
+                    item["stop_result"] = clean_text(fields["stop_result"], MAX_RESULT)
+                if fields.get("sleep") is not None:
+                    item["sleep"] = bool(fields["sleep"])
+                if fields.get("importance") is not None:
+                    item["importance"] = clean_importance(fields["importance"])
+                if fields.get("send_msg") is not None:
+                    item["send_msg"] = bool(clean_flag(fields["send_msg"])) and not is_event(item)
+                    if not item["send_msg"]:
+                        item["msg_at"] = ""
+                        item["msg_purpose"] = ""
+                        item["msg_kind"] = ""
+                if fields.get("msg_at") is not None:
+                    raw_at = str(fields["msg_at"] or "").strip().lower()
+                    item["msg_at"] = raw_at if item.get("send_msg") and raw_at in ("start", "end") else ""
+                if fields.get("msg_purpose") is not None:
+                    item["msg_purpose"] = (
+                        clean_text(fields["msg_purpose"], MAX_MSG_PURPOSE)
+                        if item.get("send_msg")
+                        else ""
+                    )
+                if fields.get("msg_kind") is not None:
+                    raw_mk = str(fields["msg_kind"] or "").strip().lower()
+                    item["msg_kind"] = raw_mk if item.get("send_msg") and raw_mk in ("routine", "casual", "repair") else ""
+                if fields.get("at_home") is not None:
+                    item["at_home"] = clean_flag(fields["at_home"])
+                if fields.get("meal") is not None:
+                    item["meal"] = bool(clean_flag(fields["meal"]))
+                if fields.get("stove") is not None and not is_event(item):
+                    stove_val = str(fields["stove"] or "").strip().lower()
+                    item["stove"] = stove_val if stove_val in ("charcoal", "wood") else ""
+                for b_flag in ("lamp", "kerosene", "water"):
+                    if fields.get(b_flag) is not None:
+                        if clean_flag(fields[b_flag]):
+                            item[b_flag] = True
+                        else:
+                            item.pop(b_flag, None)
+                if fields.get("result") is not None:
+                    item["result"] = clean_text(fields["result"], MAX_RESULT)
+                if fields.get("outfit") is not None and not is_event(item):
+                    val_out = clean_text(fields["outfit"], 100)
+                    if val_out:
+                        item["outfit"] = val_out
                     else:
-                        item.pop(b_flag, None)
-            if fields.get("result") is not None:
-                item["result"] = clean_text(fields["result"], MAX_RESULT)
-            if fields.get("outfit") is not None and not is_event(item):
-                val_out = clean_text(fields["outfit"], 100)
-                if val_out:
-                    item["outfit"] = val_out
-                else:
-                    item.pop("outfit", None)
-            if isinstance(fields.get("money"), list):
-                ml = [dict(x) for x in fields["money"] if isinstance(x, dict)]
-                if ml:
-                    item["money"] = ml
-                else:
-                    item.pop("money", None)
-            if (fields.get("end") is not None or fields.get("start") is not None) and fields.get("steps") is None:
-                # 起止改了（截短 / 拉长）：分步跟着按新时长对上，别把十几分钟的分步压进一两分钟里
-                fit_steps(item)
-            self._save_day(date_text)
-            return item
-        return None
+                        item.pop("outfit", None)
+                if isinstance(fields.get("money"), list):
+                    ml = [dict(x) for x in fields["money"] if isinstance(x, dict)]
+                    if ml:
+                        item["money"] = ml
+                    else:
+                        item.pop("money", None)
+                if (fields.get("end") is not None or fields.get("start") is not None) and fields.get("steps") is None:
+                    # 起止改了（截短 / 拉长）：分步跟着按新时长对上，别把十几分钟的分步压进一两分钟里
+                    fit_steps(item)
+                self._save_day(date_text)
+                return item
+            return None
 
     def manual_update(self, date_text: str, entry_id: str, **fields):
         """网页上改一条：改完算手动（补写、记录员都改不动），和它撞上的前后条目让开。"""
-        old = None
-        for item in self._load_day(date_text).get("entries") or []:
-            if str(item.get("id")) == str(entry_id):
-                old = dict(item)
-                break
-        if old is None:
-            return None
-        merged = dict(old)
-        for key, value in fields.items():
-            if value is not None:
-                merged[key] = value
-        steps_changed = fields.get("steps") is not None and parse_steps(fields["steps"]) != (clean_steps(old.get("steps")), step_minutes(old))
-        if steps_changed:
-            merged["steps_planned"] = None  # 网页上改了分步：原定的那份作废
-        doing_changed = fields.get("doing") is not None and clean_text(fields["doing"], MAX_DOING) != old.get("doing")
-        if fields.get("things") is None and (steps_changed or doing_changed):
-            merged["things"] = []  # 改了做的事：补写原来标的吃的跟着作废（网页上明确给了留哪几条的，照网页的）
-        if parse_time(merged.get("start")) is None:
-            return None
-        self.delete_entry(date_text, entry_id)
-        merged["source"] = "manual"
-        record = self.add_entry(str(merged.get("start"))[:10], merged)
-        if record is None:
-            # 不该发生（手动最高）：放回原样
-            self.add_entry(date_text, old)
-        elif (record.get("start") != old.get("start") or record.get("end") != old.get("end")) and (
-            fields.get("steps") is None
-            or (clean_steps(record.get("steps")), step_minutes(record)) == (clean_steps(old.get("steps")), step_minutes(old))
-        ):
-            # 网页上只改了起止、分步没动：分步按新时长对上
-            if fit_steps(record):
-                self._save_day(str(record.get("start"))[:10])
-        self.note_manual()
-        return record
+        with self._lock:
+            old = None
+            for item in self._load_day(date_text).get("entries") or []:
+                if str(item.get("id")) == str(entry_id):
+                    old = copy.deepcopy(item)
+                    break
+            if old is None:
+                return None
+            merged = copy.deepcopy(old)
+            for key, value in fields.items():
+                if value is not None:
+                    merged[key] = value
+            steps_changed = fields.get("steps") is not None and parse_steps(fields["steps"]) != (clean_steps(old.get("steps")), step_minutes(old))
+            if steps_changed:
+                merged["steps_planned"] = None  # 网页上改了分步：原定的那份作废
+            doing_changed = fields.get("doing") is not None and clean_text(fields["doing"], MAX_DOING) != old.get("doing")
+            if fields.get("things") is None and (steps_changed or doing_changed):
+                merged["things"] = []  # 改了做的事：补写原来标的吃的跟着作废（网页上明确给了留哪几条的，照网页的）
+            parsed_start = parse_time(merged.get("start"))
+            if parsed_start is None:
+                return None
+            target_date = parsed_start.date().isoformat()
+            if target_date != str(date_text).strip():
+                # 跨天移动时清除旧 id，由目标日按 next_id 分配全新唯一编号，避免与目标日已有 id 撞车
+                merged.pop("id", None)
+            self.delete_entry(date_text, entry_id)
+            merged["source"] = "manual"
+            record = self.add_entry(target_date, merged)
+            if record is None:
+                # 不该发生（手动最高）：放回原样
+                self.add_entry(date_text, old)
+            elif (record.get("start") != old.get("start") or record.get("end") != old.get("end")) and (
+                fields.get("steps") is None
+                or (clean_steps(record.get("steps")), step_minutes(record)) == (clean_steps(old.get("steps")), step_minutes(old))
+            ):
+                # 网页上只改了起止、分步没动：分步按新时长对上
+                if fit_steps(record):
+                    self._save_day(str(record.get("start"))[:10])
+            self.note_manual()
+            return record
 
     def note_manual(self) -> None:
         """网页上刚动过世界线：补写等一会儿再看，免得改到一半它先插进来。"""
-        self._load_state()["manual_at"] = fmt_time(self.now_local())
-        self._save_state()
+        with self._lock:
+            self._load_state()["manual_at"] = fmt_time(self.now_local())
+            self._save_state()
 
     def manual_at(self):
-        return parse_time(self._load_state().get("manual_at"))
+        with self._lock:
+            return parse_time(self._load_state().get("manual_at"))
 
     def delete_entry(self, date_text: str, entry_id: str, *, _notify_drop: bool = True) -> bool:
-        day = self._load_day(date_text)
-        items = day.get("entries") or []
-        removed = [x for x in items if str(x.get("id")) == str(entry_id)]
-        if not removed:
-            return False
-        day["entries"] = [x for x in items if str(x.get("id")) != str(entry_id)]
-        self._save_day(date_text)
-        if _notify_drop:
-            dropped_by_who: dict[str, set[str]] = {}
-            for item in removed:
-                who = str(item.get("who") or "")
-                if who:
-                    dropped_by_who.setdefault(who, set()).add(f"{str(date_text).strip()}/{entry_id}")
+        dropped_by_who: dict[str, set[str]] = {}
+        with self._lock:
+            day = self._load_day(date_text)
+            items = day.get("entries") or []
+            removed = [x for x in items if str(x.get("id")) == str(entry_id)]
+            if not removed:
+                return False
+            day["entries"] = [x for x in items if str(x.get("id")) != str(entry_id)]
+            self._save_day(date_text)
+            if _notify_drop:
+                for item in removed:
+                    who = str(item.get("who") or "")
+                    if who:
+                        dropped_by_who.setdefault(who, set()).add(f"{str(date_text).strip()}/{entry_id}")
+        if dropped_by_who:
             self._fire_drop(dropped_by_who)
         return True
 
@@ -1059,20 +1179,23 @@ class WorldStore:
     # ---------- 做完一段事的通知游标 ----------
 
     def done_mark(self, who: str) -> str:
-        return str((self._load_state().get("done_marks") or {}).get(str(who)) or "")
+        with self._lock:
+            return str((self._load_state().get("done_marks") or {}).get(str(who)) or "")
 
     def set_done_mark(self, who: str, when: str) -> None:
-        marks = self._load_state().setdefault("done_marks", {})
-        value = str(when)
-        if marks.get(str(who)) == value:
-            return
-        marks[str(who)] = value
-        self._save_state(quiet=True)  # 通知游标网页上不显示：存盘但不推「世界线变了」，免得开着的世界线页每 30 秒整页重拉
+        with self._lock:
+            marks = self._load_state().setdefault("done_marks", {})
+            value = str(when)
+            if marks.get(str(who)) == value:
+                return
+            marks[str(who)] = value
+            self._save_state(quiet=True)  # 通知游标网页上不显示：存盘但不推「世界线变了」，免得开着的世界线页每 30 秒整页重拉
 
     def fired_msgs(self, bot: str) -> set[str]:
         """该账号已投递过的主动消息节点集合（如 '2026-11-15/e3:start'）。"""
-        rows = (self._load_state().get("fired_msgs") or {}).get(str(bot)) or []
-        return {str(x) for x in rows if str(x).strip()}
+        with self._lock:
+            rows = (self._load_state().get("fired_msgs") or {}).get(str(bot)) or []
+            return {str(x) for x in rows if str(x).strip()}
 
     def mark_msg_fired(self, bot: str, key: str) -> None:
         """标记某主动消息节点已投递，每号滚动保留最近 200 条。"""
@@ -1080,11 +1203,12 @@ class WorldStore:
         val = str(key or "").strip()
         if not who or not val:
             return
-        bucket = self._load_state().setdefault("fired_msgs", {})
-        rows = [str(x) for x in (bucket.get(who) or []) if str(x).strip() and str(x) != val]
-        rows.append(val)
-        bucket[who] = rows[-MAX_FIRED_MSGS:]
-        self._save_state(quiet=True)
+        with self._lock:
+            bucket = self._load_state().setdefault("fired_msgs", {})
+            rows = [str(x) for x in (bucket.get(who) or []) if str(x).strip() and str(x) != val]
+            rows.append(val)
+            bucket[who] = rows[-MAX_FIRED_MSGS:]
+            self._save_state(quiet=True)
 
     def unmark_msg_fired(self, bot: str, keys) -> None:
         """撤回某账号的已投递节点标记（支持传 'YYYY-MM-DD/eN:start' 或条目键 'YYYY-MM-DD/eN'）。"""
@@ -1097,20 +1221,22 @@ class WorldStore:
             raw_keys = {str(k) for k in keys if str(k).strip()}
         if not raw_keys:
             return
-        bucket = self._load_state().setdefault("fired_msgs", {})
-        old = [str(x) for x in (bucket.get(who) or []) if str(x).strip()]
-        kept = [
-            x for x in old
-            if x not in raw_keys and (x.rsplit(":", 1)[0] if ":" in x else x) not in raw_keys
-        ]
-        if len(kept) != len(old):
-            bucket[who] = kept
-            self._save_state(quiet=True)
+        with self._lock:
+            bucket = self._load_state().setdefault("fired_msgs", {})
+            old = [str(x) for x in (bucket.get(who) or []) if str(x).strip()]
+            kept = [
+                x for x in old
+                if x not in raw_keys and (x.rsplit(":", 1)[0] if ":" in x else x) not in raw_keys
+            ]
+            if len(kept) != len(old):
+                bucket[who] = kept
+                self._save_state(quiet=True)
 
     # ---------- 约束 ----------
 
     def constraints(self, who: str = "", active_only: bool = True, scene: str = "") -> list:
-        items = list(self._load_state().get("constraints") or [])
+        with self._lock:
+            items = list(self._load_state().get("constraints") or [])
         if who:
             items = [x for x in items if str(x.get("who")) == str(who)]
         if active_only:
@@ -1128,55 +1254,56 @@ class WorldStore:
         who = str(item.get("who") or "").strip()
         if not text or not who:
             return None
-        scene_val = str(
-            item.get("scene") if item.get("scene") is not None else (self.home_at(self.now_local()) or "")
-        ).strip()
-        state = self._load_state()
-        items = state.setdefault("constraints", [])
-        for old in items:
-            if str(old.get("id")) == str(item.get("id") or ""):
-                old["text"] = text
-                old["status"] = "active"
-                for key in ("public", "until", "until_time", "scene"):
-                    if item.get(key) is not None:
-                        old[key] = clean_text(item.get(key), MAX_TEXT)
+        with self._lock:
+            scene_val = str(
+                item.get("scene") if item.get("scene") is not None else (self.home_at(self.now_local()) or "")
+            ).strip()
+            state = self._load_state()
+            items = state.setdefault("constraints", [])
+            for old in items:
+                if str(old.get("id")) == str(item.get("id") or ""):
+                    old["text"] = text
+                    old["status"] = "active"
+                    for key in ("public", "until", "until_time", "scene"):
+                        if item.get(key) is not None:
+                            old[key] = clean_text(item.get(key), MAX_TEXT)
+                    self._save_state()
+                    return old
+            same = self.same_constraint(who, text, scene=scene_val)
+            if same is not None:
+                # 同一个人、内容一样、还生效的已经有了：不另起一条（不然撤的时候只撤掉一份），
+                # 只补它空着的「别人看到的说法」，期限照这回说的改
+                public = clean_text(item.get("public"), MAX_PUBLIC)
+                if public and not same.get("public"):
+                    same["public"] = public
+                until = clean_text(item.get("until"), MAX_TEXT)
+                if until:
+                    same["until"] = until
+                if item.get("until_time"):
+                    same["until_time"] = str(item.get("until_time"))
+                if scene_val and not same.get("scene"):
+                    same["scene"] = scene_val
                 self._save_state()
-                return old
-        same = self.same_constraint(who, text, scene=scene_val)
-        if same is not None:
-            # 同一个人、内容一样、还生效的已经有了：不另起一条（不然撤的时候只撤掉一份），
-            # 只补它空着的「别人看到的说法」，期限照这回说的改
-            public = clean_text(item.get("public"), MAX_PUBLIC)
-            if public and not same.get("public"):
-                same["public"] = public
-            until = clean_text(item.get("until"), MAX_TEXT)
-            if until:
-                same["until"] = until
-            if item.get("until_time"):
-                same["until_time"] = str(item.get("until_time"))
-            if scene_val and not same.get("scene"):
-                same["scene"] = scene_val
+                return same
+            nid = int(state.get("next_c") or 1)
+            state["next_c"] = nid + 1
+            record = {
+                "id": "c%d" % nid,
+                "who": who,
+                "text": text,
+                "public": clean_text(item.get("public"), MAX_PUBLIC),
+                "scene": scene_val,
+                "since": str(item.get("since") or fmt_time(self.now_local())),
+                "until": clean_text(item.get("until"), MAX_TEXT),
+                "until_time": str(item.get("until_time") or ""),
+                "status": "active",
+                "source": str(item.get("source") or "chat"),
+                "src_umo": str(item.get("src_umo") or ""),
+                "src_quote": clean_text(item.get("src_quote"), MAX_TEXT),
+            }
+            items.append(record)
             self._save_state()
-            return same
-        nid = int(state.get("next_c") or 1)
-        state["next_c"] = nid + 1
-        record = {
-            "id": "c%d" % nid,
-            "who": who,
-            "text": text,
-            "public": clean_text(item.get("public"), MAX_PUBLIC),
-            "scene": scene_val,
-            "since": str(item.get("since") or fmt_time(self.now_local())),
-            "until": clean_text(item.get("until"), MAX_TEXT),
-            "until_time": str(item.get("until_time") or ""),
-            "status": "active",
-            "source": str(item.get("source") or "chat"),
-            "src_umo": str(item.get("src_umo") or ""),
-            "src_quote": clean_text(item.get("src_quote"), MAX_TEXT),
-        }
-        items.append(record)
-        self._save_state()
-        return record
+            return record
 
     def same_constraint(self, who: str, text: str, scene: str = ""):
         """还生效的规矩里，同一个人、内容一样（去掉空白标点后比）的那条；没有返回 None。"""
@@ -1184,73 +1311,82 @@ class WorldStore:
         if not key:
             return None
         scene_val = str(scene or "").strip()
-        for old in self._load_state().get("constraints") or []:
-            if (str(old.get("status")) == "active" and str(old.get("who")) == str(who)
-                    and _rule_key(old.get("text")) == key):
-                old_scene = str(old.get("scene") or "").strip()
-                if scene_val and old_scene and old_scene != scene_val:
-                    continue
-                return old
+        with self._lock:
+            for old in self._load_state().get("constraints") or []:
+                if (str(old.get("status")) == "active" and str(old.get("who")) == str(who)
+                        and _rule_key(old.get("text")) == key):
+                    old_scene = str(old.get("scene") or "").strip()
+                    if scene_val and old_scene and old_scene != scene_val:
+                        continue
+                    return old
         return None
 
     def update_constraint(self, cid: str, **fields):
-        for item in self._load_state().get("constraints") or []:
-            if str(item.get("id")) != str(cid):
-                continue
-            for key in ("text", "public", "until", "until_time", "status", "scene"):
-                if fields.get(key) is not None:
-                    item[key] = clean_text(fields[key], MAX_TEXT)
-            self._save_state()
-            return item
-        return None
+        with self._lock:
+            for item in self._load_state().get("constraints") or []:
+                if str(item.get("id")) != str(cid):
+                    continue
+                for key in ("text", "public", "until", "until_time", "status", "scene"):
+                    if fields.get(key) is not None:
+                        item[key] = clean_text(fields[key], MAX_TEXT)
+                self._save_state()
+                return item
+            return None
 
     def lift_constraint(self, cid: str, note: str = "") -> bool:
-        for item in self._load_state().get("constraints") or []:
-            if str(item.get("id")) == str(cid):
-                item["status"] = "lifted"
-                if note:
-                    item["note"] = clean_text(note, MAX_TEXT)
-                self._save_state()
-                return True
-        return False
+        with self._lock:
+            for item in self._load_state().get("constraints") or []:
+                if str(item.get("id")) == str(cid):
+                    item["status"] = "lifted"
+                    if note:
+                        item["note"] = clean_text(note, MAX_TEXT)
+                    self._save_state()
+                    return True
+            return False
 
     def _expire_constraints(self, now: datetime.datetime | None = None) -> int:
         moment = (now or self.now_local()).replace(tzinfo=None)
         count = 0
-        for item in self._load_state().get("constraints") or []:
-            if str(item.get("status")) != "active":
-                continue
-            when = parse_time(item.get("until_time"))
-            if when is not None and when <= moment:
-                item["status"] = "lifted"
-                item["note"] = "到点自动解除"
-                count += 1
+        with self._lock:
+            for item in self._load_state().get("constraints") or []:
+                if str(item.get("status")) != "active":
+                    continue
+                when = parse_time(item.get("until_time"))
+                if when is not None and when <= moment:
+                    item["status"] = "lifted"
+                    item["note"] = "到点自动解除"
+                    count += 1
         return count
 
     # ---------- 打算 ----------
 
+    def _prune_expired_intentions(self, today: datetime.date) -> bool:
+        with self._lock:
+            state = self._load_state()
+            items = list(state.get("intentions") or [])
+            kept = [x for x in items if not _master_plan_expired(x, today)]
+            if len(kept) != len(items):
+                state["intentions"] = kept
+                self._state_dirty = True
+                return True
+            return False
+
     def intentions(self, who: str = "") -> list:
-        state = self._load_state()
-        items = list(state.get("intentions") or [])
-        today = self.now_local().date()
-        kept = [x for x in items if not _master_plan_expired(x, today)]
-        if len(kept) != len(items):
-            items = kept
-            state["intentions"] = items
+        with self._lock:
+            self._prune_expired_intentions(self.now_local().date())
+            items = list(self._load_state().get("intentions") or [])
         if who:
             items = [x for x in items if str(x.get("who")) == str(who)]
         return items
 
     def tick(self, now: datetime.datetime | None = None) -> None:
         """每轮一次的轻维护：到点约束、旧打算编号和过期都只在这里写回。"""
-        moment = (now or self.now_local()).replace(tzinfo=None)
-        state = self._load_state()
-        before = [dict(item) for item in (state.get("intentions") or [])]
-        self.intentions()
-        after = state.get("intentions") or []
-        changed = before != after or self._expire_constraints(moment) > 0
-        if changed:
-            self._save_state()
+        with self._lock:
+            moment = (now or self.now_local()).replace(tzinfo=None)
+            pruned = self._prune_expired_intentions(moment.date())
+            expired_c = self._expire_constraints(moment)
+            if self._state_dirty or pruned or expired_c > 0:
+                self._save_state()
 
     def _intention_seq(self, state: dict) -> int:
         """下一条打算的编号：只增不减（存在 intention_seq），撤掉的编号不再用，
@@ -1279,38 +1415,39 @@ class WorldStore:
         if not who or not body:
             return None
         reason = clean_text(why, MAX_TEXT)
-        state = self._load_state()
-        items = list(state.get("intentions") or [])
-        # 同样的打算不重复记；不同的打算并存，新的不再顶掉旧的
-        for item in items:
-            if str(item.get("who")) == str(who) and str(item.get("text") or "") == body:
-                if reason and not item.get("why"):
-                    item["why"] = reason
-                    self._save_state()
-                return item
-        seq = self._intention_seq(state)
-        state["intention_seq"] = seq
-        record = {"id": "i%d" % seq, "who": who, "text": body,
-                  "window": clean_text(window, 60), "source": source,
-                  "created": fmt_time(self.now_local())}
-        if reason:
-            record["why"] = reason
-        together = [str(x) for x in (with_list or []) if str(x).strip() and str(x) != str(who)]
-        if together:
-            record["with"] = together
-        day = str(date or "").strip()[:10]
-        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
-            record["date"] = day
-        heard = [str(x) for x in (heard_by or []) if str(x).strip()]
-        if heard:
-            record["heard_by"] = heard
-        moment = str(now_at or "").strip()[:16]
-        if parse_time(moment) is not None:
-            record["now_at"] = moment
-        items.append(record)
-        state["intentions"] = items
-        self._save_state()
-        return record
+        with self._lock:
+            state = self._load_state()
+            items = list(state.get("intentions") or [])
+            # 同样的打算不重复记；不同的打算并存，新的不再顶掉旧的
+            for item in items:
+                if str(item.get("who")) == str(who) and str(item.get("text") or "") == body:
+                    if reason and not item.get("why"):
+                        item["why"] = reason
+                        self._save_state()
+                    return item
+            seq = self._intention_seq(state)
+            state["intention_seq"] = seq
+            record = {"id": "i%d" % seq, "who": who, "text": body,
+                      "window": clean_text(window, 60), "source": source,
+                      "created": fmt_time(self.now_local())}
+            if reason:
+                record["why"] = reason
+            together = [str(x) for x in (with_list or []) if str(x).strip() and str(x) != str(who)]
+            if together:
+                record["with"] = together
+            day = str(date or "").strip()[:10]
+            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
+                record["date"] = day
+            heard = [str(x) for x in (heard_by or []) if str(x).strip()]
+            if heard:
+                record["heard_by"] = heard
+            moment = str(now_at or "").strip()[:16]
+            if parse_time(moment) is not None:
+                record["now_at"] = moment
+            items.append(record)
+            state["intentions"] = items
+            self._save_state()
+            return record
 
     def update_intention(self, intention_id: str, text=None, window=None, date=None, pushed=None,
                          source="manual", why=None) -> bool:
@@ -1318,125 +1455,143 @@ class WorldStore:
         why 传字符串就改「怎么说起的」（空串就是清掉）。"""
         if not intention_id:
             return False
-        state = self._load_state()
-        items = list(state.get("intentions") or [])
-        hit = False
-        for item in items:
-            if str(item.get("id")) != str(intention_id):
-                continue
-            if text is not None:
-                body = clean_text(text, MAX_INTENTION_TEXT)
-                if body:
-                    item["text"] = body
-            if window is not None:
-                item["window"] = clean_text(window, 60)
-            if why is not None:
-                reason = clean_text(why, MAX_TEXT)
-                if reason:
-                    item["why"] = reason
-                else:
-                    item.pop("why", None)
-            day = str(date or "").strip()[:10]
-            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
-                item["date"] = day
-            if parse_time(pushed) is not None:
-                item["pushed"] = str(pushed)[:16]
-            if source is not None:
-                item["source"] = source
-            hit = True
-            break
-        if hit:
-            state["intentions"] = items
-            self._save_state()
-        return hit
+        with self._lock:
+            state = self._load_state()
+            items = list(state.get("intentions") or [])
+            hit = False
+            for item in items:
+                if str(item.get("id")) != str(intention_id):
+                    continue
+                if text is not None:
+                    body = clean_text(text, MAX_INTENTION_TEXT)
+                    if body:
+                        item["text"] = body
+                if window is not None:
+                    item["window"] = clean_text(window, 60)
+                if why is not None:
+                    reason = clean_text(why, MAX_TEXT)
+                    if reason:
+                        item["why"] = reason
+                    else:
+                        item.pop("why", None)
+                day = str(date or "").strip()[:10]
+                if re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
+                    item["date"] = day
+                if parse_time(pushed) is not None:
+                    item["pushed"] = str(pushed)[:16]
+                if source is not None:
+                    item["source"] = source
+                hit = True
+                break
+            if hit:
+                state["intentions"] = items
+                self._save_state()
+            return hit
 
     def drop_intention(self, intention_id: str, who: str = "") -> bool:
         """按编号撤一条打算（做完 / 对不上，由记录员或网页指定）；给了 who 就只撤这个人的。"""
         if not intention_id:
             return False
-        state = self._load_state()
-        items = list(state.get("intentions") or [])
-        left = [x for x in items
-                if str(x.get("id")) != str(intention_id) or (who and str(x.get("who")) != str(who))]
-        if len(left) == len(items):
-            return False
-        state["intentions"] = left
-        self._save_state()
-        return True
+        with self._lock:
+            state = self._load_state()
+            items = list(state.get("intentions") or [])
+            left = [x for x in items
+                    if str(x.get("id")) != str(intention_id) or (who and str(x.get("who")) != str(who))]
+            if len(left) == len(items):
+                return False
+            state["intentions"] = left
+            self._save_state()
+            return True
 
     def clear_intention(self, who: str) -> None:
-        state = self._load_state()
-        state["intentions"] = [x for x in (state.get("intentions") or [])
-                               if str(x.get("who")) != str(who)]
-        self._save_state()
+        with self._lock:
+            state = self._load_state()
+            state["intentions"] = [x for x in (state.get("intentions") or [])
+                                   if str(x.get("who")) != str(who)]
+            self._save_state()
 
     # ---------- 游标 / 状态 ----------
 
     def cursor(self, key: str) -> dict:
-        return dict((self._load_state().get("cursors") or {}).get(str(key)) or {})
+        with self._lock:
+            return dict((self._load_state().get("cursors") or {}).get(str(key)) or {})
 
     def set_cursor(self, key: str, ts: float, digest: str) -> None:
-        state = self._load_state()
-        state.setdefault("cursors", {})[str(key)] = {"ts": float(ts), "hash": str(digest)}
-        self._save_state()
+        with self._lock:
+            state = self._load_state()
+            state.setdefault("cursors", {})[str(key)] = {"ts": float(ts), "hash": str(digest)}
+            self._save_state()
 
     def last_step(self) -> str:
-        return str(self._load_state().get("last_step") or "")
+        with self._lock:
+            return str(self._load_state().get("last_step") or "")
 
     def set_last_step(self, when: str) -> None:
-        self._load_state()["last_step"] = str(when)
-        self._save_state()
+        with self._lock:
+            self._load_state()["last_step"] = str(when)
+            self._save_state()
 
     def last_review(self) -> str:
-        return str(self._load_state().get("last_review") or "")
+        with self._lock:
+            return str(self._load_state().get("last_review") or "")
 
     def set_last_review(self, date_text: str) -> None:
-        self._load_state()["last_review"] = str(date_text)
-        self._save_state()
+        with self._lock:
+            self._load_state()["last_review"] = str(date_text)
+            self._save_state()
 
     def last_step_attempt(self) -> str:
-        return str(self._load_state().get("last_step_attempt") or "")
+        with self._lock:
+            return str(self._load_state().get("last_step_attempt") or "")
 
     def set_last_step_attempt(self, when: str) -> None:
-        self._load_state()["last_step_attempt"] = str(when)
-        self._save_state()
+        with self._lock:
+            self._load_state()["last_step_attempt"] = str(when)
+            self._save_state()
 
     def note_error(self, where: str, text: str) -> None:
-        state = self._load_state()
-        state.setdefault("errors", {})[str(where)] = {
-            "at": fmt_time(self.now_local()),
-            "text": clean_text(text, 300),
-        }
-        self._save_state()
+        with self._lock:
+            state = self._load_state()
+            state.setdefault("errors", {})[str(where)] = {
+                "at": fmt_time(self.now_local()),
+                "text": clean_text(text, 300),
+            }
+            self._save_state()
 
     def clear_error(self, where: str) -> None:
         """这一块后来成功了，旧报错清掉。"""
-        state = self._load_state()
-        if str(where) in (state.get("errors") or {}):
-            state["errors"].pop(str(where), None)
-            self._save_state()
+        with self._lock:
+            state = self._load_state()
+            if str(where) in (state.get("errors") or {}):
+                state["errors"].pop(str(where), None)
+                self._save_state()
 
     def errors(self) -> dict:
-        return dict(self._load_state().get("errors") or {})
+        with self._lock:
+            return dict(self._load_state().get("errors") or {})
 
     # ---------- 作息骨架 ----------
 
     def _load_routine(self) -> dict:
-        if self._routine is None:
-            self._routine = self._read_json(
-                self.root / ROUTINE_NAME,
-                {"version": 1, "bots": {}, "days": {}},
-            )
-        return self._routine
+        with self._lock:
+            if self._routine is None:
+                self._routine = self._read_json(
+                    self.root / ROUTINE_NAME,
+                    {"version": 1, "bots": {}, "days": {}},
+                )
+            return self._routine
 
     def _save_routine(self) -> None:
-        self._write_json(self.root / ROUTINE_NAME, self._load_routine())
+        with self._lock:
+            self._write_json(self.root / ROUTINE_NAME, self._load_routine())
 
     def routine(self, bot: str) -> dict:
-        return dict((self._load_routine().get("bots") or {}).get(str(bot)) or {})
+        with self._lock:
+            return dict((self._load_routine().get("bots") or {}).get(str(bot)) or {})
 
     def all_routine(self) -> dict:
-        return dict(self._load_routine().get("bots") or {})
+        with self._lock:
+            return dict(self._load_routine().get("bots") or {})
 
     def known_bots(self, exclude: str = "") -> list:
         """有作息骨架、或今天有条目的机器人（不含 exclude）。"""
@@ -1455,55 +1610,66 @@ class WorldStore:
         return out
 
     def set_routine(self, bot: str, data: dict) -> None:
-        book = self._load_routine()
-        book.setdefault("bots", {})[str(bot)] = dict(data or {})
-        self._save_routine()
+        with self._lock:
+            book = self._load_routine()
+            book.setdefault("bots", {})[str(bot)] = dict(data or {})
+            self._save_routine()
 
     def day_plan(self, bot: str, date_text: str) -> dict:
         """当天抖动后的起床 / 入睡时刻；没有就按骨架现算一次并记住。"""
-        book = self._load_routine()
-        slot = book.setdefault("days", {}).setdefault(str(date_text), {})
-        if str(bot) in slot:
-            return dict(slot[str(bot)])
-        base = self.routine(bot)
-        if not base:
-            return {}
-        seed = int(hashlib.md5(("%s|%s" % (bot, date_text)).encode("utf-8")).hexdigest()[:8], 16)
-        rng = random.Random(seed)
-        wake = parse_time("%s %s" % (date_text, base.get("wake") or "06:30"))
-        sleep = parse_time("%s %s" % (date_text, base.get("sleep") or "23:00"))
-        wake_jitter = int(base.get("wake_jitter_min") or 0)
-        sleep_jitter = int(base.get("sleep_jitter_min") or 0)
-        if wake and wake_jitter:
-            wake += datetime.timedelta(minutes=rng.randint(-wake_jitter, wake_jitter))
-        if sleep and sleep_jitter:
-            sleep += datetime.timedelta(minutes=rng.randint(-sleep_jitter, sleep_jitter))
-        plan = {"wake": clock_text(wake) if wake else "",
-                "sleep": clock_text(sleep) if sleep else ""}
-        slot[str(bot)] = plan
-        self._save_routine()
-        return dict(plan)
+        with self._lock:
+            book = self._load_routine()
+            slot = book.setdefault("days", {}).setdefault(str(date_text), {})
+            if str(bot) in slot:
+                return dict(slot[str(bot)])
+            base = self.routine(bot)
+            if not base:
+                return {}
+            seed = int(hashlib.md5(("%s|%s" % (bot, date_text)).encode("utf-8")).hexdigest()[:8], 16)
+            rng = random.Random(seed)
+            wake = parse_time("%s %s" % (date_text, base.get("wake") or "06:30"))
+            sleep = parse_time("%s %s" % (date_text, base.get("sleep") or "23:00"))
+            wake_jitter = int(base.get("wake_jitter_min") or 0)
+            sleep_jitter = int(base.get("sleep_jitter_min") or 0)
+            if wake and wake_jitter:
+                wake += datetime.timedelta(minutes=rng.randint(-wake_jitter, wake_jitter))
+            if sleep and sleep_jitter:
+                sleep += datetime.timedelta(minutes=rng.randint(-sleep_jitter, sleep_jitter))
+            plan = {"wake": clock_text(wake) if wake else "",
+                    "sleep": clock_text(sleep) if sleep else ""}
+            slot[str(bot)] = plan
+            self._save_routine()
+            return dict(plan)
 
     def prune(self, today: datetime.date, keep_days: int = DEFAULT_KEEP_DAYS) -> int:
-        """删掉太老的日文件，返回删掉的数量。"""
+        """删掉太老的日文件并同步清理内存缓存，返回删掉的数量。"""
         removed = 0
         cutoff = today - datetime.timedelta(days=int(keep_days or DEFAULT_KEEP_DAYS))
-        if self.dir.exists():
-            for path in sorted(self.dir.glob("*.json")):
+        cutoff_text = cutoff.isoformat()
+        with self._lock:
+            if self.dir.exists():
+                for path in sorted(self.dir.glob("*.json")):
+                    try:
+                        day = datetime.date.fromisoformat(path.stem)
+                    except Exception:
+                        continue
+                    if day < cutoff:
+                        try:
+                            path.unlink()
+                            removed += 1
+                            self._days.pop(path.stem, None)
+                        except Exception:
+                            logger.warning("[super_enhance/world] 删 %s 失败", path.name)
+            for key in list(self._days.keys()):
                 try:
-                    day = datetime.date.fromisoformat(path.stem)
+                    if datetime.date.fromisoformat(key) < cutoff:
+                        self._days.pop(key, None)
                 except Exception:
                     continue
-                if day < cutoff:
-                    try:
-                        path.unlink()
-                        removed += 1
-                    except Exception:
-                        logger.warning("[super_enhance/world] 删 %s 失败", path.name)
-        book = self._load_routine()
-        days = book.get("days") or {}
-        book["days"] = {k: v for k, v in days.items() if str(k) >= cutoff.isoformat()}
-        self._save_routine()
+            book = self._load_routine()
+            days = book.get("days") or {}
+            book["days"] = {k: v for k, v in days.items() if str(k) >= cutoff_text}
+            self._save_routine()
         return removed
 
 

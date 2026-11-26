@@ -14,8 +14,8 @@ from astrbot.api import logger
 from astrbot.core.message.components import Plain
 from astrbot.core.message.message_event_result import MessageChain
 
+from ...common.bots import platform_of as bot_of_umo
 from ...common.patching import PatchSet
-from ..life_state.models import bot_of_umo
 
 DEFAULT_REPLY = "（上下文满了，请主人手动 /compact v2）"
 
@@ -28,6 +28,7 @@ class OverflowGuard:
         self.config = config
         self.tools = tools  # ContextToolsFeature：复用 /usage 的上限算法
         self.patches = PatchSet()
+        self.on_intercept = None  # 超限拦截时的清理回调：fn(event)，避免 reply_guard / silence 残留悬空轮次
 
     @property
     def enabled(self) -> bool:
@@ -45,8 +46,6 @@ class OverflowGuard:
     # ---------- 1. 拦 AstrBot 自动压缩 ----------
 
     def install(self) -> None:
-        if not self.enabled:
-            return
         try:
             from astrbot.core.agent.context.manager import ContextManager
         except Exception:
@@ -54,8 +53,11 @@ class OverflowGuard:
             return
         current = ContextManager._run_compression
         orig = getattr(current, "_super_enhance_orig", None) or current
+        guard = self
 
         async def blocked(cm, messages, prev_tokens):
+            if not guard.enabled:
+                return await orig(cm, messages, prev_tokens)
             limit = getattr(cm.config, "max_context_tokens", 0)
             logger.error(
                 "[super_enhance/overflow] 上下文 %s / %s tokens 已到 AstrBot 自动压缩线，"
@@ -66,7 +68,7 @@ class OverflowGuard:
             return messages
 
         self.patches.add(ContextManager, "_run_compression", orig, blocked)
-        logger.info("[super_enhance/overflow] 已拦截 AstrBot 自动压缩")
+        logger.info("[super_enhance/overflow] 已安装 AstrBot 自动压缩拦截（当前状态：%s）", "开" if self.enabled else "关")
 
     def uninstall(self) -> None:
         try:
@@ -99,6 +101,11 @@ class OverflowGuard:
             threshold * 100,
         )
         event.stop_event()
+        if callable(self.on_intercept):
+            try:
+                self.on_intercept(event)
+            except Exception:
+                logger.error("[super_enhance/overflow] 超限清理回调出错", exc_info=True)
         try:
             await event.send(MessageChain([Plain(self.reply_for(umo))]))
         except Exception:

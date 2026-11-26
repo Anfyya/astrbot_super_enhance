@@ -3,6 +3,7 @@
 import datetime
 import hashlib
 import re
+from collections import OrderedDict
 
 from astrbot.api import logger
 
@@ -10,6 +11,12 @@ from ...common.text import strip_inline_system
 from .models import bot_of_umo
 from .world import clean_text, fmt_time, parse_time
 from .facts import fact_batch
+
+# 内存 _source_keys 与持久化 observations / notes 上限，防止无限增长与全历史 raw_log 扫描
+SOURCE_KEYS_CACHE_MAX = 14
+MAX_OBSERVATIONS = 200
+MAX_NOTES = 200
+TODAY_NOTE_KEEP_DAYS = 7
 
 
 LIVING_NOTE = """
@@ -275,7 +282,7 @@ def _short_when(updated_at: str, today_text: str) -> str:
 class Companionship:
     def __init__(self, world, cfg, raw_log, label_fn=str):
         self.world, self.cfg, self.raw_log, self.label = world, cfg, raw_log, label_fn
-        self._source_keys = {}
+        self._source_keys: OrderedDict[str, tuple] = OrderedDict()
 
     def _data(self):
         state = self.world._load_state()
@@ -342,10 +349,28 @@ class Companionship:
             return True
         # 原始记录被更正或删除时，摘要不继续冒充事实。
         rows = self.raw_log.read_day(day)
+        ver = None
+        day_cache = getattr(self.raw_log, "_day_cache", None)
+        if isinstance(day_cache, dict) and day in day_cache:
+            try:
+                ver = ("mtime", day_cache[day][0], len(rows))
+            except Exception:
+                ver = None
+        if ver is None:
+            ver = (
+                "sig",
+                len(rows),
+                tuple((r.get("ts"), r.get("role"), r.get("umo"), r.get("text")) for r in rows),
+            )
         cached = self._source_keys.get(day)
-        if cached is None or cached[0] is not rows:
-            cached = (rows, {self._source(item)["key"] for item in rows})
+        if cached is None or cached[0] != ver:
+            cached = (ver, {self._source(item)["key"] for item in rows})
             self._source_keys[day] = cached
+            self._source_keys.move_to_end(day)
+            while len(self._source_keys) > SOURCE_KEYS_CACHE_MAX:
+                self._source_keys.popitem(last=False)
+        else:
+            self._source_keys.move_to_end(day)
         return source.get("key") in cached[1]
 
     def _match(self, items, quote, role=None):
@@ -365,6 +390,46 @@ class Companionship:
         data["seq"] = int(data.get("seq") or 0) + 1
         return prefix + str(data["seq"])
 
+    @staticmethod
+    def _prune_observations(data: dict) -> None:
+        obs = data.get("observations")
+        if not isinstance(obs, list) or len(obs) <= MAX_OBSERVATIONS:
+            return
+        obs.sort(key=lambda x: float((x.get("source") or {}).get("ts") or 0))
+        latest_shortcut = None
+        for row in reversed(obs):
+            if (row.get("source") or {}).get("role") == "shortcut":
+                latest_shortcut = row
+                break
+        kept = obs[-MAX_OBSERVATIONS:]
+        if latest_shortcut is not None and latest_shortcut not in kept:
+            kept = [latest_shortcut] + kept[-(MAX_OBSERVATIONS - 1):]
+        data["observations"] = kept
+
+    @staticmethod
+    def _prune_notes(data: dict, now: datetime.datetime) -> None:
+        notes = data.get("notes")
+        if not isinstance(notes, list) or not notes:
+            return
+        cutoff_day = (now.date() - datetime.timedelta(days=TODAY_NOTE_KEEP_DAYS)).isoformat()
+        superseded_by_expired: set[str] = set()
+        kept = []
+        for x in notes:
+            src = x.get("source") or {}
+            scope = x.get("scope")
+            day = str(src.get("date") or "")
+            if scope != "lasting" and day and day < cutoff_day:
+                sup = str(x.get("supersedes") or "").strip()
+                if sup:
+                    superseded_by_expired.add(sup)
+                continue
+            kept.append(x)
+        if superseded_by_expired:
+            kept = [x for x in kept if str(x.get("id") or "") not in superseded_by_expired]
+        if len(kept) > MAX_NOTES:
+            kept = kept[-MAX_NOTES:]
+        data["notes"] = kept
+
     def _observe(self, bot, source, state="", place=""):
         if not state and not place:
             return
@@ -381,6 +446,7 @@ class Companionship:
             row["state"] = state
         if place:
             row["place"] = clean_text(place, 80)
+        self._prune_observations(data)
         after = self.owner_state(now)
         category = lambda value: "rest" if value in ("resting", "asleep") else value
         changed = category(before["state"]) != category(after["state"]) or before["place"] != after["place"]
@@ -453,23 +519,28 @@ class Companionship:
 
     def owner_state(self, now, bot=""):
         result = {"state": "unknown", "place": ""}
-        rows = sorted(self._data()["observations"], key=lambda x: float(x["source"].get("ts") or 0))
-        has_shortcut = any(
-            (r.get("source") or {}).get("role") == "shortcut" and self._valid(r.get("source"), now)
-            for r in rows
-        )
-        for row in rows:
+        rows = sorted(self._data()["observations"], key=lambda x: float((x.get("source") or {}).get("ts") or 0))
+        scene = self._scene()
+        # 倒序早停：优先找最新一条有效的快捷指令状态；若不存在任何有效快捷指令，则取最新一条同 scene 有效状态，
+        # 避免每次调用都从最老记录开始全量扫全历史 raw_log。
+        chosen_shortcut = None
+        chosen_fallback = None
+        for row in reversed(rows):
+            if "state" not in row:
+                continue
             src = row.get("source") or {}
             is_shortcut = src.get("role") == "shortcut"
-            if not is_shortcut and row.get("scene") != self._scene():
+            if is_shortcut:
+                if self._valid(src, now):
+                    chosen_shortcut = (row["state"], src)
+                    break
                 continue
-            if not self._valid(src, now):
-                continue
-            # 清醒/睡眠状态全平台共用且以快捷指令为准（FIX-50：位置改由 world.master_where
-            # 唯一权威提供，停读 observations 的旧 place 行——主人在哪跟着世界线走）
-            if "state" in row and (is_shortcut or not has_shortcut):
-                result["state"] = row["state"]
-                result["source"] = src
+            if chosen_fallback is None and row.get("scene") == scene and self._valid(src, now):
+                chosen_fallback = (row["state"], src)
+        chosen = chosen_shortcut or chosen_fallback
+        if chosen is not None:
+            result["state"] = chosen[0]
+            result["source"] = chosen[1]
         try:
             got = self.world.master_where(now)
         except Exception:
@@ -825,6 +896,7 @@ class Companionship:
             notes.append({"id": self._id("n"), "bot": bot, "scene": self._scene(), "text": text,
                           "source": source, "scope": "lasting" if note.get("scope") == "lasting" else "today",
                           "supersedes": str(note.get("supersedes") or "")})
+            self._prune_notes(self._data(), now)
             self._save()
         plans = []
         for d_raw in raw.get("decisions") or []:
@@ -920,14 +992,30 @@ class Companionship:
             owner_line = self.owner_state_text(bot, now)
             if owner_line:
                 lines.append(owner_line)
-        notes = [x for x in self._data()["notes"] if x.get("bot") == bot and x.get("scene") == self._scene()
-                 and self._valid(x["source"], now)]
-        replaced = {x.get("supersedes") for x in notes}
-        for item in notes[-6:]:
-            if item["id"] in replaced or (item["scope"] != "lasting" and item["source"].get("date") != now.date().isoformat()):
-                continue
-            lines.append("%s 相处近况：%s" % (item["id"], item["text"]))
         today_text = now.date().isoformat()
+        scene = self._scene()
+        raw_notes = [x for x in self._data()["notes"] if x.get("bot") == bot and x.get("scene") == scene]
+        replaced: set[str] = set()
+        picked: list[dict] = []
+        # 倒序扫描：仅对可能展示（today 或 lasting）或带 supersedes 的记录调用 _valid，收齐 6 条即早停，避免全量扫历史 raw_log
+        for item in reversed(raw_notes):
+            src = item.get("source") or {}
+            is_candidate = item.get("scope") == "lasting" or src.get("date") == today_text
+            sup = str(item.get("supersedes") or "").strip()
+            if not is_candidate and not sup:
+                continue
+            if item.get("id") in replaced:
+                continue
+            if not self._valid(src, now):
+                continue
+            if sup:
+                replaced.add(sup)
+            if is_candidate:
+                picked.append(item)
+                if len(picked) >= 6:
+                    break
+        for item in reversed(picked):
+            lines.append("%s 相处近况：%s" % (item["id"], item["text"]))
         if include_decisions:
             for dec in self.pending_decisions(now, bot=bot)[-4:]:
                 lines.append(format_decision_line(dec, today_text, label_fn=self.label, include_bot=False, show_status=True))
@@ -1476,14 +1564,14 @@ class Companionship:
                 elif norm_hb:
                     if old_level == 0 or not same_sign:
                         row["heard_by"] = list(norm_hb)
-                    elif "*" in norm_hb:
+                    elif "*" in norm_hb or (old_heard_by and "*" in old_heard_by):
                         row["heard_by"] = ["*"]
-                    elif old_heard_by and "*" not in old_heard_by:
+                    elif old_heard_by:
                         row["heard_by"] = list(dict.fromkeys([*old_heard_by, *norm_hb]))
                     elif row["level"] > old_level and row["level"] > 0:
                         row["heard_by"] = list(norm_hb)
                     else:
-                        row["heard_by"] = list(old_heard_by) if old_heard_by else ["*"]
+                        row["heard_by"] = ["*"]
                 else:
                     if old_level == 0 or not same_sign:
                         row["heard_by"] = ["*"]

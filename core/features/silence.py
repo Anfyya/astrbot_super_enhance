@@ -9,7 +9,7 @@
    避免静默轮的上下文丢失）。
 """
 
-import datetime
+import time
 
 from astrbot.api import logger
 
@@ -21,6 +21,7 @@ from .turn_state import (
 # 故意加插件前缀，避免与旧的 stay_silent 插件互相干扰。
 SILENT_FLAG = "_super_enhance_stay_silent"
 ATTEMPT_FLAG = "_super_enhance_silence_attempts"
+CARRIED_FLAG = "_super_enhance_silence_carried"
 PENDING_TTL_SECONDS = 120
 
 REFUSE_TEXT = "收到新消息，本轮静默失败，请正常回复或再次调用静默工具。"
@@ -33,7 +34,7 @@ class SilenceFeature:
     def __init__(self, config) -> None:
         self.config = config
         self._latest_event: dict[str, object] = {}
-        self._pending: dict[str, dict] = {}
+        self._pending: dict[str, list[dict]] = {}
 
     @property
     def enabled(self) -> bool:
@@ -41,8 +42,41 @@ class SilenceFeature:
 
     # ---------- 追踪新消息 ----------
 
+    @staticmethod
+    def _is_notice(event) -> bool:
+        try:
+            raw = getattr(getattr(event, "message_obj", None), "raw_message", None)
+            return isinstance(raw, dict) and raw.get("post_type") == "notice"
+        except Exception:
+            return False
+
+    @staticmethod
+    def _is_command_event(event) -> bool:
+        try:
+            components = getattr(getattr(event, "message_obj", None), "message", None) or []
+        except Exception:
+            components = []
+        parts = [getattr(comp, "text", None) for comp in components if isinstance(getattr(comp, "text", None), str)]
+        raw = "".join(parts).lstrip()
+        if raw:
+            return raw[0] in "/／"
+        try:
+            text = str(event.get_message_str() or "").lstrip()
+        except Exception:
+            text = ""
+        return bool(text) and text[0] in "/／"
+
     def note_incoming(self, event) -> None:
         """每条新消息都会走到这里：静默轮期间进来的消息要摘出来，别被折叠吞掉。"""
+        if not self.enabled:
+            return
+        try:
+            has_text = bool((event.get_message_str() or "").strip())
+            components = getattr(getattr(event, "message_obj", None), "message", None) or []
+        except Exception:
+            has_text, components = True, []
+        if (not has_text and not components) or self._is_notice(event) or self._is_command_event(event):
+            return
         try:
             umo = event.unified_msg_origin
         except Exception:
@@ -58,21 +92,38 @@ class SilenceFeature:
             and not is_agent_done(previous)
         ):
             detach_runner(previous, "silence")
-            arrived = arrived_at(previous) or datetime.datetime.now().timestamp()
-            self._pending[umo] = {
+            arrived = arrived_at(previous) or time.time()
+            queue = self._pending.setdefault(umo, [])
+            try:
+                carried = list(previous.get_extra(CARRIED_FLAG) or [])
+            except Exception:
+                carried = []
+            if carried:
+                queue.extend(carried)
+            queue.append({
                 "text": (previous.get_message_str() or "").strip(),
                 "sender_id": previous.get_sender_id(),
                 "sender_name": previous.get_sender_name(),
                 # 写上一条消息自己到达的时间（本地时区），不是现在
                 "at": local_stamp(arrived),
-                "ts": datetime.datetime.now().timestamp(),
-            }
+                "ts": time.time(),
+            })
             logger.info(
                 "[super_enhance/silence] 静默轮期间收到新消息，摘出来当新消息处理（%s）",
                 umo,
             )
 
         self._latest_event[umo] = event
+
+    def discard_turn(self, event) -> None:
+        """外部拦截（如上下文超限）终止本轮时清理悬空记录，避免污染下一轮。"""
+        try:
+            umo = event.unified_msg_origin
+        except Exception:
+            return
+        if self._latest_event.get(umo) is event:
+            self._latest_event.pop(umo, None)
+        self._pending.pop(umo, None)
 
     @staticmethod
     def _detach_runner(old_event) -> None:
@@ -138,15 +189,24 @@ class SilenceFeature:
     async def on_llm_request(self, event, req) -> None:
         if not self.enabled:
             return
-        info = self._pending.pop(event.unified_msg_origin, None)
-        if not info:
+        umo = event.unified_msg_origin
+        items = self._pending.pop(umo, None)
+        if not items:
             return
-        text = append_pending_user(req, info, PENDING_TTL_SECONDS)
-        if not text:
-            return
-        logger.info(
-            "[super_enhance/silence] 已把静默轮的用户消息补进新一轮请求：%s", text[:40]
-        )
+        carried: list[dict] = []
+        for info in items:
+            text = append_pending_user(req, info, PENDING_TTL_SECONDS)
+            if text:
+                carried.append(info)
+                logger.info(
+                    "[super_enhance/silence] 已把静默轮的用户消息补进新一轮请求：%s", text[:40]
+                )
+        if carried:
+            try:
+                existing = list(event.get_extra(CARRIED_FLAG) or [])
+                event.set_extra(CARRIED_FLAG, existing + carried)
+            except Exception:
+                pass
 
     @staticmethod
     def _context_has(req, text: str) -> bool:

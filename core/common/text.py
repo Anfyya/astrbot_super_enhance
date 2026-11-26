@@ -10,7 +10,7 @@ STAMP_TAG_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 INLINE_SYSTEM_RE = re.compile(
-    r"<system>.*?(?:</system>|<system>|\Z)",
+    r"<system>.*?(?:</system>|(?=<system>)|\Z)",
     re.IGNORECASE | re.DOTALL,
 )
 CURRENT_TIME_RE = re.compile(

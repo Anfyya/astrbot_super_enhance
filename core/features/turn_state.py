@@ -7,6 +7,7 @@
 所以收尾逻辑必须挂在最高优先级的 ``on_agent_done`` 上，否则被作废的那一轮根本轮不到它。
 """
 
+import datetime
 import time
 
 from astrbot.api import logger
@@ -55,7 +56,10 @@ def detach_runner(event, feature: str) -> None:
 
 
 def context_has(req, text: str) -> bool:
-    """最近 8 条 user 消息里有没有同一句；工具调用多时也不会误判成缺失。"""
+    """最近 8 条 user 消息里有没有同一句（剥离 system_reminder 后整句精确比对，避免短回复被子串误吞）。"""
+    target = body_text(text)
+    if not target:
+        return False
     contexts = getattr(req, "contexts", None) or []
     users = [
         item for item in contexts
@@ -63,13 +67,8 @@ def context_has(req, text: str) -> bool:
     ]
     for item in users[-8:]:
         content = item.get("content") if isinstance(item, dict) else getattr(item, "content", None)
-        if isinstance(content, str) and text in content:
+        if body_text(content) == target:
             return True
-        if isinstance(content, list):
-            for part in content:
-                piece = part.get("text") if isinstance(part, dict) else getattr(part, "text", None)
-                if isinstance(piece, str) and text in piece:
-                    return True
     return False
 
 
@@ -185,18 +184,78 @@ def drop_unsent(messages, start: int = 0) -> int:
     return marked
 
 
-def remove_texts_from_tail(history: list, texts: list[str], window: int = 16) -> tuple[list, int]:
-    """从历史末尾 window 条里删掉正文等于 texts 的 assistant 消息（不带 tool_calls），每句只删一次。"""
+def _message_time(content) -> datetime.datetime | None:
+    return text_utils.time_of(text_utils.raw_text(content, sep=" ", any_type=True))
+
+
+def remove_texts_from_tail(
+    history: list,
+    texts: list[str],
+    window: int = 16,
+    *,
+    user_text: str = "",
+    next_user_text: str = "",
+    not_before: datetime.datetime | None = None,
+    not_after: datetime.datetime | None = None,
+) -> tuple[list, int]:
+    """从历史末尾 window 条里删掉正文等于 texts 的 assistant 消息（不带 tool_calls），每句只删一次。
+
+    传入 ``user_text`` / ``next_user_text`` / ``not_before`` / ``not_after`` 时，先按轮次边界与时间范围
+    锁定被取消的旧轮区间，避免误删新轮或其他轮次的正常短回复。
+    """
     wanted = [t for t in texts if t]
     if not wanted or not isinstance(history, list):
         return history, 0
     out = list(history)
-    removed = 0
     lo = max(0, len(out) - window)
-    for i in range(len(out) - 1, lo - 1, -1):
+    hi = len(out)
+
+    target_u = body_text(user_text) if user_text else ""
+    next_u = body_text(next_user_text) if next_user_text else ""
+
+    if next_u and next_u != target_u:
+        for i in range(hi - 1, lo - 1, -1):
+            item = out[i]
+            if isinstance(item, dict) and item.get("role") == "user" and body_text(item.get("content")) == next_u:
+                hi = i
+                break
+
+    if target_u:
+        u_positions = [
+            i for i in range(lo, hi)
+            if isinstance(out[i], dict)
+            and out[i].get("role") == "user"
+            and body_text(out[i].get("content")) == target_u
+        ]
+        if not u_positions:
+            return history, 0
+        if next_u and next_u == target_u and len(u_positions) >= 2:
+            u_idx = u_positions[-2]
+            hi = min(hi, u_positions[-1])
+        else:
+            u_idx = u_positions[-1]
+        lo = u_idx + 1
+        for j in range(u_idx + 1, hi):
+            item = out[j]
+            if isinstance(item, dict) and item.get("role") == "user" and not is_interruption(item):
+                hi = j
+                break
+
+    min_t = not_before.replace(second=0, microsecond=0) if isinstance(not_before, datetime.datetime) else None
+    max_t = not_after.replace(second=0, microsecond=0) if isinstance(not_after, datetime.datetime) else None
+
+    removed = 0
+    for i in range(hi - 1, lo - 1, -1):
         item = out[i]
         if not isinstance(item, dict) or item.get("role") != "assistant" or item.get("tool_calls"):
             continue
+        if min_t is not None or max_t is not None:
+            moment = _message_time(item.get("content"))
+            if moment is not None:
+                if min_t is not None and moment < min_t:
+                    continue
+                if max_t is not None and moment > max_t:
+                    continue
         body = body_text(item.get("content"))
         if body in wanted:
             wanted.remove(body)

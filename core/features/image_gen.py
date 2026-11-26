@@ -26,16 +26,16 @@
 
 import asyncio
 import base64
-import datetime
 import io
 import re
+import threading
 import time
 from pathlib import Path
 
 from astrbot.api import logger
 from astrbot.api.event import MessageChain
 
-from ..common import jsonio, llm
+from ..common import jsonio, llm, timeutil
 from ..common.bots import platform_of
 from ..common.patching import PatchSet
 
@@ -125,7 +125,11 @@ class ImageGenFeature:
         self._views: dict[str, tuple[str, str]] = {}  # 编号 → 回看用的小图 (mime, base64)
         self._recalled: tuple = ()  # 上次回看带了哪几张（变了才记日志）
         self._images_api_pids: set[str] = set()  # 记住只认 /v1/images/* 的源，下次不先走 chat
+        self._index_lock = threading.Lock()  # 串行保护 index.json 读-改-写（协程与网页线程共用）
         self.patches = PatchSet()
+
+    def _now(self):
+        return timeutil.now(timeutil.timezone(self.config, self.context))
 
     @property
     def enabled(self) -> bool:
@@ -390,7 +394,8 @@ class ImageGenFeature:
                 out.append((m.group(1).lower(), re.sub(r"\s+", "", m.group(2))))
                 continue
             if url.startswith("http") and hasattr(client, "_client"):
-                r = await asyncio.wait_for(client._client.get(url, timeout=min(30.0, max(5.0, left))), timeout=min(30.0, max(5.0, left)))
+                dl_timeout = min(30.0, max(1.0, left))
+                r = await asyncio.wait_for(client._client.get(url, timeout=dl_timeout), timeout=dl_timeout)
                 if r.status_code == 200 and r.content:
                     mime = mime_of(r.content) or fmt_mime or "image/png"
                     out.append((mime, base64.b64encode(r.content).decode()))
@@ -447,12 +452,20 @@ class ImageGenFeature:
         if extra_body:
             kwargs["extra_body"] = dict(extra_body)
         if refs:
-            files = [
-                ("ref_%d.%s" % (i + 1, EXT.get(mime, "png")), base64.b64decode(b64), mime)
-                for i, (mime, b64) in enumerate(refs)
-            ]
-            kwargs["image"] = files if len(files) > 1 else files[0]
-            resp = await asyncio.wait_for(client.images.edit(**kwargs), timeout=left)
+            files = []
+            for i, (mime, b64) in enumerate(refs):
+                try:
+                    raw = base64.b64decode(b64)
+                except Exception:
+                    logger.warning("[super_enhance/image] 参考图 %d base64 无效，跳过", i + 1)
+                    continue
+                if raw:
+                    files.append(("ref_%d.%s" % (i + 1, EXT.get(mime, "png")), raw, mime))
+            if files:
+                kwargs["image"] = files if len(files) > 1 else files[0]
+                resp = await asyncio.wait_for(client.images.edit(**kwargs), timeout=left)
+            else:
+                resp = await asyncio.wait_for(client.images.generate(**kwargs), timeout=left)
         else:
             resp = await asyncio.wait_for(client.images.generate(**kwargs), timeout=left)
         return await self._extract_images_response(resp, client, left), "", self._usage_dict(resp)
@@ -465,8 +478,11 @@ class ImageGenFeature:
         if "2.6" in str(model or "").lower() and "complexity" not in eb:
             eb["complexity"] = "low"
         img_size = want
+        deadline = min(began + self.timeout, time.time() + max(0.0, float(left)))
         for _ in range(4):
-            rem = max(10.0, min(left, self.timeout - (time.time() - began)))
+            rem = deadline - time.time()
+            if rem <= 1.0:
+                raise asyncio.TimeoutError("Images API 剩余超时不足")
             try:
                 found, text, usage = await self._call_images(client, model, prompt_text, refs, img_size, quality, rem, eb)
                 sent = {**eb, **({"quality": quality} if quality else {})}
@@ -499,12 +515,13 @@ class ImageGenFeature:
         why = []
         ids = self.provider_ids
         for n, pid in enumerate(ids):
-            left = self.timeout - (time.time() - began)
-            if left < 10:
+            total_left = self.timeout - (time.time() - began)
+            if total_left < 10:
                 why.append("没时间试 %s 了" % "、".join(ids[n:]))
                 break
-            if n < len(ids) - 1:
-                left = max(20, left - RESERVE)
+            has_fallback = n < len(ids) - 1
+            left = min(total_left, max(10.0, total_left - RESERVE)) if has_fallback else total_left
+            model_deadline = time.time() + left
             provider = llm.resolve_provider(self.context, pid, fallback=False)
             client = getattr(provider, "client", None)
             if client is None:
@@ -525,7 +542,9 @@ class ImageGenFeature:
                     except Exception as e:
                         if self._needs_images_api(e) and hasattr(client, "images"):
                             self._images_api_pids.add(pid)
-                            rem = max(10.0, self.timeout - (time.time() - began))
+                            rem = model_deadline - time.time()
+                            if rem <= 1.0:
+                                raise asyncio.TimeoutError("切换 Images API 时剩余时间不足") from e
                             logger.info("[super_enhance/image] [%s] %s 只支持 /v1/images/*，改用 Images API 重试", bot, pid)
                             found, text, usage, sent_extra = await self._ask_images_compat(
                                 bot, pid, client, model, prompt_text, refs, want, began, rem, extra_body
@@ -566,38 +585,56 @@ class ImageGenFeature:
         if not want:
             want = DEFAULT_IMAGE_SIZE
         chars, _ = self._character_refs(characters, notes)
-        refs = (await self._refs(event, umo, bot, use_sent, use_last, notes))[:max(0, REF_MAX - len(chars))]
+        limit = max(0, REF_MAX - len(chars))
+        other_refs = await self._refs(event, umo, bot, use_sent, use_last, notes)
+        refs = other_refs[-limit:] if limit > 0 else []
         refs = [(item[1], item[2]) for item in chars] + refs
         prompt_text = self._lead(chars, len(refs) - len(chars)) + prompt
         began = time.time()
         found, used, why, usage, sent_extra = await self._ask(bot, prompt_text, refs, want, began)
         if not found:
             return "没呈现出来：%s。请直接简短说一声这会儿呈不出来就行，严禁自己用文字口述画面或「现场播报」代替图片，也别报错误码。" % "；".join(why)
-        index = self._load_index()
-        drawn = list(event.get_extra(EXTRA_KEY) or []) if hasattr(event, "get_extra") else []
-        stamp = datetime.datetime.now()
-        ids, sizes = [], []
-        for i, (mime, b64) in enumerate(found):
-            data = base64.b64decode(b64)
-            index["seq"] = int(index.get("seq") or 0) + 1
-            image_id = "img%d" % index["seq"]
-            name = "%s_%s_%s.%s" % (bot, stamp.strftime("%Y%m%d_%H%M%S"), image_id, EXT.get(mime, "jpg"))
-            self.dir.mkdir(parents=True, exist_ok=True)
-            (self.dir / name).write_bytes(data)
+        prepared = []
+        for mime, b64 in found:
+            try:
+                data = base64.b64decode(b64)
+            except Exception:
+                logger.warning("[super_enhance/image] [%s] 返回的图片 base64 解码失败，跳过", bot, exc_info=True)
+                continue
+            if not data:
+                continue
             view_mime, view_b64, dims = await asyncio.to_thread(preview_of, data)
-            self._keep_view(image_id, name, view_mime, view_b64)
-            item_meta = {"bot": bot, "file": name, "prompt": prompt[:300], "size": dims,
-                         "characters": [("%s(%s)" % (item[0], item[3]) if len(item) > 3 and item[3] != "常服" else item[0]) for item in chars], "model": used,
-                         "at": stamp.strftime("%Y-%m-%d %H:%M"), "sent": []}
-            if usage:
-                item_meta["usage"] = usage
-            if sent_extra:
-                item_meta["extra_body"] = sent_extra
-            index["items"][image_id] = item_meta
-            drawn.append({"id": image_id, "mime": view_mime, "b64": view_b64})
-            ids.append(image_id)
-            sizes.append(dims or "?")
-        self._save_index(index)
+            prepared.append((mime, data, view_mime, view_b64, dims))
+        if not prepared:
+            return "没呈现出来：模型返回的图片数据损坏。请直接简短说一声这会儿呈不出来就行，严禁自己用文字口述画面或「现场播报」代替图片，也别报错误码。"
+        drawn = list(event.get_extra(EXTRA_KEY) or []) if hasattr(event, "get_extra") else []
+        stamp = self._now()
+        ids, sizes = [], []
+        with self._index_lock:
+            index = self._load_index()
+            self.dir.mkdir(parents=True, exist_ok=True)
+            for mime, data, view_mime, view_b64, dims in prepared:
+                index["seq"] = int(index.get("seq") or 0) + 1
+                image_id = "img%d" % index["seq"]
+                name = "%s_%s_%s.%s" % (bot, stamp.strftime("%Y%m%d_%H%M%S"), image_id, EXT.get(mime, "jpg"))
+                (self.dir / name).write_bytes(data)
+                self._keep_view(image_id, name, view_mime, view_b64)
+                item_meta = {
+                    "bot": bot, "file": name, "prompt": prompt[:300], "size": dims,
+                    "characters": [("%s(%s)" % (item[0], item[3]) if len(item) > 3 and item[3] != "常服" else item[0]) for item in chars],
+                    "model": used,
+                    "at": stamp.strftime("%Y-%m-%d %H:%M"),
+                    "sent": [],
+                }
+                if usage:
+                    item_meta["usage"] = usage
+                if sent_extra:
+                    item_meta["extra_body"] = sent_extra
+                index["items"][image_id] = item_meta
+                drawn.append({"id": image_id, "mime": view_mime, "b64": view_b64})
+                ids.append(image_id)
+                sizes.append(dims or "?")
+            self._save_index(index)
         if hasattr(event, "set_extra"):
             event.set_extra(EXTRA_KEY, drawn)
             if ids:
@@ -616,26 +653,33 @@ class ImageGenFeature:
             return "画面呈现没开。"
         umo = str(getattr(event, "unified_msg_origin", "") or "")
         bot = platform_of(umo) or "bot"
-        index = self._load_index()
         hit = ID_RE.search(str(image_id or ""))
-        key = hit.group(0).lower() if hit else self._latest(index, bot)
-        item = index["items"].get(key) if key else None
-        if item is None:
-            return "没发：%s。" % ("没有 %s 这张画面" % key if key else "你还没呈现过画面")
-        if item.get("bot") != bot:
-            return "没发：%s 不是你画的。" % key
-        if item.get("deleted"):
-            return "没发：%s 已经删掉了。" % key
-        path = self.dir / str(item.get("file") or "")
-        if not path.exists():
-            return "没发：%s 的图文件找不到了。" % key
+        with self._index_lock:
+            index = self._load_index()
+            key = hit.group(0).lower() if hit else self._latest(index, bot)
+            item = index["items"].get(key) if key else None
+            if item is None:
+                return "没发：%s。" % ("没有 %s 这张画面" % key if key else "你还没呈现过画面")
+            if item.get("bot") != bot:
+                return "没发：%s 不是你画的。" % key
+            if item.get("deleted"):
+                return "没发：%s 已经删掉了。" % key
+            path = self.dir / str(item.get("file") or "")
+            if not path.exists():
+                return "没发：%s 的图文件找不到了。" % key
+            raw_bytes = path.read_bytes()
         try:
-            await self.context.send_message(umo, MessageChain().base64_image(base64.b64encode(path.read_bytes()).decode()))
+            await self.context.send_message(umo, MessageChain().base64_image(base64.b64encode(raw_bytes).decode()))
         except Exception as e:
             logger.warning("[super_enhance/image] [%s] %s 没发出去：%s", bot, key, e, exc_info=True)
             return "没发出去（%s）。" % str(e)[:80]
-        item.setdefault("sent", []).append(datetime.datetime.now().strftime("%Y-%m-%d %H:%M"))
-        self._save_index(index)
+        sent_at = self._now().strftime("%Y-%m-%d %H:%M")
+        with self._index_lock:
+            fresh_index = self._load_index()
+            fresh_item = fresh_index["items"].get(key)
+            if isinstance(fresh_item, dict):
+                fresh_item.setdefault("sent", []).append(sent_at)
+                self._save_index(fresh_index)
         logger.info("[super_enhance/image] [%s] 发了 %s", bot, key)
         return ("%s 已经发给对方了。请直接向主人指引或描述画面里的东西（例如「喏，挂在横梁上就是这样」「端上桌啦，快趁热吃」），"
                 "严禁交代制作过程，严禁说「我画的」「我拍的」「刚洗出来的照片」。") % key
@@ -709,10 +753,9 @@ class ImageGenFeature:
         """网页上把她画的这张换成别的图：原图、小图挪进 old/ 留着，新的存成这个编号的原图（最长边不超过 2560 的 JPEG）
         和小图；之后网页显示、给她回看的都是新的（QQ 上已经发出去的那张撤不回）。成了返回空，不成返回原因。"""
         image_id = str(image_id or "").lower()
-        index = self._load_index()
-        item = index["items"].get(image_id)
-        if not isinstance(item, dict):
-            return "没有 %s 这张图" % image_id
+        with self._index_lock:
+            if not isinstance(self._load_index()["items"].get(image_id), dict):
+                return "没有 %s 这张图" % image_id
         match = re.match(r"^data:image/[\w.+-]+;base64,([A-Za-z0-9+/=\s]+)$", str(data_uri or ""))
         try:
             from PIL import Image
@@ -724,38 +767,44 @@ class ImageGenFeature:
             img.thumbnail((2560, 2560))
             out = io.BytesIO()
             img.save(out, "JPEG", quality=90)
+            data = out.getvalue()
+            mime, b64, dims = preview_of(data)
         except Exception:
             logger.warning("[super_enhance/image] %s 换图读不出来", image_id, exc_info=True)
             return "%s：传上来的图读不出来" % image_id
-        stamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-        moved = self._retire(item, stamp)
-        name = "%s.jpg" % Path(str(item.get("file") or image_id)).stem
-        data = out.getvalue()
-        self.dir.mkdir(parents=True, exist_ok=True)
-        (self.dir / name).write_bytes(data)
-        self._views.pop(image_id, None)
-        mime, b64, dims = preview_of(data)
-        self._keep_view(image_id, name, mime, b64)
-        item.update(file=name, size=dims or item.get("size"))
-        item.pop("deleted", None)
-        item.setdefault("edits", []).append({"at": stamp, "what": "换了一张", "old": moved})
-        self._save_index(index)
+        stamp = self._now().strftime("%Y%m%d%H%M%S")
+        with self._index_lock:
+            index = self._load_index()
+            item = index["items"].get(image_id)
+            if not isinstance(item, dict):
+                return "没有 %s 这张图" % image_id
+            moved = self._retire(item, stamp)
+            name = "%s.jpg" % Path(str(item.get("file") or image_id)).stem
+            self.dir.mkdir(parents=True, exist_ok=True)
+            (self.dir / name).write_bytes(data)
+            self._views.pop(image_id, None)
+            self._keep_view(image_id, name, mime, b64)
+            item.update(file=name, size=dims or item.get("size"))
+            item.pop("deleted", None)
+            item.setdefault("edits", []).append({"at": stamp, "what": "换了一张", "old": moved})
+            self._save_index(index)
         logger.info("[super_enhance/image] 网页上换了 %s（原来的挪进 old/：%s）", image_id, "、".join(moved) or "没有")
         return ""
 
     def delete_image(self, image_id: str) -> str:
         """网页上删掉她画的这张：原图、小图挪进 old/ 留着，编号记成删了；之后网页不显示、不给她回看、也发不了。"""
         image_id = str(image_id or "").lower()
-        index = self._load_index()
-        item = index["items"].get(image_id)
-        if not isinstance(item, dict):
-            return "没有 %s 这张图" % image_id
-        stamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-        moved = self._retire(item, stamp)
-        self._views.pop(image_id, None)
-        item["deleted"] = stamp
-        item.setdefault("edits", []).append({"at": stamp, "what": "删了", "old": moved})
-        self._save_index(index)
+        stamp = self._now().strftime("%Y%m%d%H%M%S")
+        with self._index_lock:
+            index = self._load_index()
+            item = index["items"].get(image_id)
+            if not isinstance(item, dict):
+                return "没有 %s 这张图" % image_id
+            moved = self._retire(item, stamp)
+            self._views.pop(image_id, None)
+            item["deleted"] = stamp
+            item.setdefault("edits", []).append({"at": stamp, "what": "删了", "old": moved})
+            self._save_index(index)
         logger.info("[super_enhance/image] 网页上删了 %s（挪进 old/：%s）", image_id, "、".join(moved) or "没有")
         return ""
 
@@ -866,12 +915,24 @@ class ImageGenFeature:
             except Exception:
                 logger.error("[super_enhance/image] 呈现好的画面放不进上下文", exc_info=True)
                 message = None
+            dropped = False
+
+            def cleanup() -> None:
+                nonlocal dropped
+                if message is not None and not dropped:
+                    dropped = True
+                    feature.drop_view(runner, message)
+
             try:
                 async for resp in orig(runner, *args, **kwargs):
+                    # 必须在 yield 最终响应前同步移除临时预览图：ToolLoopAgentRunner.step()
+                    # 收到非 chunk 响应后会立刻 break 并落盘 run_context.messages，
+                    # 若仅靠 finally，异步生成器延迟关闭会导致数百 KB base64 泄漏进存档。
+                    if not getattr(resp, "is_chunk", False):
+                        cleanup()
                     yield resp
             finally:
-                if message is not None:
-                    feature.drop_view(runner, message)
+                cleanup()
 
         self.patches.add(ToolLoopAgentRunner, TARGET, orig, wrapped, marker="_super_enhance_image_orig")
         logger.info("[super_enhance/image] 已安装：呈现好的画面先放进她的上下文给她看，看完不存进历史")

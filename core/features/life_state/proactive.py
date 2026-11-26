@@ -204,9 +204,10 @@ def _entry_day(item: dict, fallback: str = "") -> str:
 class _JobView:
     """交给 AstrBot 执行的任务副本：只换掉 payload（现场生成的提示词），不动数据库里那条。"""
 
-    def __init__(self, job, payload: dict) -> None:
+    def __init__(self, job, payload: dict, *, inflight_token=None) -> None:
         self._job = job
         self.payload = payload
+        self._inflight_token = inflight_token
 
     def __getattr__(self, name):
         return getattr(self._job, name)
@@ -232,8 +233,8 @@ class ProactivePlanner:
         self._send_patches = PatchSet()
         self._locks: dict[str, asyncio.Lock] = {}
         self._master_locks: dict[str, asyncio.Lock] = {}
-        # 正在生成的主动对话：会话 → 开始时刻
-        self._inflight: dict[str, float] = {}
+        # 正在生成的主动对话：会话 → 在途任务 token 集合（支持同会话并发不互擦）
+        self._inflight: dict[str, set[object]] = {}
         # 会话 → 最近一次主动消息实际发出的时刻（内存快表）
         self._last_dispatched_ts: dict[str, float] = {}
         # 角色 → 最近一次实际发出 repair（反思道歉/破冰/关心）主动消息的时刻（60 分钟冷却防轰炸）
@@ -628,15 +629,26 @@ class ProactivePlanner:
             items = items_by_bot[bot]
             prev_valid = None
             for index, item in enumerate(items):
-                if is_event(item) or real_stop(item):
+                if is_event(item):
+                    continue
+                start = parse_time(item.get("start"))
+                end = parse_time(item.get("end")) if item.get("end") else None
+                if real_stop(item):
+                    # 实际已开始且有发生时长、并带地点或在家标记的被打断段，仍代表她真实去过该处：
+                    # 推进 prev_valid，消除出门被打断后回家漏报 & 在家被打断后幽灵回家误报。
+                    if (
+                        start is not None
+                        and start <= flat
+                        and (end is None or end > start)
+                        and (item.get("at_home") is not None or str(item.get("place") or "").strip())
+                    ):
+                        prev_valid = item
                     continue
                 eid = str(item.get("id") or "").strip()
                 if not eid:
                     prev_valid = item
                     continue
                 day = _entry_day(item, flat.date().isoformat())
-                start = parse_time(item.get("start"))
-                end = parse_time(item.get("end")) if item.get("end") else None
 
                 # 1. 检查 "start" 节点（显式 send_msg=true，或在家↔外出切换硬触发）
                 in_start_win = (
@@ -733,7 +745,7 @@ class ProactivePlanner:
                 elif item.get("send_msg") and item.get("msg_at") == "end":
                     end_kind = "segment"
                     end_purpose = clean_line(item.get("msg_purpose") or doing, 140)
-                elif item.get("source") != "step" and gives_to_master(item):
+                elif gives_to_master(item):
                     end_kind = "given"
                     end_purpose = f"刚弄好了给主人的东西（{doing}），跟主人说一声"
                 elif intent_finished:
@@ -1359,24 +1371,48 @@ class ProactivePlanner:
                     )
                     return None
 
-            self._inflight[target] = now_ts
+            inflight_token = object()
+            bucket = self._inflight.get(target)
+            if not isinstance(bucket, set):
+                bucket = set()
+                self._inflight[target] = bucket
+            bucket.add(inflight_token)
             self._last_dispatched_ts[target] = now_ts
 
-        now = timeutil.now(self.timezone)
-        chat = self._chat(target)
-        payload["note"] = self.build_note(meta, now, chat, target=target)
-        logger.info(
-            "[super_enhance/life] [%s] 主动对话到点（%s，原定 %s%s）：%s",
-            meta["bot"],
-            label,
-            self._planned_text(meta),
-            "，顺延过 %d 次" % meta["postponed"] if meta["postponed"] else "",
-            self._chat_summary(chat, now),
-        )
-        return _JobView(job, payload)
+        try:
+            now = timeutil.now(self.timezone)
+            chat = self._chat(target)
+            payload["note"] = self.build_note(meta, now, chat, target=target)
+            logger.info(
+                "[super_enhance/life] [%s] 主动对话到点（%s，原定 %s%s）：%s",
+                meta["bot"],
+                label,
+                self._planned_text(meta),
+                "，顺延过 %d 次" % meta["postponed"] if meta["postponed"] else "",
+                self._chat_summary(chat, now),
+            )
+            return _JobView(job, payload, inflight_token=inflight_token)
+        except BaseException:
+            bucket = self._inflight.get(target)
+            if isinstance(bucket, set):
+                bucket.discard(inflight_token)
+                if not bucket:
+                    self._inflight.pop(target, None)
+            raise
 
     def _after_fire(self, run, target: str, started: float) -> None:
-        self._inflight.pop(target, None)
+        tok = getattr(run, "_inflight_token", None)
+        bucket = self._inflight.get(target)
+        if isinstance(bucket, set):
+            if tok is not None:
+                bucket.discard(tok)
+            if not bucket:
+                self._inflight.pop(target, None)
+        elif bucket is not None:
+            if isinstance(bucket, int) and bucket > 1:
+                self._inflight[target] = bucket - 1
+            else:
+                self._inflight.pop(target, None)
         try:
             payload = getattr(run, "payload", None) or {}
             meta = self._meta_of(run, dict(payload))
@@ -1556,9 +1592,28 @@ class ProactivePlanner:
         if self.raw_log is not None:
             try:
                 ref_ts = now_ts if now_ts is not None else time.time()
-                since = datetime.datetime.fromtimestamp(ref_ts - 86400, self.timezone)
+                since_ts = ref_ts - 86400
+                since_dt = datetime.datetime.fromtimestamp(since_ts, self.timezone)
+                until_dt = datetime.datetime.fromtimestamp(ref_ts, self.timezone)
+                if hasattr(self.raw_log, "read_day"):
+                    out: list[dict] = []
+                    cur_day = since_dt.date()
+                    end_day = until_dt.date()
+                    while cur_day <= end_day:
+                        for m in (self.raw_log.read_day(cur_day.isoformat()) or []):
+                            if str(m.get("umo") or "") != target:
+                                continue
+                            try:
+                                m_ts = float(m.get("ts") or 0.0)
+                            except Exception:
+                                m_ts = 0.0
+                            if m_ts >= since_ts:
+                                out.append(m)
+                        cur_day += datetime.timedelta(days=1)
+                    out.sort(key=lambda item: float(item.get("ts") or 0.0))
+                    return out
                 if hasattr(self.raw_log, "read_since"):
-                    return [m for m in (self.raw_log.read_since(since) or []) if str(m.get("umo") or "") == target]
+                    return [m for m in (self.raw_log.read_since(since_dt) or []) if str(m.get("umo") or "") == target]
             except Exception:
                 return []
         return []

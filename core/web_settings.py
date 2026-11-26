@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import os
 import sys
 import tempfile
@@ -176,10 +177,14 @@ def clean_value(item: dict, value: Any) -> Any:
             return value
         raise ValueError("「%s」要么开要么关" % label)
     if kind in ("int", "float"):
+        if isinstance(value, bool):
+            raise ValueError("「%s」要填数字" % label)
         try:
             number = float(value)
         except (TypeError, ValueError):
             raise ValueError("「%s」要填数字" % label) from None
+        if not math.isfinite(number):
+            raise ValueError("「%s」要填有限数字" % label)
         if kind == "int":
             if number != int(number):
                 raise ValueError("「%s」要填整数" % label)
@@ -195,8 +200,9 @@ def clean_value(item: dict, value: Any) -> Any:
         return text
     if kind == "text":
         text = str(value or "").replace("\r\n", "\n").strip()
-        if len(text) > int(item.get("max") or 8000):
-            raise ValueError("「%s」太长了（最多 %s 字）" % (label, item.get("max")))
+        limit = int(item.get("max") or 8000)
+        if len(text) > limit:
+            raise ValueError("「%s」太长了（最多 %d 字）" % (label, limit))
         return text
     if kind in ("list", "lines"):
         if not isinstance(value, list):
@@ -219,10 +225,11 @@ class WebSettings:
         self._lock = threading.Lock()
         self._cache: tuple[int, dict] | None = None
 
-    def stored(self) -> dict:
+    def _stored_unlocked(self) -> dict:
         try:
             mtime = self.path.stat().st_mtime_ns
         except OSError:
+            self._cache = None
             return {}
         cached = self._cache
         if cached is not None and cached[0] == mtime:
@@ -235,17 +242,22 @@ class WebSettings:
         self._cache = (mtime, data)
         return data
 
+    def stored(self) -> dict:
+        with self._lock:
+            return copy.deepcopy(self._stored_unlocked())
+
     def section(self, name: str) -> dict:
         """这一组登记过的键：网页存的值，没存过用默认值（SectionConfig 每次读配置都会先查这里）。"""
         items = _BY_SECTION.get(name)
         if not items:
             return {}
-        saved = self.stored().get(name) or {}
-        out = {}
-        for item in items:
-            value = saved.get(item["key"]) if isinstance(saved, dict) else None
-            out[item["key"]] = copy.deepcopy(item["default"]) if value is None else value
-        return out
+        with self._lock:
+            saved = self._stored_unlocked().get(name) or {}
+            out = {}
+            for item in items:
+                value = saved.get(item["key"]) if isinstance(saved, dict) else None
+                out[item["key"]] = copy.deepcopy(item["default"] if value is None else value)
+            return out
 
     def view(self) -> dict:
         """给网页的：分组、每项的说明、现值、默认值。"""
@@ -269,7 +281,7 @@ class WebSettings:
         if not cleaned:
             return 0
         with self._lock:
-            data = copy.deepcopy(self.stored())
+            data = copy.deepcopy(self._stored_unlocked())
             for item, value in cleaned:
                 data.setdefault(item["section"], {})[item["key"]] = value
             _write_json(self.path, data)
@@ -282,7 +294,7 @@ def _write_json(path: Path, data: Any) -> None:
     fd, tmp = tempfile.mkstemp(prefix=".%s." % path.name, suffix=".tmp", dir=str(path.parent))
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+            json.dump(data, f, ensure_ascii=False, indent=2, allow_nan=False)
             f.write("\n")
         os.replace(tmp, path)
     except BaseException:

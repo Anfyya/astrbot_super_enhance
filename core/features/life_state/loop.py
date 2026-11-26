@@ -74,10 +74,11 @@ async def flush_outbox(service) -> None:
         logger.error("[super_enhance/life] outbox 读取失败", exc_info=True)
         return
     try:
-        stamp = service._now().strftime("%Y%m%d-%H%M%S")
+        stamp = service._now().strftime("%Y%m%d-%H%M%S-%f")
         fp.rename(service.data_dir / ("outbox.sent-%s.jsonl" % stamp))
     except Exception:
-        pass
+        logger.error("[super_enhance/life] outbox 归档重命名失败，跳过本轮发送以防重复", exc_info=True)
+        return
     for line in lines:
         line = line.strip()
         if not line:
@@ -247,7 +248,8 @@ async def world_daily(service, today: datetime.date) -> None:
     except Exception:
         logger.warning("[super_enhance/life] 生成今天的天象与初始状态失败", exc_info=True)
     await sync_live_jobs(service, date_text)
-    await review_if_due(service, service._now())
+    if recorder_on(service):
+        await review_if_due(service, service._now())
 
 async def review_if_due(service, now: datetime.datetime) -> None:
     """每日约束复核：今天还没成功就做；失败隔 REVIEW_RETRY_MINUTES 分钟再试，一天最多 REVIEW_TRIES 回。"""

@@ -168,15 +168,20 @@ def tide_step_text(start: datetime.datetime, until: datetime.datetime | None = N
             has_bad_day_low = False
             cur = flat_s
             while cur < flat_e:
-                step_end = min(flat_e, cur + datetime.timedelta(minutes=30))
-                if 6 <= cur.hour < 18 and has_low_tide_in_window(cur, step_end, home):
+                next_hour = cur.replace(minute=0, second=0, microsecond=0) + datetime.timedelta(hours=1)
+                step_end = min(flat_e, cur + datetime.timedelta(minutes=30), next_hour)
+                day_start = cur.replace(hour=6, minute=0, second=0, microsecond=0)
+                day_end = cur.replace(hour=18, minute=0, second=0, microsecond=0)
+                seg_s = max(cur, day_start)
+                seg_e = min(step_end, day_end)
+                if seg_e > seg_s and has_low_tide_in_window(seg_s, seg_e, home):
                     has_day_low = True
                     slot_bad = False
                     if weather_of is not None:
                         try:
                             from . import weather as _wmod
-                            wtxt = weather_of(cur.date()) if callable(weather_of) else str(weather_of)
-                            hr = _wmod.day_hours(cur.date().isoformat(), wtxt, home)[cur.hour]
+                            wtxt = weather_of(seg_s.date()) if callable(weather_of) else str(weather_of)
+                            hr = _wmod.day_hours(seg_s.date().isoformat(), wtxt, home)[seg_s.hour]
                             if int(hr.get("wind") or 0) >= 7 or float(hr.get("rain") or 0.0) >= 8.0:
                                 slot_bad = True
                         except Exception:

@@ -253,8 +253,8 @@ def _is_store_kerosene(item: dict) -> bool:
     return bool(has_store_pay and not _has_supply_things(item))
 
 
-def _store_refills(world, start: datetime.datetime, end: datetime.datetime) -> list[datetime.datetime]:
-    """[start, end) 里去坡上杂货铺打回小壶煤油的时刻列表（按结构化 kerosene=true + origin.text 精确枚举识别）。"""
+def _store_refills(world, start: datetime.datetime, end: datetime.datetime, *, include_end: bool = True) -> list[datetime.datetime]:
+    """[start, end]（或 include_end=False 时 [start, end)）里去坡上杂货铺打回小壶煤油的时刻列表（按结构化 kerosene=true + origin.text 精确枚举识别）。"""
     from .world import real_stop as _real_stop
 
     out: list[datetime.datetime] = []
@@ -264,7 +264,7 @@ def _store_refills(world, start: datetime.datetime, end: datetime.datetime) -> l
             if str(item.get("who")) == "master" or _real_stop(item):
                 continue
             moment = parse_time(item.get("end")) if item.get("end") else parse_time(item.get("start"))
-            if moment is None or not start <= moment < end:
+            if moment is None or moment < start or (moment > end if include_end else moment >= end):
                 continue
             if _is_store_kerosene(item):
                 out.append(moment)
@@ -278,8 +278,8 @@ def _store_refills(world, start: datetime.datetime, end: datetime.datetime) -> l
     return deduped
 
 
-def _pickup(world, start: datetime.datetime, end: datetime.datetime):
-    """[start, end) 里把这一趟煤油领回来的时刻（纯结构化判定：kerosene=true 或段里入库了补给船配给物资）；没领返回 None。"""
+def _pickup(world, start: datetime.datetime, end: datetime.datetime, *, include_end: bool = True):
+    """[start, end]（或 include_end=False 时 [start, end)）里把这一趟煤油领回来的时刻（纯结构化判定：kerosene=true 或段里入库了补给船配给物资）；没领返回 None。"""
     from .world import real_stop as _real_stop
 
     legacy_cutoff = datetime.datetime(2026, 11, 16, 0, 0)
@@ -289,7 +289,7 @@ def _pickup(world, start: datetime.datetime, end: datetime.datetime):
             if str(item.get("who")) == "master" or _real_stop(item):
                 continue
             moment = parse_time(item.get("end")) if item.get("end") else parse_time(item.get("start"))
-            if moment is None or not start <= moment < end:
+            if moment is None or moment < start or (moment > end if include_end else moment >= end):
                 continue
             if item.get("kerosene") and not _is_store_kerosene(item):
                 return moment
@@ -311,12 +311,14 @@ def lamp_left(moment: datetime.datetime, world, text_of, home: str):
     if not arrivals:
         return None
     left = 0.0
-    for a, b in zip(arrivals, arrivals[1:] + [flat]):
+    last_idx = len(arrivals) - 1
+    for idx, (a, b) in enumerate(zip(arrivals, arrivals[1:] + [flat])):
+        is_last = idx == last_idx
         events: list[tuple[datetime.datetime, float]] = []
-        got = a if a < LAMP_SINCE else _pickup(world, a, b)
+        got = a if a < LAMP_SINCE else _pickup(world, a, b, include_end=is_last)
         if got is not None:
             events.append((got, float(LAMP_HOURS)))
-        for st_ts in _store_refills(world, a, b):
+        for st_ts in _store_refills(world, a, b, include_end=is_last):
             events.append((st_ts, float(STORE_KEROSENE_HOURS)))
         events.sort(key=lambda x: x[0])
         cur = a
@@ -338,7 +340,7 @@ def picked_up(moment: datetime.datetime, world, text_of, home: str):
     arrivals = [_at(s) for s in ships(flat.date(), flat.date(), text_of, home) if s["sure"] and _at(s) <= flat]
     if not arrivals:
         return None
-    return arrivals[-1] < LAMP_SINCE or _pickup(world, arrivals[-1], flat + datetime.timedelta(minutes=1)) is not None
+    return arrivals[-1] < LAMP_SINCE or _pickup(world, arrivals[-1], flat, include_end=True) is not None
 
 
 def _oil_amount(left: float) -> str:
@@ -381,7 +383,10 @@ def _next_text(st: dict, today: datetime.date) -> str:
         return ""
     if nxt["delayed"] and nxt["planned"] <= today:
         day, wind = nxt["delayed"][-1]
-        return "补给船原定 %s 到，%s 那个钟点海上 %d 级风，没来，往后推了" % (_md(nxt["planned"]), _md(day), wind)
+        base = "补给船原定 %s 到，%s 那个钟点海上 %d 级风，没来" % (_md(nxt["planned"]), _md(day), wind)
+        if nxt["day"] == today:
+            return "%s，改到今天 %02d:00 前后靠码头" % (base, nxt["hour"])
+        return "%s，往后推了" % base
     if nxt["day"] == today:
         return "补给船今天 %02d:00 前后靠码头" % nxt["hour"]
     return "下一趟补给船预计 %s 上午到（海上风大会晚一两天）" % _md(nxt["day"])

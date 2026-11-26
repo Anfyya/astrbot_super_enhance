@@ -1898,7 +1898,7 @@
 
   /* ================= 状态 ================= */
   var S = {
-    convs: [], convErr: "", labels: {}, sideRest: store.get("sideRest", null),
+    convs: [], convErr: "", convSig: "", labels: {}, sideRest: store.get("sideRest", null),
     view: "conv", cid: "", tab: store.get("tab", "history") === "requests" ? "requests" : "history",
     items: [], range: null, histErr: "", histLoading: false,
     q: "", showThink: false, flips: {}, openText: {},
@@ -2125,10 +2125,72 @@
   });
 
   /* ================= 视图切换 ================= */
+  function poolEditing() { return Object.keys(S.poolEdit).length > 0; }
+  function ledgerEditing() { return Object.keys(S.ledEdit).length > 0 || Object.keys(S.trEdit).length > 0; }
+  function thingsEditing() { return Object.keys(S.tEdit).length > 0; }
+  function worldFormHasDirty() {
+    return worldOpenForms().some(function (x) { return x.f && (x.f._init === undefined || worldDirty(x.f)); });
+  }
+  function thingsFormHasDirty() {
+    return Object.keys(S.tEdit).some(function (k) { var f = S.tEdit[k]; return f && (f._init === undefined || worldDirty(f)); });
+  }
+  function clearWorldEdits() {
+    Object.keys(W_MAPS).forEach(function (kind) { S[W_MAPS[kind]] = {}; });
+  }
+  function clearMoodDraft() {
+    S.moodOpen = false; S.moodDraft = null; S.moodDirty = false;
+  }
+  function clearMoneyEdits() {
+    S.moneyBalEdit = {}; S.moneyAccEdit = {}; S.moneyRecForm = null; S.moneyDebtForm = null; S.moneySettle = null;
+  }
+
   function guardDirty() {
     if (S.view === "set" && setDirty()) {
       return confirmDlg({ title: "放弃未保存的设置？", body: "「设置」页还有修改没保存。", ok: "放弃修改", danger: true }).then(function (ok) {
         if (ok) { S.setDraft = {}; }
+        return ok;
+      });
+    }
+    if (S.view === "world" && (worldFormHasDirty() || (S.moodOpen && S.moodDirty))) {
+      return confirmDlg({ title: "放弃未保存的修改？", body: "「世界线」页还有编辑或主人情绪修改没保存。", ok: "放弃修改", danger: true }).then(function (ok) {
+        if (ok) { clearWorldEdits(); clearMoodDraft(); }
+        return ok;
+      });
+    }
+    if (S.view === "world" && worldEditing()) {
+      clearWorldEdits();
+      if (S.moodOpen && !S.moodDirty) { clearMoodDraft(); }
+    }
+    if (S.view === "things" && thingsFormHasDirty()) {
+      return confirmDlg({ title: "放弃未保存的修改？", body: "「家里的吃的 / 东西」页还有修改没保存。", ok: "放弃修改", danger: true }).then(function (ok) {
+        if (ok) { S.tEdit = {}; }
+        return ok;
+      });
+    }
+    if (S.view === "things" && thingsEditing()) {
+      S.tEdit = {};
+    }
+    if (S.view === "money" && moneyEditing()) {
+      return confirmDlg({ title: "放弃未保存的修改？", body: "「钱匣与账本」页还有编辑表单没保存。", ok: "放弃修改", danger: true }).then(function (ok) {
+        if (ok) { clearMoneyEdits(); }
+        return ok;
+      });
+    }
+    if (S.view === "pool" && poolEditing()) {
+      return confirmDlg({ title: "放弃未保存的修改？", body: "「插曲与消遣」页还有编辑内容没保存。", ok: "放弃修改", danger: true }).then(function (ok) {
+        if (ok) { S.poolEdit = {}; }
+        return ok;
+      });
+    }
+    if (S.view === "ledger" && ledgerEditing()) {
+      return confirmDlg({ title: "放弃未保存的修改？", body: "「能力与约定」页还有编辑内容没保存。", ok: "放弃修改", danger: true }).then(function (ok) {
+        if (ok) { S.ledEdit = {}; S.trEdit = {}; }
+        return ok;
+      });
+    }
+    if (S.moodOpen && S.moodDirty) {
+      return confirmDlg({ title: "放弃未保存的修改？", body: "「主人情绪」面板还有修改没保存。", ok: "放弃修改", danger: true }).then(function (ok) {
+        if (ok) { clearMoodDraft(); }
         return ok;
       });
     }
@@ -2200,8 +2262,6 @@
 
   // 家里的吃的；focusId：跳过来时展开、闪一下那一件
   function openThings(focusId, cat) {
-    if (S.view === "world" && !worldGuard()) { return; }
-    if (S.view === "things" && !thingGuard()) { return; }
     guardDirty().then(function (ok) {
       if (!ok) { return; }
       setSideOpen(false);
@@ -2238,11 +2298,18 @@
 
   // 从别处跳到世界线某一天、某个人的某一段（停在那一段、闪一下）
   function openWorldEntry(date, entryId, who) {
-    if (S.view === "things" && !thingGuard()) { return; }
-    if (date) { S.worldDate = date; }
-    if (who && who !== "master") { S.worldWho = who; }
-    S.worldFocus = { from: "e:" + entryId, to: "e:" + entryId, at: Date.now(), reveal: true };
-    openWorld();
+    guardDirty().then(function (ok) {
+      if (!ok) { return; }
+      if (date) { S.worldDate = date; }
+      if (who && who !== "master") { S.worldWho = who; }
+      S.worldFocus = { from: "e:" + entryId, to: "e:" + entryId, at: Date.now(), reveal: true };
+      setSideOpen(false);
+      closeInsp(true);
+      S.view = "world";
+      showView();
+      renderWorld();
+      loadWorld();
+    });
   }
 
   function showView() {
@@ -2995,11 +3062,12 @@
     var payload = { cid: S.cid, index: it.i };
     if (taText && taText.value !== parts.body) { payload.text = joinReminder(taText.value, parts.tags); }
     if (taThink && taThink.value !== (it.think || "")) { payload.think = taThink.value; }
-    if (imgs && imgs.list.join("\n") !== imgs.orig.join("\n")) { payload.images = imgs.list.slice(); }
+    if (imgs && JSON.stringify(imgs.list) !== JSON.stringify(imgs.orig)) { payload.images = imgs.list.slice(); }
     var edits = payload.text !== undefined || payload.think !== undefined || payload.images !== undefined;
     var changes = (draws ? draws.list : []).filter(function (d) { return d.change; }).map(function (d) { return Object.assign({ id: d.id }, d.change); });
     if (!edits && !changes.length) { return; }
     btn.disabled = true;
+    var prevTotal = S.total;
     var editResult = null;
     (edits ? post("ctx/edit", payload) : Promise.resolve(null)).then(function (saved) {
       editResult = saved;
@@ -3010,20 +3078,14 @@
       var failed = r && r.failed && r.failed.length ? "；没改成：" + r.failed.join("；") : "";
       // 撤销只管存档里的改动；她画的图换了 / 删了，原图在图片文件夹的 old/ 里
       toast("已保存 #" + it.i + failed, edits ? { action: { label: "撤销", run: function () { doUndo(true); } } } : {});
-      if (editResult && editResult.item && !changes.length) {
-        S.total = editResult.total;
-        if (S.range) { S.range.total = S.range.end = editResult.total; }
-        S.lastSig = editResult.last_sig || S.lastSig;
-        var conv = curConv();
-        if (conv) { conv.estimate_tokens = editResult.estimate_tokens; conv.token_usage = editResult.token_usage; }
+      if (editResult && editResult.item && !changes.length && typeof editResult.total === "number" && editResult.total === prevTotal) {
         S.items.forEach(function (row, k) { if (row.i === it.i) { S.items[k] = editResult.item; } });
-        renderStream();
-        renderHead();
-        renderSide();
+        applyCounts(editResult);
         openMsg(it.i);
         return;
       }
-      return loadHistory("keep");
+      var added = (editResult && typeof editResult.total === "number") ? Math.max(0, editResult.total - prevTotal) : 0;
+      return loadHistory("keep", added);
     }).catch(function (e) {
       btn.disabled = false;
       toast("保存失败：" + errMsg(e), { err: true });
@@ -3033,8 +3095,11 @@
   // 删 / 插完：后端回的条数、签名、token 记到页面上，重画列表、标题和侧栏（不整段重读）
   function applyCounts(r) {
     S.total = r.total;
-    if (S.range) { S.range.total = S.range.end = r.total; }
-    S.lastSig = r.last_sig || S.lastSig;
+    if (S.range) {
+      S.range.total = S.range.end = r.total;
+      if (Array.isArray(r.open_tool_calls)) { S.range.open_tool_calls = r.open_tool_calls; }
+    }
+    if (typeof r.last_sig === "string") { S.lastSig = r.last_sig; }
     var conv = curConv();
     if (conv) { conv.items = r.total; conv.estimate_tokens = r.estimate_tokens; conv.token_usage = r.token_usage; }
     renderStream();
@@ -3043,6 +3108,7 @@
   }
 
   function doDelete(indexes) {
+    var prevTotal = S.total;
     post("ctx/delete", { cid: S.cid, indexes: indexes }).then(function (r) {
       var msg = "已删除 " + r.removed + " 条";
       if (r.removed_extra) { msg += "，连带清理 " + r.removed_extra + " 条工具消息"; }
@@ -3050,7 +3116,8 @@
       S.multi = false;
       if (S.insp && S.insp.kind === "msg" && indexes.indexOf(S.insp.i) >= 0) { closeInsp(true); }
       toast(msg, { action: { label: "撤销", run: function () { doUndo(true); } } });
-      if (!r.removed_extra) {
+      var expectedTotal = prevTotal - r.removed;
+      if (!r.removed_extra && typeof r.total === "number" && r.total === expectedTotal) {
         var gone = {};
         indexes.forEach(function (i) { gone[i] = 1; });
         S.items = S.items.filter(function (row) { return !gone[row.i]; }).map(function (row) {
@@ -3060,7 +3127,8 @@
         applyCounts(r);
         return;
       }
-      return loadHistory("keep");
+      var added = typeof r.total === "number" ? Math.max(0, r.total - expectedTotal) : 0;
+      return loadHistory("keep", added);
     }).catch(function (e) {
       toast("删除失败：" + errMsg(e), { err: true });
     });
@@ -3460,12 +3528,13 @@
       payload.tool_call_id = st.target || "";
     }
     btn.disabled = true;
+    var prevTotal = S.total;
     post("ctx/append", payload).then(function (r) {
       st.dirty = false;
       var at = r && typeof r.start === "number" ? r.start : null;
       toast("已插入 " + ((r && r.added) || 1) + " 条", { action: { label: "撤销", run: function () { doUndo(true); } } });
       closeInsp(true);
-      if (r && r.items && typeof r.start === "number") {
+      if (r && r.items && typeof r.start === "number" && typeof r.total === "number" && r.total === prevTotal + r.items.length) {
         S.items.forEach(function (row) { if (row.i >= r.start) { row.i += r.items.length; } });
         var start = (S.range && S.range.start) || 0;
         S.items = S.items.slice(0, Math.max(0, r.start - start)).concat(r.items, S.items.slice(Math.max(0, r.start - start)));
@@ -3474,7 +3543,8 @@
         scrollToItem(at, true);
         return;
       }
-      return loadHistory("keep").then(function () {
+      var added = (r && typeof r.total === "number") ? Math.max(0, r.total - prevTotal) : 1;
+      return loadHistory("keep", added).then(function () {
         if (at !== null && itemByIndex(at)) { openMsg(at); scrollToItem(at, true); }
       });
     }).catch(function (e) {
@@ -4205,10 +4275,11 @@
           String(mtVal === null ? "" : mtVal) !== String(orig.min_temp || "") || item.outdoor !== orig.outdoor ||
           (f.size || "normal") !== (orig.size || "normal") ||
           JSON.stringify(w) !== JSON.stringify(kind === "together" ? orig.w[""] : orig.w);
-        var first = changed ? post("ctx/pools/edit", { action: "update", kind: kind, index: i, text: it.text, item: item }) : Promise.resolve();
-        p = first.then(function () {
+        var first = changed ? post("ctx/pools/edit", { action: "update", kind: kind, index: i, text: it.text, item: item }) : Promise.resolve(null);
+        p = first.then(function (res) {
           if (f.to === kind) { return null; }
-          return post("ctx/pools/edit", { action: "move", kind: kind, index: i, text: t, to: f.to });
+          var moveText = (res && res.text) || (res && res.item && res.item.text) || (changed ? t : it.text);
+          return post("ctx/pools/edit", { action: "move", kind: kind, index: i, text: moveText, to: f.to });
         }).then(function () {
           stop();
           toast(f.to === kind ? "已保存" : "已挪到「" + poolLabel(f.to) + "」");
@@ -4447,7 +4518,7 @@
     box.appendChild(sec);
     box.appendChild(trainingSection(d));
     box.appendChild(promiseSection(d));
-    box.appendChild(eventSection(d));
+    if ((d.events || []).length) { box.appendChild(eventSection(d)); }
   }
 
   function abilityCard(b) {
@@ -6354,14 +6425,23 @@
     if (settling) {
       var sf = S.moneySettle;
       var accSel = moneyAccSelect(accs, sf.account, function (v) { sf.account = v; }, "sel");
-      var sa = h("input", { class: "inp txt", type: "number", step: "0.01", placeholder: "结算金额（元）" });
+      var sa = h("input", { class: "inp txt", type: "number", step: "0.01", placeholder: "结算金额（元，留空全额结清）" });
       sa.value = sf.amount; sa.addEventListener("input", function () { sf.amount = sa.value; });
       var sc = h("button", { class: "btn", type: "button", text: "取消" });
       sc.addEventListener("click", function () { S.moneySettle = null; renderMoney(); });
       var sok = h("button", { class: "btn pri", type: "button", text: "确认结账" });
       sok.addEventListener("click", function () {
+        var rawAmt = String(sf.amount == null ? "" : sf.amount).trim();
+        var amt = null;
+        if (rawAmt !== "") {
+          amt = Number(rawAmt);
+          if (!isFinite(amt) || amt <= 0) {
+            toast("结算金额必须大于 0（留空表示全额结清）", { err: true });
+            return;
+          }
+        }
         sok.disabled = true;
-        moneyPost({ action: "settle_debt", id: x.id, account: sf.account, amount: sf.amount === "" ? 0 : Number(sf.amount) }, "已结账", function () {
+        moneyPost({ action: "settle_debt", id: x.id, account: sf.account, amount: amt }, "已结账", function () {
           S.moneySettle = null;
         }).then(function () { sok.disabled = false; });
       });
@@ -8400,9 +8480,11 @@
     var sec = h("div", { class: "lsec" }, lsecHead("打算", "她在对话里说过的；做完或对不上，由记录员按条撤掉；补写会照着走"));
     var card = h("div", { class: "pc" });
     var list = (d.intentions || []).filter(function (x) { return x.who === who; });
-    var latest = list.length ? list[list.length - 1] : null;
     if (S.iEdit[who]) {
-      card.appendChild(worldIntentionForm(d, latest, who));
+      var editing = S.iEdit[who].id
+        ? (list.filter(function (x) { return x.id === S.iEdit[who].id; })[0] || { id: S.iEdit[who].id, who: who })
+        : null;
+      card.appendChild(worldIntentionForm(d, editing, who));
     } else {
       if (list.length) {
         var rows = h("div", { class: "lrows" });
@@ -8443,17 +8525,18 @@
     var key = who || (it ? it.who : "new");
     var wk = "i:" + key;
     var f = S.iEdit[key];
-    var box = edBox(wk, it ? "改打算" : "替她写一条打算", worldLabel(d, f.who || key), "补写会照着排");
+    var isEdit = !!(it || (f && f.id));
+    var box = edBox(wk, isEdit ? "改打算" : "替她写一条打算", worldLabel(d, f.who || key), "补写会照着排");
     box.appendChild(edSec(edInput(f.text, "打算，例如：下午想去温泉街挑布", function (v) { f.text = v; }, { area: true, cls: "ed-body", focus: true })));
     var p = edProps();
-    if (!it && !who) {
+    if (!isEdit && !who) {
       edRow(p, "谁的", edChips((d.bots || []).map(function (b) { return { key: b.key, label: b.label }; }), f.who, function (v) { f.who = v; }));
     }
     edRow(p, "什么时候", edInput(f.window, "可空，例如 13:00~16:00", function (v) { f.window = v; }), "大概什么时候去做；写了时间段，补写会把那段时间腾出来");
     edRow(p, "怎么说起的", edInput(f.why, "可空，例如 15:11 她问今晚能不能去，主人答应了", function (v) { f.why = v; }, { area: true }),
       "补写、记录员看；聊天时她只看到上面那句");
     box.appendChild(edSec(p));
-    return worldFormFoot(box, function () { worldClose("i", key); }, "保存", function () {
+    return worldFormFoot(box, function () { worldClose("i", key); }, isEdit ? "保存" : "添加", function () {
       if (!String(f.text || "").trim()) { toast("打算不能空", { err: true }); return null; }
       return worldPost({ kind: "intention", action: "set", id: f.id || "", who: f.who, text: f.text, window: f.window, why: String(f.why || "") },
         f.id ? "已保存" : "已添加", function () { delete S.iEdit[key]; }, { from: wk, to: wk });
@@ -9890,7 +9973,12 @@
     pollBusy = true;
     api("ctx/pulse", { cid: cid }).then(function (d) {
       if (cid !== S.cid) { return; }
-      if (d.conversations_changed) { loadConvs(); }
+      if (typeof d.conv_sig === "string") {
+        if (S.convSig && d.conv_sig !== S.convSig) { loadConvs(); }
+        S.convSig = d.conv_sig;
+      } else if (d.conversations_changed) {
+        loadConvs();
+      }
       var sig = d.last && d.last.sig || "";
       if (d.total !== S.total || sig !== S.lastSig) {
         // 历史还在读、还没读过、多选中、详情面板改了没存、弹窗开着：这一轮先不重读（下一轮照样发现）；
@@ -9946,30 +10034,41 @@
   setInterval(function () {
     if (document.hidden || LIVE.on) { return; }
     // 有正在改的能力 / 在练的事就不重读：整页重画会把输入框重建，打断正在输入的内容
-    if (S.view === "ledger" && !Object.keys(S.ledEdit).length && !Object.keys(S.trEdit).length) { loadLedger(true); }
-    if (S.view === "money" && !Object.keys(S.moneyBalEdit).length && !Object.keys(S.moneyAccEdit).length && !S.moneyRecForm && !S.moneyDebtForm && !S.moneySettle) { loadMoney(true); }
-    if (S.view === "heat" && !S.heatBusy) { loadHeat(true); }
+    if (S.view === "ledger" && !ledgerEditing()) { loadLedger(true); }
+    if (S.view === "money" && !moneyEditing()) { loadMoney(true); }
+    if (S.view === "heat" && !S.heatBusy && !S.heatPop) { loadHeat(true); }
   }, 30000);
   // 热源页温度会随现实时间自然升降，即使 SSE 连通也每分钟静默重算一次
   setInterval(function () {
-    if (!document.hidden && S.view === "heat" && !S.heatBusy) { loadHeat(true); }
+    if (!document.hidden && S.view === "heat" && !S.heatBusy && !S.heatPop) { loadHeat(true); }
   }, 60000);
 
   /* ================= 实时推送 ================= */
   // 服务器那头谁写了数据谁喊一声（ctx/stream），这里挂着收，收到只刷新正在看的那一页；
   // 先收到 hello 才算连上，之后 LIVE_DEAD_MS 里一条都没收到（心跳 10 秒一条）就当断了，退回轮询、过一会儿重连
-  var LIVE = { on: false, id: null, retry: 0, last: 0, opened: false, timer: null, flushT: null, pending: {}, side: false };
+  var LIVE = { on: false, id: null, gen: 0, retry: 0, last: 0, opened: false, timer: null, flushT: null, pending: {}, side: false };
   var LIVE_DEAD_MS = 30000;
   function liveStart() {
     var b = bridge();
     if (!b || typeof b.subscribeSSE !== "function") { return; }
+    if (LIVE.id) { try { b.unsubscribeSSE(LIVE.id); } catch (e) { /* 已经断了 */ } LIVE.id = null; }
+    var myGen = ++LIVE.gen;
     LIVE.last = Date.now();
     b.subscribeSSE("ctx/stream", {
-      onMessage: liveGot,
-      onError: liveLost
-    }).then(function (id) { LIVE.id = id; }).catch(liveLost);
+      onMessage: function (m) { if (myGen === LIVE.gen) { liveGot(m); } },
+      onError: function () { if (myGen === LIVE.gen) { liveLost(); } }
+    }).then(function (id) {
+      if (myGen !== LIVE.gen) {
+        if (id) { try { b.unsubscribeSSE(id); } catch (e) { /* 已失效旧订阅 */ } }
+        return;
+      }
+      LIVE.id = id;
+    }).catch(function () {
+      if (myGen === LIVE.gen) { liveLost(); }
+    });
   }
   function liveLost() {
+    LIVE.gen++;
     LIVE.on = false;
     if (LIVE.id) { try { bridge().unsubscribeSSE(LIVE.id); } catch (e) { /* 已经断了 */ } LIVE.id = null; }
     if (LIVE.timer) { return; }
@@ -10021,23 +10120,22 @@
       if (S.view === "world") {
         if (worldEditing() || S.worldLoading) { later = true; } else { drop("world", "things"); loadWorld(true); }
       } else if (S.view === "things") {
-        if (Object.keys(S.tEdit).length || S.thingsLoading) { later = true; } else { drop("world", "things"); loadThings(true); }
+        if (thingsEditing() || S.thingsLoading) { later = true; } else { drop("world", "things"); loadThings(true); }
       } else if (S.view === "heat") {
-        if (S.heatBusy || S.heatLoading) { later = true; } else { drop("world", "things"); loadHeat(true); }
+        if (S.heatBusy || S.heatLoading || S.heatPop) { later = true; } else { drop("world", "things"); loadHeat(true); }
       } else { drop("world", "things"); }
     }
     if (p.pools) {
-      if (S.view !== "pool") { drop("pools"); } else if (S.poolsLoading) { later = true; } else { drop("pools"); loadPools(true); }
+      if (S.view !== "pool") { drop("pools"); } else if (poolEditing() || S.poolsLoading) { later = true; } else { drop("pools"); loadPools(true); }
     }
     if (p.ledger) {
-      if (S.view !== "ledger") { drop("ledger"); } else if (S.ledgerLoading) { later = true; } else { drop("ledger"); loadLedger(true); }
+      if (S.view !== "ledger") { drop("ledger"); } else if (ledgerEditing() || S.ledgerLoading) { later = true; } else { drop("ledger"); loadLedger(true); }
     }
     if (p.money) {
-      if (S.view !== "money") { drop("money"); } else if (S.moneyLoading) { later = true; } else { drop("money"); loadMoney(true); }
+      if (S.view !== "money") { drop("money"); } else if (moneyEditing() || S.moneyLoading) { later = true; } else { drop("money"); loadMoney(true); }
     }
     if (p.master_mood) {
-      drop("master_mood");
-      loadMasterMood(true);
+      if (S.moodOpen && (S.moodDirty || S.moodSaving)) { later = true; } else { drop("master_mood"); loadMasterMood(true); }
     }
     if (LIVE.side) { LIVE.side = false; loadSide(); }
     if (later) { LIVE.flushT = setTimeout(liveFlush, 1500); }
@@ -10469,6 +10567,7 @@
     list.sort(function (a, b) { return (b.updated_at || 0) - (a.updated_at || 0); });
     S.convs = list;
     S.convErr = "";
+    if (d && typeof d.conv_sig === "string") { S.convSig = d.conv_sig; }
     return list;
   }
   function loadConvs() {

@@ -33,10 +33,11 @@ from . import error_voice
 
 # cron 事件在 extras 里带这两个键；用它把主动对话和普通聊天区分开
 CRON_EXTRA_KEYS = ("cron_job", "cron_payload")
+CRON_CONV_EXTRA = "_super_enhance_cron_conv"
 OUR_CRON_PREFIX = "超级增强·"
 FINAL_CRON_TOOLS = frozenset({"send_message_to_user", "send_view", "tell", "start_doing"})
 CONVERSATION_TTL_SECONDS = 900
-_cron_conversations: dict[str, tuple[object, float]] = {}
+_cron_conversations: dict[str, list[tuple[object, float]]] = {}
 
 
 def is_cron_event(event) -> bool:
@@ -66,25 +67,71 @@ def is_plugin_cron_event(event) -> bool:
 
 def _prune_cron_conversations() -> None:
     now = time.time()
-    for key, (_conv, stamp) in list(_cron_conversations.items()):
-        if now - stamp > CONVERSATION_TTL_SECONDS:
+    for key, stack in list(_cron_conversations.items()):
+        fresh = [(conv, stamp) for conv, stamp in stack if now - stamp <= CONVERSATION_TTL_SECONDS]
+        if fresh:
+            _cron_conversations[key] = fresh
+        else:
             _cron_conversations.pop(key, None)
 
 
-def remember(umo: str, conversation) -> None:
+def remember(umo: str, conversation, event=None) -> None:
     if umo and conversation is not None:
         _prune_cron_conversations()
-        _cron_conversations[str(umo)] = (conversation, time.time())
+        key = str(umo)
+        stack = [item for item in _cron_conversations.get(key, []) if item[0] is not conversation]
+        stack.append((conversation, time.time()))
+        _cron_conversations[key] = stack
+        if event is not None and hasattr(event, "set_extra"):
+            try:
+                event.set_extra(CRON_CONV_EXTRA, conversation)
+            except Exception:
+                pass
 
 
-def get(umo: str):
+def get(umo: str, event=None):
+    if event is not None and hasattr(event, "get_extra"):
+        try:
+            bound = event.get_extra(CRON_CONV_EXTRA)
+            if bound is not None:
+                return bound
+        except Exception:
+            pass
     _prune_cron_conversations()
-    item = _cron_conversations.get(str(umo or ""))
-    return item[0] if item is not None else None
+    stack = _cron_conversations.get(str(umo or ""))
+    return stack[-1][0] if stack else None
 
 
-def forget(umo: str) -> None:
-    _cron_conversations.pop(str(umo or ""), None)
+def forget(umo: str, conversation=None) -> None:
+    key = str(umo or "")
+    stack = _cron_conversations.get(key)
+    if not stack:
+        return
+    if conversation is None:
+        stack.pop()
+    else:
+        stack[:] = [item for item in stack if item[0] is not conversation]
+    if not stack:
+        _cron_conversations.pop(key, None)
+
+
+def forget_event(event) -> None:
+    if event is None:
+        return
+    umo = str(getattr(event, "unified_msg_origin", "") or "")
+    conv = None
+    if hasattr(event, "get_extra"):
+        try:
+            conv = event.get_extra(CRON_CONV_EXTRA)
+        except Exception:
+            conv = None
+    if hasattr(event, "set_extra"):
+        try:
+            event.set_extra(CRON_CONV_EXTRA, None)
+        except Exception:
+            pass
+    if conv is not None:
+        forget(umo, conv)
 
 TIME_RES = (text_utils.CURRENT_TIME_RE, text_utils.SENT_TIME_RE)
 
@@ -171,15 +218,16 @@ class CronContextFeature:
             event = kwargs.get("event")
             req = kwargs.get("req")
             is_cron = req is not None and is_cron_event(event)
+            remembered: tuple[str, object] | None = None
             try:
                 # 登记本次 cron 用的会话对象：cross_session 要把主动消息并入历史
                 # （这一步与下面的裁剪开关无关，始终执行）。
                 if is_cron:
                     conv = getattr(req, "conversation", None)
+                    umo = getattr(event, "unified_msg_origin", "") or ""
                     if conv is not None:
-                        remember(
-                            getattr(event, "unified_msg_origin", "") or "", conv
-                        )
+                        remember(umo, conv, event=event)
+                        remembered = (umo, conv)
                     for hook in list(feature.cron_request_hooks):
                         try:
                             await hook(event, req)
@@ -193,7 +241,12 @@ class CronContextFeature:
                 logger.error("[super_enhance/cron_ctx] cron 钩子异常", exc_info=True)
             want_defer = is_cron and bool(kwargs.get("apply_reset", True)) and bool(feature.cron_post_build_hooks)
             call_kwargs = {**kwargs, "apply_reset": False} if want_defer else kwargs
-            result = await orig(*args, **call_kwargs)
+            try:
+                result = await orig(*args, **call_kwargs)
+            except BaseException:
+                if remembered is not None:
+                    forget(*remembered)
+                raise
             if result is not None and is_cron_event(event):
                 built = getattr(result, "provider_request", None) or req
                 runner = getattr(result, "agent_runner", None)
@@ -206,14 +259,19 @@ class CronContextFeature:
                                 "[super_enhance/cron_ctx] cron 装完人格后补注入失败", exc_info=True
                             )
                 try:
-                    feature._prepare_built_cron(event, built, runner)
+                    feature._prepare_built_cron(event, built, runner, remembered=remembered)
                 except Exception:
                     logger.error("[super_enhance/cron_ctx] cron 后置工具与一步收尾装配失败", exc_info=True)
                 if want_defer:
                     reset_coro = getattr(result, "reset_coro", None)
                     if reset_coro is not None:
-                        await reset_coro
-                        result.reset_coro = None
+                        try:
+                            await reset_coro
+                            result.reset_coro = None
+                        except BaseException:
+                            if remembered is not None:
+                                forget(*remembered)
+                            raise
                 for hook in list(feature.cron_built_hooks):
                     try:
                         await hook(event, built)
@@ -223,6 +281,10 @@ class CronContextFeature:
                     feature._sync_skill_like_tools(runner)
                 except Exception:
                     logger.error("[super_enhance/cron_ctx] 同步 skills_like 工具集失败", exc_info=True)
+                if remembered is not None and runner is None:
+                    forget(*remembered)
+            elif remembered is not None:
+                forget(*remembered)
             return result
 
         self.patches.add(
@@ -248,8 +310,8 @@ class CronContextFeature:
 
     # ---------- cron 工具清理与一步收尾 ----------
 
-    def _prepare_built_cron(self, event, built, runner) -> None:
-        """build_main_agent 之后：同步摘除闲置内置工具（保持与私聊工具表一致以命中缓存），并装一步收尾包装。"""
+    def _prepare_built_cron(self, event, built, runner, *, remembered: tuple[str, object] | None = None) -> None:
+        """build_main_agent 之后：同步摘除闲置内置工具（保持与私聊工具表一致以命中缓存），装一步收尾与会话释放包装。"""
         if getattr(built, "_se_strip_idle_tools", False):
             from .bot_dialog import IDLE_BUILTIN_TOOLS
             raw_set = getattr(runner, "_skill_like_raw_tool_set", None)
@@ -258,6 +320,52 @@ class CronContextFeature:
                     raw_set.remove_tool(tname)
         if runner is not None and is_plugin_cron_event(event):
             self._install_one_step_finish(event, runner)
+        if runner is not None and remembered is not None:
+            self._install_conv_cleanup(event, runner, remembered[0], remembered[1])
+
+    @staticmethod
+    def _install_conv_cleanup(event, runner, umo: str, conv) -> None:
+        """在 cron runner 跑完或异常退出时自动释放登记的会话对象，防止永久残留。"""
+        if getattr(runner, "_se_cron_cleanup", False):
+            return
+        orig_step = getattr(runner, "step", None)
+        if orig_step is None:
+            return
+        released = False
+
+        def release() -> None:
+            nonlocal released
+            if released:
+                return
+            released = True
+            forget(umo, conv)
+            if event is not None and hasattr(event, "get_extra") and hasattr(event, "set_extra"):
+                try:
+                    if event.get_extra(CRON_CONV_EXTRA) is conv:
+                        event.set_extra(CRON_CONV_EXTRA, None)
+                except Exception:
+                    pass
+
+        async def wrapped_step(*s_args, **s_kwargs):
+            failed = False
+            try:
+                async for item in orig_step(*s_args, **s_kwargs):
+                    yield item
+            except BaseException:
+                failed = True
+                raise
+            finally:
+                done = failed
+                if not done:
+                    try:
+                        done = bool(runner.done())
+                    except Exception:
+                        done = True
+                if done:
+                    release()
+
+        runner.step = wrapped_step
+        runner._se_cron_cleanup = True
 
     @staticmethod
     def _sync_skill_like_tools(runner) -> None:
@@ -293,6 +401,30 @@ class CronContextFeature:
                 out[tc_id] = str(content or "")
         return out
 
+    @staticmethod
+    def _tool_result_failed(tool_name: str, res_text: str) -> bool:
+        """判断同轮某个工具结果是否失败或被拦截。"""
+        text = str(res_text or "").strip()
+        if not text:
+            return True
+        low = text.lower()
+        if low.startswith("error") or ("error:" in low[:40]):
+            return True
+        if ("次上限" in text and "本轮已调用" in text) or "请勿再调用此工具" in text:
+            return True
+        if tool_name == "send_message_to_user":
+            return not (
+                "Message sent to session" in text
+                or "主人已明确休息，普通主动消息暂未发送" in text
+            )
+        if tool_name == "start_doing":
+            return text.startswith("没写进去")
+        if tool_name == "send_view":
+            return text.startswith(("没发", "画面呈现没开"))
+        if tool_name == "tell":
+            return text.startswith(("没传过去", "没有内容", "认不出", "没有配置"))
+        return False
+
     @classmethod
     def _should_finish_after_send(cls, current_umo: str, llm_resp, new_messages: list) -> bool:
         names = list(getattr(llm_resp, "tools_call_name", None) or [])
@@ -305,23 +437,30 @@ class CronContextFeature:
             return False
         sent_current = False
         for idx, t_name in enumerate(names):
+            tc_id = str(ids_list[idx]) if idx < len(ids_list) else ""
+            if not tc_id or tc_id not in result_by_id:
+                return False
+            res_text = result_by_id[tc_id]
+            # 同轮任一工具（含兄弟工具）失败或被拦截时，不强行结束循环，留给模型处理
+            if cls._tool_result_failed(t_name, res_text):
+                return False
             if t_name != "send_message_to_user":
                 continue
-            t_args = args_list[idx] if idx < len(args_list) and isinstance(args_list[idx], dict) else {}
-            tc_id = str(ids_list[idx]) if idx < len(ids_list) else ""
-            res_text = result_by_id.get(tc_id, "")
-            if res_text.lstrip().lower().startswith("error"):
+            raw_args = args_list[idx] if idx < len(args_list) else {}
+            if isinstance(raw_args, str):
+                try:
+                    raw_args = json.loads(raw_args)
+                except Exception:
+                    return False
+            if not isinstance(raw_args, dict):
                 return False
-            session_arg = str(t_args.get("session") or "").strip()
+            session_arg = str(raw_args.get("session") or "").strip()
             targets_current = (
                 not session_arg
                 or session_arg == current_umo
                 or (":" not in session_arg and bool(current_umo) and current_umo.endswith(":" + session_arg))
             )
-            if targets_current and (
-                "Message sent to session" in res_text
-                or "主人已明确休息，普通主动消息暂未发送" in res_text
-            ):
+            if targets_current:
                 sent_current = True
         return sent_current
 
@@ -511,6 +650,8 @@ class CronContextFeature:
 
         cleaned = STAMP_TAG_RE.sub(repl, text)
         cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
+        if not cleaned:
+            return ""
         if moments:
             # 留一个最短的时间戳标签（不再写成「[10-17 23:03] 正文」）：聊天记录（history_transcript）
             # 靠这个标签分清「备忘后面的摘录」和「之后的原话」，没了它主动对话的最近原话全被当成旧摘录（2026-10-18）
@@ -557,7 +698,7 @@ class CronContextFeature:
             logger.warning("[super_enhance/cron_ctx] 无通知目标，仅记录日志：%s", text)
             return
         # 这次主动消息还在跑：补进历史要并到它登记的会话对象上，收尾时一起写库
-        live_conv = get(umo) if self._is_cron_event(event) else None
+        live_conv = get(umo, event=event) if self._is_cron_event(event) else None
         await self._send(umo, text, live_conv)
 
     def _notify_targets_sync(self, text: str) -> None:

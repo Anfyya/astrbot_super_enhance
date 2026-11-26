@@ -19,13 +19,12 @@
 """
 
 import asyncio
-import datetime
 import json
 from pathlib import Path
 
 from astrbot.api import logger
 
-from ..common import jsonio
+from ..common import jsonio, timeutil
 
 FILE_NAME = "pending_memory_edits.json"
 LM_DIR_NAME = "astrbot_plugin_livingmemory"
@@ -114,9 +113,12 @@ class MemoryEditRunner:
 
     async def run(self) -> None:
         try:
-            plan = jsonio.load(self.path, {})
+            plan = jsonio.load(self.path, None, strict=True)
         except Exception:
-            logger.error("[super_enhance/lm_edits] 待改清单读不了，这次不改", exc_info=True)
+            logger.error("[super_enhance/lm_edits] 待改清单 JSON 损坏或读不了，保留原文件不改", exc_info=True)
+            return
+        if not isinstance(plan, dict):
+            logger.error("[super_enhance/lm_edits] 待改清单格式不对（顶层应为对象），保留原文件不改")
             return
         loop = asyncio.get_running_loop()
         deadline = loop.time() + WAIT_SECONDS
@@ -128,19 +130,37 @@ class MemoryEditRunner:
             await asyncio.sleep(POLL_SECONDS)
             engine = self.find_engine()
         processor = self.find_processor()
+        edits = plan.get("edits")
+        if not isinstance(edits, list):
+            edits = []
+        raw_progress = plan.get("_progress")
+        progress: dict[str, dict] = dict(raw_progress) if isinstance(raw_progress, dict) else {}
+        plan["_progress"] = progress
         results = []
-        for edit in plan.get("edits") or []:
+        for idx, edit in enumerate(edits):
+            key = str(idx)
+            if key in progress and isinstance(progress[key], dict):
+                results.append(progress[key])
+                continue
             try:
-                results.append(await self.apply_one(engine, edit, processor))
+                res = await self.apply_one(engine, edit, processor)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                logger.error("[super_enhance/lm_edits] 改记忆出错：%s", edit.get("id"), exc_info=True)
-                results.append({"id": edit.get("id"), "ok": False, "why": "出错：%s" % exc})
-        stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+                edit_id = edit.get("id") if isinstance(edit, dict) else None
+                logger.error("[super_enhance/lm_edits] 改记忆出错：%s", edit_id, exc_info=True)
+                res = {"id": edit_id, "ok": False, "why": "出错：%s" % exc}
+            results.append(res)
+            progress[key] = res
+            try:
+                jsonio.save(self.path, plan, indent=1, quiet=True)
+            except Exception:
+                logger.warning("[super_enhance/lm_edits] 单条进度落盘失败（第 %d 条）", idx, exc_info=True)
+        stamp = timeutil.now().strftime("%Y%m%d-%H%M%S")
         done = self.path.with_name("pending_memory_edits.done-%s.json" % stamp)
+        saved_plan = {k: v for k, v in plan.items() if k != "_progress"}
         try:
-            jsonio.save(done, {"plan": plan, "results": results}, indent=1)
+            jsonio.save(done, {"plan": saved_plan, "results": results}, indent=1)
             self.path.unlink()
         except Exception:
             logger.error("[super_enhance/lm_edits] 结果写盘失败", exc_info=True)
@@ -159,8 +179,13 @@ class MemoryEditRunner:
         persona = str(edit.get("persona") or md.get("persona_id") or "").strip()
         if persona:
             md["persona_id"] = persona
+        raw_imp = edit.get("importance")
+        if raw_imp is None:
+            raw_imp = md.get("importance")
+        if raw_imp is None:
+            raw_imp = 0.5
         try:
-            importance = float(edit.get("importance") or md.get("importance") or 0.5)
+            importance = float(raw_imp)
         except Exception:
             importance = 0.5
         session_id = str(edit.get("session_id") or md.get("session_id") or "livingmemory:global")
@@ -188,6 +213,8 @@ class MemoryEditRunner:
         return {"id": new_id, "ok": bool(new_id), "op": "add", "persona": persona, "atoms": len(atoms or [])}
 
     async def apply_one(self, engine, edit: dict, processor=None) -> dict:
+        if not isinstance(edit, dict):
+            return {"id": None, "ok": False, "why": "条目格式不对"}
         if edit.get("add"):
             return await self.apply_add(engine, edit, processor)
         try:

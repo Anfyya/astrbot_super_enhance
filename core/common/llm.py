@@ -105,6 +105,8 @@ async def text_chat(
             )
             text = str(getattr(response, "completion_text", "") or "")
             thought = str(getattr(response, "reasoning_content", "") or "").strip()
+            if str(getattr(response, "role", "") or "").strip().lower() == "err":
+                raise RuntimeError(text.strip() or "模型返回错误响应（role=err）")
             _record(**record, elapsed=round(time.time() - started, 1), attempt=attempt,
                     error="", text=text, thought=thought)
             return text, thought

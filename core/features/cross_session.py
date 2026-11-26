@@ -153,26 +153,42 @@ class CrossSessionFeature:
         except Exception as e:
             self._debug(f"insert failed {target_umo}: {e}", exc_info=True)
 
+    @staticmethod
+    def _is_send_success(tool_result) -> bool:
+        """与 raw_log.py 对齐：只认 send_message_to_user 明确成功回执，拦截/报错一律不算发出。"""
+        if tool_result is None:
+            return False
+        if getattr(tool_result, "isError", False) or (
+            isinstance(tool_result, dict) and tool_result.get("isError")
+        ):
+            return False
+        if isinstance(tool_result, str):
+            result_text = tool_result
+        else:
+            content = (
+                tool_result.get("content", [])
+                if isinstance(tool_result, dict)
+                else getattr(tool_result, "content", [])
+            ) or []
+            result_text = "\n".join(
+                str(part.get("text", "") if isinstance(part, dict) else getattr(part, "text", ""))
+                for part in content
+            )
+        text = str(result_text or "")
+        if text.lstrip().lower().startswith("error"):
+            return False
+        return "Message sent to session " in text
+
     async def on_tool_respond(self, event, tool, tool_args, tool_result) -> None:
         if not self.enabled:
             return
         if not tool or getattr(tool, "name", "") != "send_message_to_user":
             return
 
-        # 工具执行失败不处理。
-        if tool_result is not None:
-            try:
-                if hasattr(tool_result, "content"):
-                    texts = " ".join(
-                        [c.text for c in tool_result.content if hasattr(c, "text")]
-                    )
-                    if "error" in texts.lower():
-                        self._debug(f"skip error result {texts[:80]}")
-                        return
-                elif isinstance(tool_result, str) and "error" in tool_result.lower():
-                    return
-            except Exception:
-                pass
+        # 只有明确成功发出才补录历史；休息拦截、tool_cap 上限拦截、报错等一律跳过。
+        if not self._is_send_success(tool_result):
+            self._debug("skip non-sent result")
+            return
 
         if not tool_args:
             return
@@ -206,13 +222,13 @@ class CrossSessionFeature:
             # 收尾只写一条 [CronJob] 流水账，她那句话会丢——这里并入本次 cron
             # 请求的内存会话对象，由 AstrBot 收尾写库时一起落盘。
             if is_cron_event(event):
-                await self._append_to_live_conversation(current_umo, messages)
+                await self._append_to_live_conversation(current_umo, messages, event=event)
             return
 
         if target_umo == current_umo:
             # 显式填了自己这个会话：跟留空一样（主动对话并进本次会话；普通对话由 pipeline 自己保存）
             if is_cron_event(event):
-                await self._append_to_live_conversation(current_umo, messages)
+                await self._append_to_live_conversation(current_umo, messages, event=event)
             return
 
         # 仅修私聊跨会话（群聊由 send_message 的 group_history 处理）。
@@ -226,9 +242,9 @@ class CrossSessionFeature:
 
         await self._insert_to_target_history(target_umo, messages)
 
-    async def _append_to_live_conversation(self, umo: str, messages: list) -> None:
+    async def _append_to_live_conversation(self, umo: str, messages: list, *, event=None) -> None:
         """把 cron 主动消息并入本次请求的会话对象（随后由 AstrBot 收尾写库）。"""
-        conv = get_cron_conversation(umo)
+        conv = get_cron_conversation(umo, event=event)
         if conv is None:
             logger.warning(
                 "[super_enhance/cross_session] 主动消息未并入历史：未登记会话对象 %s",
@@ -270,7 +286,7 @@ class CrossSessionFeature:
         if not is_cron_event(event):
             return
         umo = getattr(event, "unified_msg_origin", "") or ""
-        conv = get_cron_conversation(umo)
+        conv = get_cron_conversation(umo, event=event)
         appended = getattr(conv, CRON_APPENDED_ATTR, None) if conv is not None else None
         if not appended:
             return

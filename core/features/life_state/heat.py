@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import copy
 import datetime
+import threading
 from typing import Any
 
 from astrbot.api import logger
@@ -14,6 +16,9 @@ from . import weather as weather_mod
 from . import weathering
 from .food import room_temp
 from .world import fmt_time, is_event, is_sleep, parse_time, real_stop, stove_active_in_entry
+
+# 保护手动点火/添料扣库存与写 manual_stoves 的原子性，避免并发超扣或半提交
+_HEAT_LOCK = threading.RLock()
 
 # 与 things.py 保持一致的真实燃料消耗标准
 WOOD_MIN_PER_KG = 40  # 1.5 公斤干柴 = 60 分钟（40 分钟/公斤）
@@ -193,7 +198,11 @@ def _active_stoves(world, now: datetime.datetime, home: str) -> dict[str, dict]:
             st = parse_time(entry.get("start"))
             if st is None or st > flat:
                 continue
-            en = parse_time(entry.get("end")) if entry.get("end") else (st + datetime.timedelta(minutes=45))
+            en = (
+                parse_time(entry.get("end"))
+                if entry.get("end")
+                else (st + datetime.timedelta(minutes=weather_mod.estimate_open_stove_minutes(entry, kind)))
+            )
             if en is None or not (st <= flat < en):
                 continue
             if has_homes and world.home_at(st) != "海边小镇":
@@ -564,7 +573,11 @@ def _recent_fire_history(life, now: datetime.datetime, home: str) -> list[dict]:
             if stove not in ("wood", "charcoal"):
                 continue
             st = parse_time(entry.get("start"))
-            en = parse_time(entry.get("end")) if entry.get("end") else (st + datetime.timedelta(minutes=45) if st else None)
+            en = (
+                parse_time(entry.get("end"))
+                if entry.get("end")
+                else (st + datetime.timedelta(minutes=weather_mod.estimate_open_stove_minutes(entry, stove)) if st else None)
+            )
             if st is None or en is None or en < cutoff or st > flat + datetime.timedelta(hours=4):
                 continue
             rows.append({
@@ -731,35 +744,111 @@ def _plan_charcoal_deduction(batches: list[dict], need_grams: int, preferred_id:
     return plan
 
 
-def _commit_fuel_plan(life, flat: datetime.datetime, plan: list[dict], note: str, stove_id: str = "") -> list[dict]:
-    """将已通过校验的燃料扣减方案写入 things.json。"""
+def _capture_fuel_rollback(store, plan: list[dict]) -> dict[str, Any]:
+    """扣减库存前捕获受影响物品的精确回滚快照。"""
+    snap: dict[str, Any] = {"existing": {}, "created": []}
+    if not hasattr(store, "_load"):
+        return snap
+    lock = getattr(store, "_lock", None)
+    if lock is not None:
+        lock.acquire()
+    try:
+        for row in plan:
+            tid = str(row.get("id") or "")
+            if not tid or tid in snap["existing"]:
+                continue
+            cur = store.get(tid)
+            if cur is not None:
+                snap["existing"][str(cur.get("id"))] = copy.deepcopy(cur)
+    finally:
+        if lock is not None:
+            lock.release()
+    return snap
+
+
+def _rollback_fuel_snapshot(store, snap: dict[str, Any]) -> None:
+    """当多批次扣库存中途失败或后续写 manual_stoves 抛异常/返回空时，精确还原库存。"""
+    if not snap or not hasattr(store, "_load"):
+        return
+    lock = getattr(store, "_lock", None)
+    if lock is not None:
+        lock.acquire()
+    try:
+        data = store._load()
+        items = data.get("items") or []
+        created_ids = set(snap.get("created") or [])
+        existing = snap.get("existing") or {}
+        if created_ids:
+            items[:] = [x for x in items if str(x.get("id") or "") not in created_ids]
+        for idx, it in enumerate(items):
+            tid = str(it.get("id") or "")
+            if tid in existing:
+                items[idx] = copy.deepcopy(existing[tid])
+        if hasattr(store, "_save"):
+            store._save()
+    except Exception:
+        logger.error("[super_enhance/heat] 回滚燃料库存失败", exc_info=True)
+    finally:
+        if lock is not None:
+            lock.release()
+
+
+def _commit_fuel_plan(
+    life,
+    flat: datetime.datetime,
+    plan: list[dict],
+    note: str,
+    stove_id: str = "",
+    *,
+    _rollback_out: dict[str, Any] | None = None,
+) -> list[dict]:
+    """将已通过校验的燃料扣减方案写入 things.json；多批次任一批失败时自动回滚已扣批次。"""
     store = life.things
+    snap = _capture_fuel_rollback(store, plan)
+    if _rollback_out is not None:
+        _rollback_out.clear()
+        _rollback_out.update(snap)
     shelf = store.view(flat)
     stamp = fmt_time(flat)
     deducted = []
-    for row in plan:
-        tid = row["id"]
-        found = shelf.find(tid)
-        if found is None:
-            raise ValueError("找不到物品批次 %s，请刷新后重试" % tid)
-        if found.get("virtual"):
-            store.materialize(found, shelf)
-            tid = str(found.get("id"))
-        stage: dict[str, Any] = {
-            "at": stamp,
-            "what": row["what"],
-            "used": row["used"],
-            "by": "master",
-            "note": note,
-            "src": {"manual": "网页热源", **({"stove_id": stove_id} if stove_id else {})},
-            "recorded": stamp,
-        }
-        if row.get("left"):
-            stage["left"] = row["left"]
-        err = store.add_stage(tid, stage)
-        if err:
-            raise ValueError("扣减库存 %s 失败：%s" % (tid, err))
-        deducted.append({"id": tid, "name": row["name"], "used": row["used"]})
+    try:
+        for row in plan:
+            tid = row["id"]
+            found = shelf.find(tid)
+            if found is None:
+                raise ValueError("找不到物品批次 %s，请刷新后重试" % tid)
+            if found.get("virtual"):
+                was_missing = store.get(tid) is None
+                store.materialize(found, shelf)
+                tid = str(found.get("id"))
+                if was_missing and tid not in snap["existing"]:
+                    snap["created"].append(tid)
+                    if _rollback_out is not None:
+                        _rollback_out["created"] = list(snap["created"])
+            elif tid not in snap["existing"] and hasattr(store, "get"):
+                cur = store.get(tid)
+                if cur is not None:
+                    snap["existing"][tid] = copy.deepcopy(cur)
+                    if _rollback_out is not None:
+                        _rollback_out["existing"] = snap["existing"]
+            stage: dict[str, Any] = {
+                "at": stamp,
+                "what": row["what"],
+                "used": row["used"],
+                "by": "master",
+                "note": note,
+                "src": {"manual": "网页热源", **({"stove_id": stove_id} if stove_id else {})},
+                "recorded": stamp,
+            }
+            if row.get("left"):
+                stage["left"] = row["left"]
+            err = store.add_stage(tid, stage)
+            if err:
+                raise ValueError("扣减库存 %s 失败：%s" % (tid, err))
+            deducted.append({"id": tid, "name": row["name"], "used": row["used"]})
+    except Exception:
+        _rollback_fuel_snapshot(store, snap)
+        raise
     return deducted
 
 
@@ -965,107 +1054,190 @@ def heat_action(life, payload: dict, now: datetime.datetime) -> dict[str, Any]:
     if stove not in ("wood", "charcoal"):
         raise ValueError("请选择铁桶柴炉（wood）或小炭炉（charcoal）")
 
-    fuel = _fuel_batches(life, flat)
-    stoves = _active_stoves(life.world, flat, home)
-    active_info = stoves[stove]
-    st_name = "铁桶柴炉" if stove == "wood" else "小炭炉"
+    with _HEAT_LOCK:
+        fuel = _fuel_batches(life, flat)
+        stoves = _active_stoves(life.world, flat, home)
+        active_info = stoves[stove]
+        st_name = "铁桶柴炉" if stove == "wood" else "小炭炉"
 
-    if action == "ignite":
-        amt, minutes, cost_text, label = _resolve_fuel_request(stove, "ignite", payload)
-        if stove == "wood":
-            plan = _plan_wood_deduction(fuel["wood_batches"], float(amt), preferred_id=preferred_id)
-        else:
-            plan = _plan_charcoal_deduction(fuel["charcoal_batches"], int(round(amt)), preferred_id=preferred_id)
+        if action == "ignite":
+            amt, minutes, cost_text, label = _resolve_fuel_request(stove, "ignite", payload)
+            if stove == "wood":
+                plan = _plan_wood_deduction(fuel["wood_batches"], float(amt), preferred_id=preferred_id)
+            else:
+                plan = _plan_charcoal_deduction(fuel["charcoal_batches"], int(round(amt)), preferred_id=preferred_id)
 
-        # 若此时同炉已有手动火在烧，直接在原结束时间基础上顺延，避免浪费燃料
-        if active_info.get("burning") and active_info.get("manual_id"):
-            old_end = parse_time(active_info["end"]) or flat
-            new_end = max(flat, old_end) + datetime.timedelta(minutes=minutes)
-            end_lbl = _fmt_end_clock(flat, new_end)
-            deducted = _commit_fuel_plan(life, flat, plan, "网页手动给%s添料续烧（+%s）" % (st_name, _fmt_dur(minutes)), active_info["manual_id"])
-            rec = life.world.extend_manual_stove(
-                active_info["manual_id"],
-                new_end,
-                fuel_extra=deducted,
-                note="主人手动续烧%s至 %s" % (st_name, end_lbl),
+            # 若此时同炉已有手动火在烧，直接在原结束时间基础上顺延，避免浪费燃料
+            if active_info.get("burning") and active_info.get("manual_id"):
+                old_end = parse_time(active_info["end"]) or flat
+                new_end = max(flat, old_end) + datetime.timedelta(minutes=minutes)
+                end_lbl = _fmt_end_clock(flat, new_end)
+                rb_snap: dict[str, Any] = {}
+                deducted = _commit_fuel_plan(
+                    life, flat, plan,
+                    "网页手动给%s添料续烧（+%s）" % (st_name, _fmt_dur(minutes)),
+                    active_info["manual_id"],
+                    _rollback_out=rb_snap,
+                )
+                try:
+                    rec = life.world.extend_manual_stove(
+                        active_info["manual_id"],
+                        new_end,
+                        fuel_extra=deducted,
+                        note="主人手动续烧%s至 %s" % (st_name, end_lbl),
+                    )
+                    if rec is None:
+                        raise ValueError("手动炉火记录已失效，未能续烧%s" % st_name)
+                except Exception:
+                    _rollback_fuel_snapshot(life.things, rb_snap)
+                    raise
+                _record_master_fire_event(life, flat, stove, "给%s添了%s续烧至 %s" % (st_name, cost_text, end_lbl))
+                logger.info("[super_enhance/heat] 手动续烧 %s +%dmin 扣 %s", st_name, minutes, deducted)
+                return {
+                    "action": "refuel",
+                    "record": rec,
+                    "deducted": deducted,
+                    "message": "已给%s添料续烧 +%s（至 %s，实扣 %s）" % (st_name, _fmt_dur(minutes), end_lbl, cost_text),
+                }
+
+            # 若此时同炉正由世界线烧着（无 manual_id），再添一把燃料按物理接力顺延燃烧时间，避免重叠浪费
+            if active_info.get("burning") and active_info.get("end"):
+                old_end = parse_time(active_info["end"]) or flat
+                base_end = max(flat, old_end)
+                new_end = base_end + datetime.timedelta(minutes=minutes)
+                end_lbl = _fmt_end_clock(flat, new_end)
+                rb_snap = {}
+                deducted = _commit_fuel_plan(
+                    life, flat, plan,
+                    "网页手动给%s添料续烧（+%s）" % (st_name, _fmt_dur(minutes)),
+                    _rollback_out=rb_snap,
+                )
+                try:
+                    rec = life.world.add_manual_stove(
+                        stove,
+                        flat,
+                        new_end,
+                        note="主人手动给%s添料接力续烧" % st_name,
+                        fuel=deducted,
+                        by="master",
+                        paid_start=base_end,
+                    )
+                    if not rec:
+                        raise ValueError("写入手动炉火记录失败，未能续烧%s" % st_name)
+                except Exception:
+                    _rollback_fuel_snapshot(life.things, rb_snap)
+                    raise
+                _record_master_fire_event(life, flat, stove, "往%s里添了%s续烧至 %s" % (st_name, cost_text, end_lbl))
+                logger.info("[super_enhance/heat] 手动添料续烧世界线 %s +%dmin 扣 %s", st_name, minutes, deducted)
+                return {
+                    "action": "refuel",
+                    "record": rec,
+                    "deducted": deducted,
+                    "message": "炉子正烧着，已顺手给%s添料续烧 +%s（至 %s，实扣 %s）" % (st_name, _fmt_dur(minutes), end_lbl, cost_text),
+                }
+
+            end_t = flat + datetime.timedelta(minutes=minutes)
+            end_lbl = _fmt_end_clock(flat, end_t)
+            rb_snap = {}
+            deducted = _commit_fuel_plan(
+                life, flat, plan,
+                "网页手动点燃%s（%s）" % (st_name, _fmt_dur(minutes)),
+                _rollback_out=rb_snap,
             )
-            _record_master_fire_event(life, flat, stove, "给%s添了%s续烧至 %s" % (st_name, cost_text, end_lbl))
-            logger.info("[super_enhance/heat] 手动续烧 %s +%dmin 扣 %s", st_name, minutes, deducted)
+            try:
+                rec = life.world.add_manual_stove(
+                    stove,
+                    flat,
+                    end_t,
+                    note="主人手动点起%s（%s）" % (st_name, label),
+                    fuel=deducted,
+                    by="master",
+                )
+                if not rec:
+                    raise ValueError("写入手动炉火记录失败，未能点燃%s" % st_name)
+            except Exception:
+                _rollback_fuel_snapshot(life.things, rb_snap)
+                raise
+            _record_master_fire_event(life, flat, stove, "亲手用%s点起了%s（烧%s，至 %s）" % (cost_text, st_name, _fmt_dur(minutes), end_lbl))
+            logger.info("[super_enhance/heat] 手动点火 %s %dmin 扣 %s", st_name, minutes, deducted)
+            return {
+                "action": "ignite",
+                "record": rec,
+                "deducted": deducted,
+                "message": "已点燃%s，预计烧 %s（至 %s，实扣 %s）" % (st_name, _fmt_dur(minutes), end_lbl, cost_text),
+            }
+
+        if action == "refuel":
+            amt, minutes, cost_text, _ = _resolve_fuel_request(stove, "refuel", payload)
+            if stove == "wood":
+                plan = _plan_wood_deduction(fuel["wood_batches"], float(amt), preferred_id=preferred_id)
+            else:
+                plan = _plan_charcoal_deduction(fuel["charcoal_batches"], int(round(amt)), preferred_id=preferred_id)
+
+            if active_info.get("burning") and active_info.get("manual_id"):
+                old_end = parse_time(active_info["end"]) or flat
+                new_end = max(flat, old_end) + datetime.timedelta(minutes=minutes)
+                end_lbl = _fmt_end_clock(flat, new_end)
+                rb_snap = {}
+                deducted = _commit_fuel_plan(
+                    life, flat, plan,
+                    "网页手动给%s添料续烧（+%s）" % (st_name, _fmt_dur(minutes)),
+                    active_info["manual_id"],
+                    _rollback_out=rb_snap,
+                )
+                try:
+                    rec = life.world.extend_manual_stove(
+                        active_info["manual_id"],
+                        new_end,
+                        fuel_extra=deducted,
+                        note="主人手动续烧%s至 %s" % (st_name, end_lbl),
+                    )
+                    if rec is None:
+                        raise ValueError("手动炉火记录已失效，未能续烧%s" % st_name)
+                except Exception:
+                    _rollback_fuel_snapshot(life.things, rb_snap)
+                    raise
+                _record_master_fire_event(life, flat, stove, "给%s添了%s续烧至 %s" % (st_name, cost_text, end_lbl))
+                return {
+                    "action": "refuel",
+                    "record": rec,
+                    "deducted": deducted,
+                    "message": "已给%s添料续烧 +%s（至 %s，实扣 %s）" % (st_name, _fmt_dur(minutes), end_lbl, cost_text),
+                }
+
+            # 如果此刻是她们在世界线里点着的火，热源区间从此刻 flat 覆盖续烧至 new_end 防断火且可熄火；
+            # 但 paid_start=base_end 精确记录手动扣柴仅覆盖新续出来的 [base_end, new_end]，[flat, base_end] 仍由世界线段按实扣柴，绝不漏扣
+            old_end = parse_time(active_info["end"]) if active_info.get("burning") and active_info.get("end") else flat
+            base_end = max(flat, old_end) if old_end is not None else flat
+            new_end = base_end + datetime.timedelta(minutes=minutes)
+            end_lbl = _fmt_end_clock(flat, new_end)
+            rb_snap = {}
+            deducted = _commit_fuel_plan(
+                life, flat, plan,
+                "网页手动给%s添料续烧（+%s）" % (st_name, _fmt_dur(minutes)),
+                _rollback_out=rb_snap,
+            )
+            try:
+                rec = life.world.add_manual_stove(
+                    stove,
+                    flat,
+                    new_end,
+                    note="主人手动给%s添料接力续烧" % st_name,
+                    fuel=deducted,
+                    by="master",
+                    paid_start=base_end,
+                )
+                if not rec:
+                    raise ValueError("写入手动炉火记录失败，未能续烧%s" % st_name)
+            except Exception:
+                _rollback_fuel_snapshot(life.things, rb_snap)
+                raise
+            _record_master_fire_event(life, flat, stove, "往%s里添了%s续烧至 %s" % (st_name, cost_text, end_lbl))
             return {
                 "action": "refuel",
                 "record": rec,
                 "deducted": deducted,
                 "message": "已给%s添料续烧 +%s（至 %s，实扣 %s）" % (st_name, _fmt_dur(minutes), end_lbl, cost_text),
             }
-
-        end_t = flat + datetime.timedelta(minutes=minutes)
-        end_lbl = _fmt_end_clock(flat, end_t)
-        deducted = _commit_fuel_plan(life, flat, plan, "网页手动点燃%s（%s）" % (st_name, _fmt_dur(minutes)))
-        rec = life.world.add_manual_stove(
-            stove,
-            flat,
-            end_t,
-            note="主人手动点起%s（%s）" % (st_name, label),
-            fuel=deducted,
-            by="master",
-        )
-        _record_master_fire_event(life, flat, stove, "亲手用%s点起了%s（烧%s，至 %s）" % (cost_text, st_name, _fmt_dur(minutes), end_lbl))
-        logger.info("[super_enhance/heat] 手动点火 %s %dmin 扣 %s", st_name, minutes, deducted)
-        return {
-            "action": "ignite",
-            "record": rec,
-            "deducted": deducted,
-            "message": "已点燃%s，预计烧 %s（至 %s，实扣 %s）" % (st_name, _fmt_dur(minutes), end_lbl, cost_text),
-        }
-
-    if action == "refuel":
-        amt, minutes, cost_text, _ = _resolve_fuel_request(stove, "refuel", payload)
-        if stove == "wood":
-            plan = _plan_wood_deduction(fuel["wood_batches"], float(amt), preferred_id=preferred_id)
-        else:
-            plan = _plan_charcoal_deduction(fuel["charcoal_batches"], int(round(amt)), preferred_id=preferred_id)
-
-        if active_info.get("burning") and active_info.get("manual_id"):
-            old_end = parse_time(active_info["end"]) or flat
-            new_end = max(flat, old_end) + datetime.timedelta(minutes=minutes)
-            end_lbl = _fmt_end_clock(flat, new_end)
-            deducted = _commit_fuel_plan(life, flat, plan, "网页手动给%s添料续烧（+%s）" % (st_name, _fmt_dur(minutes)), active_info["manual_id"])
-            rec = life.world.extend_manual_stove(
-                active_info["manual_id"],
-                new_end,
-                fuel_extra=deducted,
-                note="主人手动续烧%s至 %s" % (st_name, end_lbl),
-            )
-            _record_master_fire_event(life, flat, stove, "给%s添了%s续烧至 %s" % (st_name, cost_text, end_lbl))
-            return {
-                "action": "refuel",
-                "record": rec,
-                "deducted": deducted,
-                "message": "已给%s添料续烧 +%s（至 %s，实扣 %s）" % (st_name, _fmt_dur(minutes), end_lbl, cost_text),
-            }
-
-        # 如果此刻是她们在世界线里点着的火，热源区间从此刻 flat 覆盖续烧至 new_end 防断火且可熄火；
-        # 但 paid_start=base_end 精确记录手动扣柴仅覆盖新续出来的 [base_end, new_end]，[flat, base_end] 仍由世界线段按实扣柴，绝不漏扣
-        old_end = parse_time(active_info["end"]) if active_info.get("burning") and active_info.get("end") else flat
-        base_end = max(flat, old_end) if old_end is not None else flat
-        new_end = base_end + datetime.timedelta(minutes=minutes)
-        end_lbl = _fmt_end_clock(flat, new_end)
-        deducted = _commit_fuel_plan(life, flat, plan, "网页手动给%s添料续烧（+%s）" % (st_name, _fmt_dur(minutes)))
-        rec = life.world.add_manual_stove(
-            stove,
-            flat,
-            new_end,
-            note="主人手动给%s添料接力续烧" % st_name,
-            fuel=deducted,
-            by="master",
-            paid_start=base_end,
-        )
-        _record_master_fire_event(life, flat, stove, "往%s里添了%s续烧至 %s" % (st_name, cost_text, end_lbl))
-        return {
-            "action": "refuel",
-            "record": rec,
-            "deducted": deducted,
-            "message": "已给%s添料续烧 +%s（至 %s，实扣 %s）" % (st_name, _fmt_dur(minutes), end_lbl, cost_text),
-        }
 
     raise ValueError("不支持的操作：%s" % action)

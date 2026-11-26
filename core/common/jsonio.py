@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import tempfile
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
@@ -15,6 +16,33 @@ from astrbot.api import logger
 from . import live
 
 _pending_writes = ContextVar("super_enhance_pending_writes", default=None)
+
+
+def _key(path) -> Path:
+    return Path(path).resolve()
+
+
+def _atomic_write_bytes(target: Path, data: bytes) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(
+        dir=str(target.parent),
+        prefix=".%s." % target.name,
+        suffix=".tmp",
+    )
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        os.replace(tmp, target)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _atomic_write_text(target: Path, body: str, encoding: str = "utf-8") -> None:
+    _atomic_write_bytes(target, body.encode(encoding))
 
 
 @contextmanager
@@ -33,22 +61,15 @@ def staged_writes(*, preview: bool = False):
         replaced = []
         try:
             for path, (body, encoding, quiet) in pending.items():
-                path.parent.mkdir(parents=True, exist_ok=True)
-                temp = path.with_name(path.name + ".tmp")
-                temp.write_text(body, encoding=encoding)
-                os.replace(temp, path)
+                _atomic_write_text(path, body, encoding)
                 replaced.append(path)
-        except Exception:
+        except BaseException:
             for path in reversed(replaced):
                 before = originals[path]
                 if before is None:
                     path.unlink(missing_ok=True)
                 else:
-                    temp = path.with_name(path.name + ".tmp")
-                    temp.write_bytes(before)
-                    os.replace(temp, path)
-            for path in pending:
-                path.with_name(path.name + ".tmp").unlink(missing_ok=True)
+                    _atomic_write_bytes(path, before)
             raise
         for path, (_, _, quiet) in pending.items():
             if not quiet:
@@ -62,8 +83,10 @@ def load(path, default: Any = None, *, encoding: str = "utf-8", strict: bool = F
     文件在、内容坏了：记一条 error 日志，回默认值；strict 时直接抛（调用方要靠这个别拿空的去覆盖坏文件）。"""
     target = Path(path)
     pending = _pending_writes.get()
-    if pending is not None and target in pending:
-        return json.loads(pending[target][0])
+    if pending is not None:
+        key = _key(target)
+        if key in pending:
+            return json.loads(pending[key][0])
     if not target.exists():
         return copy.deepcopy(default)
     try:
@@ -100,7 +123,6 @@ def save(
     """先写同目录临时文件，再原子替换目标；存完告诉网页这块变了（live，quiet 时不告诉：只存了网页上不显示的东西）。
     返回写进去的 JSON 正文。"""
     target = Path(path)
-    temp = target.with_name(target.name + ".tmp")
     body = json.dumps(
         data,
         ensure_ascii=ensure_ascii,
@@ -109,11 +131,9 @@ def save(
     )
     pending = _pending_writes.get()
     if pending is not None:
-        pending[target] = (body, encoding, quiet)
+        pending[_key(target)] = (body, encoding, quiet)
         return body
-    target.parent.mkdir(parents=True, exist_ok=True)
-    temp.write_text(body, encoding=encoding)
-    os.replace(temp, target)
+    _atomic_write_text(target, body, encoding)
     if not quiet:
         live.file_saved(target)
     return body

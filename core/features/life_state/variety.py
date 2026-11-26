@@ -11,9 +11,11 @@
 """
 
 import collections
+import copy
 import datetime
 import random
 import re
+import threading
 from pathlib import Path
 
 from ...common import jsonio
@@ -779,7 +781,7 @@ _NEW_DEFAULT_TEXTS = frozenset((
     "潜到沉了的旧超市、车站或渔具仓外沿，捞回一批废铜缆线、铅坠或未开封旧铁盒带回船屋给船长瞧",
     "去港边检修系留的小潜艇舱盖与电量，看看海况顺便盘算拉船长挑个点开出去探一趟深水区",
     "跟船长一起开打捞船或小潜艇出海深潜打捞",
-    "趁好天去坡上柴料场、船坞或林边拉回成批大圆木和粗硬木，花大半天锯劈并码满棚下柴垛",
+    "趁好天去坡上柴料场、船坞或林边拉回百来公斤大圆木和粗硬木，花大半天锯劈并码满棚下大柴垛",
     "趁白天把船屋和仓棚里堆着的未劈大圆木一口气锯断劈成硬木柴垛码满棚下，顺手烧炉夹炭",
     "去煮盐棚扎扎实实帮大半天大工挑海水添柴，一口气换回一大罐闷炭和工钱扛回船屋",
     "划小船把沉没旧街或半沉大楼一整片仔细扫透打捞，满载废铜铁件和旧物拖回仓棚分类归置",
@@ -1024,32 +1026,62 @@ _FORCE_ZERO_CONGYU_TEXTS = frozenset({
 
 
 def normalize_pools(data, *, merge_new_defaults: bool = False) -> dict:
-    """读进来的池子：哪个池子缺了或坏了就用默认的那份；单条坏了就跳过。merge_new_defaults=True 时仅补入 _NEW_DEFAULT_TEXTS 白名单新条并同步灵体丛雨禁用外人条目置零。"""
+    """读进来的池子：哪个池子缺了或坏了就用默认的那份；单条坏了就跳过。merge_new_defaults=True 时仅补入尚未见过的 _NEW_DEFAULT_TEXTS 白名单新条并同步灵体丛雨禁用外人条目置零。"""
     out = default_pools()
     if not isinstance(data, dict):
         return out
+    seen_defaults: set[str] = set()
+    for meta_key in ("_seen_defaults", "_dismissed_defaults"):
+        raw_meta = data.get(meta_key)
+        if isinstance(raw_meta, (list, tuple, set)):
+            seen_defaults.update(str(x) for x in raw_meta if x)
+    congyu_zero_done: set[str] = set()
+    raw_cz = data.get("_congyu_zero_done")
+    if isinstance(raw_cz, (list, tuple, set)):
+        congyu_zero_done.update(str(x) for x in raw_cz if x)
+    defaults_by_kind = {kind: list(out[kind]) for kind in POOL_KINDS}
+    all_texts: set[str] = set()
+    custom_kinds: set[str] = set()
     for kind in POOL_KINDS:
         rows = data.get(kind)
         if not isinstance(rows, list):
+            for d_item in out[kind]:
+                all_texts.add(d_item["text"])
             continue
+        custom_kinds.add(kind)
         clean, seen = [], set()
         for row in rows:
             try:
                 item = clean_pool_item(kind, row)
             except ValueError:
                 continue
-            if merge_new_defaults and item["text"] in _FORCE_ZERO_CONGYU_TEXTS and isinstance(item.get("w"), dict):
+            # 仅在首次迁移（未记录进 _congyu_zero_done）时把旧配置中 12 条外人条目丛雨默认清零；
+            # 一旦用户在网页手动修改并保存过，则完全尊重用户修改不再强行清零
+            if (
+                merge_new_defaults
+                and item["text"] in _FORCE_ZERO_CONGYU_TEXTS
+                and item["text"] not in congyu_zero_done
+                and isinstance(item.get("w"), dict)
+            ):
                 if float(item["w"].get("丛雨") or 0) > 0:
                     item["w"] = dict(item["w"], 丛雨=0.0)
             if item["text"] not in seen:
                 seen.add(item["text"])
+                all_texts.add(item["text"])
                 clean.append(item)
-        if merge_new_defaults:
-            for d_item in out[kind]:
-                if d_item["text"] in _NEW_DEFAULT_TEXTS and d_item["text"] not in seen:
-                    seen.add(d_item["text"])
-                    clean.append(d_item)
         out[kind] = clean
+    if merge_new_defaults:
+        for kind in POOL_KINDS:
+            if kind not in custom_kinds:
+                continue
+            clean = out[kind]
+            seen = {item["text"] for item in clean}
+            for d_item in defaults_by_kind[kind]:
+                t = d_item["text"]
+                if t in _NEW_DEFAULT_TEXTS and t not in seen_defaults and t not in seen and t not in all_texts:
+                    seen.add(t)
+                    all_texts.add(t)
+                    clean.append(d_item)
     return out
 
 
@@ -1203,11 +1235,20 @@ def build_live_context(
                 h_snow_acc = sum(float(ph.get("rain") or 0.0) for ph in h_past_24 if ph.get("snow")) + h_snow_mm
                 h_mid_rain_cnt = sum(1 for ph in h_past_24 if float(ph.get("rain") or 0.0) >= 2.5 and not ph.get("snow"))
                 h_temp = float(h["temp"]) if h.get("temp") is not None else 18.0
+                h_low_tide = False
+                if has_tide:
+                    try:
+                        from . import tide as _tide_mod
+                        h_low_tide = _tide_mod.has_low_tide_in_window(span_a, span_b, str(home or "").strip())
+                    except Exception:
+                        h_low_tide = False
                 win_hour_ctxs.append({
                     "dt": span_a,
                     "end_dt": span_b,
                     "hour": h_dt.hour,
                     "has_weather": True,
+                    "has_tide": has_tide,
+                    "has_low_tide": h_low_tide,
                     "max_rain": h_rain,
                     "soon_rain": max(float(ph.get("rain") or 0.0) for ph in h_ahead_2),
                     "max_liquid_rain": 0.0 if h_snow else h_rain,
@@ -1304,6 +1345,7 @@ def build_live_context(
             cabin_item_count = 0
             day_text_fn = weather_of if weather_of is not None else (lambda _d: "多云")
             home_at_fn = world.home_at if world is not None else (lambda _m: ctx["home"])
+            fire_lit_fn = store._fire_lit_fn(flat_start) if hasattr(store, "_fire_lit_fn") else None
 
             for item in local_vals:
                 if things_mod.is_ended(item) is not None:
@@ -1323,7 +1365,7 @@ def build_live_context(
                     info = things_mod.measure(item)
                     charcoal_g += float((info or {}).get("left") or 0.0)
                     continue
-                if weathering.usable_stove_wood(item, flat_start, day_text_fn, home_at_fn):
+                if weathering.usable_stove_wood(item, flat_start, day_text_fn, home_at_fn, fire_lit_fn=fire_lit_fn):
                     st_info = things_mod.stock(item)
                     qty = float(st_info.get("left") or 0.0) if st_info is not None else 8.0
                     wood_kg += qty
@@ -1459,9 +1501,10 @@ def build_live_context(
     # 钱匣余额（tin_box_yuan，缺失保持 None 绝不静默兜底 0.0）与距上次打捞/卖废铜天数（近 7 天，纯结构化）
     if money is None and world is not None and getattr(world, "root", None) is not None:
         try:
-            if (Path(world.root) / "money.json").exists():
+            money_path = Path(world.root) / "money.json"
+            if money_path.exists():
                 from .money import MoneyBook
-                money = MoneyBook(world.root)
+                money = MoneyBook(money_path)
         except Exception:
             money = None
     snap = None
@@ -1813,7 +1856,7 @@ def _eval_wx_only(item: dict, grp: str, wx_ctx: dict) -> tuple[list[tuple[str, s
 
 
 def wx_valid_spans(item: dict, ctx: dict | None) -> list[tuple[datetime.datetime, datetime.datetime]] | None:
-    """计算条目在当前窗口 ctx['win_hour_ctxs'] 中真正满足气象门禁的合并时段 [(start, end), ...]。"""
+    """计算条目在当前窗口 ctx['win_hour_ctxs'] 中真正满足气象（含低潮交集）门禁的合并时段 [(start, end), ...]。"""
     if not isinstance(ctx, dict) or not ctx.get("has_weather"):
         return None
     hour_ctxs = ctx.get("win_hour_ctxs")
@@ -1821,10 +1864,13 @@ def wx_valid_spans(item: dict, ctx: dict | None) -> list[tuple[datetime.datetime
         return None
     text = str(item.get("text") or "")
     grp = str(item.get("group") or "") or _DEFAULT_GROUP.get(text, "")
-    if not _item_has_wx_constraint(item, grp):
+    need_tide = bool(item.get("low_tide") and ctx.get("has_tide"))
+    if not _item_has_wx_constraint(item, grp) and not need_tide:
         return None
     spans: list[tuple[datetime.datetime, datetime.datetime]] = []
     for h_ctx in hour_ctxs:
+        if need_tide and not h_ctx.get("has_low_tide"):
+            continue
         h_gates, _m, _n = _eval_wx_only(item, grp, h_ctx)
         if not h_gates:
             a = h_ctx["dt"]
@@ -2121,10 +2167,12 @@ def _eval_gates(
     mult = mood_mult
     if ctx.get("has_weather"):
         hour_ctxs = ctx.get("win_hour_ctxs")
-        if isinstance(hour_ctxs, list) and hour_ctxs and _item_has_wx_constraint(item, grp):
+        need_tide_intersect = bool(item.get("low_tide") and ctx.get("has_tide"))
+        if isinstance(hour_ctxs, list) and hour_ctxs and (_item_has_wx_constraint(item, grp) or need_tide_intersect):
             win_total_sec = sum(max(0.0, (hc["end_dt"] - hc["dt"]).total_seconds()) for hc in hour_ctxs)
             min_valid_sec = min(1800.0, win_total_sec * 0.5) if win_total_sec > 0 else 0.0
             valid_sec = 0.0
+            wx_only_valid_sec = 0.0
             best_mult = 1.0
             best_notes: list[str] = []
             first_hour_gates: list[tuple[str, str, str]] = []
@@ -2132,15 +2180,19 @@ def _eval_gates(
                 hg, hm, hn = _eval_wx_only(item, grp, hc)
                 dur = max(0.0, (hc["end_dt"] - hc["dt"]).total_seconds())
                 if not hg:
-                    valid_sec += dur
-                    if hm >= best_mult:
-                        best_mult = hm
-                        best_notes = hn
+                    wx_only_valid_sec += dur
+                    if (not need_tide_intersect) or hc.get("has_low_tide"):
+                        valid_sec += dur
+                        if hm >= best_mult:
+                            best_mult = hm
+                            best_notes = hn
                 elif not first_hour_gates:
                     first_hour_gates = hg
             if valid_sec >= min_valid_sec and valid_sec > 0:
                 mult *= best_mult
                 notes.extend(best_notes)
+            elif need_tide_intersect and ctx.get("has_low_tide") and wx_only_valid_sec > 0:
+                gates.append(("low_tide_wx_mismatch", "hard", "退潮低位时段与合适天气窗口没有重叠"))
             else:
                 wg, _wm, _wn = _eval_wx_only(item, grp, ctx)
                 gates.extend(wg or first_hour_gates)
@@ -2330,7 +2382,6 @@ _FOIL_DISCOVER_TEXT = {
     "wx_sunny_cloud": "到甲板一看天色阴沉返潮、没日头晒不透",
     "wx_sunny_wind": "探头见外头风浪太大、摆出去怕被吹乱打湿",
     "wx_dry_rain": "探头见外头落起雨、不便久待",
-    "wx_dry_wind": "探头见外头风浪太大、不便出海或上甲板",
 }
 FOIL_WINDOW_CHANCE = 0.25
 MAX_FOILED_PER_DAY = 1
@@ -2348,7 +2399,7 @@ def foil_reason(item: dict, ctx: dict | None, groups: dict | None = None, *, nam
     code = gates[0][0]
     if code in ("wx_calm_bad", "wx_dive_bad", "wx_dive_murky", "wx_sub_bad"):
         return _FOIL_DISCOVER_TEXT[code]
-    if code in ("wx_sunny_rain", "wx_sunny_cloud", "wx_sunny_wind", "wx_dry_rain", "wx_dry_wind"):
+    if code in ("wx_sunny_rain", "wx_sunny_cloud", "wx_sunny_wind", "wx_dry_rain"):
         if grp in _FOIL_DRY_GROUPS:
             return _FOIL_DISCOVER_TEXT[code]
     return ""
@@ -2382,33 +2433,52 @@ class PoolStore:
     def __init__(self, path) -> None:
         self.path = Path(path)
         self._cache: tuple[int, dict] | None = None
+        self._lock = threading.RLock()
 
     def custom(self) -> bool:
-        return self.path.exists()
+        with self._lock:
+            return self.path.exists()
 
     def load(self) -> dict:
-        if not self.path.exists():
-            self._cache = None
-            return default_pools()
-        version = self.path.stat().st_mtime_ns
-        if self._cache is not None and self._cache[0] == version:
-            return self._cache[1]
-        try:
-            data = normalize_pools(jsonio.load(self.path, {}), merge_new_defaults=True)
-        except Exception:
-            return default_pools()
-        self._cache = (version, data)
-        return data
+        with self._lock:
+            if not self.path.exists():
+                self._cache = None
+                return default_pools()
+            version = self.path.stat().st_mtime_ns
+            if self._cache is not None and self._cache[0] == version:
+                return copy.deepcopy(self._cache[1])
+            try:
+                data = normalize_pools(jsonio.load(self.path, {}), merge_new_defaults=True)
+            except Exception:
+                return default_pools()
+            self._cache = (version, data)
+            return copy.deepcopy(data)
 
     def save(self, pools: dict) -> None:
-        data = {kind: list(pools.get(kind) or []) for kind in POOL_KINDS}
-        jsonio.save(self.path, data, indent=1)
-        self._cache = (self.path.stat().st_mtime_ns, normalize_pools(data, merge_new_defaults=True))
+        with self._lock:
+            prev_seen: set[str] = set()
+            if self.path.exists():
+                try:
+                    old_raw = jsonio.load(self.path, {})
+                    if isinstance(old_raw, dict):
+                        for meta_key in ("_seen_defaults", "_dismissed_defaults"):
+                            vals = old_raw.get(meta_key)
+                            if isinstance(vals, (list, tuple, set)):
+                                prev_seen.update(str(x) for x in vals if x)
+                except Exception:
+                    pass
+            data = {kind: list(pools.get(kind) or []) for kind in POOL_KINDS}
+            data["_seen_defaults"] = sorted(prev_seen | set(_NEW_DEFAULT_TEXTS))
+            data["_congyu_zero_done"] = sorted(set(_FORCE_ZERO_CONGYU_TEXTS))
+            jsonio.save(self.path, data, indent=1)
+            normed = normalize_pools(data, merge_new_defaults=True)
+            self._cache = (self.path.stat().st_mtime_ns, normed)
 
     def reset(self) -> None:
-        if self.path.exists():
-            self.path.unlink()
-        self._cache = None
+        with self._lock:
+            if self.path.exists():
+                self.path.unlink()
+            self._cache = None
 
 
 TONES = (
@@ -2596,7 +2666,7 @@ def drawn_days(
                     )
                     if mine:
                         out.setdefault(text if exact else ck, back)
-        if used_world and day < "2026-11-16":
+        if used_world and day >= "2026-11-16":
             continue
         record = (history or {}).get(day)
         if not isinstance(record, dict):

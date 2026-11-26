@@ -20,6 +20,7 @@ from .world import fmt_time
 
 CONFIG_FILE = "sleep_webhook.json"
 ROUTE_MARK = "_se_sleep_webhook"
+MAX_BODY_BYTES = 16384
 
 _SLEEP_WORDS = frozenset({
     "sleep", "asleep", "resting", "on", "start", "1", "true", "睡觉", "开启", "睡眠",
@@ -169,8 +170,34 @@ class SleepWebhook:
         webhook = self
 
         async def endpoint(request):
+            # 先鉴权，未通过直接 404，绝不先读请求体防大包打爆内存
+            if not webhook.check_token(request.headers):
+                return PlainTextResponse("Not Found", status_code=404)
             action = str(request.path_params.get("action") or "")
-            body = await request.body() if request.method in ("POST", "PUT") else b""
+            body = b""
+            if request.method in ("POST", "PUT"):
+                raw_cl = request.headers.get("content-length") or request.headers.get("Content-Length")
+                if raw_cl is not None and str(raw_cl).strip():
+                    try:
+                        content_len = int(str(raw_cl).strip())
+                    except ValueError:
+                        return JSONResponse({"ok": False, "error": "invalid content-length"}, status_code=400)
+                    if content_len > MAX_BODY_BYTES:
+                        return JSONResponse({"ok": False, "error": "payload too large"}, status_code=413)
+                stream_fn = getattr(request, "stream", None)
+                if callable(stream_fn):
+                    chunks = bytearray()
+                    async for chunk in stream_fn():
+                        if not chunk:
+                            continue
+                        if len(chunks) + len(chunk) > MAX_BODY_BYTES:
+                            return JSONResponse({"ok": False, "error": "payload too large"}, status_code=413)
+                        chunks.extend(chunk)
+                    body = bytes(chunks)
+                else:
+                    body = await request.body()
+                    if len(body) > MAX_BODY_BYTES:
+                        return JSONResponse({"ok": False, "error": "payload too large"}, status_code=413)
             code, payload = await webhook.handle_http(
                 action, request.method, request.headers, request.query_params, body
             )

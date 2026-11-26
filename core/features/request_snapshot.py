@@ -16,7 +16,7 @@ from typing import Any
 
 from astrbot.api import logger
 
-from ..common import jsonio, snapgit
+from ..common import jsonio, snapgit, timeutil
 
 SNAPSHOT_DIR_NAME = "request_snapshots"
 INDEX_NAME = "index.json"
@@ -101,10 +101,11 @@ def build_snapshot(event: Any, req: Any, kind: str = "") -> dict:
     prompt = getattr(req, "prompt", None) or ""
     image_urls = [str(u)[:120] for u in (getattr(req, "image_urls", None) or [])]
     audio_urls = [str(u)[:120] for u in (getattr(req, "audio_urls", None) or [])]
-    now = time.time()
+    now_dt = timeutil.now()
+    now = now_dt.timestamp()
     return {
         "ts": now,
-        "time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now)),
+        "time": now_dt.strftime("%Y-%m-%d %H:%M:%S"),
         "umo": str(getattr(event, "unified_msg_origin", "") or ""),
         "kind": kind,
         "cid": str(getattr(conv, "cid", "") or "") if conv else "",
@@ -317,7 +318,7 @@ class RequestSnapshotStore:
 
     def close(self) -> None:
         """插件卸载时：排着的照样存完，不再收新的。"""
-        self.git.worker.shutdown(wait=False)
+        self.git.close()
 
 
 class RequestSnapshotFeature:

@@ -1,5 +1,6 @@
 """上下文工具：/usage 查看上下文占用，/compact 立即压缩历史（/compact v2 见 compact_v2.py）。"""
 
+import copy
 import json
 import re
 import time
@@ -128,7 +129,7 @@ class ContextToolsFeature:
 
     @classmethod
     def _strip_lossless(cls, history: list) -> list:
-        """无损压缩：只丢掉思考链与工具结果，对话原文一字不改。"""
+        """无损压缩：只丢掉思考链与工具结果，对话原文、精简时间戳（含系统代发提示）与多模态图片片段全部保留。"""
         out = []
         for item in history:
             if not isinstance(item, dict):
@@ -138,6 +139,7 @@ class ContextToolsFeature:
                 continue
             content = item.get("content")
             pieces = []
+            media_parts = []
             if isinstance(content, str):
                 pieces.append(content)
             elif isinstance(content, list):
@@ -145,21 +147,54 @@ class ContextToolsFeature:
                     if not isinstance(part, dict):
                         continue
                     ptype = str(part.get("type") or "text").lower()
-                    if ptype not in ("text", "plain"):
+                    if ptype == "think":
                         continue
-                    value = str(part.get("text") or "")
-                    if value:
-                        pieces.append(value)
+                    if ptype in ("text", "plain"):
+                        value = str(part.get("text") or "")
+                        if value:
+                            pieces.append(value)
+                    else:
+                        media_parts.append(copy.deepcopy(part))
             text = "\n".join(pieces).strip()
-            if not text:
+            if not text and not media_parts:
                 continue
-            stamp = cls._stamp_of(text)
+
+            stamp_label = ""
+            stamp_full = ""
+            system_notes: list[str] = []
+            for match in _REMINDER_RE.finditer(text):
+                rem_body = match.group("body") or ""
+                if not stamp_full:
+                    sent_hit = text_utils.SENT_TIME_RE.search(rem_body)
+                    cur_hit = text_utils.CURRENT_TIME_RE.search(rem_body)
+                    if sent_hit:
+                        stamp_label = "Sent at"
+                        stamp_full = "%s-%s-%s %s:%s" % sent_hit.groups()
+                    elif cur_hit:
+                        stamp_label = "Current datetime"
+                        stamp_full = "%s-%s-%s %s:%s" % cur_hit.groups()
+                if text_utils.NOTE_MARK in rem_body:
+                    clean_note = " ".join(rem_body.split())
+                    if clean_note and clean_note not in system_notes:
+                        system_notes.append(clean_note)
+
             body = _REMINDER_RE.sub("", text).strip()
-            if not body:
+            if not body and not media_parts:
                 continue
-            if stamp:
-                body = "[%s] %s" % (stamp, body)
-            out.append({"role": role, "content": [{"type": "text", "text": body}]})
+
+            parts: list[dict] = []
+            if body:
+                parts.append({"type": "text", "text": body})
+            if media_parts:
+                parts.extend(media_parts)
+            if stamp_full:
+                parts.append({
+                    "type": "text",
+                    "text": "<system_reminder>%s: %s</system_reminder>" % (stamp_label or "Sent at", stamp_full),
+                })
+            for note in system_notes:
+                parts.append({"type": "text", "text": "<system_reminder>%s</system_reminder>" % note})
+            out.append({"role": role, "content": parts})
         return out
 
     @staticmethod
@@ -193,39 +228,45 @@ class ContextToolsFeature:
                 yield result
             return
         umo, cid, conv = await self._current_conv(event)
-        if not conv:
+        if not conv or not cid:
             yield event.plain_result("没有会话")
             return
-        history = self._history_of(conv)
-        if len(history) <= 2:
-            yield event.plain_result("历史已经很短，不需要压缩")
-            return
 
-        before_tokens = int(conv.token_usage or 0)
-        before_chars = self._count_chars(history)
+        mgr = self.context.conversation_manager
         t0 = time.time()
+        async with history_io.hold_lock(cid):
+            latest_conv = await mgr.get_conversation(umo, cid)
+            if latest_conv is not None:
+                conv = latest_conv
+            history = self._history_of(conv)
+            if len(history) <= 2:
+                yield event.plain_result("历史已经很短，不需要压缩")
+                return
 
-        new_history = self._strip_lossless(history)
-        if not new_history:
-            yield event.plain_result("压缩没有产出内容，历史未改动")
-            return
-        after_chars = self._count_chars(new_history)
-        if after_chars >= before_chars:
-            yield event.plain_result(
-                "没有可精简的内容（%d -> %d 字符），历史未改动"
-                % (before_chars, after_chars)
-            )
-            return
+            before_tokens = int(conv.token_usage or 0)
+            before_chars = self._count_chars(history)
 
-        new_tokens = self._estimate_tokens(new_history)
-        try:
-            await self.context.conversation_manager.update_conversation(
-                umo, cid, history=new_history, token_usage=new_tokens
-            )
-        except Exception as e:
-            logger.error("[super_enhance/context] save failed: %s", e, exc_info=True)
-            yield event.plain_result("写回失败 " + str(e))
-            return
+            new_history = self._strip_lossless(history)
+            if not new_history:
+                yield event.plain_result("压缩没有产出内容，历史未改动")
+                return
+            after_chars = self._count_chars(new_history)
+            if after_chars >= before_chars:
+                yield event.plain_result(
+                    "没有可精简的内容（%d -> %d 字符），历史未改动"
+                    % (before_chars, after_chars)
+                )
+                return
+
+            new_tokens = self._estimate_tokens(new_history)
+            try:
+                await mgr.update_conversation(
+                    umo, cid, history=new_history, token_usage=new_tokens
+                )
+            except Exception as e:
+                logger.error("[super_enhance/context] save failed: %s", e, exc_info=True)
+                yield event.plain_result("写回失败 " + str(e))
+                return
 
         yield event.plain_result(
             "压缩完成\n"

@@ -97,6 +97,9 @@ class BotDialogFeature:
         self._pending_report: dict[tuple, dict] = {}
         # 跨会话记录里最近一次写过的「我上一句」：key = (本机器人平台, 对方 bot 的 QQ)
         self._last_own_line: dict[tuple, str] = {}
+        # 多主人场景：记住各平台最近开口的主人，便于跨会话记录与 tell 对齐
+        self._last_master: dict[str, str] = {}
+        self._last_master_any: str = ""
 
     @property
     def enabled(self) -> bool:
@@ -200,6 +203,8 @@ class BotDialogFeature:
             # 主人开口 = 新一轮开始：所有平台的计数一起清零。
             # 只清当前平台的话，主人在 A 平台派活、B 平台那边还会按旧轮次直接静默。
             self._state.clear()
+            self._last_master[bot] = sender
+            self._last_master_any = sender
             return
         if sender not in self.bot_ids:
             return
@@ -261,6 +266,67 @@ class BotDialogFeature:
 
     # ---------- 写回主人会话 ----------
 
+    def _active_master_id(self, bot: str = "", other_id: str = "", event=None) -> str:
+        """多主人会话对齐：优先用当前会话主人 / 待回报委托主人 / 最近活跃主人，最后兜底 masters[0]。"""
+        masters = self.master_ids
+        if not masters:
+            return ""
+        if event is not None:
+            ev_sender = self._identity(event).sender
+            if ev_sender in masters:
+                return ev_sender
+        if bot and other_id:
+            pending = self._pending_report.get((bot, other_id))
+            if pending:
+                m_umo = str(pending.get("master_umo") or "").strip()
+                m_id = m_umo.rsplit(":", 1)[-1].strip() if ":" in m_umo else ""
+                if m_id in masters:
+                    return m_id
+        if bot:
+            recent_bot = self._last_master.get(bot, "")
+            if recent_bot in masters:
+                return recent_bot
+        if self._last_master_any in masters:
+            return self._last_master_any
+        return masters[0]
+
+    def _target_master_umo(self, bot: str, other_id: str = "") -> tuple[str, str]:
+        """返回 (对齐后的主人 QQ, 目标会话 UMO)；若有待回报委托，优先回写至派活的那个会话。"""
+        if bot and other_id:
+            pending = self._pending_report.get((bot, other_id))
+            if pending and pending.get("master_umo"):
+                m_umo = str(pending["master_umo"]).strip()
+                m_id = m_umo.rsplit(":", 1)[-1].strip() if ":" in m_umo else self._active_master_id(bot, other_id)
+                return m_id, m_umo
+        m_id = self._active_master_id(bot, other_id)
+        return m_id, ("%s:FriendMessage:%s" % (bot, m_id)) if m_id else ""
+
+    @staticmethod
+    def _is_send_success(tool_result) -> bool:
+        """校验 send_message_to_user 是否真正成功发出（与 raw_log / cross_session 对齐）。"""
+        if tool_result is None:
+            return False
+        if getattr(tool_result, "isError", False) or (
+            isinstance(tool_result, dict) and tool_result.get("isError")
+        ):
+            return False
+        if isinstance(tool_result, str):
+            result_text = tool_result
+        else:
+            content = (
+                tool_result.get("content", [])
+                if isinstance(tool_result, dict)
+                else getattr(tool_result, "content", [])
+            ) or []
+            result_text = "\n".join(
+                str(part.get("text", "") if isinstance(part, dict) else getattr(part, "text", ""))
+                for part in content
+            )
+        text = str(result_text or "")
+        if text.lstrip().lower().startswith("error"):
+            return False
+        return "Message sent to session " in text
+
     async def record_exchange(self, event) -> None:
         """把这次 bot↔bot 来回写成一条纯文本记录，追加到主人和本机器人的会话历史。
 
@@ -282,15 +348,18 @@ class BotDialogFeature:
         if not bot or not identity.peer_bot or not masters:
             return
 
+        master_id, target_umo = self._target_master_umo(bot, sender.strip())
+        if not master_id or not target_umo:
+            return
+
         try:
-            record = await self._build_record(event, bot, masters[0], sender)
+            record = await self._build_record(event, bot, master_id, sender, target_umo=target_umo)
         except Exception:
             logger.error("[super_enhance/bot_dialog] 生成跨会话记录失败", exc_info=True)
             return
         if not record:
             return
 
-        target_umo = "%s:FriendMessage:%s" % (bot, masters[0])
         try:
             await self._append_to_history(target_umo, record)
         except Exception:
@@ -301,34 +370,49 @@ class BotDialogFeature:
 
     # ---------- 委托回报 ----------
 
-    async def note_delegation(self, event, tool, tool_args) -> None:
+    async def note_delegation(self, event, tool, tool_args, tool_result=None) -> None:
         """主人在会话里派活、她真的把话发给另一个机器人 → 记一条待回报。"""
         if not self.enabled or not self.delegation_enabled or self.context is None:
             return
         if str(getattr(tool, "name", "") or "") != "send_message_to_user":
             return
+        if not self._is_send_success(tool_result):
+            return
         identity = self._identity(event)
         sender, platform = identity.sender, identity.bot
         if sender not in self.master_ids or not platform:
             return
+        self._last_master[platform] = sender
+        self._last_master_any = sender
         master_umo = identity.umo  # 回报发回主人派活的这个会话（10-28 阶段5 误删了这一行）
 
         session = str((tool_args or {}).get("session") or "").strip()
-        parts = session.split(":", 2)
-        if len(parts) != 3:
+        if not session:
             return
-        target_platform, _msg_type, target_id = (p.strip() for p in parts)
+        if ":" in session:
+            parts = session.split(":", 2)
+            if len(parts) != 3:
+                return
+            target_platform, _msg_type, target_id = (p.strip() for p in parts)
+        else:
+            # 兼容只传对方机器人纯 QQ 号的写法
+            target_platform, target_id = platform, session
         if target_platform != platform or target_id not in self.bot_ids:
             return
 
         key = (platform, target_id)
+        old = self._pending_report.get(key)
+        old_job_id = old.get("fallback_job") if isinstance(old, dict) else None
         settle = self.fallback_seconds
-        self._pending_report[key] = {
+        entry = {
             "master_umo": master_umo,
             "at": time.time(),
             "deadline": time.time() + settle,
             "fallback_job": None,
         }
+        self._pending_report[key] = entry
+        if old_job_id:
+            await self._delete_job(old_job_id)
         logger.info(
             "[super_enhance/bot_dialog] 记下委托：%s → %s（回报到 %s）",
             platform,
@@ -340,7 +424,10 @@ class BotDialogFeature:
         )
         job_id = getattr(job, "job_id", None)
         if job_id:
-            self._pending_report[key]["fallback_job"] = job_id
+            if self._pending_report.get(key) is entry:
+                entry["fallback_job"] = job_id
+            else:
+                await self._delete_job(job_id)
 
     async def _on_delegation_reply(
         self, bot: str, other_id: str, fallback_umo: str
@@ -455,7 +542,7 @@ class BotDialogFeature:
             logger.debug("[super_enhance/bot_dialog] 删除回报任务失败：%s", job_id)
 
     async def _build_record(
-        self, event, bot: str, master_id: str, other_id: str
+        self, event, bot: str, master_id: str, other_id: str, *, target_umo: str = ""
     ) -> str:
         conv_mgr = getattr(self.context, "conversation_manager", None)
         if conv_mgr is None:
@@ -484,12 +571,13 @@ class BotDialogFeature:
         own_label = self._label(own_id)
         other_label = self._label(other_id)
         own_line = "%s → %s：「%s」" % (own_label, other_label, sent_text) if sent_text else ""
+        master_session = target_umo or ("%s:FriendMessage:%s" % (bot, master_id))
         if own_line and not self._fresh(sent_at):
             # 那句是上回聊的时候说的（超过 window_minutes，或者没带时间），不算这次的来回：
             # 不然会按现在的时间再记一遍（10-23 22:38 把 10-17 22:47 那句又记了一次）
             own_line = ""
         elif own_line and await self._recorded(
-            conv_mgr, "%s:FriendMessage:%s" % (bot, master_id), own_line, sent_at
+            conv_mgr, master_session, own_line, sent_at
         ):
             # 主人会话里已经记过这句（上面内存里那份重启就没了）
             own_line = ""
@@ -587,9 +675,10 @@ class BotDialogFeature:
                 # 内容相似但确实是新一轮往来的，照写不误。
                 logger.info("[super_enhance/bot_dialog] 同一条记录连着写两次，跳过（%s）", umo)
                 return
+        stamp = "<system_reminder>Sent at: %s</system_reminder>" % timeutil.local_stamp(tz=self._zone())
         await history_io.append(
             conv_mgr, umo,
-            {"role": "assistant", "content": [{"type": "text", "text": text}]},
+            {"role": "assistant", "content": [{"type": "text", "text": text}, {"type": "text", "text": stamp}]},
             cid=cid,
         )
         logger.info("[super_enhance/bot_dialog] 已把跨会话记录写进 %s", umo)
@@ -609,14 +698,14 @@ class BotDialogFeature:
         others = [b for b in dict.fromkeys(bots or []) if b and b != own]
         if own not in (bots or []) or len(others) != 1:
             return "认不出该告诉谁（需要正好两个角色），这次没有传话。"
-        masters = self.master_ids
-        if not masters:
+        master_id = self._active_master_id(own, event=event)
+        if not master_id:
             return "没有配置主人 QQ 号，这次没有传话。"
         other = others[0]
         own_name, other_name = label_for(own), label_for(other)
         record = "【%s要带给%s的话】%s\n「%s」" % (own_name, other_name, self._now_text(), text)
         try:
-            await self._append_to_history("%s:FriendMessage:%s" % (other, masters[0]), record)
+            await self._append_to_history("%s:FriendMessage:%s" % (other, master_id), record)
         except Exception as e:
             logger.error("[super_enhance/bot_dialog] tell 写入失败", exc_info=True)
             return "没传过去：%s" % e
@@ -640,18 +729,28 @@ class BotDialogFeature:
         ids = self.master_ids
         return ids[0] if ids else ""
 
+    def _enabled_platforms(self) -> list[str]:
+        """启用的平台名列表：优先取 tool_bots_fn，否则回退到身份表里的平台名（而非 QQ 号列表）。"""
+        enabled = self.tool_bots_fn() if self.tool_bots_fn else None
+        return list(enabled) if enabled else list(self.bots.accounts.keys())
+
     def others(self, own: str) -> list[tuple[str, str]]:
-        enabled = self.tool_bots_fn() if self.tool_bots_fn else self.bot_ids
+        enabled = self._enabled_platforms()
+        accounts = self.accounts()
         return [
-            (self.bots.label_for(bot), session_for(own, self.accounts()[bot]))
-            for bot in dict.fromkeys(enabled or []) if bot and bot != own and self.accounts().get(bot)
+            (self.bots.label_for(bot), session_for(own, accounts[bot]))
+            for bot in dict.fromkeys(enabled or []) if bot and bot != own and accounts.get(bot)
         ]
 
     def send_text(self, own: str, umo: str, *, cron: bool = False) -> str:
-        others, master = self.others(own), self.master_id()
+        others, masters = self.others(own), self.master_ids
         where = "当前会话"
-        if master and umo == session_for(own, master):
-            where = "和主人的私聊"
+        current_master = ""
+        for mid in masters:
+            if umo == session_for(own, mid):
+                where = "和主人的私聊"
+                current_master = mid
+                break
         for label, session in others:
             if umo == session:
                 where = "和%s的私聊" % label
@@ -666,8 +765,13 @@ class BotDialogFeature:
             "session 只能填下面这几个，照抄，不要自己拼：",
         ]
         lines += ["- %s：%s" % (label, session) for label, session in others]
-        if master:
-            lines.append("- 主人：%s" % session_for(own, master))
+        if current_master:
+            ordered_masters = [current_master] + [m for m in masters if m != current_master]
+        else:
+            active_master = self._active_master_id(own)
+            ordered_masters = ([active_master] + [m for m in masters if m != active_master]) if active_master else list(masters)
+        for mid in ordered_masters:
+            lines.append("- 主人：%s" % session_for(own, mid))
         lines += ["- 留空 = 发到你现在这个会话（现在是：%s）" % where, "", 'messages 这样填：[{"type": "plain", "text": "要说的话"}]']
         return "\n".join(lines)
 
@@ -691,7 +795,7 @@ class BotDialogFeature:
             return
         umo = str(getattr(event, "unified_msg_origin", "") or "")
         own = self._identity(event).bot
-        enabled = set(self.tool_bots_fn() if self.tool_bots_fn else (self.bot_ids or ()))
+        enabled = set(self._enabled_platforms())
         is_managed_bot = bool(own and own in enabled)
         cron = is_cron_event(event)
         allow_send = cron or not is_managed_bot

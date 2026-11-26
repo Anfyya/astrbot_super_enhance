@@ -23,6 +23,8 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -91,18 +93,44 @@ class GitStore:
             max_workers=1, thread_name_prefix="snapgit"
         )
         self._since_gc = 0
+        self._closed = False
+        self._submit_lock = threading.Lock()
+        self._last_future: concurrent.futures.Future | None = None
 
     # ------------------------------------------------------------------ 底层
+    @staticmethod
+    def _is_lock_error(text: str | bytes) -> bool:
+        low = text.lower() if isinstance(text, bytes) else str(text or "").lower().encode("utf-8", "replace")
+        return (
+            b".lock" in low
+            or b"could not lock" in low
+            or b"cannot lock" in low
+            or (b"unable to create" in low and b"lock" in low)
+        )
+
+    def _cleanup_stale_lock(self) -> bool:
+        lock = self.root / ".git" / "index.lock"
+        try:
+            if lock.exists() and time.time() - lock.stat().st_mtime > STALE_LOCK_SECONDS:
+                lock.unlink()
+                return True
+        except OSError:
+            pass
+        return False
+
     def _run(self, *args: str, env=None, check: bool = True) -> subprocess.CompletedProcess:
-        for _ in range(LOCK_RETRIES):
+        res = None
+        for attempt in range(LOCK_RETRIES):
             res = subprocess.run(
                 [GIT or "git", "-C", str(self.root), *args],
                 capture_output=True,
                 env=env,
                 timeout=TIMEOUT,
             )
-            if res.returncode == 0 or b".lock" not in (res.stderr or b""):
+            if res.returncode == 0 or not self._is_lock_error(res.stderr or b""):
                 break
+            if attempt == LOCK_RETRIES - 2:
+                self._cleanup_stale_lock()
             time.sleep(LOCK_WAIT)
         if check and res.returncode != 0:
             err = (res.stderr or res.stdout or b"").decode("utf-8", "replace").strip()
@@ -116,9 +144,11 @@ class GitStore:
         """库能不能用；头一回调的时候建库（只在后台线程里调）。"""
         if self.ok is not None:
             return self.ok
+        if not GIT:
+            logger.error("[super_enhance/snap] git 库用不了：找不到 git 命令")
+            self.ok = False
+            return False
         try:
-            if not GIT:
-                raise RuntimeError("找不到 git 命令")
             self.root.mkdir(parents=True, exist_ok=True)
             if not (self.root / ".git").is_dir():
                 self._run("init", "-q")
@@ -133,22 +163,46 @@ class GitStore:
             ignore = self.root / ".gitignore"
             if not ignore.exists():
                 ignore.write_text("*.tmp\nindex.json\nreq_*.json\n", encoding="utf-8")
-            lock = self.root / ".git" / "index.lock"
-            if lock.exists() and time.time() - lock.stat().st_mtime > STALE_LOCK_SECONDS:
-                # 上次提交到一半被杀了留下的（正在提交的锁不会放这么久）
-                lock.unlink()
+            self._cleanup_stale_lock()
             self.ok = True
+        except subprocess.TimeoutExpired as exc:
+            logger.warning("[super_enhance/snap] git 库初始化超时（保留重试机会）：%s", exc)
+            return False
         except Exception as exc:  # noqa: BLE001
+            if self._is_lock_error(str(exc)) or isinstance(exc, FileNotFoundError):
+                logger.warning("[super_enhance/snap] git 库暂时被锁占用（保留重试机会）：%s", exc)
+                return False
             logger.error("[super_enhance/snap] git 库用不了：%s", exc)
             self.ok = False
-        return self.ok
+        return bool(self.ok)
 
     def has_repo(self) -> bool:
         return (self.root / ".git").is_dir()
 
-    def submit(self, fn: Callable, *args: Any) -> concurrent.futures.Future:
-        """排进后台线程；出错只记日志。"""
-        return self.worker.submit(self._guard, fn, *args)
+    def submit(self, fn: Callable, *args: Any) -> concurrent.futures.Future | None:
+        """排进后台线程；出错只记日志。已关闭时静默忽略。"""
+        with self._submit_lock:
+            if self._closed:
+                return None
+            try:
+                fut = self.worker.submit(self._guard, fn, *args)
+            except RuntimeError:
+                self._closed = True
+                return None
+            self._last_future = fut
+            return fut
+
+    def close(self, *, wait: bool = True, timeout: float | None = 5.0) -> None:
+        """关闭写队列：不再接新任务，必要时短暂等待已入队提交落盘，避免重载时留 index.lock 竞态。"""
+        with self._submit_lock:
+            self._closed = True
+            last = self._last_future
+        self.worker.shutdown(wait=False)
+        if wait and last is not None and not threading.current_thread().name.startswith("snapgit"):
+            try:
+                last.result(timeout=timeout)
+            except Exception:  # noqa: BLE001
+                pass
 
     @staticmethod
     def _guard(fn: Callable, *args: Any) -> Any:
@@ -163,13 +217,21 @@ class GitStore:
         """覆盖写 rel 再提交；回提交号。内容跟上一版一模一样时不新提交，回当前的。"""
         path = self.root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
-        temp = path.with_name(path.name + ".tmp")
-        temp.write_text(body, encoding="utf-8")
-        os.replace(temp, path)
+        fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".%s." % path.name, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(body)
+            os.replace(tmp, path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
         self._run("add", "--", rel)
         stamp = "@%d %s" % (int(when if when is not None else time.time()), TZ_OFFSET)
         env = dict(os.environ, GIT_AUTHOR_DATE=stamp, GIT_COMMITTER_DATE=stamp)
-        res = self._run("commit", "-q", "-m", message, env=env, check=False)
+        res = self._run("commit", "-q", "-m", message, "--", rel, env=env, check=False)
         if res.returncode != 0 and self._out("status", "--porcelain", "--", rel).strip():
             err = (res.stderr or res.stdout or b"").decode("utf-8", "replace").strip()
             raise RuntimeError("git commit 失败：%s" % err[:300])

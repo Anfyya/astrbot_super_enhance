@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import copy
 import datetime
+import math
+import threading
 from pathlib import Path
 from typing import Iterable
 
@@ -20,7 +22,7 @@ from astrbot.api import logger
 from ...common import jsonio
 from .ledger import _JsonBook
 from .things import CAT_FOOD, CAT_ITEM, norm_step
-from .world import clean_text, fmt_time, is_event, parse_time, step_finished_at
+from .world import clean_steps, clean_text, fmt_time, is_event, parse_time, step_finished_at
 
 MONEY_FILE_NAME = "money.json"
 MAX_RECORDS = 400
@@ -150,8 +152,13 @@ SEASIDE_PRICE_GUIDE = (
 
 def fmt_yuan(value) -> str:
     """把人民币数值格式化成干净可读的短串（整数不带 .00，带小数保留到角/分）。"""
+    if isinstance(value, bool):
+        return "0"
     try:
-        num = round(float(value or 0.0), 2)
+        raw = float(value or 0.0)
+        if not math.isfinite(raw):
+            return "0"
+        num = round(raw, 2)
     except Exception:
         return "0"
     if abs(num - round(num)) < 1e-6:
@@ -162,10 +169,28 @@ def fmt_yuan(value) -> str:
 
 
 def round_yuan(value) -> float:
+    if isinstance(value, bool):
+        return 0.0
     try:
-        return round(float(value), 2)
+        num = float(value)
     except Exception:
         return 0.0
+    if not math.isfinite(num):
+        return 0.0
+    return round(num, 2)
+
+
+def _strict_yuan(value, field: str = "金额") -> float:
+    """严格校验金额数值：拒绝 bool、非数字、NaN 与无穷大并抛 ValueError。"""
+    if isinstance(value, bool):
+        raise ValueError("%s必须是有效数字" % field)
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        raise ValueError("%s必须是有效数字" % field)
+    if not math.isfinite(num):
+        raise ValueError("%s不能为 NaN 或无穷大" % field)
+    return round(num, 2)
 
 
 def normalize_account(raw) -> str:
@@ -215,19 +240,22 @@ def _blank_book() -> dict:
 
 
 def _op_at(entry: dict, raw_op: dict) -> datetime.datetime | None:
-    """复用 world.step_finished_at 计算世界线条目中单笔 money 动作发生的准确时刻。"""
+    """复用 world.step_finished_at 计算世界线条目中单笔 money 动作发生的准确时刻；未中断时越界 step 自动 clamp 到总步数。"""
     at_s = str(raw_op.get("at") or "").strip()
     if at_s:
         dt = parse_time(at_s)
         if dt is not None:
             return dt
-    steps = entry.get("steps") or []
+    total_steps = len(clean_steps(entry.get("steps")))
+    raw_step = raw_op.get("step")
     try:
-        step_no = int(raw_op.get("step") or 0)
+        step_no = int(raw_step) if raw_step not in (None, "") else 0
     except Exception:
         step_no = 0
-    if step_no <= 0 and isinstance(steps, list) and steps:
-        step_no = len(steps)
+    if step_no < 1:
+        step_no = total_steps if (not entry.get("stopped") and total_steps > 0) else 0
+    elif not entry.get("stopped"):
+        step_no = min(step_no, total_steps) if total_steps > 0 else 0
     return step_finished_at(entry, step_no)
 
 
@@ -256,39 +284,124 @@ class MoneyBook(_JsonBook):
 
     def __init__(self, path: Path) -> None:
         super().__init__(path, _blank_book())
+        self._lock = threading.RLock()
+        self._world = None
+
+    def _resolve_world(self, world=None):
+        if world is not None:
+            self._world = world
+            return world
+        return self._world
+
+    def _find_wl_op(self, wl_key: str, world=None, *, now: datetime.datetime | None = None):
+        """在世界线中精确查找 wl_key (<date>/<eid>/<idx>) 对应的真实未中断操作，返回 (entry, op_dt, op, wl_ref) 或 None。"""
+        w = self._resolve_world(world)
+        if w is None or not wl_key:
+            return None
+        parts = str(wl_key).strip().split("/")
+        if len(parts) != 3:
+            return None
+        date_str, eid, idx_str = parts
+        if not date_str or not eid or not idx_str.isdigit():
+            return None
+        flat = now.replace(tzinfo=None) if now is not None else None
+        try:
+            entries = w.entries(date_str)
+        except Exception:
+            return None
+        for entry in entries:
+            if str(entry.get("id") or "").strip() != eid:
+                continue
+            for key, op_dt, op in _entry_wl_ops(entry, date_str):
+                if key == wl_key:
+                    if flat is not None and op_dt > flat:
+                        return None
+                    return entry, op_dt, op, f"{date_str}/{eid}"
+        return None
+
+    def _materialize_wl_debt(
+        self,
+        data: dict,
+        debt_id: str,
+        *,
+        now: datetime.datetime | None = None,
+        world=None,
+    ) -> dict | None:
+        """若 debt_id 是尚未固化的世界线欠账 (wl_<date>/<eid>/<idx>)，将其就地固化进 data['debts'] 并记 settled_wl 防重复归档。"""
+        did = str(debt_id or "").strip()
+        if not did.startswith("wl_"):
+            return None
+        existing = next((d for d in data["debts"] if isinstance(d, dict) and str(d.get("id") or "") == did), None)
+        if existing is not None:
+            return existing
+        wl_key = did[3:]
+        if not wl_key or wl_key in (data.get("void_wl") or {}):
+            return None
+        hit = self._find_wl_op(wl_key, world=world, now=now)
+        if hit is None:
+            return None
+        entry, op_dt, op, wl_ref = hit
+        if normalize_kind(op.get("kind")) != "debt_add":
+            return None
+        accs = data["accounts"]
+        debts_map = {str(d["id"]): d for d in data["debts"] if isinstance(d, dict) and d.get("id")}
+        rec = self._apply_op_on_state(
+            accs,
+            debts_map,
+            op,
+            at_str=fmt_time(op_dt),
+            source="step",
+            wl_key=wl_key,
+            wl_ref=wl_ref,
+            who=str(entry.get("who") or "").strip(),
+            allow_negative=True,
+        )
+        debt = debts_map.get(did)
+        if debt is None:
+            return None
+        data["debts"] = list(debts_map.values())
+        if rec is not None and not any(str(r.get("wl_key") or "") == wl_key for r in data["records"] if isinstance(r, dict)):
+            data["records"].append(rec)
+            if len(data["records"]) > MAX_RECORDS:
+                data["records"] = data["records"][-MAX_RECORDS:]
+        data.setdefault("settled_wl", {})[wl_key] = fmt_time(now or datetime.datetime.now())
+        return debt
 
     def _ensure_shape(self) -> dict:
-        data = self._load()
-        accs = data.setdefault("accounts", {})
-        for k, meta in DEFAULT_ACCOUNTS.items():
-            if k not in accs or not isinstance(accs[k], dict):
-                accs[k] = copy.deepcopy(meta)
-            else:
-                for mk, mv in meta.items():
-                    if mk not in accs[k]:
-                        accs[k][mk] = mv
-                accs[k]["balance"] = round_yuan(accs[k].get("balance", 0.0))
-        if not isinstance(data.get("debts"), list):
-            data["debts"] = []
-        if not isinstance(data.get("records"), list):
-            data["records"] = []
-        if not isinstance(data.get("settled_wl"), dict):
-            data["settled_wl"] = {}
-        if not isinstance(data.get("void_wl"), dict):
-            data["void_wl"] = {}
-        return data
+        with self._lock:
+            data = self._load()
+            accs = data.setdefault("accounts", {})
+            for k, meta in DEFAULT_ACCOUNTS.items():
+                if k not in accs or not isinstance(accs[k], dict):
+                    accs[k] = copy.deepcopy(meta)
+                else:
+                    for mk, mv in meta.items():
+                        if mk not in accs[k]:
+                            accs[k][mk] = mv
+                    accs[k]["balance"] = round_yuan(accs[k].get("balance", 0.0))
+            if not isinstance(data.get("debts"), list):
+                data["debts"] = []
+            if not isinstance(data.get("records"), list):
+                data["records"] = []
+            if not isinstance(data.get("settled_wl"), dict):
+                data["settled_wl"] = {}
+            if not isinstance(data.get("void_wl"), dict):
+                data["void_wl"] = {}
+            return data
 
     def _next_debt_id(self) -> str:
-        data = self._ensure_shape()
-        try:
-            val = int(data.get("next_debt_id") or 1)
-        except Exception:
-            val = 1
-        data["next_debt_id"] = val + 1
-        return f"d{val}"
+        with self._lock:
+            data = self._ensure_shape()
+            try:
+                val = int(data.get("next_debt_id") or 1)
+            except Exception:
+                val = 1
+            data["next_debt_id"] = val + 1
+            return f"d{val}"
 
     def _next_rec_id(self) -> str:
-        return f"m{self._next_id()}"
+        with self._lock:
+            return f"m{self._next_id()}"
 
     def _apply_op_on_state(
         self,
@@ -307,7 +420,19 @@ class MoneyBook(_JsonBook):
         kind = normalize_kind(op.get("kind"))
         if kind not in MONEY_KINDS:
             return None
-        amount = round_yuan(op.get("amount") or 0.0)
+        raw_amount = op.get("amount")
+        if raw_amount is None:
+            amount = 0.0
+        else:
+            if isinstance(raw_amount, bool):
+                return None
+            try:
+                f_amt = float(raw_amount)
+            except (TypeError, ValueError):
+                return None
+            if not math.isfinite(f_amt):
+                return None
+            amount = round(f_amt, 2)
         what = clean_text(op.get("what"), 120)
         counterparty = clean_text(op.get("counterparty"), 40)
         items_ref = [str(x).strip() for x in (op.get("items") or []) if str(x).strip()]
@@ -386,6 +511,11 @@ class MoneyBook(_JsonBook):
                         rec["debt_id"] = debt_id
                         break
             direction = (target or {}).get("direction") or normalize_direction(op.get("direction")) or "payable"
+            rec["direction"] = direction
+            if target is not None:
+                rem = round_yuan(target.get("remaining", target.get("amount", 0.0)))
+                if rem > 0 and amount <= 0:
+                    return None
             if acc and acc in accs and amount > 0:
                 if direction == "payable":
                     if not allow_negative and accs[acc]["balance"] + 1e-6 < amount:
@@ -395,7 +525,7 @@ class MoneyBook(_JsonBook):
                     accs[acc]["balance"] = round_yuan(accs[acc]["balance"] + amount)
             if target is not None:
                 rem = round_yuan(target.get("remaining", target.get("amount", 0.0)))
-                if rem <= 0 or amount <= 0:
+                if rem <= 0:
                     target["remaining"] = 0.0
                     target["status"] = "settled"
                 else:
@@ -432,117 +562,121 @@ class MoneyBook(_JsonBook):
 
     def snapshot(self, now: datetime.datetime, world=None) -> dict:
         """计算到 `now` 为止的全盘真实账面（固化余额 + 到点未中断世界线收支）。"""
-        data = self._ensure_shape()
-        accs = copy.deepcopy(data["accounts"])
-        debts_map: dict[str, dict] = {
-            str(d["id"]): copy.deepcopy(d) for d in data["debts"] if isinstance(d, dict) and d.get("id")
-        }
-        recs = [copy.deepcopy(r) for r in data["records"] if isinstance(r, dict)]
-        pending = self._collect_pending_wl(now, world, data.get("settled_wl") or {}, data.get("void_wl") or {})
-        for wl_key, op_dt, op, meta in pending:
-            rec = self._apply_op_on_state(
-                accs,
-                debts_map,
-                op,
-                at_str=fmt_time(op_dt),
-                source="world",
-                wl_key=wl_key,
-                wl_ref=meta["wl"],
-                who=meta["who"],
-                allow_negative=True,
+        with self._lock:
+            eff_world = self._resolve_world(world)
+            data = self._ensure_shape()
+            accs = copy.deepcopy(data["accounts"])
+            debts_map: dict[str, dict] = {
+                str(d["id"]): copy.deepcopy(d) for d in data["debts"] if isinstance(d, dict) and d.get("id")
+            }
+            recs = [copy.deepcopy(r) for r in data["records"] if isinstance(r, dict)]
+            pending = self._collect_pending_wl(now, eff_world, data.get("settled_wl") or {}, data.get("void_wl") or {})
+            for wl_key, op_dt, op, meta in pending:
+                rec = self._apply_op_on_state(
+                    accs,
+                    debts_map,
+                    op,
+                    at_str=fmt_time(op_dt),
+                    source="world",
+                    wl_key=wl_key,
+                    wl_ref=meta["wl"],
+                    who=meta["who"],
+                    allow_negative=True,
+                )
+                if rec is not None:
+                    recs.append(rec)
+
+            recs.sort(key=lambda r: (str(r.get("at") or ""), str(r.get("id") or "")))
+            # 从当前真实结尾余额逆推每笔流水发生后的账户结余
+            cur_bal = {k: float(v.get("balance") or 0.0) for k, v in accs.items()}
+            for rec in reversed(recs):
+                kind = rec.get("kind")
+                amt = float(rec.get("amount") or 0.0)
+                if kind == "transfer":
+                    fa, ta = rec.get("from_account") or "", rec.get("to_account") or ""
+                    if fa in cur_bal:
+                        rec["from_after"] = round_yuan(cur_bal[fa])
+                        cur_bal[fa] = round_yuan(cur_bal[fa] + amt)
+                    if ta in cur_bal:
+                        rec["to_after"] = round_yuan(cur_bal[ta])
+                        cur_bal[ta] = round_yuan(cur_bal[ta] - amt)
+                else:
+                    acc = rec.get("account") or ""
+                    if acc in cur_bal and kind in ("earn", "spend", "adjust", "debt_settle"):
+                        rec["after_balance"] = round_yuan(cur_bal[acc])
+                        if kind == "earn" or kind == "adjust":
+                            cur_bal[acc] = round_yuan(cur_bal[acc] - amt)
+                        elif kind == "spend":
+                            cur_bal[acc] = round_yuan(cur_bal[acc] + amt)
+                        elif kind == "debt_settle" and amt > 0:
+                            debt = debts_map.get(str(rec.get("debt_id") or ""))
+                            direction = normalize_direction(rec.get("direction")) or (debt or {}).get("direction") or "payable"
+                            cur_bal[acc] = round_yuan(cur_bal[acc] + amt if direction == "payable" else cur_bal[acc] - amt)
+
+            debts_list = sorted(
+                debts_map.values(),
+                key=lambda d: (d.get("status") != "open", str(d.get("created") or ""), str(d.get("id") or "")),
             )
-            if rec is not None:
-                recs.append(rec)
-
-        recs.sort(key=lambda r: (str(r.get("at") or ""), str(r.get("id") or "")))
-        # 从当前真实结尾余额逆推每笔流水发生后的账户结余
-        cur_bal = {k: float(v.get("balance") or 0.0) for k, v in accs.items()}
-        for rec in reversed(recs):
-            kind = rec.get("kind")
-            amt = float(rec.get("amount") or 0.0)
-            if kind == "transfer":
-                fa, ta = rec.get("from_account") or "", rec.get("to_account") or ""
-                if fa in cur_bal:
-                    rec["from_after"] = round_yuan(cur_bal[fa])
-                    cur_bal[fa] = round_yuan(cur_bal[fa] + amt)
-                if ta in cur_bal:
-                    rec["to_after"] = round_yuan(cur_bal[ta])
-                    cur_bal[ta] = round_yuan(cur_bal[ta] - amt)
-            else:
-                acc = rec.get("account") or ""
-                if acc in cur_bal and kind in ("earn", "spend", "adjust", "debt_settle"):
-                    rec["after_balance"] = round_yuan(cur_bal[acc])
-                    if kind == "earn" or kind == "adjust":
-                        cur_bal[acc] = round_yuan(cur_bal[acc] - amt)
-                    elif kind == "spend":
-                        cur_bal[acc] = round_yuan(cur_bal[acc] + amt)
-                    elif kind == "debt_settle" and amt > 0:
-                        debt = debts_map.get(str(rec.get("debt_id") or ""))
-                        direction = rec.get("direction") or (debt or {}).get("direction") or "payable"
-                        cur_bal[acc] = round_yuan(cur_bal[acc] + amt if direction == "payable" else cur_bal[acc] - amt)
-
-        debts_list = sorted(
-            debts_map.values(),
-            key=lambda d: (d.get("status") != "open", str(d.get("created") or ""), str(d.get("id") or "")),
-        )
-        return {
-            "accounts": accs,
-            "debts": debts_list,
-            "records": recs,
-            "total_cash": round_yuan(sum(accs[k]["balance"] for k in ACCOUNT_ORDER if k in accs)),
-            "home_and_girls_cash": round_yuan(sum(accs[k]["balance"] for k in ("tin_box", "napcat2", "napcat") if k in accs)),
-        }
+            return {
+                "accounts": accs,
+                "debts": debts_list,
+                "records": recs,
+                "total_cash": round_yuan(sum(accs[k]["balance"] for k in ACCOUNT_ORDER if k in accs)),
+                "home_and_girls_cash": round_yuan(sum(accs[k]["balance"] for k in ("tin_box", "napcat2", "napcat") if k in accs)),
+            }
 
     def archive_settled(self, now: datetime.datetime, world) -> int:
         """把已经彻底完结（end <= now - SETTLE_DELAY_MINUTES 且未中断）的世界线 money 操作固化进 money.json。"""
-        if world is None:
-            return 0
-        flat = now.replace(tzinfo=None)
-        cutoff = flat - datetime.timedelta(minutes=SETTLE_DELAY_MINUTES)
-        data = self._ensure_shape()
-        settled = data.setdefault("settled_wl", {})
-        void_wl = data.get("void_wl") or {}
-        pending = self._collect_pending_wl(flat, world, settled, void_wl)
-        to_archive = []
-        for wl_key, op_dt, op, meta in pending:
-            entry = meta["entry"]
-            end_dt = parse_time(entry.get("end"))
-            if end_dt is None or end_dt > cutoff:
-                continue
-            to_archive.append((wl_key, op_dt, op, meta))
-        if not to_archive:
-            return 0
+        with self._lock:
+            if world is None:
+                return 0
+            self._resolve_world(world)
+            flat = now.replace(tzinfo=None)
+            cutoff = flat - datetime.timedelta(minutes=SETTLE_DELAY_MINUTES)
+            data = self._ensure_shape()
+            settled = data.setdefault("settled_wl", {})
+            void_wl = data.get("void_wl") or {}
+            pending = self._collect_pending_wl(flat, world, settled, void_wl)
+            to_archive = []
+            for wl_key, op_dt, op, meta in pending:
+                entry = meta["entry"]
+                end_dt = parse_time(entry.get("end"))
+                if end_dt is None or end_dt > cutoff:
+                    continue
+                to_archive.append((wl_key, op_dt, op, meta))
+            if not to_archive:
+                return 0
 
-        accs = data["accounts"]
-        debts_map = {str(d["id"]): d for d in data["debts"] if isinstance(d, dict) and d.get("id")}
-        count = 0
-        for wl_key, op_dt, op, meta in to_archive:
-            rec = self._apply_op_on_state(
-                accs,
-                debts_map,
-                op,
-                at_str=fmt_time(op_dt),
-                source="step",
-                wl_key=wl_key,
-                wl_ref=meta["wl"],
-                who=meta["who"],
-                allow_negative=True,
-            )
-            settled[wl_key] = fmt_time(flat)
-            if rec is not None:
-                data["records"].append(rec)
-                count += 1
-        data["debts"] = list(debts_map.values())
-        if len(data["records"]) > MAX_RECORDS:
-            data["records"] = data["records"][-MAX_RECORDS:]
-        # 清理过旧的 settled_wl/void_wl 标记
-        keep_cut = (flat.date() - datetime.timedelta(days=VOID_KEEP_DAYS)).isoformat()
-        data["settled_wl"] = {k: v for k, v in settled.items() if str(k)[:10] >= keep_cut}
-        data["void_wl"] = {k: v for k, v in void_wl.items() if str(k)[:10] >= keep_cut}
-        self._save()
-        if count:
-            logger.info("[super_enhance/money] 已固化归档 %d 笔世界线账目", count)
-        return count
+            accs = data["accounts"]
+            debts_map = {str(d["id"]): d for d in data["debts"] if isinstance(d, dict) and d.get("id")}
+            count = 0
+            for wl_key, op_dt, op, meta in to_archive:
+                rec = self._apply_op_on_state(
+                    accs,
+                    debts_map,
+                    op,
+                    at_str=fmt_time(op_dt),
+                    source="step",
+                    wl_key=wl_key,
+                    wl_ref=meta["wl"],
+                    who=meta["who"],
+                    allow_negative=True,
+                )
+                settled[wl_key] = fmt_time(flat)
+                if rec is not None:
+                    data["records"].append(rec)
+                    count += 1
+            data["debts"] = list(debts_map.values())
+            if len(data["records"]) > MAX_RECORDS:
+                data["records"] = data["records"][-MAX_RECORDS:]
+            # 清理过旧的 settled_wl/void_wl 标记
+            keep_cut = (flat.date() - datetime.timedelta(days=VOID_KEEP_DAYS)).isoformat()
+            data["settled_wl"] = {k: v for k, v in settled.items() if str(k)[:10] >= keep_cut}
+            data["void_wl"] = {k: v for k, v in void_wl.items() if str(k)[:10] >= keep_cut}
+            self._save()
+            if count:
+                logger.info("[super_enhance/money] 已固化归档 %d 笔世界线账目", count)
+            return count
 
     # ---------- 记录员 / 网页写盘接口 ----------
 
@@ -559,227 +693,261 @@ class MoneyBook(_JsonBook):
         """落盘来自聊天记录员的一组钱变动，单条不合规只跳过那条，绝不阻断主流程。"""
         if not isinstance(ops, list) or not ops:
             return []
-        self.archive_settled(now, world)
-        snap = self.snapshot(now, world)
-        sim_bal = {k: round_yuan(v["balance"]) for k, v in snap["accounts"].items()}
-        data = self._ensure_shape()
-        accs = data["accounts"]
-        debts_map = {str(d["id"]): d for d in data["debts"] if isinstance(d, dict) and d.get("id")}
-        written: list[dict] = []
+        with self._lock:
+            eff_world = self._resolve_world(world)
+            self.archive_settled(now, eff_world)
+            snap = self.snapshot(now, eff_world)
+            sim_bal = {k: round_yuan(v["balance"]) for k, v in snap["accounts"].items()}
+            snap_debts = {str(d["id"]): d for d in snap.get("debts") or [] if isinstance(d, dict) and d.get("id")}
+            data = self._ensure_shape()
+            accs = data["accounts"]
+            debts_map = {str(d["id"]): d for d in data["debts"] if isinstance(d, dict) and d.get("id")}
+            written: list[dict] = []
 
-        for raw in ops:
-            if not isinstance(raw, dict):
-                continue
-            kind = normalize_kind(raw.get("kind"))
-            if kind not in ("earn", "spend", "transfer", "debt_add", "debt_settle"):
-                continue
-            amt = round_yuan(raw.get("amount") or 0.0)
-            at_str = clean_text(raw.get("at"), 16) or default_at or fmt_time(now)
-            if parse_time(at_str) is None:
-                at_str = default_at or fmt_time(now)
+            for raw in ops:
+                if not isinstance(raw, dict):
+                    continue
+                kind = normalize_kind(raw.get("kind"))
+                if kind not in ("earn", "spend", "transfer", "debt_add", "debt_settle"):
+                    continue
+                raw_amt = raw.get("amount")
+                if raw_amt is None:
+                    amt = 0.0
+                else:
+                    if isinstance(raw_amt, bool):
+                        continue
+                    try:
+                        f_amt = float(raw_amt)
+                    except (TypeError, ValueError):
+                        continue
+                    if not math.isfinite(f_amt):
+                        continue
+                    amt = round(f_amt, 2)
+                at_str = clean_text(raw.get("at"), 16) or default_at or fmt_time(now)
+                if parse_time(at_str) is None:
+                    at_str = default_at or fmt_time(now)
 
-            # 对话里机器人没提现钱足够或透支时保护账户不被扣穿；先用合并视图 sim_bal 检查再套用
-            op = dict(raw)
-            op["kind"] = kind
-            op["amount"] = amt
-            acc = normalize_account(op.get("account"))
-            from_acc = normalize_account(op.get("from_account"))
-            to_acc = normalize_account(op.get("to_account"))
-            # 职责划分：记录员(recorder)只记涉及主人钱包(master)的当场动钱，以及主人亲口发话指挥的账户间挪钱(transfer，如把兜里钱放铁盒)；
-            # 女孩自己买菜买柴、卖废品、挂账结账一律归世界线(step)记账；且下方有 2 小时跨通道去重防重复转账
-            if source == "recorder":
-                involves_master = (acc == "master" or from_acc == "master" or to_acc == "master")
-                allow_master_transfer = (kind == "transfer" and bool(has_master))
-                if not involves_master and not allow_master_transfer:
+                # 对话里机器人没提现钱足够或透支时保护账户不被扣穿；先去重再用合并视图 sim_bal 检查再套用
+                op = dict(raw)
+                op["kind"] = kind
+                op["amount"] = amt
+                acc = normalize_account(op.get("account"))
+                from_acc = normalize_account(op.get("from_account"))
+                to_acc = normalize_account(op.get("to_account"))
+                # 职责划分：记录员(recorder)只记涉及主人钱包(master)的当场动钱，以及主人亲口发话指挥的账户间挪钱(transfer，如把兜里钱放铁盒)；
+                # 女孩自己买菜买柴、卖废品、挂账结账一律归世界线(step)记账；且下方有 2 小时跨通道去重防重复转账
+                if source == "recorder":
+                    involves_master = (acc == "master" or from_acc == "master" or to_acc == "master")
+                    allow_master_transfer = (kind == "transfer" and bool(has_master))
+                    if not involves_master and not allow_master_transfer:
+                        logger.info(
+                            "[super_enhance/money] 跳过记录员非主人钱包账目（归世界线记账）：%s %s元 %s",
+                            KIND_LABELS.get(kind, kind), fmt_yuan(amt), op.get("what") or "",
+                        )
+                        continue
+
+                # 跨通道去重前移至 sim_bal 修改之前：重复账目直接跳过，绝不扣改 sim_bal 误杀后续合法交易
+                op_dt_val = parse_time(at_str) or now.replace(tzinfo=None)
+                dedup_pool = list(snap.get("records") or [])[-40:] + written
+                dup = False
+                for r in dedup_pool:
+                    if r.get("kind") != kind or round_yuan(r.get("amount")) != amt:
+                        continue
+                    if (r.get("account") or "") != acc or (r.get("from_account") or "") != from_acc or (r.get("to_account") or "") != to_acc:
+                        continue
+                    r_dt = parse_time(r.get("at"))
+                    if r_dt is not None and abs((op_dt_val - r_dt).total_seconds()) <= 7200:
+                        dup = True
+                        break
+                    if str(r.get("at") or "")[:16] == at_str[:16]:
+                        dup = True
+                        break
+                if dup:
                     logger.info(
-                        "[super_enhance/money] 跳过记录员非主人钱包账目（归世界线记账）：%s %s元 %s",
-                        KIND_LABELS.get(kind, kind), fmt_yuan(amt), op.get("what") or "",
+                        "[super_enhance/money] [%s] 跳过重复账目（近 2 小时内已有同笔记录）：%s %s元 %s",
+                        source, KIND_LABELS.get(kind, kind), fmt_yuan(amt), op.get("what") or "",
                     )
                     continue
 
-            if kind == "spend":
-                if acc not in accs or amt <= 0:
-                    continue
-                if sim_bal[acc] + 1e-6 < amt:
-                    logger.info("[super_enhance/money] 跳过记录员超额支出：%s 余额 %.2f < %.2f (%s)", acc, sim_bal[acc], amt, op.get("what"))
-                    continue
-                sim_bal[acc] = round_yuan(sim_bal[acc] - amt)
-            elif kind == "transfer":
-                if from_acc not in accs or to_acc not in accs or from_acc == to_acc or amt <= 0:
-                    continue
-                if sim_bal[from_acc] + 1e-6 < amt:
-                    logger.info("[super_enhance/money] 跳过记录员超额挪用：%s 余额 %.2f < %.2f (%s)", from_acc, sim_bal[from_acc], amt, op.get("what"))
-                    continue
-                sim_bal[from_acc] = round_yuan(sim_bal[from_acc] - amt)
-                sim_bal[to_acc] = round_yuan(sim_bal[to_acc] + amt)
-            elif kind == "earn":
-                if acc not in accs or amt <= 0:
-                    continue
-                sim_bal[acc] = round_yuan(sim_bal[acc] + amt)
-            elif kind == "debt_settle":
-                if amt <= 0:
-                    continue
-                did = str(op.get("debt_id") or "").strip()
-                tgt = debts_map.get(did)
-                if tgt is None:
-                    continue
-                direction = (tgt or {}).get("direction") or normalize_direction(op.get("direction")) or "payable"
-                if acc in accs:
-                    if direction == "payable":
-                        if sim_bal[acc] + 1e-6 < amt:
-                            logger.info("[super_enhance/money] 跳过记录员超额还账：%s 余额 %.2f < %.2f", acc, sim_bal[acc], amt)
+                if kind == "spend":
+                    if acc not in accs or amt <= 0:
+                        continue
+                    if sim_bal[acc] + 1e-6 < amt:
+                        logger.info("[super_enhance/money] 跳过记录员超额支出：%s 余额 %.2f < %.2f (%s)", acc, sim_bal[acc], amt, op.get("what"))
+                        continue
+                    sim_bal[acc] = round_yuan(sim_bal[acc] - amt)
+                elif kind == "transfer":
+                    if from_acc not in accs or to_acc not in accs or from_acc == to_acc or amt <= 0:
+                        continue
+                    if sim_bal[from_acc] + 1e-6 < amt:
+                        logger.info("[super_enhance/money] 跳过记录员超额挪用：%s 余额 %.2f < %.2f (%s)", from_acc, sim_bal[from_acc], amt, op.get("what"))
+                        continue
+                    sim_bal[from_acc] = round_yuan(sim_bal[from_acc] - amt)
+                    sim_bal[to_acc] = round_yuan(sim_bal[to_acc] + amt)
+                elif kind == "earn":
+                    if acc not in accs or amt <= 0:
+                        continue
+                    sim_bal[acc] = round_yuan(sim_bal[acc] + amt)
+                elif kind == "debt_settle":
+                    if amt <= 0:
+                        continue
+                    did = str(op.get("debt_id") or "").strip()
+                    tgt = debts_map.get(did) or snap_debts.get(did)
+                    if tgt is None:
+                        continue
+                    direction = (tgt or {}).get("direction") or normalize_direction(op.get("direction")) or "payable"
+                    if acc in accs:
+                        if direction == "payable":
+                            if sim_bal[acc] + 1e-6 < amt:
+                                logger.info("[super_enhance/money] 跳过记录员超额还账：%s 余额 %.2f < %.2f", acc, sim_bal[acc], amt)
+                                continue
+                            sim_bal[acc] = round_yuan(sim_bal[acc] - amt)
+                        else:
+                            sim_bal[acc] = round_yuan(sim_bal[acc] + amt)
+                    # 若目标是尚未固化的世界线欠账 (wl_*)，校验通过后就地固化进 data['debts'] 再结算
+                    if did not in debts_map and did.startswith("wl_"):
+                        mat = self._materialize_wl_debt(data, did, now=now, world=eff_world)
+                        if mat is None:
                             continue
-                        sim_bal[acc] = round_yuan(sim_bal[acc] - amt)
-                    else:
-                        sim_bal[acc] = round_yuan(sim_bal[acc] + amt)
+                        debts_map[did] = mat
 
-            # 跨通道去重：同时检查已固化流水与尚未满 90 分钟的世界线待结算流水（前后 120 分钟内同类型+同金额+同账户即视为同一笔）
-            op_dt_val = parse_time(at_str) or now.replace(tzinfo=None)
-            dedup_pool = list(snap.get("records") or [])[-40:] + written
-            dup = False
-            for r in dedup_pool:
-                if r.get("kind") != kind or round_yuan(r.get("amount")) != amt:
-                    continue
-                if (r.get("account") or "") != acc or (r.get("from_account") or "") != from_acc or (r.get("to_account") or "") != to_acc:
-                    continue
-                r_dt = parse_time(r.get("at"))
-                if r_dt is not None and abs((op_dt_val - r_dt).total_seconds()) <= 7200:
-                    dup = True
-                    break
-                if str(r.get("at") or "")[:16] == at_str[:16]:
-                    dup = True
-                    break
-            if dup:
-                logger.info(
-                    "[super_enhance/money] [%s] 跳过重复账目（近 2 小时内已有同笔记录）：%s %s元 %s",
-                    source, KIND_LABELS.get(kind, kind), fmt_yuan(amt), op.get("what") or "",
+                rec = self._apply_op_on_state(
+                    accs, debts_map, op, at_str=at_str, source=source, who=str(op.get("who") or ""), allow_negative=True
                 )
-                continue
+                if rec is not None:
+                    data["records"].append(rec)
+                    written.append(rec)
+                    logger.info(
+                        "[super_enhance/money] [%s] 记一笔 %s：%s元 %s",
+                        source, KIND_LABELS.get(kind, kind), fmt_yuan(amt), rec.get("what") or "",
+                    )
 
-            rec = self._apply_op_on_state(
-                accs, debts_map, op, at_str=at_str, source=source, who=str(op.get("who") or ""), allow_negative=True
-            )
-            if rec is not None:
-                data["records"].append(rec)
-                written.append(rec)
-                logger.info(
-                    "[super_enhance/money] [%s] 记一笔 %s：%s元 %s",
-                    source, KIND_LABELS.get(kind, kind), fmt_yuan(amt), rec.get("what") or "",
-                )
-
-        if written:
-            data["debts"] = list(debts_map.values())
-            if len(data["records"]) > MAX_RECORDS:
-                data["records"] = data["records"][-MAX_RECORDS:]
-            self._save()
-        return written
+            if written:
+                data["debts"] = list(debts_map.values())
+                if len(data["records"]) > MAX_RECORDS:
+                    data["records"] = data["records"][-MAX_RECORDS:]
+                self._save()
+            return written
 
     def set_balance_to(self, account: str, target_amount: float, *, now: datetime.datetime, note: str = "", world=None) -> dict:
         """网页手改某账户余额：精确校准到 target_amount 并记一条调账流水。"""
-        acc = normalize_account(account)
-        if not acc:
-            raise ValueError("未知账户：%s" % account)
-        target = round_yuan(target_amount)
-        if target < 0:
-            raise ValueError("账户余额不能为负数")
-        snap = self.snapshot(now, world)
-        cur = round_yuan(snap["accounts"][acc]["balance"])
-        delta = round_yuan(target - cur)
-        data = self._ensure_shape()
-        at_str = fmt_time(now)
-        rec = None
-        if abs(delta) >= 1e-6:
-            data["accounts"][acc]["balance"] = round_yuan(data["accounts"][acc]["balance"] + delta)
-            rec = {
-                "id": self._next_rec_id(),
-                "at": at_str,
-                "kind": "adjust",
-                "account": acc,
-                "from_account": "",
-                "to_account": "",
-                "amount": delta,
-                "who": "master",
-                "counterparty": "",
-                "what": clean_text(note, 120) or ("网页把%s调成 %s 元（原 %s 元）" % (data["accounts"][acc]["label"], fmt_yuan(target), fmt_yuan(cur))),
-                "items": [],
-                "debt_id": "",
-                "source": "web",
-                "wl": "",
-                "wl_key": "",
+        with self._lock:
+            acc = normalize_account(account)
+            if not acc:
+                raise ValueError("未知账户：%s" % account)
+            target = _strict_yuan(target_amount, "目标余额")
+            if target < 0:
+                raise ValueError("账户余额不能为负数")
+            if world is not None:
+                self.archive_settled(now, world)
+            eff_world = self._resolve_world(world)
+            snap = self.snapshot(now, eff_world)
+            cur = round_yuan(snap["accounts"][acc]["balance"])
+            delta = round_yuan(target - cur)
+            data = self._ensure_shape()
+            at_str = fmt_time(now)
+            rec = None
+            if abs(delta) >= 1e-6:
+                data["accounts"][acc]["balance"] = round_yuan(data["accounts"][acc]["balance"] + delta)
+                rec = {
+                    "id": self._next_rec_id(),
+                    "at": at_str,
+                    "kind": "adjust",
+                    "account": acc,
+                    "from_account": "",
+                    "to_account": "",
+                    "amount": delta,
+                    "who": "master",
+                    "counterparty": "",
+                    "what": clean_text(note, 120) or ("网页把%s调成 %s 元（原 %s 元）" % (data["accounts"][acc]["label"], fmt_yuan(target), fmt_yuan(cur))),
+                    "items": [],
+                    "debt_id": "",
+                    "source": "web",
+                    "wl": "",
+                    "wl_key": "",
+                }
+                data["records"].append(rec)
+                if len(data["records"]) > MAX_RECORDS:
+                    data["records"] = data["records"][-MAX_RECORDS:]
+                self._save()
+            return {"account": acc, "balance": target, "delta": delta, "record": rec}
+
+    def edit_account_meta(self, account: str, *, label: str | None = None, place: str | None = None, note: str | None = None) -> dict:
+        with self._lock:
+            acc = normalize_account(account)
+            data = self._ensure_shape()
+            if acc not in data["accounts"]:
+                raise ValueError("找不到账户：%s" % account)
+            meta = data["accounts"][acc]
+            if label is not None and clean_text(label, 20):
+                meta["label"] = clean_text(label, 20)
+            if place is not None:
+                meta["place"] = clean_text(place, 60)
+            if note is not None:
+                meta["note"] = clean_text(note, 160)
+            self._save()
+            return meta
+
+    def add_web_record(self, payload: dict, *, now: datetime.datetime) -> dict:
+        with self._lock:
+            data = self._ensure_shape()
+            accs = data["accounts"]
+            debts_map = {str(d["id"]): d for d in data["debts"] if isinstance(d, dict) and d.get("id")}
+            kind = normalize_kind(payload.get("kind"))
+            if kind not in ("earn", "spend", "transfer", "adjust"):
+                raise ValueError("不支持的流水类型：%s" % payload.get("kind"))
+            raw_amt = payload.get("amount")
+            if raw_amt is None or str(raw_amt).strip() == "":
+                raise ValueError("金额不能为空")
+            amt = _strict_yuan(raw_amt, "金额")
+            if kind != "adjust" and amt <= 0:
+                raise ValueError("金额必须大于 0")
+            at_str = clean_text(payload.get("at"), 16) or fmt_time(now)
+            if parse_time(at_str) is None:
+                raise ValueError("时间格式要写成 YYYY-MM-DD HH:MM")
+            op = {
+                "kind": kind,
+                "account": normalize_account(payload.get("account")),
+                "from_account": normalize_account(payload.get("from_account")),
+                "to_account": normalize_account(payload.get("to_account")),
+                "amount": amt,
+                "who": clean_text(payload.get("who"), 20) or "master",
+                "counterparty": clean_text(payload.get("counterparty"), 40),
+                "what": clean_text(payload.get("what"), 120),
             }
+            rec = self._apply_op_on_state(accs, debts_map, op, at_str=at_str, source="web", allow_negative=True)
+            if rec is None:
+                raise ValueError("账户或字段填得不对")
             data["records"].append(rec)
             if len(data["records"]) > MAX_RECORDS:
                 data["records"] = data["records"][-MAX_RECORDS:]
             self._save()
-        return {"account": acc, "balance": target, "delta": delta, "record": rec}
-
-    def edit_account_meta(self, account: str, *, label: str | None = None, place: str | None = None, note: str | None = None) -> dict:
-        acc = normalize_account(account)
-        data = self._ensure_shape()
-        if acc not in data["accounts"]:
-            raise ValueError("找不到账户：%s" % account)
-        meta = data["accounts"][acc]
-        if label is not None and clean_text(label, 20):
-            meta["label"] = clean_text(label, 20)
-        if place is not None:
-            meta["place"] = clean_text(place, 60)
-        if note is not None:
-            meta["note"] = clean_text(note, 160)
-        self._save()
-        return meta
-
-    def add_web_record(self, payload: dict, *, now: datetime.datetime) -> dict:
-        data = self._ensure_shape()
-        accs = data["accounts"]
-        debts_map = {str(d["id"]): d for d in data["debts"] if isinstance(d, dict) and d.get("id")}
-        kind = normalize_kind(payload.get("kind"))
-        if kind not in ("earn", "spend", "transfer", "adjust"):
-            raise ValueError("不支持的流水类型：%s" % payload.get("kind"))
-        amt = round_yuan(payload.get("amount") or 0.0)
-        if kind != "adjust" and amt <= 0:
-            raise ValueError("金额必须大于 0")
-        at_str = clean_text(payload.get("at"), 16) or fmt_time(now)
-        if parse_time(at_str) is None:
-            raise ValueError("时间格式要写成 YYYY-MM-DD HH:MM")
-        op = {
-            "kind": kind,
-            "account": normalize_account(payload.get("account")),
-            "from_account": normalize_account(payload.get("from_account")),
-            "to_account": normalize_account(payload.get("to_account")),
-            "amount": amt,
-            "who": clean_text(payload.get("who"), 20) or "master",
-            "counterparty": clean_text(payload.get("counterparty"), 40),
-            "what": clean_text(payload.get("what"), 120),
-        }
-        rec = self._apply_op_on_state(accs, debts_map, op, at_str=at_str, source="web", allow_negative=True)
-        if rec is None:
-            raise ValueError("账户或字段填得不对")
-        data["records"].append(rec)
-        if len(data["records"]) > MAX_RECORDS:
-            data["records"] = data["records"][-MAX_RECORDS:]
-        self._save()
-        return rec
+            return rec
 
     def delete_record(self, rec_id: str, *, revert_balance: bool = True, now: datetime.datetime | None = None, world=None) -> bool:
-        """删除一条流水：支持删固化流水（按需回退余额）或作废尚未固化的世界线流水。"""
-        rid = str(rec_id or "").strip()
-        if not rid:
-            return False
-        data = self._ensure_shape()
-        accs = data["accounts"]
-        for idx, rec in enumerate(data["records"]):
-            if str(rec.get("id") or "") == rid:
-                if revert_balance:
-                    self._revert_rec_balance(accs, rec, data.get("debts") or [])
-                data["records"].pop(idx)
+        """删除一条流水：支持删固化流水（按需回退余额）或作废尚未固化的真实世界线流水。"""
+        with self._lock:
+            rid = str(rec_id or "").strip()
+            if not rid:
+                return False
+            eff_world = self._resolve_world(world)
+            data = self._ensure_shape()
+            accs = data["accounts"]
+            for idx, rec in enumerate(data["records"]):
+                if str(rec.get("id") or "") == rid:
+                    if revert_balance:
+                        self._revert_rec_balance(accs, rec, data.get("debts") or [])
+                    data["records"].pop(idx)
+                    self._save()
+                    return True
+            # 检查是否尚未固化的世界线流水（id == wl_key）：先验证该 wl_key 确实存在于世界线才写入 void_wl
+            if "/" in rid and rid not in data["void_wl"]:
+                if self._find_wl_op(rid, world=eff_world, now=None) is None:
+                    return False
+                data["void_wl"][rid] = fmt_time(now or datetime.datetime.now())
                 self._save()
                 return True
-        # 检查是否尚未固化的世界线流水（id == wl_key）
-        if "/" in rid and rid not in data["void_wl"]:
-            data["void_wl"][rid] = fmt_time(now or datetime.datetime.now())
-            self._save()
-            return True
-        return False
+            return False
 
     @staticmethod
     def _revert_rec_balance(accs: dict, rec: dict, debts: list | None = None) -> None:
@@ -800,7 +968,7 @@ class MoneyBook(_JsonBook):
         elif kind == "debt_settle":
             did = str(rec.get("debt_id") or "").strip()
             target = next((d for d in (debts or []) if str(d.get("id") or "") == did), None)
-            direction = (target or {}).get("direction") or normalize_direction(rec.get("direction")) or "payable"
+            direction = normalize_direction(rec.get("direction")) or (target or {}).get("direction") or "payable"
             if acc in accs and amt > 0:
                 if direction == "payable":
                     accs[acc]["balance"] = round_yuan(accs[acc]["balance"] + amt)
@@ -813,97 +981,141 @@ class MoneyBook(_JsonBook):
                 target["status"] = "open"
 
     def add_debt(self, payload: dict, *, now: datetime.datetime) -> dict:
-        data = self._ensure_shape()
-        direction = normalize_direction(payload.get("direction")) or "payable"
-        cp = clean_text(payload.get("counterparty"), 40)
-        if not cp:
-            raise ValueError("要写清楚对方是谁（如杂货铺、东港福记旧物行）")
-        amt = round_yuan(payload.get("amount") or 0.0)
-        if amt < 0:
-            raise ValueError("金额不能为负")
-        at_str = fmt_time(now)
-        debt = {
-            "id": self._next_debt_id(),
-            "direction": direction,
-            "counterparty": cp,
-            "amount": amt,
-            "remaining": amt,
-            "about": clean_text(payload.get("about"), 120),
-            "status": "open",
-            "created": at_str,
-            "updated": at_str,
-            "source": "web",
-        }
-        data["debts"].append(debt)
-        self._save()
-        return debt
+        with self._lock:
+            data = self._ensure_shape()
+            direction = normalize_direction(payload.get("direction")) or "payable"
+            cp = clean_text(payload.get("counterparty"), 40)
+            if not cp:
+                raise ValueError("要写清楚对方是谁（如杂货铺、东港福记旧物行）")
+            raw_amt = payload.get("amount")
+            amt = _strict_yuan(raw_amt if raw_amt not in (None, "") else 0.0, "金额")
+            if amt < 0:
+                raise ValueError("金额不能为负")
+            at_str = fmt_time(now)
+            debt = {
+                "id": self._next_debt_id(),
+                "direction": direction,
+                "counterparty": cp,
+                "amount": amt,
+                "remaining": amt,
+                "about": clean_text(payload.get("about"), 120),
+                "status": "open",
+                "created": at_str,
+                "updated": at_str,
+                "source": "web",
+            }
+            data["debts"].append(debt)
+            self._save()
+            return debt
 
-    def update_debt(self, debt_id: str, payload: dict, *, now: datetime.datetime) -> dict:
-        data = self._ensure_shape()
-        did = str(debt_id or "").strip()
-        for d in data["debts"]:
-            if str(d.get("id") or "") == did:
-                if payload.get("direction"):
-                    nd = normalize_direction(payload.get("direction"))
-                    if nd:
-                        d["direction"] = nd
-                if payload.get("counterparty") is not None:
-                    cp = clean_text(payload.get("counterparty"), 40)
-                    if cp:
-                        d["counterparty"] = cp
-                if payload.get("amount") is not None:
-                    d["amount"] = max(0.0, round_yuan(payload.get("amount")))
-                if payload.get("remaining") is not None:
-                    d["remaining"] = max(0.0, round_yuan(payload.get("remaining")))
-                if payload.get("about") is not None:
-                    d["about"] = clean_text(payload.get("about"), 120)
-                if payload.get("status") in ("open", "settled"):
-                    d["status"] = payload["status"]
-                    if d["status"] == "settled":
-                        d["remaining"] = 0.0
-                d["updated"] = fmt_time(now)
+    def update_debt(self, debt_id: str, payload: dict, *, now: datetime.datetime, world=None) -> dict:
+        with self._lock:
+            new_amount = None
+            if payload.get("amount") is not None:
+                new_amount = _strict_yuan(payload.get("amount"), "金额")
+                if new_amount < 0:
+                    raise ValueError("金额不能为负")
+            new_remaining = None
+            if payload.get("remaining") is not None:
+                new_remaining = _strict_yuan(payload.get("remaining"), "剩余金额")
+                if new_remaining < 0:
+                    raise ValueError("剩余金额不能为负")
+            eff_world = self._resolve_world(world)
+            data = self._ensure_shape()
+            did = str(debt_id or "").strip()
+            target = next((d for d in data["debts"] if str(d.get("id") or "") == did), None)
+            if target is None and did.startswith("wl_"):
+                target = self._materialize_wl_debt(data, did, now=now, world=eff_world)
+            if target is None:
+                raise ValueError("找不到账目 #%s" % did)
+            if payload.get("direction"):
+                nd = normalize_direction(payload.get("direction"))
+                if nd:
+                    target["direction"] = nd
+            if payload.get("counterparty") is not None:
+                cp = clean_text(payload.get("counterparty"), 40)
+                if cp:
+                    target["counterparty"] = cp
+            if new_amount is not None:
+                target["amount"] = new_amount
+            if new_remaining is not None:
+                target["remaining"] = new_remaining
+            if payload.get("about") is not None:
+                target["about"] = clean_text(payload.get("about"), 120)
+            if payload.get("status") in ("open", "settled"):
+                target["status"] = payload["status"]
+                if target["status"] == "settled":
+                    target["remaining"] = 0.0
+            target["updated"] = fmt_time(now)
+            self._save()
+            return target
+
+    def settle_debt(
+        self,
+        debt_id: str,
+        *,
+        account: str = "",
+        amount: float | None = None,
+        now: datetime.datetime,
+        what: str = "",
+        world=None,
+    ) -> dict:
+        with self._lock:
+            explicit_amt = None
+            if amount is not None:
+                explicit_amt = _strict_yuan(amount, "结清金额")
+                if explicit_amt <= 0:
+                    raise ValueError("结清金额必须大于 0")
+            eff_world = self._resolve_world(world)
+            data = self._ensure_shape()
+            did = str(debt_id or "").strip()
+            target = next((d for d in data["debts"] if str(d.get("id") or "") == did), None)
+            if target is None and did.startswith("wl_"):
+                target = self._materialize_wl_debt(data, did, now=now, world=eff_world)
+            if target is None:
+                raise ValueError("找不到账目 #%s" % did)
+            amt = explicit_amt if explicit_amt is not None else round_yuan(target.get("remaining", target.get("amount", 0.0)))
+            acc = normalize_account(account) if account else ""
+            op = {
+                "kind": "debt_settle",
+                "debt_id": did,
+                "account": acc,
+                "amount": amt,
+                "what": clean_text(what, 120) or ("%s #%s（%s）" % (
+                    "还清欠账" if target.get("direction") == "payable" else "收回欠款",
+                    did, target.get("counterparty") or "",
+                )),
+            }
+            accs = data["accounts"]
+            debts_map = {str(d["id"]): d for d in data["debts"] if isinstance(d, dict) and d.get("id")}
+            rec = self._apply_op_on_state(accs, debts_map, op, at_str=fmt_time(now), source="web", who="master", allow_negative=True)
+            if rec is None:
+                raise ValueError("结清账目失败，请检查金额与状态")
+            if acc or amt > 0:
+                data["records"].append(rec)
+                if len(data["records"]) > MAX_RECORDS:
+                    data["records"] = data["records"][-MAX_RECORDS:]
+            data["debts"] = list(debts_map.values())
+            self._save()
+            return {"debt": target, "record": rec}
+
+    def delete_debt(self, debt_id: str, *, now: datetime.datetime | None = None, world=None) -> bool:
+        with self._lock:
+            eff_world = self._resolve_world(world)
+            data = self._ensure_shape()
+            did = str(debt_id or "").strip()
+            kept = [d for d in data["debts"] if str(d.get("id") or "") != did]
+            if len(kept) != len(data["debts"]):
+                data["debts"] = kept
                 self._save()
-                return d
-        raise ValueError("找不到账目 #%s" % did)
-
-    def settle_debt(self, debt_id: str, *, account: str = "", amount: float | None = None, now: datetime.datetime, what: str = "") -> dict:
-        data = self._ensure_shape()
-        did = str(debt_id or "").strip()
-        target = next((d for d in data["debts"] if str(d.get("id") or "") == did), None)
-        if target is None:
-            raise ValueError("找不到账目 #%s" % did)
-        amt = round_yuan(amount if amount is not None else target.get("remaining", target.get("amount", 0.0)))
-        acc = normalize_account(account) if account else ""
-        op = {
-            "kind": "debt_settle",
-            "debt_id": did,
-            "account": acc,
-            "amount": amt,
-            "what": clean_text(what, 120) or ("%s #%s（%s）" % (
-                "还清欠账" if target.get("direction") == "payable" else "收回欠款",
-                did, target.get("counterparty") or "",
-            )),
-        }
-        accs = data["accounts"]
-        debts_map = {str(d["id"]): d for d in data["debts"] if isinstance(d, dict) and d.get("id")}
-        rec = self._apply_op_on_state(accs, debts_map, op, at_str=fmt_time(now), source="web", who="master", allow_negative=True)
-        if rec is not None and (acc or amt > 0):
-            data["records"].append(rec)
-            if len(data["records"]) > MAX_RECORDS:
-                data["records"] = data["records"][-MAX_RECORDS:]
-        data["debts"] = list(debts_map.values())
-        self._save()
-        return {"debt": target, "record": rec}
-
-    def delete_debt(self, debt_id: str) -> bool:
-        data = self._ensure_shape()
-        did = str(debt_id or "").strip()
-        kept = [d for d in data["debts"] if str(d.get("id") or "") != did]
-        if len(kept) == len(data["debts"]):
+                return True
+            if did.startswith("wl_"):
+                mat = self._materialize_wl_debt(data, did, now=now, world=eff_world)
+                if mat is not None:
+                    data["debts"] = [d for d in data["debts"] if str(d.get("id") or "") != did]
+                    self._save()
+                    return True
             return False
-        data["debts"] = kept
-        self._save()
-        return True
 
     # ---------- 提示词渲染 ----------
 
@@ -1145,10 +1357,18 @@ def validate_step_segments_money(
             if kind not in ("earn", "spend", "transfer", "debt_add", "debt_settle"):
                 errors.append(f"{tag} money[{m_i}]：kind={op.get('kind')!r} 非法（须填 earn/spend/transfer/debt_add/debt_settle）")
                 continue
+            raw_amt_val = op.get("amount")
+            if isinstance(raw_amt_val, bool):
+                errors.append(f"{tag} money[{m_i}]：amount 必须为有效有限数字")
+                continue
             try:
-                amt = round_yuan(float(op.get("amount") if op.get("amount") is not None else -1))
+                raw_f = float(raw_amt_val if raw_amt_val is not None else -1)
             except Exception:
-                amt = -1.0
+                raw_f = -1.0
+            if not math.isfinite(raw_f):
+                errors.append(f"{tag} money[{m_i}]：amount 必须为有效有限数字")
+                continue
+            amt = round_yuan(raw_f)
             if kind != "debt_add" and amt <= 0:
                 errors.append(f"{tag} money[{m_i}]：amount 必须为大于 0 的数字")
                 continue
@@ -1305,10 +1525,10 @@ def validate_step_segments_money(
                             errors.append(f"{tag} money[{m_i}]：收购站/集市普通变卖单笔上限 {int(MAX_ROUTINE_EARN)} 元")
                             continue
                     if reason == "consign_payout":
-                        did = str(op.get("debt_id") or "").strip()
-                        if not did or did not in sim_debts or sim_debts[did].get("direction") != "receivable":
-                            errors.append(f"{tag} money[{m_i}]：寄卖回款(reason=consign_payout)请改用 kind=\"debt_settle\" 并填对应的待收 debt_id")
-                            continue
+                        errors.append(
+                            f"{tag} money[{m_i}]：寄卖回款(reason=consign_payout)必须改用 kind=\"debt_settle\" 并填对应的待收 debt_id 核销，不能用 kind=\"earn\" 重复领款"
+                        )
+                        continue
                 sim_bal[acc] = round_yuan(sim_bal[acc] + amt)
                 if op_cp and seg_dt is not None:
                     recent_ops.append((bot, kind, amt, op_cp, seg_dt, what_s[:60]))
@@ -1331,6 +1551,17 @@ def validate_step_segments_money(
                     _DEBT_GOODS_HINTS = ("买", "购", "称", "置办", "添置", "挑了", "带回", "打回", "赊账买", "赊购")
                     if any(k in what_s for k in _DEBT_GOODS_HINTS) and not any(k in what_s for k in _DEBT_SERVICE_HINTS):
                         goods_spend_notes.append(f"赊账{fmt_yuan(amt)}元「{what_s}」")
+                sim_id = f"sim_debt_{bot}_{idx}_{m_i}"
+                sim_debts[sim_id] = {
+                    "id": sim_id,
+                    "direction": direction,
+                    "counterparty": cp,
+                    "amount": amt,
+                    "remaining": amt,
+                    "about": what_s,
+                    "status": "open",
+                    "created": fmt_time(seg_dt) if seg_dt is not None else fmt_time(moment),
+                }
                 if seg_dt is not None:
                     recent_ops.append((bot, kind, amt, cp, seg_dt, what_s[:60]))
 

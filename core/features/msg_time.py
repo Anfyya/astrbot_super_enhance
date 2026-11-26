@@ -13,6 +13,11 @@ from .silence import SILENT_FLAG
 # 故 system 与 reminder 之间一律按「除尖括号与换行外任意字符」认。
 # 发送前和历史写入前都要按下面这组规则剥掉。
 _TAG = r"system[^<>\n]*?reminder"
+# 已经盖好的合法发送时间戳（严格格式，避免聊天正文出现「发送时间」「发出时间」「sent at」误判导致漏盖戳）
+_STRICT_STAMP_RE = re.compile(
+    r"<\s*" + _TAG + r"\s*>[^<]*?(?:sent\s*at|current\s*datetime)\s*[:：]\s*\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}[^<]*?</\s*" + _TAG + r"\s*>",
+    re.IGNORECASE | re.DOTALL,
+)
 # 快速预检：文本里可能藏着戳才继续处理
 _MAYBE_STAMP_RE = re.compile(
     r"(?:sent\s*at|发送时间|发出时间)|<\s*" + _TAG + r"\s*>",
@@ -88,11 +93,11 @@ class MsgTimeFeature:
     def _has_stamp(message) -> bool:
         content = getattr(message, "content", None)
         if isinstance(content, str):
-            return bool(_MAYBE_STAMP_RE.search(content))
+            return bool(_STRICT_STAMP_RE.search(content))
         if isinstance(content, list):
             for part in content:
                 text = getattr(part, "text", None)
-                if isinstance(text, str) and _MAYBE_STAMP_RE.search(text):
+                if isinstance(text, str) and _STRICT_STAMP_RE.search(text):
                     return True
         return False
 

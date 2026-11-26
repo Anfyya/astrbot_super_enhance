@@ -29,6 +29,8 @@ _DRY_NEGATION_RE = re.compile(r"(?:防潮|不潮|无潮|未潮|没生锈|未生�
 _RAW_SMELL_KINDS = frozenset(("生鱼虾水产", "生肉禽肉"))
 _AROMA_WINDOW_MINUTES = 60.0
 _SMOKE_LINGER_MINUTES = 30.0
+_OPEN_BAD_SMELL_HOURS = 2.0
+_SEALED_BAD_SMELL_HOURS = 72.0
 
 
 def _short_spot(place: str) -> str:
@@ -125,30 +127,54 @@ def cabin_smell_info(
         w_meta = last.get("weather") if isinstance(last.get("weather"), dict) else {}
         # 剥离「未开封/没开封/未拆封」后再判是否开封，同时合并检查 state 与 note（CAT_FOOD 归一化后原文常留在 note）
         open_probe = re.sub(r"(?:未|没|还没)(?:开封|拆封|打开|开盖)", "", detail_txt)
-        is_explicitly_open = (
+        # 剔除「没盖严/未拧紧/未密封」等否定片段后再判密封
+        clean_seal_state = re.sub(r"(?:没|未|不)(?:盖严|拧紧|密封|封严|封好|封紧)", "", detail_txt)
+        latest_explicit_open = (
             keep == "敞着放"
             or state_txt == "切开了"
             or any(k in open_probe for k in _OPEN_OR_UNSEALED_WORDS)
-            or any(str(st.get("what") or "").strip() in ("吃了一部分", "用掉一部分", "切开了", "打开了") for st in stages)
         )
-        # 剔除「没盖严/未拧紧/未密封」等否定片段后再判密封，且显式开封/吃剩罐头绝不当作密封
-        clean_seal_state = re.sub(r"(?:没|未|不)(?:盖严|拧紧|密封|封严|封好|封紧)", "", detail_txt)
+        # 最新一步已明确重新拧紧/密封且本身非敞口时，不再被更早步骤的「吃过/开过」历史粘连
+        explicitly_resealed = (not latest_explicit_open) and (
+            bool(w_meta.get("sealed"))
+            or any(k in clean_seal_state for k in ("拧紧", "密封", "盖严", "封严", "封好", "封紧"))
+        )
+        is_explicitly_open = latest_explicit_open or (
+            (not explicitly_resealed)
+            and any(str(st.get("what") or "").strip() in ("吃了一部分", "用掉一部分", "切开了", "打开了") for st in stages)
+        )
         is_sealed_box = (not is_explicitly_open) and (
             bool(w_meta.get("sealed"))
             or (keep == "收着放" and any(k in (name + place + clean_seal_state) for k in _SEALED_CONTAINER_WORDS))
-            or any(k in clean_seal_state for k in ("拧紧", "密封", "盖严", "未开封"))
+            or any(k in clean_seal_state for k in ("拧紧", "密封", "盖严", "封严", "封好", "封紧", "未开封"))
         )
 
         if cat == things_mod.CAT_FOOD:
             try:
                 prof = store.profile(item, flat, shelf)
-                fresh_lvl = str((prof.get("fresh") or {}).get("level") or "")
+                fresh_info = prof.get("fresh") or {}
+                fresh_lvl = str(fresh_info.get("level") or "")
             except Exception:
+                fresh_info = {}
                 fresh_lvl = ""
 
             if fresh_lvl == "坏了":
+                bad_since = fresh_info.get("bad_since")
+                if isinstance(bad_since, str):
+                    bad_since = parse_time(bad_since)
+                bad_hours = (
+                    (flat - bad_since.replace(tzinfo=None)).total_seconds() / 3600.0
+                    if isinstance(bad_since, datetime.datetime)
+                    else None
+                )
                 if is_sealed_box:
-                    continue
+                    # 盖紧密封的容器坏了也能慢慢渗味，但过程很慢（坏掉约 3 天后才开始在屋里闻到）
+                    if bad_hours is None or bad_hours < _SEALED_BAD_SMELL_HOURS:
+                        continue
+                else:
+                    # 敞口或未封严的食物变质约 2 小时后即可在屋里闻到酸馊/腥臭
+                    if bad_hours is not None and bad_hours < _OPEN_BAD_SMELL_HOURS:
+                        continue
                 if kind in _RAW_SMELL_KINDS:
                     rotten_raw += 1
                 else:

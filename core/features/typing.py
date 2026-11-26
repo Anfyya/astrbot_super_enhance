@@ -57,15 +57,22 @@ class TypingFeature:
 
         # 只拦 LLM 说话的正常消息，不拦空链和指令。
         try:
-            if hasattr(result, "is_llm_result") and not result.is_llm_result():
-                if result.is_model_result() is False:
-                    self._debug("skip not llm result")
-                    return
+            is_llm = result.is_llm_result() if hasattr(result, "is_llm_result") else None
+            is_model = result.is_model_result() if hasattr(result, "is_model_result") else None
+            if is_llm is False and is_model is not True:
+                self._debug("skip not llm result")
+                return
+            if is_llm is None and is_model is False:
+                self._debug("skip not model result")
+                return
         except Exception:
             pass
 
-        delay = float(self.config.get("delay_seconds", 2.0))
-        delay = min(max(delay, 0.0), 10.0)
+        try:
+            delay = float(self.config.get("delay_seconds", 2.0))
+        except Exception:
+            delay = 2.0
+        delay = min(max(delay, 0.0), 30.0)
         event_type = 1  # 显示成「对方正在输入…」
 
         try:
@@ -108,7 +115,7 @@ class TypingFeature:
             try:
                 await asyncio.sleep(delay)
             except asyncio.CancelledError:
-                pass
+                raise
             self._debug(f"delay done {delay}s")
             # 等待期间事件可能被作废（新消息优先），睡醒后再确认一次，别把废掉的回复发出去。
             if event.is_stopped():

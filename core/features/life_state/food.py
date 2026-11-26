@@ -130,6 +130,9 @@ PLACE_SPOT_WORDS = (
     ("冰箱", "冰箱"), ("冷冻", "冻着"), ("冰柜", "冻着"), ("地窖", "地窖"), ("窖里", "地窖"),
     ("井里", "井里"), ("井水", "井里"), ("吊在井", "井里"), ("井边", "阴凉处"), ("背阴", "阴凉处"), ("阴凉", "阴凉处"),
     ("院子", "屋外"), ("院里", "屋外"), ("檐下", "屋外"), ("屋外", "屋外"), ("门外", "屋外"), ("甲板", "屋外"),
+    ("船舱", "屋里"), ("屋里", "屋里"), ("屋内", "屋里"), ("里屋", "屋里"), ("储物舱", "屋里"),
+    ("灶房", "屋里"), ("灶台", "屋里"), ("矮桌", "屋里"), ("柴炉", "屋里"), ("炭炉", "屋里"), ("火炉", "屋里"),
+    ("柜格", "屋里"), ("木柜", "屋里"), ("书桌", "屋里"), ("餐桌", "屋里"),
 )
 # 「切开了」之外：剥了皮、削了皮、去了皮也是切开了（露着面）；摔了、压了、磕了是碰伤了
 STATE_WORDS = (("没熟", "没熟透"), ("夹生", "没熟透"), ("不熟", "没熟透"), ("半生", "没熟透"),
@@ -353,6 +356,12 @@ def _compute_room_temp(moment: datetime.datetime, weather_text) -> float:
     shift, amp = weather_shift_at(moment, weather_text)
     raw = month_temp(moment, _table_of(weather_text, moment)) + shift + amp * _swing(moment)
     if home == "海边小镇" and moment >= SEA_COLD_SNAP_START:
+        # 2026-11-17 00:00~06:00 寒潮过境：室内与室外同步 6 小时平滑过渡，避免屋外 7℃ 时无火船舱断崖跌至 3.5℃
+        snap_hours = (moment - SEA_COLD_SNAP_START).total_seconds() / 3600.0
+        if 0.0 <= snap_hours < 6.0:
+            legacy_raw = month_temp(moment, SEA_MONTH_TEMP_LEGACY) + shift + amp * _swing(moment)
+            frac = snap_hours / 6.0
+            raw = legacy_raw * (1.0 - frac) + max(raw, 3.5) * frac
         # 船屋浮在不结冰的港湾海水上且有木舱遮挡，未生火时舱内最低约 3.5℃，水缸蔬菜不结冰
         return max(raw, 3.5)
     return raw
@@ -1104,6 +1113,7 @@ class Sim:
         self.bad_since = None
         self.cover, self.spot, self.state, self.place = DEFAULT_KEEP, DEFAULT_SPOT, DEFAULT_STATE, ""
         self.container_text = init_text
+        self.sealed_active = self._text_mentions_sealed(init_text) and not self._text_mentions_unsealed(init_text)
         self.last_stage_text = ""
         self.heat_at = None
         self.reheats = 0
@@ -1115,6 +1125,7 @@ class Sim:
         self.acid_pickled = _has(init_text, ACID_PICKLE_WORDS) and "acid" not in first_denied
         self.oil_sealed = _has(init_text, OIL_SEAL_WORDS) and "oil" not in first_denied
         self.ash_buried = False
+        self._pre_ash_life = self.life
         self.drying = self.dry_done = False
         self.stove_drying = False
         self.half_dry_done = False
@@ -1148,16 +1159,30 @@ class Sim:
             elif self.kind in PRODUCE + SOY:
                 self.life = max(self.life, 96.0)
 
+    @staticmethod
+    def _text_mentions_sealed(text: str) -> bool:
+        cleaned = re.sub(r"(?:没|未|不)(?:盖严|拧紧|密封|封严|封好|封紧|封口)", "", str(text or ""))
+        return _has(cleaned, SEALED_CONTAINER_WORDS)
+
+    @staticmethod
+    def _text_mentions_unsealed(text: str) -> bool:
+        cleaned = re.sub(r"(?:未|没|还没)(?:开封|拆封|打开|开盖)", "", str(text or ""))
+        return _has(cleaned, ("开封", "拆封", "开了封", "开了盖", "开盖", "倒在盘", "倒进盘", "倒出", "摆在盘", "敞口", "敞着", "没盖严", "未盖严", "没拧紧", "未拧紧", "未密封", "没封严"))
+
+    def _is_tight_sealed(self) -> bool:
+        if self.cover == "敞着放":
+            return False
+        if self.sealed_active:
+            return True
+        if "罐头" in self.container_text and self.state != "切开了" and not self._text_mentions_unsealed(self.last_stage_text):
+            return True
+        return False
+
     def _is_sealed_container(self) -> bool:
         """密封罐、拧紧铁桶、玻璃瓶、未开封罐头或明确收着放：免除海边空气潮湿加速腐败惩罚。"""
         if self.cover == "收着放":
             return True
-        text = self.container_text
-        if _has(text, SEALED_CONTAINER_WORDS):
-            return True
-        if "罐头" in text and self.state != "切开了":
-            return True
-        return False
+        return self._is_tight_sealed()
 
     def _is_live_kept(self) -> bool:
         return self.cover == "活养着" or (self.spot == "船舷海里活养" and self.kind == "生鱼虾水产" and self.state == DEFAULT_STATE)
@@ -1168,7 +1193,13 @@ class Sim:
         what = str(stage.get("what") or "")
         cover, spot = split_keep(stage.get("keep"), stage.get("spot"), stage.get("place"))
         prev_spot = self.spot
-        self.cover = cover or self.cover
+        if cover:
+            self.cover = cover
+        elif what == "晒上了" and self.cover == DEFAULT_KEEP:
+            # 晾晒省略放法时默认露天敞着晾，暴雨会淋湿且后续翻面不会误中止晾晒
+            self.cover = "敞着放"
+        elif what == "炉烘" and self.cover == DEFAULT_KEEP:
+            self.cover = "挂着通风"
         self.spot = spot or self.spot
         self.state = norm_state(stage.get("state")) or self.state
         self.place = str(stage.get("place") or "") or self.place
@@ -1176,6 +1207,16 @@ class Sim:
         self.last_stage_text = stage_text
         if stage_text.strip():
             self.container_text = (self.container_text + " " + stage_text).strip()
+        w_meta = stage.get("weather") if isinstance(stage.get("weather"), dict) else {}
+        if self.cover == "敞着放" or w_meta.get("sealed") is False:
+            self.sealed_active = False
+        elif w_meta.get("sealed") is True or self._text_mentions_sealed(stage_text):
+            if not self._text_mentions_unsealed(stage_text) or any(w in stage_text for w in ("拧紧", "盖严", "重新密封", "封严", "封好")):
+                self.sealed_active = True
+            else:
+                self.sealed_active = False
+        elif self._text_mentions_unsealed(stage_text) or what in ("切开了", "打开了"):
+            self.sealed_active = False
         denied = {
             x.strip()
             for x in str(((stage.get("src") or {}) if isinstance(stage.get("src"), dict) else {}).get("preserve_denied") or "").split(",")
@@ -1205,11 +1246,15 @@ class Sim:
             self.life = max(self.life, OIL_SEAL_LIFE)
         # 4) 柴炉冷却草木灰 / 干沙埋藏（结构化 what == "灰沙埋" 优先，兼容老文本，须未因无灰/无沙被拒）
         if (what == "灰沙埋" or _has(self.place + " " + stage_text, ASH_SAND_WORDS)) and "ash" not in denied:
+            if not self.ash_buried:
+                self._pre_ash_life = self.life
             self.ash_buried = True
             if self.kind in ("禽蛋类", "耐储根茎瓜菜", "葱姜蒜调味根茎"):
                 self.life = max(self.life, ASH_SAND_LIFE)
         elif what == "挪地方" and stage.get("place") and not _has(str(stage.get("place") or ""), ASH_SAND_WORDS):
-            self.ash_buried = False
+            if self.ash_buried:
+                self.ash_buried = False
+                self.life = self._pre_ash_life
         heated = (first and what == "做好了") or what == "热了一下"
         if heated:
             if what == "热了一下":
@@ -1472,7 +1517,7 @@ class Sim:
             if cover == "泡在水里":
                 rate = 20.0
             else:
-                tight = _has(self.container_text, SEALED_CONTAINER_WORDS)
+                tight = self._is_tight_sealed()
                 c_soggy = 0.03 if tight else COVER_SOGGY.get(cover, 1.0)
                 rate = c_soggy * SPOT_SOGGY.get(spot, 1.0)
                 rate *= 1.6 if wet and not tight else (0.85 if sunny(weather) else 1.0)
@@ -1846,7 +1891,7 @@ def simulate(item: dict, life, now=None, weather_of=None, index: SpaceIndex | No
     elif quality:
         out["quality"] = []
         out["texture"] = 1.0
-    if end is not None or not started or sim.frac >= 1.0:
+    if (end_at is not None and end_at <= flat) or not started or sim.frac >= 1.0:
         return out
     hurry = 0.8
     sim.quality = False

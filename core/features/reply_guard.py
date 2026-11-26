@@ -14,10 +14,12 @@ AstrBot 原生有两种行为：
 """
 
 import asyncio
+import datetime
 import time
 
 from astrbot.api import logger
 
+from ..common import timeutil
 from .silence import SILENT_FLAG
 from .turn_state import (
     AGENT_DONE_FLAG,
@@ -50,7 +52,8 @@ class ReplyGuardFeature:
         self.context = context
         self.cfg = cfg
         self._turn: dict[str, dict] = {}
-        self._pending: dict[str, dict] = {}
+        self._pending: dict[str, list[dict]] = {}
+        self._cleanup_tasks: set[asyncio.Task] = set()
         # 由 main 接上：HistoryMergeFeature（在会话写锁里改历史）
         self.history = None
 
@@ -91,6 +94,7 @@ class ReplyGuardFeature:
         if str(umo or "").split(":")[0] == "webchat":
             # 面板网页聊天不参与「新消息优先」（2026-10-24 用户要求）：这一轮不登记，后面几个钩子查不到也就都不管
             return
+        new_text = (event.get_message_str() or "").strip()
         previous = self._turn.get(umo)
         if (
             previous
@@ -106,24 +110,44 @@ class ReplyGuardFeature:
             elif self._finished_without_reply(previous):
                 logger.debug("[super_enhance/reply_guard] 上一轮已经结束且没有要发的内容，不取消（%s）", umo)
             else:
-                unsent = self._cancel(previous)
-                self._pending[umo] = {
+                cancel_ts = time.time()
+                unsent = self._cancel(previous, next_user_text=new_text, cancel_ts=cancel_ts)
+                queue = self._pending.setdefault(umo, [])
+                # 若上一轮本身已经背着更早被取消、但还没写库的消息，先按原顺序还回队列（避免 M1→M2→M3 丢 M1）
+                carried = previous.get("carried") or []
+                if carried:
+                    queue.extend(carried)
+                queue.append({
                     "text": previous.get("text", ""),
                     "sender_id": previous.get("sender_id", ""),
                     "sender_name": previous.get("sender_name", ""),
                     "at": previous.get("at", ""),
-                    "ts": time.time(),
+                    "started": float(previous.get("started") or 0),
+                    "ts": cancel_ts,
                     "unsent": unsent,
-                }
+                    "next_user_text": new_text,
+                })
         self._turn[umo] = {
             "event": event,
-            "text": (event.get_message_str() or "").strip(),
+            "text": new_text,
             "sender_id": event.get_sender_id(),
             "sender_name": event.get_sender_name(),
             "at": local_stamp(arrived_at(event) or None),
             "started": arrived_at(event) or time.time(),
             "delivered": False,
+            "carried": [],
         }
+
+    def discard_turn(self, event) -> None:
+        """外部拦截（如上下文超限）直接终止本轮时，清理本轮悬空记录，绝不污染下一轮。"""
+        try:
+            umo = event.unified_msg_origin
+        except Exception:
+            return
+        info = self._turn.get(umo)
+        if info and info.get("event") is event:
+            self._turn.pop(umo, None)
+        self._pending.pop(umo, None)
 
     @staticmethod
     def _finished_without_reply(previous: dict) -> bool:
@@ -145,7 +169,16 @@ class ReplyGuardFeature:
             result = None
         return result is None or not getattr(result, "chain", None)
 
-    def _cancel(self, previous: dict) -> list[str]:
+    @staticmethod
+    def _local_dt(ts: float | None) -> datetime.datetime | None:
+        if not ts:
+            return None
+        try:
+            return datetime.datetime.fromtimestamp(float(ts), timeutil.zone()).replace(tzinfo=None)
+        except Exception:
+            return None
+
+    def _cancel(self, previous: dict, *, next_user_text: str = "", cancel_ts: float | None = None) -> list[str]:
         """停掉上一轮；返回它已经生成、但没发出去的正文（需要从历史 / 新请求里删掉）。"""
         old_event = previous.get("event")
         if old_event is None:
@@ -170,12 +203,30 @@ class ReplyGuardFeature:
         )
         if unsent:
             # 这一轮已经生成完、AstrBot 已经（或马上）把它存进历史了：事后删掉没发出去的那几句
-            asyncio.create_task(
-                self._remove_from_history(old_event.unified_msg_origin, unsent)
+            task = asyncio.create_task(
+                self._remove_from_history(
+                    old_event.unified_msg_origin,
+                    unsent,
+                    user_text=str(previous.get("text") or ""),
+                    next_user_text=next_user_text,
+                    not_before=self._local_dt(previous.get("started")),
+                    not_after=self._local_dt(cancel_ts or time.time()),
+                )
             )
+            self._cleanup_tasks.add(task)
+            task.add_done_callback(self._cleanup_tasks.discard)
         return unsent
 
-    async def _remove_from_history(self, umo: str, texts: list[str]) -> None:
+    async def _remove_from_history(
+        self,
+        umo: str,
+        texts: list[str],
+        *,
+        user_text: str = "",
+        next_user_text: str = "",
+        not_before: datetime.datetime | None = None,
+        not_after: datetime.datetime | None = None,
+    ) -> None:
         if self.history is None:
             return
         mgr = getattr(self.context, "conversation_manager", None)
@@ -186,7 +237,14 @@ class ReplyGuardFeature:
             removed = {"n": 0}
 
             def fn(history):
-                new, n = remove_texts_from_tail(history, texts)
+                new, n = remove_texts_from_tail(
+                    history,
+                    texts,
+                    user_text=user_text,
+                    next_user_text=next_user_text,
+                    not_before=not_before,
+                    not_after=not_after,
+                )
                 removed["n"] = n
                 return new if n else None
 
@@ -230,23 +288,36 @@ class ReplyGuardFeature:
     async def on_llm_request(self, event, req) -> None:
         if not self.enabled:
             return
-        info = self._pending.pop(event.unified_msg_origin, None)
-        if not info:
+        umo = event.unified_msg_origin
+        items = self._pending.pop(umo, None)
+        if not items:
             return
         contexts = getattr(req, "contexts", None)
-        if isinstance(contexts, list) and info.get("unsent"):
-            # 上一轮存进历史又被作废的那几句，可能已经被这一轮读进来了
-            new, n = remove_texts_from_tail(contexts, list(info["unsent"]))
-            if n:
-                contexts[:] = new
-                logger.info("[super_enhance/reply_guard] 本次请求里去掉 %d 句没发出去的旧回复", n)
-        text = append_pending_user(req, info, PENDING_TTL_SECONDS)
-        if not text:
-            return
-        logger.info(
-            "[super_enhance/reply_guard] 已把上一条用户消息单独补进本次请求：%s",
-            text[:40],
-        )
+        carried: list[dict] = []
+        for info in items:
+            if isinstance(contexts, list) and info.get("unsent"):
+                # 上一轮存进历史又被作废的那几句，可能已经被这一轮读进来了
+                new, n = remove_texts_from_tail(
+                    contexts,
+                    list(info["unsent"]),
+                    user_text=str(info.get("text") or ""),
+                    next_user_text=str(info.get("next_user_text") or ""),
+                    not_before=self._local_dt(info.get("started")),
+                    not_after=self._local_dt(info.get("ts")),
+                )
+                if n:
+                    contexts[:] = new
+                    logger.info("[super_enhance/reply_guard] 本次请求里去掉 %d 句没发出去的旧回复", n)
+            text = append_pending_user(req, info, PENDING_TTL_SECONDS)
+            if text:
+                carried.append(info)
+                logger.info(
+                    "[super_enhance/reply_guard] 已把上一条用户消息单独补进本次请求：%s",
+                    text[:40],
+                )
+        turn = self._turn.get(umo)
+        if turn and turn.get("event") is event and carried:
+            turn.setdefault("carried", []).extend(carried)
 
     @staticmethod
     def _context_has(req, text: str) -> bool:

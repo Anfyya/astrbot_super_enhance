@@ -45,8 +45,21 @@ def parse_day(text, today: datetime.date):
             return False
     m = re.fullmatch(r"(\d{1,2})[-/.月](\d{1,2})[日号]?", text)
     if m:
+        month, dom = int(m.group(1)), int(m.group(2))
+        if month == 2 and dom == 29:
+            year = today.year
+            while year > 0:
+                try:
+                    cand = datetime.date(year, 2, 29)
+                except ValueError:
+                    year -= 1
+                    continue
+                if cand <= today:
+                    return cand
+                year -= 1
+            return False
         try:
-            day = datetime.date(today.year, int(m.group(1)), int(m.group(2)))
+            day = datetime.date(today.year, month, dom)
         except ValueError:
             return False
         return day if day <= today else day.replace(year=today.year - 1)
@@ -158,9 +171,10 @@ def search(world: WorldStore, viewer: str, label, now: datetime.datetime,
     days = [day] if day else _available_days(world, today)
     if day and day not in _available_days(world, today):
         return "%s 那天的世界线已经没有了（只留最近几天的）。" % day.isoformat()
-    rows, total = [], 0
+    rows, total, shown_count = [], 0, 0
     for one in days:
         hits = []
+        day_end = datetime.datetime.combine(one + datetime.timedelta(days=1), datetime.time())
         for item in world.entries(one.isoformat(), ""):
             level = visible_to(item, viewer)
             if level == "none":
@@ -169,7 +183,13 @@ def search(world: WorldStore, viewer: str, label, now: datetime.datetime,
             if start is None or start > now:
                 continue
             if span is not None:
-                end = parse_time(item.get("end")) if item.get("end") else start
+                if item.get("end"):
+                    end = parse_time(item.get("end")) or start
+                elif is_event(item):
+                    end = start
+                else:
+                    # 无 end 的开口持续段：用当前时刻（或当日结束）作为结束边界参与时段匹配
+                    end = max(start, min(now, day_end))
                 a, b = _minutes(start, one), _minutes(end, one)
                 lo, hi = span
                 if not (a <= hi and max(a, b) >= lo):
@@ -181,11 +201,13 @@ def search(world: WorldStore, viewer: str, label, now: datetime.datetime,
             hits.append("- %s %s %s：%s" % (_ref(one, item), _span_text(item, one), _who(item, viewer, label),
                                          _clip(_text(item, level, now))))
         total += len(hits)
-        if hits and len(rows) < MAX_ROWS:
+        if hits and shown_count < MAX_ROWS:
+            remain = MAX_ROWS - shown_count
             head = "%s（%s）" % (one.isoformat(), WEEKDAYS_CN[one.weekday()])
-            take = hits[:MAX_ROWS - len(rows)] if day or span else hits[-(MAX_ROWS - len(rows)):]
+            take = hits[:remain] if day or span else hits[-remain:]
             rows.append(head)
             rows.extend(take)
+            shown_count += len(take)
     if not total:
         return "世界线里没翻到%s。" % "、".join(
             x for x in ("「%s」" % keyword if terms else "", day.isoformat() if day else "",
@@ -221,19 +243,38 @@ def detail(world: WorldStore, viewer: str, label, now: datetime.datetime, ref: s
     if level == "none":
         return "这一条你看不到。"
     start = parse_time(item.get("start"))
-    end = parse_time(item.get("end")) if item.get("end") else start
+    end = parse_time(item.get("end")) if item.get("end") else None
     if start is None or start > now:
-        return event_text_at(item, now, detail=level == "detail") or "这一条尚未发生。"
+        return "这一条尚未发生。"
     lines = ["当时的世界线：%s（%s）%s" % (day.isoformat(), WEEKDAYS_CN[day.weekday()], _span_text(item, day))]
     who = str(item.get("who") or "")
     text = _text(item, level, now, full=True)
-    withs = [label(x) or x for x in item.get("with") or [] if x != viewer]
+    withs = ["主人" if x == "master" else (label(x) or x) for x in item.get("with") or [] if x != viewer]
     lines.append("%s：%s%s%s" % (
         _who(item, viewer, label), text, "（和%s一起）" % "、".join(withs) if withs else "",
         "（原话：%s）" % item["src_quote"] if level == "detail" and item.get("src_quote")
         and (is_event(item) or (end is not None and end <= now)) and not item.get("_fact_error") else ""))
-    # 同一个人前后各一件
-    own = [x for x in world.activities(who, end or now) if not is_event(x)] if who and who != "master" else []
+    # 同一个人前后各一件（包含 day + 1，防止跨夜或次日凌晨「后一件」漏查）
+    own = []
+    if who and who != "master":
+        check_days = {
+            day - datetime.timedelta(days=1),
+            day,
+            day + datetime.timedelta(days=1),
+        }
+        if end is not None:
+            check_days.add(end.date())
+            check_days.add(end.date() + datetime.timedelta(days=1))
+        seen_own: set[tuple[str, str]] = set()
+        for one_day in sorted(check_days):
+            for x in world.entries(one_day.isoformat(), who):
+                if is_event(x):
+                    continue
+                own_key = (str(x.get("id") or ""), str(x.get("start") or ""))
+                if own_key not in seen_own:
+                    seen_own.add(own_key)
+                    own.append(x)
+        own.sort(key=lambda x: str(x.get("start") or ""))
     ids = [str(x.get("id")) + str(x.get("start")) for x in own]
     key = str(item.get("id")) + str(item.get("start"))
     if key in ids:
@@ -248,27 +289,47 @@ def detail(world: WorldStore, viewer: str, label, now: datetime.datetime, ref: s
                 lines.append("%s%s：%s %s" % (
                     "你" if who == viewer else _who(item, viewer, label), word,
                     _span_text(other, other_day), _clip(_text(other, seen, now))))
-    # 同一时候别人在干什么、这段时间里顺带的事
+    # 同一时候别人在干什么、这段时间里顺带的事（包含 day + 1 覆盖跨夜条目）
     if start is not None:
-        lo, hi = start, max(end or start, start)
+        lo = start
+        if is_event(item):
+            hi = start
+        elif end is not None:
+            hi = max(end, start)
+        else:
+            hi = max(now, start)
         others: dict = {}
         events = []
-        for back in (1, 0):
-            one = day - datetime.timedelta(days=back)
+        scan_days = sorted({
+            day - datetime.timedelta(days=1),
+            day,
+            day + datetime.timedelta(days=1),
+            hi.date(),
+        })
+        seen_peer: set[tuple[str, str, str]] = set()
+        for one in scan_days:
             for x in world.entries(one.isoformat(), ""):
-                if x is item:
+                if x is item or (
+                    str(x.get("id") or "") == str(item.get("id") or "")
+                    and str(x.get("start") or "") == str(item.get("start") or "")
+                    and str(x.get("who") or "") == who
+                ):
                     continue
+                peer_key = (str(x.get("who") or ""), str(x.get("id") or ""), str(x.get("start") or ""))
+                if peer_key in seen_peer:
+                    continue
+                seen_peer.add(peer_key)
                 seen = visible_to(x, viewer)
                 if seen == "none":
                     continue
                 a = parse_time(x.get("start"))
-                b = parse_time(x.get("end")) if x.get("end") else a
                 if a is None or a > now:
                     continue
                 if is_event(x):
                     if lo <= a <= hi:
                         events.append("%s %s：%s" % (_span_text(x, day), _who(x, viewer, label), _clip(_text(x, seen, now))))
                     continue
+                b = parse_time(x.get("end")) if x.get("end") else now
                 if str(x.get("who")) == who:
                     continue
                 if not (a < hi and (b or a) > lo):
