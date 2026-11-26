@@ -961,8 +961,8 @@ class Recorder:
         return ""
 
     def apply(self, umo: str, data: dict, now: datetime.datetime, items=None) -> None:
-        """一次批改只把涉及到的世界线文件各写一遍。"""
-        with fact_batch(self), self.world.day_transaction():
+        """一次批改受 fact_batch 整批原子保护；world.day_transaction 仅包裹世界线写入段，释放 WorldStore._lock 后再写 things/money，确保全库锁序单向无 AB-BA 死锁。"""
+        with fact_batch(self):
             self._apply(umo, data, now, items)
 
     def _apply(self, umo: str, data: dict, now: datetime.datetime, items=None) -> None:
@@ -973,37 +973,40 @@ class Recorder:
         companion = getattr(self, "companionship", None)
         comp_raw = _extract_companionship(data)
         extra_plans = []
-        if companion is not None:
-            for item in batch:
-                companion.safe("observe_message", item)
-            previous = companion.safe("reply_context", umo, batch, now, default=[])
-            extra_plans = companion.safe("apply_record", umo, comp_raw, previous + batch, now, default=[])
-            if extra_plans:
-                data = dict(data, intentions=list(data.get("intentions") or []) + extra_plans)
-        # 预扫本批合法 same_as 承接，防止前面 _apply_stale 误删待承接段或无条件 _touch 把精准刹车打穿
-        self._prescan_same_as(data.get("entries") or [], bots, flat_now)
-        # 先定对不上的那几段怎么收场（收尾、做完、交接要几分钟），再记这次的新条目：免得新条目先把手上的事一刀截断
-        state.free_at = self._apply_stale(data.get("stale") or [], now)
-        self._apply_entries(data.get("entries") or [], umo, now, items, bots, state.free_at, flat_now)
-        self._apply_master_mood(umo, comp_raw, batch, now, bots)
-        if batch and not any(str(x.get("role") or "") == "user" for x in batch):
-            # 这批全是她主动发的、主人一句没说：规矩和打算都不可能从这里来（主动消息里的不记）
-            if data.get("constraints") or data.get("intentions"):
-                logger.info("[super_enhance/world] 这批只有她主动发的消息，丢掉记录员给的 %d 条规矩、%d 条打算",
-                            len(data.get("constraints") or []), len(data.get("intentions") or []))
-            data = dict(data, constraints=[], intentions=[])
-        self._apply_constraints(data, umo, now, batch)
-        self._apply_intentions(data, umo, now, bots, flat_now, batch)
+        # 阶段 1：世界线全量更新（持 WorldStore._lock 批处理并在退出时释放，避免持 WorldStore._lock 跨调 ThingStore/MoneyBook 形成 AB-BA 死锁）
+        with self.world.day_transaction():
+            if companion is not None:
+                for item in batch:
+                    companion.safe("observe_message", item)
+                previous = companion.safe("reply_context", umo, batch, now, default=[])
+                extra_plans = companion.safe("apply_record", umo, comp_raw, previous + batch, now, default=[])
+                if extra_plans:
+                    data = dict(data, intentions=list(data.get("intentions") or []) + extra_plans)
+            # 预扫本批合法 same_as 承接，防止前面 _apply_stale 误删待承接段或无条件 _touch 把精准刹车打穿
+            self._prescan_same_as(data.get("entries") or [], bots, flat_now)
+            # 先定对不上的那几段怎么收场（收尾、做完、交接要几分钟），再记这次的新条目：免得新条目先把手上的事一刀截断
+            state.free_at = self._apply_stale(data.get("stale") or [], now)
+            self._apply_entries(data.get("entries") or [], umo, now, items, bots, state.free_at, flat_now)
+            self._apply_master_mood(umo, comp_raw, batch, now, bots)
+            if batch and not any(str(x.get("role") or "") == "user" for x in batch):
+                # 这批全是她主动发的、主人一句没说：规矩和打算都不可能从这里来（主动消息里的不记）
+                if data.get("constraints") or data.get("intentions"):
+                    logger.info("[super_enhance/world] 这批只有她主动发的消息，丢掉记录员给的 %d 条规矩、%d 条打算",
+                                len(data.get("constraints") or []), len(data.get("intentions") or []))
+                data = dict(data, constraints=[], intentions=[])
+            self._apply_constraints(data, umo, now, batch)
+            self._apply_intentions(data, umo, now, bots, flat_now, batch)
+            # 改到了谁的现在：她后面补写排的全撤掉，补写从头排；最后核对两人「一起」对得上
+            for who, since in sorted(state.touched.items()):
+                self._redo_after(who, since, now)
+            self._unpair(now)
+        # 阶段 2：已释放 WorldStore._lock，仍在 fact_batch(staged_writes + 全 Store 回滚) 保护下更新其他账本与存货
         self._apply_promises(data.get("promises") or [], now, umo)
         self._apply_trainings(data.get("trainings") or [], now)
         self._apply_abilities(data.get("abilities") or [], now)
         self._apply_things(data.get("things") or [], umo, batch, now)
         self._apply_things(data.get("items") or [], umo, batch, now, cat=CAT_ITEM)
         self._apply_money(data.get("money") or [], umo, batch, now)
-        # 改到了谁的现在：她后面补写排的全撤掉，补写从头排；最后核对两人「一起」对得上
-        for who, since in sorted(state.touched.items()):
-            self._redo_after(who, since, now)
-        self._unpair(now)
 
     def _apply_entries(self, raws, umo: str, now: datetime.datetime, items, bots: set,
                        free_at: dict, flat_now: datetime.datetime) -> None:
