@@ -1586,6 +1586,8 @@ class LifeStep:
     @staticmethod
     def _meal_slot_of(dt: datetime.datetime) -> str:
         hm = dt.hour * 60 + dt.minute
+        if hm >= 21 * 60 + 30 or hm < 4 * 60:
+            return "夜宵"
         if hm < 10 * 60 + 30:
             return "早饭"
         if hm < 15 * 60 + 30:
@@ -2608,8 +2610,12 @@ class LifeStep:
                 self._note_mood_abort(moment)
                 return False
             self._deferred_decision = None
+            self._last_ask_approved = False
             data, text = await self._ask_master(data, prompt, text, tasks, moment, system_prompt=system_prompt)
-            written, missed = self.apply(data, tasks, moment, mood_snapshot=self._mood_guard_start)
+            written, missed = self.apply(
+                data, tasks, moment, mood_snapshot=self._mood_guard_start,
+                master_replied=bool(getattr(self, "_last_ask_approved", False)),
+            )
             if self._last_apply_aborted_by_mood:
                 self._note_mood_abort(moment)
                 return False
@@ -2786,6 +2792,8 @@ class LifeStep:
                     row["fast_replied"] = True
                     companion._save()
                     break
+        if is_approved:
+            self._last_ask_approved = True
         return fixed, again
 
     def _raw_after(self, umo: str, after_ts: float, role: str) -> list:
@@ -3107,8 +3115,6 @@ class LifeStep:
                 bot_kept.append((idx, raw, cursor, seg_end, st_code))
                 if raw.get("kerosene") is True:
                     batch_any["kerosene"] = True
-                    if first_kerosene_at is None or cursor < first_kerosene_at:
-                        first_kerosene_at = cursor
                 if raw.get("water") is True:
                     batch_any["water"] = True
                 if st_code == "do":
@@ -3127,9 +3133,6 @@ class LifeStep:
                                 }
                                 if staple_of(food_probe) is not None:
                                     batch_measured_food_keys.add(food_key)
-                                if str(eff.get("kind") or "") == "干货调料粮食" and store is not None and store._is_edible_oil({"cat": CAT_FOOD, "name": eff.get("name"), "kind": "干货调料粮食"}):
-                                    if first_oil_at is None or cursor < first_oil_at:
-                                        first_oil_at = cursor
                     for eff in raw.get("items") or []:
                         if isinstance(eff, dict):
                             if eff.get("new"):
@@ -3141,14 +3144,10 @@ class LifeStep:
                                 item_probe = {"cat": CAT_ITEM, "name": eff.get("name"), "kind": kd_str}
                                 if is_charcoal(item_probe):
                                     batch_fuel_keys.add(item_key)
-                                    if first_charcoal_at is None or cursor < first_charcoal_at:
-                                        first_charcoal_at = cursor
                                 if kd_str in weathering.STOVE_WOOD_KINDS or purp_str == "fuel":
                                     batch_fuel_keys.add(item_key)
                                     w_meta = weathering.wood_fuel_meta({"kind": kd_str, "stages": [{"weather": eff.get("weather")}]})
                                     batch_wood_tier[item_key] = w_meta["tier"]
-                                    if _wood_ready_weather(eff, True) and (first_wood_at is None or seg_end < first_wood_at):
-                                        first_wood_at = seg_end
                             else:
                                 batch_any["used_item"] = True
                                 tid_str = str(eff.get("id") or "").strip()
@@ -3167,11 +3166,55 @@ class LifeStep:
                                         batch_wood_tier[tid_str] = "hardwood"
                                     elif prior_tier is not None and tid_str not in batch_wood_tier:
                                         batch_wood_tier[tid_str] = prior_tier
-                                if is_wood_ref and _wood_ready_weather(eff, False, hit_item):
-                                    if first_wood_at is None or seg_end < first_wood_at:
-                                        first_wood_at = seg_end
                 cursor = seg_end
             kept_by_bot[bot] = (bot_kept, cursor, until)
+
+        # 第一遍结束后，按实际送抵船屋的时刻结算跨人可用时间（防止 A 还在买油/换炭/领煤油路上，B 在家提前时空倒流用上）
+        def _home_arrival_of(b_kept: list, pos_idx: int) -> datetime.datetime | None:
+            _i, r0, _s0, e0, _c0 = b_kept[pos_idx]
+            if r0.get("at_home") is True:
+                return e0
+            for _i2, r2, s2, _e2, _c2 in b_kept[pos_idx + 1:]:
+                if r2.get("at_home") is True:
+                    return s2
+            return None
+
+        first_kerosene_at = None
+        first_oil_at = None
+        first_charcoal_at = None
+        first_wood_at = None
+        for _b_id, (b_kept, _, _) in kept_by_bot.items():
+            for p_i, (_idx, raw, _s, seg_end, st_code) in enumerate(b_kept):
+                arr = _home_arrival_of(b_kept, p_i)
+                if raw.get("kerosene") is True and arr is not None:
+                    if first_kerosene_at is None or arr < first_kerosene_at:
+                        first_kerosene_at = arr
+                if st_code != "do":
+                    continue
+                for eff in raw.get("things") or []:
+                    if isinstance(eff, dict) and eff.get("new"):
+                        if str(eff.get("kind") or "") == "干货调料粮食" and store is not None and store._is_edible_oil({"cat": CAT_FOOD, "name": eff.get("name"), "kind": "干货调料粮食"}):
+                            if arr is not None and (first_oil_at is None or arr < first_oil_at):
+                                first_oil_at = arr
+                for eff in raw.get("items") or []:
+                    if isinstance(eff, dict):
+                        if eff.get("new"):
+                            kd_str = clean_text(eff.get("kind"), 10)
+                            purp_str = str(eff.get("purpose") or "").strip()
+                            item_probe = {"cat": CAT_ITEM, "name": eff.get("name"), "kind": kd_str}
+                            if is_charcoal(item_probe) and arr is not None:
+                                if first_charcoal_at is None or arr < first_charcoal_at:
+                                    first_charcoal_at = arr
+                            if (kd_str in weathering.STOVE_WOOD_KINDS or purp_str == "fuel") and _wood_ready_weather(eff, True):
+                                if arr is not None and (first_wood_at is None or arr < first_wood_at):
+                                    first_wood_at = arr
+                        else:
+                            tid_str = str(eff.get("id") or "").strip()
+                            hit_item = shelf.find(tid_str) if (shelf is not None and tid_str) else None
+                            is_wood_ref = tid_str in batch_fuel_keys or (hit_item is not None and weathering.fuel_item(hit_item) and not is_charcoal(hit_item))
+                            if is_wood_ref and _wood_ready_weather(eff, False, hit_item):
+                                if arr is not None and (first_wood_at is None or arr < first_wood_at):
+                                    first_wood_at = arr
 
         if ask_at_dt is not None and kept_by_bot:
             max_batch_end = max((fc for _, fc, _ in kept_by_bot.values()), default=flat)
@@ -3296,7 +3339,7 @@ class LifeStep:
                     errors.append(f"{tag}：非做事段 meal 必须为 false")
                 if st_code == "do" and raw.get("meal") is True:
                     cur_slot = self._meal_slot_of(seg_start)
-                    if cur_slot in ("午饭", "晚饭"):
+                    if cur_slot in ("早饭", "午饭", "晚饭"):
                         prior_meal = next(
                             (
                                 (p_st, p_en)
@@ -3310,6 +3353,8 @@ class LifeStep:
                                 f"{tag}：{who_lbl}今日{cur_slot}已在 {fmt_time(prior_meal[0])[11:16]}–{fmt_time(prior_meal[1])[11:16]} 吃过，"
                                 f"严禁重吃第二顿{cur_slot}（若陪主人吃另做的饭请将 meal 填 false）"
                             )
+                        else:
+                            existing_meals_by_bot.setdefault(bot, []).append((cur_slot, seg_start, seg_end, str(raw.get("doing") or "")))
                 if raw.get("with"):
                     bot_has_partner = True
                 # 防擅自把在家主人带出门 & 防主人已外出时仍在家写 with: master
@@ -3370,8 +3415,12 @@ class LifeStep:
                 if seaside and raw.get("lamp") is True:
                     if sleep:
                         errors.append(f"{tag}：睡觉段 lamp 必须为 false")
-                    elif not (inv_state.get("lamp_ok") or (first_kerosene_at is not None and first_kerosene_at <= seg_end)):
-                        errors.append(f"{tag}：家里煤油已点完且未领新煤油，lamp 不能填 true")
+                    elif not (
+                        inv_state.get("lamp_ok")
+                        or (raw.get("kerosene") is True and raw.get("at_home") is True)
+                        or (first_kerosene_at is not None and first_kerosene_at <= seg_start)
+                    ):
+                        errors.append(f"{tag}：家里煤油已点完且在此之前未把新煤油带回船屋，lamp 不能填 true")
 
                 if raw.get("send_msg") is True:
                     m_at = str(raw.get("msg_at") or "").strip()
@@ -3395,10 +3444,10 @@ class LifeStep:
                         errors.append(f"{tag}：非海边住处 stove 必须填 \"\"")
                     elif stove_val != "" and raw.get("at_home") is False:
                         errors.append(f"{tag}：外出段（at_home=false）不在船屋，不能由本人标生火，stove 必须填 \"\"")
-                    elif stove_val == "charcoal" and inv_state["charcoal_g"] <= 0 and not (first_charcoal_at is not None and first_charcoal_at <= seg_end):
-                        errors.append(f"{tag}：家里闷炭现余 0 克且在此之前未补炭入库，stove 严禁填 \"charcoal\"")
-                    elif stove_val == "wood" and inv_state["wood_kg"] <= 0 and not (first_wood_at is not None and first_wood_at <= seg_end):
-                        errors.append(f"{tag}：家里干柴为 0 公斤且在此之前未补柴入库，stove 严禁填 \"wood\"")
+                    elif stove_val == "charcoal" and inv_state["charcoal_g"] <= 0 and not (first_charcoal_at is not None and first_charcoal_at <= seg_start):
+                        errors.append(f"{tag}：家里闷炭现余 0 克且在此之前未把闷炭带回船屋，stove 严禁填 \"charcoal\"")
+                    elif stove_val == "wood" and inv_state["wood_kg"] <= 0 and not (first_wood_at is not None and first_wood_at <= seg_start):
+                        errors.append(f"{tag}：家里干柴为 0 公斤且在此之前未把干柴带回船屋，stove 严禁填 \"wood\"")
                     if stove_val == "wood":
                         bot_has_wood_stove = True
 
@@ -3529,9 +3578,9 @@ class LifeStep:
                             if ck not in ("boil", "fry", "steam", "roast", "cold"):
                                 errors.append(f"{tag} things[{t_i}]（{nm}）：what=\"做好了\" 时必须填 cook（boil/fry/steam/roast/cold 五选一）")
                             else:
-                                has_oil_now = (inv_state["oil_ml"] is None or inv_state["oil_ml"] > 0) or (first_oil_at is not None and first_oil_at <= seg_end)
+                                has_oil_now = (inv_state["oil_ml"] is None or inv_state["oil_ml"] > 0) or (first_oil_at is not None and first_oil_at <= seg_start)
                                 if ck == "fry" and not has_oil_now:
-                                    errors.append(f"{tag} things[{t_i}]（{nm}）：家里食用油现余 0 毫升且在此之前未补油，cook 严禁填 \"fry\"")
+                                    errors.append(f"{tag} things[{t_i}]（{nm}）：家里食用油现余 0 毫升且在此之前未把油带回船屋，cook 严禁填 \"fry\"")
                                 if seaside and raw.get("at_home") is True and ck in ("boil", "fry", "steam", "roast") and stove_val not in ("charcoal", "wood"):
                                     # 若紧挨着的前一段是已开火的 chat 做菜段（记录员未建菜品、由本段盛盘入库），放行不强逼重复填 stove
                                     prev_chat_cooked = False
@@ -3558,8 +3607,8 @@ class LifeStep:
                             errors.append(f"{tag} things[{t_i}]（{tid}）：已有食物的 what={eff.get('what')!r} 不合法")
                         if what in ("用完了", "吃完了") and str(eff.get("left") or "").strip():
                             errors.append(f"{tag} things[{t_i}]（{tid}）：what=\"{what}\" 时 left 必须填空串 \"\"")
-                        if what == "油封" and inv_state["oil_ml"] is not None and inv_state["oil_ml"] < 60 and not (first_oil_at is not None and first_oil_at <= seg_end):
-                            errors.append(f"{tag} things[{t_i}]（{tid}）：家里食用油不足 60 毫升，不能做 \"油封\"")
+                        if what == "油封" and inv_state["oil_ml"] is not None and inv_state["oil_ml"] < 60 and not (first_oil_at is not None and first_oil_at <= seg_start):
+                            errors.append(f"{tag} things[{t_i}]（{tid}）：家里食用油不足 60 毫升且在此之前未把油带回船屋，不能做 \"油封\"")
                         if what == "炉烘" and stove_val != "wood":
                             errors.append(f"{tag} things[{t_i}]（{tid}）：做 what=\"炉烘\" 时该段 stove 必须填 \"wood\"")
                         if what == "热了一下" and seaside and raw.get("at_home") is True and stove_val not in ("charcoal", "wood"):
@@ -3771,6 +3820,60 @@ class LifeStep:
 
         errors.extend(self._validate_with_symmetry(kept_by_bot))
 
+        # 物理唯一煤油灯防分裂校验（仅拦一灯同时出现在两处，绝不拦白天点灯）
+        if seaside:
+            lamp_spans: list[tuple[str, int, datetime.datetime, datetime.datetime, bool, list[str], str]] = []
+            for l_bot, (b_kept, _, _) in kept_by_bot.items():
+                for l_idx, l_raw, l_s, l_e, _ in b_kept:
+                    if l_raw.get("lamp") is True:
+                        lamp_spans.append((
+                            l_bot, l_idx, l_s, l_e, bool(l_raw.get("at_home")),
+                            [str(x) for x in (l_raw.get("with") or [])], str(l_raw.get("place") or ""),
+                        ))
+            # 仅本批确实有点灯段时，才纳入世界线里对方已有且与本批重叠的 lamp=True 段
+            if lamp_spans:
+                all_days = sorted({s.date().isoformat() for _, _, s, _, _, _, _ in lamp_spans} | {e.date().isoformat() for _, _, _, e, _, _, _ in lamp_spans})
+                batch_bots_covered = {b: (bk[0][2], bk[-1][3]) for b, (bk, _, _) in kept_by_bot.items() if bk}
+                all_bots = list(self.raw_log.enabled_bots()) if self.raw_log is not None else list(tasks.keys())
+                for other_bot in all_bots:
+                    for d_s in all_days:
+                        for ex in self.world.entries(d_s, other_bot):
+                            if is_event(ex) or real_stop(ex) or ex.get("lamp") is not True:
+                                continue
+                            es = parse_time(ex.get("start"))
+                            ee = parse_time(ex.get("end")) if ex.get("end") else None
+                            if es is None or ee is None:
+                                continue
+                            cov = batch_bots_covered.get(other_bot)
+                            if cov is not None and not (ee <= cov[0] or es >= cov[1]):
+                                continue
+                            lamp_spans.append((
+                                other_bot, 0, es, ee, bool(ex.get("at_home", True)),
+                                [str(x) for x in (ex.get("with") or [])], str(ex.get("place") or ""),
+                            ))
+            reported_lamp_pairs: set[tuple] = set()
+            for i_a in range(len(lamp_spans)):
+                ba, ia, sa, ea, ha, wa, pa = lamp_spans[i_a]
+                for i_b in range(i_a + 1, len(lamp_spans)):
+                    bb, ib, sb, eb, hb, wb, pb = lamp_spans[i_b]
+                    if (ia == 0 and ib == 0) or ba == bb or max(sa, sb) >= min(ea, eb):
+                        continue
+                    # 同在船屋里共用一盏灯合法；同行外出共提一盏灯合法
+                    if ha and hb:
+                        continue
+                    if (not ha) and (not hb) and (bb in wa or ba in wb or (pa and pa == pb)):
+                        continue
+                    pair_key = tuple(sorted([(ba, ia, sa), (bb, ib, sb)]))
+                    if pair_key in reported_lamp_pairs:
+                        continue
+                    reported_lamp_pairs.add(pair_key)
+                    la, lb = self.label(ba) or ba, self.label(bb) or bb
+                    ov_s, ov_e = max(sa, sb), min(ea, eb)
+                    errors.append(
+                        f"煤油灯分身冲突（{fmt_time(ov_s)[11:16]}–{fmt_time(ov_e)[11:16]}）：船屋里只有一盏煤油灯，"
+                        f"{la}（{'在家' if ha else '外出'}）与 {lb}（{'在家' if hb else '外出'}）不在同一处，不能同时把 lamp 填为 true"
+                    )
+
         money_book = getattr(self, "money", None)
         if money_book is not None:
             norm_segs = {}
@@ -3793,7 +3896,7 @@ class LifeStep:
 
         return errors
 
-    def apply(self, data: dict, tasks: dict, now: datetime.datetime, *, mood_snapshot: dict | None = None):
+    def apply(self, data: dict, tasks: dict, now: datetime.datetime, *, mood_snapshot: dict | None = None, master_replied: bool = False):
         self._last_apply_aborted_by_mood = False
         guard_before = mood_snapshot if mood_snapshot is not None else getattr(self, "_mood_guard_start", None)
         if guard_before is not None:
@@ -3808,9 +3911,9 @@ class LifeStep:
                 )
                 return {}, []
         with fact_batch(self):
-            return self._apply(data, tasks, now)
+            return self._apply(data, tasks, now, master_replied=master_replied)
 
-    def _apply(self, data: dict, tasks: dict, now: datetime.datetime):
+    def _apply(self, data: dict, tasks: dict, now: datetime.datetime, *, master_replied: bool = False):
         """落库（不搞关键词兜底瞎猜，完全按模型已通过校验的结构化字段落盘），返回（每人写进去的段，没写到此刻之后的人）。"""
         flat = now.replace(tzinfo=None)
         date_text = flat.date().isoformat()
@@ -3951,14 +4054,20 @@ class LifeStep:
                 training = self.training_id(raw.get("training"), bot)
                 prev = staged_entries[-1] if staged_entries else self.world.latest_for(bot, before=fmt_time(seg_start))
                 prev_with_master = bool(prev) and "master" in (prev.get("with") or []) and not prev.get("sleep")
-                if not master_sleeping and not idle and not sleep and "master" in raw_with and (
-                    self._intent_with_master(intent) or prev_with_master
-                ):
-                    with_list.append("master")
                 origin_val = origin_of(
                     raw.get("from"), bot, seed, intent=intent, training=training,
                     pools_data=pools_data, cand_map=cand_map,
                 )
+                is_meal_with_master = bool(raw.get("meal") is True and raw.get("at_home") is True and not master_outside_apply)
+                is_promise_with_master = origin_val.get("kind") == "promise"
+                if not master_sleeping and not idle and not sleep and "master" in raw_with and (
+                    self._intent_with_master(intent)
+                    or prev_with_master
+                    or is_meal_with_master
+                    or is_promise_with_master
+                    or master_replied
+                ):
+                    with_list.append("master")
                 origin_mood_states = None
                 if isinstance(origin_val, dict) and origin_val.get("text"):
                     o_txt = str(origin_val["text"])

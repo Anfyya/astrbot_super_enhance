@@ -180,15 +180,25 @@ def state(moment: datetime.datetime, text_of, home: str) -> dict:
 
 
 def _lamp_hours(world, start: datetime.datetime, end: datetime.datetime) -> float:
-    """[start, end) 里点着灯的钟头：段上写了 lamp 的，两个人的叠在一起只算一盏灯。"""
+    """[start, end) 里点着灯的钟头：段上写了 lamp 的，两个人的叠在一起只算一盏灯；打断段按实际点灯时长扣减。"""
+    from .world import real_stop as _real_stop
+
     spans = []
     day = start.date() - datetime.timedelta(days=1)  # 前一天晚上开始、跨过半夜的段记在前一天
     while day <= end.date():
         for item in world.entries(day.isoformat()):
             if not item.get("lamp") or str(item.get("who")) == "master":
                 continue
+            if _real_stop(item):
+                stop_step = item.get("stop_at_step")
+                if isinstance(stop_step, int) and stop_step <= 0:
+                    continue
             a = parse_time(item.get("start"))
             b = parse_time(item.get("end")) if item.get("end") else None
+            if _real_stop(item) and item.get("stop_at"):
+                st_cut = parse_time(item.get("stop_at"))
+                if st_cut is not None:
+                    b = min(b, st_cut) if b is not None else st_cut
             if a is None or b is None:
                 continue
             a, b = max(a, start), min(b, end)
@@ -209,12 +219,16 @@ def _lamp_hours(world, start: datetime.datetime, end: datetime.datetime) -> floa
 
 
 def _has_supply_things(item: dict) -> bool:
+    """仅识别真正从码头补给船领回的配给物资，排除在废墟/别处捡到或买到的补给罐头。"""
+    place = str(item.get("place") or "")
+    if place and not any(k in place for k in ("码头", "补给船", "船屋", "船舱")):
+        return False
     for eff in item.get("things") or []:
         if not isinstance(eff, dict) or not eff.get("new"):
             continue
         what = str(eff.get("what") or "").strip()
         origin = str(eff.get("origin") or "")
-        if what in ("", "收到", "买回来") and ("补给" in origin or "配给" in origin):
+        if what in ("", "收到") and ("补给船" in origin or "配给" in origin):
             return True
     return False
 
@@ -227,6 +241,14 @@ def _is_store_kerosene(item: dict) -> bool:
         return True
     if str(item.get("kerosene_source") or "").strip().lower() == "store":
         return True
+    place = str(item.get("place") or "")
+    doing = str(item.get("doing") or "")
+    # 去杂货铺/集市买或以物易物换小壶煤油，归为小壶（STORE_KEROSENE_HOURS），绝不误加整桶 20h
+    if "补给船" not in (place + doing) and not _has_supply_things(item):
+        if any(k in place for k in ("杂货铺", "集市", "商店街", "旧衣铺")) or any(
+            k in doing for k in ("小壶", "一壶", "打回一壶", "换回一壶", "杂货铺")
+        ):
+            return True
     money_ops = item.get("money") if isinstance(item.get("money"), list) else []
     has_store_pay = any(
         isinstance(op, dict) and str(op.get("kind") or "").strip().lower() in ("spend", "debt_add")

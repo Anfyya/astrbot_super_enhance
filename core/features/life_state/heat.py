@@ -493,7 +493,7 @@ def _temp_curve(life, now: datetime.datetime, text_of, home: str) -> list[dict]:
             near_t = min(23.0, base_c + d_near)
             mid_t = min(18.5, base_c + d_mid)
             far_t = min(15.0, base_c + d_far) if out_t <= 14.0 else base_c + d_far
-            kang_t = min(26.5, base_c + d_kang)
+            kang_t = min(34.0, base_c + d_kang)
         else:
             near_t = mid_t = far_t = kang_t = base_c
         points.append({

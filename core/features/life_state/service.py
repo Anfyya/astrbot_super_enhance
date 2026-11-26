@@ -503,7 +503,6 @@ class LifeStateService:
         flat = moment.astimezone(self.timezone).replace(tzinfo=None) if moment.tzinfo is not None else moment
         today_text = flat.date().isoformat()
         yesterday_text = (flat.date() - datetime.timedelta(days=1)).isoformat()
-        home = str(self.cfg.get("world_home") or "").strip() or "穗织"
         companion = self.companionship
         owner_snapshot = companion.owner_state(moment) if companion is not None else {}
         before = str(owner_snapshot.get("state") or "unknown")
@@ -537,7 +536,6 @@ class LifeStateService:
                         else:
                             self.world.update(day, str(item.get("id") or ""), mode="normal", end=fmt_time(flat))
                 if not already_sleeping:
-                    sleep_place = "船屋·船舱" if home == "海边小镇" else "宿舍·卧房"
                     self.world.add_entry(
                         today_text,
                         {
@@ -545,11 +543,11 @@ class LifeStateService:
                             "kind": "activity",
                             "start": fmt_time(flat),
                             "end": "",
-                            "place": sleep_place,
+                            "place": "",
                             "doing": "上床睡觉",
                             "public": "上床睡觉",
                             "sleep": True,
-                            "at_home": True,
+                            "at_home": None,
                             "source": "manual",
                         },
                     )
@@ -608,17 +606,16 @@ class LifeStateService:
                     else:
                         self.world.update(day, str(item.get("id") or ""), mode="normal", end=fmt_time(flat))
 
-            wake_place = "船屋·船舱" if home == "海边小镇" else "宿舍·堂屋"
             self.world.add_entry(
                 today_text,
                 {
                     "who": "master",
                     "kind": "event",
                     "start": fmt_time(flat),
-                    "place": wake_place,
+                    "place": "",
                     "doing": "起床了",
                     "public": "起床了",
-                    "at_home": True,
+                    "at_home": None,
                     "source": "chat",
                 },
             )

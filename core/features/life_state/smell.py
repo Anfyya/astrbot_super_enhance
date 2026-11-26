@@ -15,7 +15,10 @@ from . import things as things_mod
 from . import weather as weather_mod
 from .world import parse_time
 
-_OUTSIDE_PLACE_TOKENS = ("仓棚", "码头", "甲板", "船舷", "船顶", "船头", "屋外", "院子", "补给船", "跳板", "街", "集市", "滩")
+_OUTSIDE_PLACE_TOKENS = ("仓棚", "码头", "甲板", "船舷", "船顶", "船头", "屋外", "院子", "补给船", "跳板", "街", "集市", "滩", "海里", "海底", "水下")
+_SEALED_CONTAINER_WORDS = ("密封", "罐头", "拧紧", "盖严", "密闭", "未开封", "玻璃瓶", "陶罐", "铁罐", "油罐", "腌坛", "坛子")
+_DRY_STORAGE_WORDS = ("抽屉", "工具箱", "木盒", "铁盒", "收纳盒", "袋里", "箱里", "柜格", "书桌")
+_WET_RUST_WORDS = ("湿", "潮", "海泥", "发腥", "海腥", "生锈", "锈透", "滴水", "泡")
 _RAW_SMELL_KINDS = frozenset(("生鱼虾水产", "生肉禽肉"))
 _AROMA_WINDOW_MINUTES = 60.0
 _SMOKE_LINGER_MINUTES = 30.0
@@ -101,19 +104,35 @@ def cabin_smell_info(
         place = str(last.get("place") or "").strip()
         if not _is_in_cabin(place):
             continue
+        wx_desc = str(item.get("_weather") or "")
+        state_txt = str(last.get("state") or "")
+        if "吹进海里" in (wx_desc + state_txt) or "不在船上" in (wx_desc + state_txt):
+            continue
 
         cat = things_mod.cat_of(item)
         kind = str(item.get("kind") or "").strip()
         name = str(item.get("name") or "").strip()
+        keep = str(last.get("keep") or "").strip()
+        w_meta = last.get("weather") if isinstance(last.get("weather"), dict) else {}
+        is_sealed_box = (
+            bool(w_meta.get("sealed"))
+            or (keep == "收着放" and any(k in (name + place + state_txt) for k in _SEALED_CONTAINER_WORDS))
+            or any(k in state_txt for k in ("拧紧", "密封", "盖严", "未开封"))
+        )
 
         if cat == things_mod.CAT_FOOD:
             try:
                 prof = store.profile(item, flat, shelf)
                 fresh_lvl = str((prof.get("fresh") or {}).get("level") or "")
+                wx_note = str(prof.get("weather") or "")
+                if "吹进海里" in wx_note or "不在船上" in wx_note:
+                    continue
             except Exception:
                 fresh_lvl = ""
 
             if fresh_lvl == "坏了":
+                if is_sealed_box:
+                    continue
                 if kind in _RAW_SMELL_KINDS:
                     rotten_raw += 1
                 else:
@@ -124,7 +143,6 @@ def cabin_smell_info(
                 continue
 
             # 未坏但敞口放着的生鱼虾/生肉会带海腥生鲜味（排除活养着）
-            keep = str(last.get("keep") or "").strip()
             if kind in _RAW_SMELL_KINDS and keep == "敞着放":
                 sp = _short_spot(place)
                 if sp and sp not in open_raw_spots:
@@ -143,8 +161,12 @@ def cabin_smell_info(
                             aroma_hits.append((at_dt, name))
                     break
         elif cat == things_mod.CAT_ITEM:
-            # 只有真正堆在舱内（非仓棚）的废金属/湿海漂件才算潮腥铁锈味
+            # 只有真正敞堆在舱内、或湿潮/带海泥锈味的废金属才算潮腥铁锈味；擦干收在抽屉/木盒里的干零件不误报
             if things_mod.is_scrap(item):
+                in_dry_box = any(k in place for k in _DRY_STORAGE_WORDS) or is_sealed_box
+                is_wet_or_rusty = any(k in (state_txt + wx_desc) for k in _WET_RUST_WORDS)
+                if in_dry_box and not is_wet_or_rusty:
+                    continue
                 cabin_scrap_count += 1
 
     total_bad = rotten_raw + sour_cooked
