@@ -669,8 +669,7 @@ class ProactivePlanner:
                         start_kind = "segment"
                         start_purpose = clean_line(item.get("msg_purpose") or item.get("doing") or "", 140)
                     elif (
-                        not master_sleeping
-                        and prev_valid is not None
+                        prev_valid is not None
                         and str(item.get("tool") or "") != "start_doing"
                         and str(item.get("source") or "") != "chat"
                     ):
@@ -1275,34 +1274,8 @@ class ProactivePlanner:
             cron._run_active_agent_job = orig
 
     def _install_rest_check(self):
-        """只在实际外发前复核明确休息状态，不评判文字，不影响补写。"""
-        if self._send_patches or getattr(self, "companionship", None) is None:
-            return
-        try:
-            from astrbot.core.tools.message_tools import SendMessageToUserTool
-            original = getattr(SendMessageToUserTool.call, "_se_companion_send_orig", None) or SendMessageToUserTool.call
-            planner = self
-
-            async def send(tool, context, **kwargs):
-                event = getattr(getattr(context, "context", None), "event", None)
-                if event is not None and is_proactive_event(event) and planner.enabled:
-                    payload = event.get_extra("cron_payload") or {}
-                    meta = {
-                        "kind": payload.get("se_kind") or "segment",
-                        "promise": payload.get("se_promise"),
-                        "purpose": payload.get("se_purpose") or "",
-                        "done": payload.get("se_done"),
-                        "bot": payload.get("se_bot") or bot_of_umo(event.unified_msg_origin),
-                    }
-                    now = timeutil.now(planner.timezone)
-                    if not planner.sleep_exempt(meta) and planner.companionship.safe("resting", now, default=False):
-                        planner.companionship.safe("defer_notice", meta["bot"], meta, now)
-                        return "主人已明确休息，普通主动消息暂未发送，留待合适时机；不必重复调用。"
-                return await original(tool, context, **kwargs)
-
-            self._send_patches.add(SendMessageToUserTool, "call", original, send, marker="_se_companion_send_orig")
-        except Exception:
-            logger.warning("[super_enhance/life] 发送前休息状态检查暂不可用，保留到点检查", exc_info=True)
+        """已放开主人睡觉期间的主动消息发送（改为在提示词里告知主人正在睡觉、由模型自行顾及并决定），不再在发送工具层硬拦截。"""
+        return
 
     def _lock(self, target: str) -> asyncio.Lock:
         lock = self._locks.get(target)
@@ -1386,11 +1359,10 @@ class ProactivePlanner:
 
             now_ts = time.time()
             companion = getattr(self, "companionship", None)
-            if companion is not None and not self.sleep_exempt(meta):
+            if companion is not None and meta["kind"] == "food_untouched":
                 now = timeutil.now(self.timezone)
                 if companion.safe("resting", now, default=False):
-                    companion.safe("defer_notice", meta["bot"], meta, now)
-                    logger.info("[super_enhance/life] [%s] 主人明确休息，普通主动联系转入睡期暂存", meta["bot"])
+                    logger.info("[super_enhance/life] [%s] 主人正在睡觉，跳过未动饭菜提醒", meta["bot"])
                     return None
 
             # 主人情绪精准过滤（不搞禁言、不走 _postpone，绝不拦截 question / asked / promise / routine / repair）
@@ -1937,6 +1909,15 @@ class ProactivePlanner:
         ]
 
         companion = getattr(self, "companionship", None)
+        master_resting = bool(companion is not None and companion.safe("resting", local_now, default=False))
+        if not master_resting and self.world is not None:
+            try:
+                m_cur = self.world.current("master", local_now.replace(tzinfo=None))
+                master_resting = bool(m_cur is not None and is_sleep(m_cur) and not m_cur.get("end"))
+            except Exception:
+                master_resting = False
+        if master_resting:
+            lines.append("主人这会儿还在睡觉：你确实有事想跟他说，但也要照顾着他在休息；发不发、怎么说、说什么由你自己拿主意。")
         if companion is not None:
             # 「【与主人相处的近况】」已由 service.on_llm_request 通过 world_text 统一注入上下文，此处只补睡期未发提醒。
             deferred_items = companion.safe("deferred_for", bot, local_now, default=[]) or []
