@@ -196,16 +196,13 @@ class BotDialogFeature:
         return ":GroupMessage:" in umo
 
     GROUP_STOP_CMD = "__se_group_stop__"
-    GROUP_SYNC_PREFIX = "__se_group_sync__"
 
     async def handle_group_control(self, event, reply_guard=None) -> bool:
-        """处理三人群桥接发来的内部控制指令（仅认主人发来的群消息）：
-        - __se_group_stop__：立刻作废本群在途轮次（不发消息、不写历史）；
-        - __se_group_sync__ <原文>：将主人刚发的群话以原生 user 格式同步写入后手群历史，不唤醒模型。
-        返回 True 表示已消费并停止事件传播。
+        """处理三人群桥接发来的内部急停控制指令（仅认主人发来）：
+        - 私聊 "__se_group_stop__:<group_id>"（推荐，绝不进入 AstrBot 群聊上下文缓存）；
+        - 兼容群聊 "__se_group_stop__"。
+        立刻作废目标群会话的在途轮次（不发消息、不写历史），并终止事件传播。
         """
-        if not self._is_group(event):
-            return False
         identity = self._identity(event)
         if identity.sender not in self.master_ids:
             return False
@@ -213,66 +210,26 @@ class BotDialogFeature:
         if not text:
             return False
 
-        if text == self.GROUP_STOP_CMD:
-            if reply_guard is not None:
-                aborted = reply_guard.abort_session(identity.umo)
-                logger.info(
-                    "[super_enhance/bot_dialog] 群聊急停：%s（作废在途=%s）",
-                    identity.umo,
-                    aborted,
-                )
-            event.stop_event()
-            return True
+        target_umo = ""
+        if text.startswith(self.GROUP_STOP_CMD + ":") and identity.bot:
+            gid = text.split(":", 1)[1].strip()
+            if gid:
+                target_umo = f"{identity.bot}:GroupMessage:{gid}"
+        elif text == self.GROUP_STOP_CMD and self._is_group(event):
+            target_umo = identity.umo
 
-        if text.startswith(self.GROUP_SYNC_PREFIX):
-            raw_body = text[len(self.GROUP_SYNC_PREFIX) :].strip()
-            conv_mgr = getattr(self.context, "conversation_manager", None)
-            if raw_body and conv_mgr is not None:
-                # 支持两种格式：
-                # 1) "__se_group_sync__ <uid>|<name>|<正文>"（精确指定发言人，用于同步主人或另一位机器人的发言）
-                # 2) "__se_group_sync__ <正文>"（兼容默认按当前事件发件人记）
-                sync_uid = identity.sender
-                try:
-                    sync_name = str(event.get_sender_name() or "").strip() or identity.sender
-                except Exception:
-                    sync_name = identity.sender
-                body = raw_body
-                parts = raw_body.split("|", 2)
-                if len(parts) == 3 and parts[0].strip().isdigit() and parts[1].strip() and parts[2].strip():
-                    sync_uid = parts[0].strip()
-                    sync_name = parts[1].strip()
-                    body = parts[2].strip()
-                group_name = ""
-                try:
-                    grp = getattr(getattr(event, "message_obj", None), "group", None)
-                    group_name = str(getattr(grp, "group_name", "") or "").strip()
-                except Exception:
-                    group_name = ""
-                now_local = timeutil.now(self._zone())
-                weekdays = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
-                meta_lines = [f"User ID: {sync_uid}, Nickname: {sync_name}"]
-                if group_name:
-                    meta_lines.append(f"Group name: {group_name}")
-                meta_lines.append(
-                    f"Current datetime: {now_local.strftime('%Y-%m-%d %H:%M')} (CST), Weekday: {weekdays[now_local.weekday()]}"
-                )
-                reminder = "<system_reminder>" + "\n".join(meta_lines) + "</system_reminder>"
-                msg = {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": body},
-                        {"type": "text", "text": reminder},
-                    ],
-                }
-                try:
-                    await history_io.append(conv_mgr, identity.umo, msg, create=True)
-                    logger.info("[super_enhance/bot_dialog] 群聊同步(%s)发言至 %s", sync_name, identity.umo)
-                except Exception:
-                    logger.error("[super_enhance/bot_dialog] 群聊同步发言失败", exc_info=True)
-            event.stop_event()
-            return True
+        if not target_umo:
+            return False
 
-        return False
+        if reply_guard is not None:
+            aborted = reply_guard.abort_session(target_umo)
+            logger.info(
+                "[super_enhance/bot_dialog] 群聊急停：%s（作废在途=%s）",
+                target_umo,
+                aborted,
+            )
+        event.stop_event()
+        return True
 
     def note_incoming(self, event) -> None:
         if not self.enabled or self._is_group(event):
