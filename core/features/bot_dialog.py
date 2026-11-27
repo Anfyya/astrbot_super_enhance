@@ -225,13 +225,23 @@ class BotDialogFeature:
             return True
 
         if text.startswith(self.GROUP_SYNC_PREFIX):
-            body = text[len(self.GROUP_SYNC_PREFIX) :].strip()
+            raw_body = text[len(self.GROUP_SYNC_PREFIX) :].strip()
             conv_mgr = getattr(self.context, "conversation_manager", None)
-            if body and conv_mgr is not None:
+            if raw_body and conv_mgr is not None:
+                # 支持两种格式：
+                # 1) "__se_group_sync__ <uid>|<name>|<正文>"（精确指定发言人，用于同步主人或另一位机器人的发言）
+                # 2) "__se_group_sync__ <正文>"（兼容默认按当前事件发件人记）
+                sync_uid = identity.sender
                 try:
-                    sender_name = str(event.get_sender_name() or "").strip() or identity.sender
+                    sync_name = str(event.get_sender_name() or "").strip() or identity.sender
                 except Exception:
-                    sender_name = identity.sender
+                    sync_name = identity.sender
+                body = raw_body
+                parts = raw_body.split("|", 2)
+                if len(parts) == 3 and parts[0].strip().isdigit() and parts[1].strip() and parts[2].strip():
+                    sync_uid = parts[0].strip()
+                    sync_name = parts[1].strip()
+                    body = parts[2].strip()
                 group_name = ""
                 try:
                     grp = getattr(getattr(event, "message_obj", None), "group", None)
@@ -240,7 +250,7 @@ class BotDialogFeature:
                     group_name = ""
                 now_local = timeutil.now(self._zone())
                 weekdays = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
-                meta_lines = [f"User ID: {identity.sender}, Nickname: {sender_name}"]
+                meta_lines = [f"User ID: {sync_uid}, Nickname: {sync_name}"]
                 if group_name:
                     meta_lines.append(f"Group name: {group_name}")
                 meta_lines.append(
@@ -256,9 +266,9 @@ class BotDialogFeature:
                 }
                 try:
                     await history_io.append(conv_mgr, identity.umo, msg, create=True)
-                    logger.info("[super_enhance/bot_dialog] 群聊同步主人发言至 %s", identity.umo)
+                    logger.info("[super_enhance/bot_dialog] 群聊同步(%s)发言至 %s", sync_name, identity.umo)
                 except Exception:
-                    logger.error("[super_enhance/bot_dialog] 群聊同步主人发言失败", exc_info=True)
+                    logger.error("[super_enhance/bot_dialog] 群聊同步发言失败", exc_info=True)
             event.stop_event()
             return True
 
