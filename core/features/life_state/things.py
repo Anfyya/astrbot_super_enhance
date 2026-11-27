@@ -2647,10 +2647,16 @@ class ThingStore:
             items = {str(x.get("id")): x for x in staged.get("items") or []}
             alias = staged.setdefault("alias", {})
             for seg in todo:
+                seg_dt = parse_time(seg.get("order") or seg.get("at"))
+                if seg_dt is not None:
+                    master_done(items, seg_dt)
                 self._apply_segment_unchecked(items, alias, seg)
                 for item in items.values():
                     item.pop("virtual", None)
                 settled[seg["key"]] = fmt_time(flat)
+            for item in items.values():
+                if isinstance(item.get("stages"), list):
+                    item["stages"] = [s for s in item["stages"] if not s.get("_auto")]
             staged["items"] = list(items.values())
             staged["alias"] = alias
             keep_from = (flat.date() - datetime.timedelta(days=SCAN_DAYS + 10)).isoformat()
@@ -2680,6 +2686,9 @@ class ThingStore:
         settled = data.get("settled") or {}
         for seg in self.segments(flat):
             if seg["ref"] not in settled and seg["key"] not in settled:
+                seg_dt = parse_time(seg.get("order") or seg.get("at"))
+                if seg_dt is not None:
+                    master_done(items, seg_dt)
                 self._apply_segment(items, alias, seg)
         for tid, info in (data.get("opened") or {}).items():
             if tid in items and isinstance(info, dict):
