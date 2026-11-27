@@ -2716,7 +2716,7 @@ class ThingStore:
         """返回此刻摆在主人跟前满 min_minutes 仍未开吃/未动的食物列表。"""
         flat = now.replace(tzinfo=None)
         return master_untouched_foods(
-            self.view(now).items, flat, min_minutes=min_minutes, max_minutes=max_minutes
+            self.view(now), flat, min_minutes=min_minutes, max_minutes=max_minutes
         )
 
     def validate_entries(self, entries: list) -> list:
