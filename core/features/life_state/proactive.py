@@ -90,6 +90,7 @@ KINDS = {
     "manual": Kind(4, "手动触发"),
     "promise": Kind(3, "约定", must_send=True),
     "wake_greet": Kind(2, "醒来招呼", timely=True),
+    "food_untouched": Kind(2, "饭菜未动", timely=True),
     "segment": Kind(1, "日常主动", casual=True, timely=True, hush=True),
     # 兼容升级前数据库里残留的旧任务名
     "night": Kind(1, "晚安", timely=True, hush=True),
@@ -226,6 +227,7 @@ class ProactivePlanner:
         self.activity_fn = None
         self.sent_fn = None
         self.world = None
+        self.things = None
         self.raw_log = None
         self.bots_fn = None
         self.companionship = None
@@ -747,7 +749,118 @@ class ProactivePlanner:
 
             if store.done_mark(bot) != flat_text:
                 store.set_done_mark(bot, flat_text)
+        scheduled += await self.notify_untouched_master_food(
+            real_now, bots=bot_list, world=store, things=self.things
+        )
         return scheduled
+
+    async def notify_untouched_master_food(
+        self,
+        now: datetime.datetime | None = None,
+        *,
+        bots: list[str] | None = None,
+        world=None,
+        things=None,
+    ) -> int:
+        """摆在主人跟前的饭菜满 30 分钟仍未开吃：仅向此刻在家清醒的 1 位角色发送纯事实提醒（不加任何引导）。"""
+        if not self.enabled:
+            return 0
+        store = world if world is not None else self.world
+        thing_store = things if things is not None else self.things
+        if store is None or thing_store is None or not hasattr(thing_store, "untouched_master_foods"):
+            return 0
+        cron = self._cron()
+        if cron is None:
+            return 0
+        real_now = now or timeutil.now(self.timezone)
+        local_now = (
+            real_now.astimezone(self.timezone)
+            if real_now.tzinfo is not None
+            else real_now.replace(tzinfo=self.timezone)
+        )
+        flat = local_now.replace(tzinfo=None)
+        bot_list = list(bots) if bots is not None else self._default_bots()
+        if not bot_list:
+            return 0
+
+        try:
+            untouched = thing_store.untouched_master_foods(local_now)
+        except Exception:
+            logger.debug("[super_enhance/life] 检查未动饭菜失败", exc_info=True)
+            return 0
+        if not untouched:
+            return 0
+
+        # 全屋统一去重：同一份摆上桌的饭菜全屋只提醒 1 次
+        all_fired: set[str] = set()
+        for b in bot_list:
+            all_fired.update(store.fired_msgs(b))
+        fresh = [
+            f for f in untouched
+            if f"untouched_food:{f['id']}:{f['at']}" not in all_fired
+        ]
+        if not fresh:
+            return 0
+
+        # 只挑此刻清醒且在家的角色
+        home = str(self.cfg.get("world_home") or "").strip() if hasattr(self, "cfg") and isinstance(self.cfg, dict) else ""
+        if not home:
+            home = str(store.home_at(flat) or "").strip() if hasattr(store, "home_at") else ""
+        from . import view as view_mod
+
+        candidates: list[str] = []
+        for bot in bot_list:
+            if not self._targets(bot):
+                continue
+            cur = store.current(bot, flat)
+            ref = cur if cur is not None else store.last_activity(bot, flat)
+            if ref is None or is_sleep(ref):
+                continue
+            if view_mod._is_outside_place(ref.get("place"), ref.get("at_home"), home):
+                continue
+            candidates.append(bot)
+        if not candidates:
+            return 0
+
+        # 只提醒在家的 1 个人：优先选把这份东西端到主人跟前的人，否则按日期轮选 1 人
+        chosen = ""
+        for f in fresh:
+            by = str(f.get("by") or "").strip()
+            if by in candidates:
+                chosen = by
+                break
+        if not chosen:
+            chosen = candidates[flat.date().toordinal() % len(candidates)]
+
+        names = "、".join(dict.fromkeys(str(f["name"]) for f in fresh if f.get("name")))
+        max_mins = max(int(f.get("minutes") or 30) for f in fresh)
+        purpose = f"摆在主人跟前的「{names}」已经放了约 {max_mins} 分钟，主人还没有动。"
+        food_ids = [str(f["id"]) for f in fresh if f.get("id")]
+
+        self.install_gate()
+        at = (local_now + datetime.timedelta(seconds=15)).replace(microsecond=0)
+        meta = {
+            "kind": "food_untouched",
+            "bot": chosen,
+            "date": at.date().isoformat(),
+            "minute": at.hour * 60 + at.minute,
+            "postponed": 0,
+            "purpose": purpose,
+            "msg_kind": "routine",
+            "food_ids": food_ids,
+        }
+        created = 0
+        for target in self._targets(chosen):
+            if await self._add_job(cron, meta, target, at):
+                created += 1
+        if created:
+            for f in fresh:
+                store.mark_msg_fired(chosen, f"untouched_food:{f['id']}:{f['at']}")
+            logger.info(
+                "[super_enhance/life] [%s] 摆在主人跟前的「%s」满 %d 分钟未动，已排纯事实提醒",
+                chosen, names, max_mins,
+            )
+        return created
 
     def on_entries_dropped(self, who: str, entry_keys: set[str] | list[str]) -> None:
         """WorldStore 删除或打断条目时的回调：撤除关联未发 cron 任务，并回退未发出的 fired_msgs 标记。"""
@@ -944,6 +1057,8 @@ class ProactivePlanner:
             out["se_done"] = meta["done"]
         if meta.get("question"):
             out["se_question"] = meta["question"]
+        if meta.get("food_ids"):
+            out["se_food_ids"] = list(meta["food_ids"])
         if meta.get("extra"):
             out["se_extra"] = meta["extra"]
         return out
@@ -977,6 +1092,7 @@ class ProactivePlanner:
         done = payload.get("se_done")
         question = payload.get("se_question")
         raw_mk = str(payload.get("se_msg_kind") or "").strip().lower()
+        raw_food_ids = payload.get("se_food_ids")
         return {
             "done": done if isinstance(done, dict) else None,
             "question": question if isinstance(question, dict) else None,
@@ -990,6 +1106,7 @@ class ProactivePlanner:
             "msg_kind": raw_mk if raw_mk in MSG_KINDS else "",
             "promise": promise,
             "training": training if isinstance(training, dict) else None,
+            "food_ids": [str(x) for x in raw_food_ids if str(x)] if isinstance(raw_food_ids, list) else [],
             "postponed": postponed,
             "job_id": str(getattr(job, "job_id", "") or ""),
             "extra": str(payload.get("se_extra") or "").strip(),
@@ -1002,7 +1119,7 @@ class ProactivePlanner:
         if explicit in MSG_KINDS:
             return explicit
         kind = str((meta or {}).get("kind") or "segment").strip()
-        if kind in ("out", "back", "meal", "morning", "night", "wake_greet"):
+        if kind in ("out", "back", "meal", "morning", "night", "wake_greet", "food_untouched"):
             return "routine"
         purpose = str((meta or {}).get("purpose") or "").strip()
         done = (meta or {}).get("done") if isinstance((meta or {}).get("done"), dict) else {}
@@ -1249,6 +1366,23 @@ class ProactivePlanner:
 
             if str(payload.get("se_kind") or "") == "correct":
                 return None
+
+            if meta["kind"] == "food_untouched" and meta.get("food_ids") and self.things is not None:
+                try:
+                    still = {
+                        str(f["id"])
+                        for f in self.things.untouched_master_foods(
+                            timeutil.now(self.timezone), min_minutes=0, max_minutes=0
+                        )
+                    }
+                    if not any(fid in still for fid in meta["food_ids"]):
+                        logger.info(
+                            "[super_enhance/life] [%s] 摆在主人跟前的饭菜（%s）已被主人开吃或挪走，取消未动提醒",
+                            meta["bot"], "、".join(meta["food_ids"]),
+                        )
+                        return None
+                except Exception:
+                    logger.debug("[super_enhance/life] 二次核验未动饭菜失败", exc_info=True)
 
             now_ts = time.time()
             companion = getattr(self, "companionship", None)

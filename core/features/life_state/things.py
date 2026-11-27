@@ -67,7 +67,7 @@ KIND_WORDS = (
 )
 
 START_STEPS = ("买回来", "收到", "做好了", "原来就有")
-MID_STEPS = ("挪地方", "切开了", "用掉一部分", "吃了一部分", "清点", "热了一下") + PROCESS_STEPS
+MID_STEPS = ("挪地方", "切开了", "用掉一部分", "开吃", "吃了一部分", "清点", "热了一下") + PROCESS_STEPS
 END_STEPS = ("用完了", "吃完了", "丢了", "坏了扔了", "送人了", "记错了")
 USE_STEPS = ("用掉一部分", "用完了")
 STEPS = START_STEPS + MID_STEPS + END_STEPS
@@ -91,9 +91,10 @@ STEP_WORDS = (
     ("做好", "做好了"), ("做了", "做好了"), ("煮好", "做好了"), ("烤好", "做好了"), ("蒸好", "做好了"),
     ("挪", "挪地方"), ("搬", "挪地方"), ("放进", "挪地方"), ("放在", "挪地方"), ("放回", "挪地方"), ("放到", "挪地方"), ("放入", "挪地方"), ("搁", "挪地方"), ("挂", "挪地方"), ("变了样", "挪地方"),
     ("切开", "切开了"), ("切了", "切开了"), ("切好", "切开了"), ("切块", "切开了"), ("切片", "切开了"), ("切丝", "切开了"), ("剖开", "切开了"), ("剥开", "切开了"), ("削皮", "切开了"),
+    ("开吃", "开吃"), ("开动", "开吃"), ("开始吃", "开吃"), ("正在吃", "开吃"), ("开始喝", "开吃"), ("正在喝", "开吃"),
     ("用掉", "用掉一部分"), ("用了", "用掉一部分"), ("吃掉", "吃了一部分"), ("吃了", "吃了一部分"),
 )
-KEEP_LEFT_STEPS = ("挪地方", "切开了", "热了一下") + PROCESS_STEPS
+KEEP_LEFT_STEPS = ("挪地方", "切开了", "开吃", "热了一下") + PROCESS_STEPS
 
 # ---------- 按量记的（米面油盐、调料干货、或显式带克/毫升单位的食物） ----------
 
@@ -406,7 +407,9 @@ SETTLE_DAYS = 7
 SCAN_DAYS = 31
 SEG_SAME_MINUTES = 30
 LOOKAHEAD_DAYS = 45
-MASTER_DONE_MINUTES = 60
+MASTER_DONE_MINUTES = 40
+MASTER_UNTOUCHED_MINUTES = 30
+MASTER_UNTOUCHED_MAX_MINUTES = 180
 MASTER_PLACE_RE = re.compile(r"主人·?跟前")
 SOON_AT = 0.5
 HURRY_AT = 0.8
@@ -812,30 +815,40 @@ _MASTER_BULK_RE = re.compile(
 )
 
 
+def _is_master_eatable(item: dict, last: dict) -> bool:
+    """只对正常可吃的饭菜/点心/饮品/水果生效；排除干货调料粮食、生食材、按量油盐米面与整瓶整袋储藏。"""
+    kind = str(item.get("kind") or "").strip()
+    if kind not in MASTER_EATABLE_KINDS:
+        return False
+    bulk_probe = "%s %s" % (item.get("name") or "", last.get("left") or "")
+    if _MASTER_BULK_RE.search(bulk_probe):
+        return False
+    # 冲泡好的单杯茶汤鲜饮虽以「茶」结尾但非散装茶叶；其余命中按量计量的调料/大包装一律不自动判吃完
+    is_brewed_drink = (
+        kind == "茶汤鲜饮"
+        and not re.search(r"茶叶|茶饼|茶砖|\d+(?:\.\d+)?\s*(?:克|g|斤|两|公斤|kg|升|l)", bulk_probe, re.IGNORECASE)
+    )
+    if not is_brewed_drink and measure(item) is not None:
+        return False
+    return True
+
+
 def master_done(items: dict, now: datetime.datetime) -> int:
+    """只有主人明确开吃（最后一步为 what='开吃' 且 by='master'）后满 MASTER_DONE_MINUTES 无人再动，才自动核销为吃完了。
+    单方面摆在主人跟前的食物绝不自动吃完。"""
     done = 0
     for item in items.values():
         if cat_of(item) != CAT_FOOD or is_ended(item) is not None:
             continue
-        # 只对正常端给主人的饭菜/点心/饮品/水果生效；排除干货调料粮食、生食材、按量油盐米面与整瓶整袋储藏
-        kind = str(item.get("kind") or "").strip()
-        if kind not in MASTER_EATABLE_KINDS:
-            continue
         stages = item.get("stages") or []
         if not stages:
             continue
-        last = max(stages, key=lambda s: str(s.get("at") or ""))
-        if not MASTER_PLACE_RE.search(str(last.get("place") or "")):
+        last = max(stages, key=lambda s: (str(s.get("at") or ""), int(s.get("_i", 0))))
+        if str(last.get("what") or "").strip() != "开吃":
             continue
-        bulk_probe = "%s %s" % (item.get("name") or "", last.get("left") or "")
-        if _MASTER_BULK_RE.search(bulk_probe):
+        if str(last.get("by") or "").strip().lower() != "master":
             continue
-        # 冲泡好的单杯茶汤鲜饮虽以「茶」结尾但非散装茶叶；其余命中按量计量的调料/大包装一律不自动判吃完
-        is_brewed_drink = (
-            kind == "茶汤鲜饮"
-            and not re.search(r"茶叶|茶饼|茶砖|\d+(?:\.\d+)?\s*(?:克|g|斤|两|公斤|kg|升|l)", bulk_probe, re.IGNORECASE)
-        )
-        if not is_brewed_drink and measure(item) is not None:
+        if not _is_master_eatable(item, last):
             continue
         moment = parse_time(last.get("at"))
         if moment is None:
@@ -845,9 +858,48 @@ def master_done(items: dict, now: datetime.datetime) -> int:
             continue
         stages.append({"at": fmt_time(due), "what": "吃完了", "left": "", "place": last.get("place") or "", "by": "master",
                        "keep": last.get("keep") or "", "spot": last.get("spot") or "", "state": last.get("state") or "",
-                       "note": "到主人跟前 %d 分钟没人再动，程序当主人吃完了" % MASTER_DONE_MINUTES, "_auto": True})
+                       "note": "主人开吃 %d 分钟后没人再动，程序当主人吃完了" % MASTER_DONE_MINUTES, "_auto": True})
         done += 1
     return done
+
+
+def master_untouched_foods(
+    items: dict,
+    now: datetime.datetime,
+    *,
+    min_minutes: int = MASTER_UNTOUCHED_MINUTES,
+    max_minutes: int = MASTER_UNTOUCHED_MAX_MINUTES,
+) -> list[dict]:
+    """筛出摆在主人跟前、已放置满 min_minutes（且未超 max_minutes）但主人尚未开吃/未动的饭菜。"""
+    out: list[dict] = []
+    for tid, item in items.items():
+        if cat_of(item) != CAT_FOOD or is_ended(item) is not None:
+            continue
+        stages = item.get("stages") or []
+        if not stages:
+            continue
+        last = max(stages, key=lambda s: (str(s.get("at") or ""), int(s.get("_i", 0))))
+        if not MASTER_PLACE_RE.search(str(last.get("place") or "")):
+            continue
+        if not _is_master_eatable(item, last):
+            continue
+        if str(last.get("what") or "").strip() in ("开吃", "吃了一部分"):
+            continue
+        moment = parse_time(last.get("at"))
+        if moment is None:
+            continue
+        elapsed = (now - moment).total_seconds() / 60.0
+        if elapsed < min_minutes or (max_minutes > 0 and elapsed > max_minutes):
+            continue
+        out.append({
+            "id": str(tid or item.get("id") or ""),
+            "name": str(item.get("name") or "").strip() or str(tid),
+            "at": str(last.get("at") or "").strip(),
+            "by": str(last.get("by") or "").strip(),
+            "minutes": int(elapsed),
+        })
+    out.sort(key=lambda x: (x["at"], x["id"]))
+    return out
 
 
 def _counts(text) -> list:
@@ -2633,6 +2685,19 @@ class ThingStore:
             current_revision = self.world.revision() if self.world is not None and hasattr(self.world, "revision") else 0
             self._view_cache = ((fmt_time(flat), current_revision, self._revision, weather_sig), result)
             return result
+
+    def untouched_master_foods(
+        self,
+        now: datetime.datetime,
+        *,
+        min_minutes: int = MASTER_UNTOUCHED_MINUTES,
+        max_minutes: int = MASTER_UNTOUCHED_MAX_MINUTES,
+    ) -> list[dict]:
+        """返回此刻摆在主人跟前满 min_minutes 仍未开吃/未动的食物列表。"""
+        flat = now.replace(tzinfo=None)
+        return master_untouched_foods(
+            self.view(now).items, flat, min_minutes=min_minutes, max_minutes=max_minutes
+        )
 
     def validate_entries(self, entries: list) -> list:
         """兼容保留的空操作接口，不再以物品小瑕疵阻断世界线落盘。"""
