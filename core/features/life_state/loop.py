@@ -148,6 +148,10 @@ async def world_loop(service) -> None:
                     step_task = None
                 if step_task is None and service.life_step.due(now) and not _pending_blocks_step(service, service._now()):
                     service._step_task = asyncio.create_task(service.life_step.run(now))
+                try:
+                    await service.life_step._flush_idea_decisions(service._now().replace(tzinfo=None))
+                except Exception:
+                    logger.warning("[super_enhance/life] 定时巡检待拍板请示失败", exc_info=True)
                 await settle_live(service, now)
                 await notify_done(service, service._now())
                 companion = getattr(service, "companionship", None)

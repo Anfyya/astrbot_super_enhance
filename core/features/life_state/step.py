@@ -2589,8 +2589,63 @@ class LifeStep:
             errors = ["返回内容不是合法的 JSON 对象"] if not isinstance(data, dict) else self.validate_payload(data, tasks, moment, master_replied=master_replied)
         return (data if not errors else None), cur_text, cur_thought, errors
 
+    def _get_idea_flush_lock(self) -> asyncio.Lock:
+        loop = asyncio.get_running_loop()
+        locks = getattr(self, "_idea_flush_locks", None)
+        if locks is None:
+            locks = {}
+            self._idea_flush_locks = locks
+        lock = locks.get(loop)
+        if lock is None:
+            lock = asyncio.Lock()
+            locks[loop] = lock
+        return lock
+
+    def _idea_meal_slot(self, dec: dict, ref_dt: datetime.datetime | None) -> tuple[str, str]:
+        """判断一条 meal 请示指向哪一天、哪一餐（(YYYY-MM-DD, 早饭|午饭|晚饭|夜宵)）；明确问明天时返回次日。"""
+        q = str(dec.get("question") or "")
+        base_day = ref_dt.date() if ref_dt is not None else None
+        if base_day is None:
+            raw_d = str(dec.get("bound_date") or dec.get("created") or "")[:10]
+            try:
+                base_day = datetime.date.fromisoformat(raw_d)
+            except Exception:
+                return "", ""
+        target_day = base_day + datetime.timedelta(days=1) if any(w in q for w in ("明天", "明早", "明晚", "明日")) else base_day
+        if any(w in q for w in ("早饭", "早餐", "明早")):
+            slot = "早饭"
+        elif any(w in q for w in ("午饭", "午餐", "中午")):
+            slot = "午饭"
+        elif any(w in q for w in ("晚饭", "晚餐", "晚上", "今晚", "明晚")):
+            slot = "晚饭"
+        elif "夜宵" in q:
+            slot = "夜宵"
+        elif ref_dt is not None:
+            slot = self._meal_slot_of(ref_dt)
+        else:
+            slot = ""
+        return target_day.isoformat(), slot
+
+    def _meal_slot_already_started(self, day_text: str, slot: str, moment: datetime.datetime) -> bool:
+        """检查 day_text 当天对应餐次是否已有任一角色已开饭/吃完（start <= moment 且 meal=True 且未 real_stop）。"""
+        if not day_text or not slot or self.world is None:
+            return False
+        for item in self.world.entries(day_text, ""):
+            if is_event(item) or real_stop(item) or item.get("meal") is not True:
+                continue
+            st = parse_time(item.get("start"))
+            if st is None or st > moment:
+                continue
+            if self._meal_slot_of(st) == slot:
+                return True
+        return False
+
     async def _flush_idea_decisions(self, moment: datetime.datetime) -> None:
-        """检查暂存的 idea 请示：先作废绑定世界线段已撤排/打断的过期单；到点（moment >= ask_after）且主人醒着时发出。"""
+        """检查暂存的 idea 请示：先作废绑定段已撤排/打断、同餐次已开饭或已错过时效的过期单；到点（moment >= ask_after）且主人醒着时发出。"""
+        async with self._get_idea_flush_lock():
+            await self._flush_idea_decisions_locked(moment)
+
+    async def _flush_idea_decisions_locked(self, moment: datetime.datetime) -> None:
         companion = getattr(self, "companionship", None)
         planner = getattr(self, "planner", None)
         if companion is None:
@@ -2602,14 +2657,44 @@ class LifeStep:
                 continue
             dec_id = str(dec.get("id") or "")
             bot = str(dec.get("bot") or "")
+            topic = normalize_decision_topic(dec.get("topic"))
             b_date = str(dec.get("bound_date") or "").strip()
             b_eid = str(dec.get("bound_entry_id") or "").strip()
+            bound_hit = None
             if b_date and b_eid:
-                hit = next((x for x in self.world.entries(b_date, bot) if str(x.get("id") or "") == b_eid), None)
-                if hit is None or real_stop(hit):
+                bound_hit = next((x for x in self.world.entries(b_date, bot) if str(x.get("id") or "") == b_eid), None)
+                if bound_hit is None or real_stop(bound_hit):
                     companion.safe("cancel_decision", dec_id, "绑定世界线段已撤排或打断")
                     logger.info("[super_enhance/world] 定时请示 %s 绑定的 %s/%s 已撤排或打断，自动作废", dec_id, b_date, b_eid)
                     continue
+
+            ask_after_s = str(dec.get("ask_after") or "").strip()
+            ask_after_dt = parse_time(ask_after_s) if ask_after_s else None
+            created_dt = parse_time(dec.get("created"))
+            ref_dt = ask_after_dt or created_dt
+
+            # 1) meal 请示：对应餐次已开饭/吃完，或错过 ask_after 超过 45 分钟，直接作废，绝不在饭后再问
+            if topic == "meal":
+                meal_day, meal_slot = self._idea_meal_slot(dec, ref_dt)
+                if meal_day and meal_slot and self._meal_slot_already_started(meal_day, meal_slot, moment):
+                    companion.safe("cancel_decision", dec_id, f"{meal_day} {meal_slot}已开饭，过时作废")
+                    logger.info("[super_enhance/world] 饭食请示 %s 对应 %s %s 已开饭，自动作废", dec_id, meal_day, meal_slot)
+                    continue
+                if meal_day and meal_day < moment.date().isoformat():
+                    companion.safe("cancel_decision", dec_id, "饭食请示已跨日，过时作废")
+                    logger.info("[super_enhance/world] 饭食请示 %s 已跨日（目标 %s），自动作废", dec_id, meal_day)
+                    continue
+                if ask_after_dt is not None and (moment - ask_after_dt).total_seconds() > 45 * 60:
+                    companion.safe("cancel_decision", dec_id, "已错过定时请示窗口，过时作废")
+                    logger.info("[super_enhance/world] 饭食定时请示 %s 已错过 %s 超过 45 分钟，自动作废", dec_id, ask_after_s)
+                    continue
+            elif ask_after_dt is not None and (moment - ask_after_dt).total_seconds() > 120 * 60:
+                bound_end = parse_time(bound_hit.get("end")) if isinstance(bound_hit, dict) else None
+                if bound_end is None or moment >= bound_end:
+                    companion.safe("cancel_decision", dec_id, "已错过定时请示窗口，过时作废")
+                    logger.info("[super_enhance/world] 定时请示 %s 已错过 %s 超过 120 分钟，自动作废", dec_id, ask_after_s)
+                    continue
+
             alive_ideas.append(dec)
         if planner is None or not planner.enabled:
             return
