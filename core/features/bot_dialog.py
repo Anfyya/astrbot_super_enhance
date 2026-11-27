@@ -189,8 +189,14 @@ class BotDialogFeature:
         )
         return True
 
+    @staticmethod
+    def _is_group(event) -> bool:
+        """群聊走原生独立会话，不套用私聊 bot↔bot 的来回上限、节奏限制和跨会话写回。"""
+        umo = str(getattr(event, "unified_msg_origin", "") or "")
+        return ":GroupMessage:" in umo
+
     def note_incoming(self, event) -> None:
-        if not self.enabled:
+        if not self.enabled or self._is_group(event):
             return
         identity = self._identity(event)
         sender, bot = identity.sender, identity.bot
@@ -223,7 +229,7 @@ class BotDialogFeature:
 
     def over_limit(self, event) -> bool:
         """另一个机器人发来的这条已经超过来回上限：这一轮不用跑模型。"""
-        if not self.enabled:
+        if not self.enabled or self._is_group(event):
             return False
         try:
             return int(event.get_extra(ROUND_FLAG, 0) or 0) > self.max_rounds
@@ -233,7 +239,7 @@ class BotDialogFeature:
     # ---------- 请求 ----------
 
     async def on_llm_request(self, event, req) -> None:
-        if not self.enabled:
+        if not self.enabled or self._is_group(event):
             return
         try:
             count = int(event.get_extra(ROUND_FLAG, 0) or 0)
@@ -337,7 +343,7 @@ class BotDialogFeature:
 
         「我上一条」只写这次来回里说的（离现在不超过 window_minutes）、主人会话里还没记过的。
         """
-        if not self.enabled or self.context is None:
+        if not self.enabled or self.context is None or self._is_group(event):
             return
         # 一律写进和主人的会话（11-07 以前面板上有开关，一直开着）
 
@@ -371,7 +377,7 @@ class BotDialogFeature:
 
     async def note_delegation(self, event, tool, tool_args, tool_result=None) -> None:
         """主人在会话里派活、她真的把话发给另一个机器人 → 记一条待回报。"""
-        if not self.enabled or not self.delegation_enabled or self.context is None:
+        if not self.enabled or not self.delegation_enabled or self.context is None or self._is_group(event):
             return
         if str(getattr(tool, "name", "") or "") != "send_message_to_user":
             return
@@ -795,15 +801,28 @@ class BotDialogFeature:
         umo = str(getattr(event, "unified_msg_origin", "") or "")
         own = self._identity(event).bot
         enabled = set(self._enabled_platforms())
+        is_group = ":GroupMessage:" in umo
         if own and own in enabled:
             setattr(req, "_se_strip_idle_tools", True)
+            drop_names = list(IDLE_BUILTIN_TOOLS)
+            if is_group:
+                # 群聊原生同场说话：隐藏私聊转发、跨会话传话、世界线改写与长期记忆工具，避免串到私聊或污染世界线/记忆
+                drop_names.extend([
+                    SEND_TOOL,
+                    TELL_TOOL,
+                    "start_doing",
+                    "recall_long_term_memory",
+                    "memorize_long_term_memory",
+                ])
             if hasattr(tool_set, "remove_tool"):
-                for tname in IDLE_BUILTIN_TOOLS:
+                for tname in drop_names:
                     tool_set.remove_tool(tname)
                 tools = getattr(tool_set, "tools", None) or []
             else:
-                strip_set = set(IDLE_BUILTIN_TOOLS)
+                strip_set = set(drop_names)
                 tools[:] = [t for t in tools if getattr(t, "name", "") not in strip_set]
+        if is_group:
+            return
         texts = {
             SEND_TOOL: self.send_text(own, umo),
             TELL_TOOL: self.tell_text(own, allow_send=True),

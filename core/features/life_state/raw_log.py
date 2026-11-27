@@ -81,6 +81,8 @@ class RawMessageLog:
         """
         if not self.enabled:
             return False
+        if ":GroupMessage:" in str(umo or ""):
+            return False
         if role not in ("user", "assistant"):
             return False
         body = (text or "").strip()
@@ -310,7 +312,7 @@ class RawMessageLog:
 # ---------- 服务层：原始消息钩子 ----------
 
 def _touch(service, umo: str) -> None:
-    if umo:
+    if umo and ":GroupMessage:" not in str(umo):
         service._activity[str(umo)] = time.time()
 
 def last_activity(service, umo: str) -> float:
