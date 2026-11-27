@@ -90,6 +90,7 @@ KINDS = {
     "manual": Kind(4, "手动触发"),
     "promise": Kind(3, "约定", must_send=True),
     "wake_greet": Kind(2, "醒来招呼", timely=True),
+    "wake_morning": Kind(2, "起床早安", timely=True),
     "segment": Kind(1, "日常主动", casual=True, timely=True, hush=True),
     # 兼容升级前数据库里残留的旧任务名
     "night": Kind(1, "晚安", timely=True, hush=True),
@@ -669,25 +670,39 @@ class ProactivePlanner:
                         and str(item.get("tool") or "") != "start_doing"
                         and str(item.get("source") or "") != "chat"
                     ):
-                        prev_out = view_mod._is_outside_place(prev_valid.get("place"), prev_valid.get("at_home"), home)
-                        cur_out = view_mod._is_outside_place(item.get("place"), item.get("at_home"), home)
-                        if prev_out != cur_out:
-                            place_txt = clean_line(item.get("place") or "", 40)
-                            doing_txt = clean_line(item.get("doing") or "", 80)
-                            if cur_out:
-                                start_kind = "out"
-                                start_purpose = f"准备出门去{place_txt}（{doing_txt}），临走前跟主人说一声"
-                            else:
-                                prev_place = clean_line(prev_valid.get("place") or "外头", 30)
-                                start_kind = "back"
-                                start_purpose = f"刚从{prev_place}回到住处（{doing_txt}），跟主人报一声回来了"
+                        doing_txt = clean_line(item.get("doing") or "", 80)
+                        prev_start_dt = parse_time(prev_valid.get("start"))
+                        slept_long = (
+                            prev_start_dt is not None
+                            and start is not None
+                            and (start - prev_start_dt).total_seconds() >= 3 * 3600
+                        )
+                        if (
+                            is_sleep(prev_valid)
+                            and not is_sleep(item)
+                            and (slept_long or (start is not None and 4 <= start.hour <= 12))
+                        ):
+                            start_kind = "wake_morning"
+                            start_purpose = f"刚睡醒起床（{doing_txt}），跟主人说声早安"
+                        else:
+                            prev_out = view_mod._is_outside_place(prev_valid.get("place"), prev_valid.get("at_home"), home)
+                            cur_out = view_mod._is_outside_place(item.get("place"), item.get("at_home"), home)
+                            if prev_out != cur_out:
+                                place_txt = clean_line(item.get("place") or "", 40)
+                                if cur_out:
+                                    start_kind = "out"
+                                    start_purpose = f"准备出门去{place_txt}（{doing_txt}），临走前跟主人说一声"
+                                else:
+                                    prev_place = clean_line(prev_valid.get("place") or "外头", 30)
+                                    start_kind = "back"
+                                    start_purpose = f"刚从{prev_place}回到住处（{doing_txt}），跟主人报一声回来了"
                     if start_kind:
                         start_key = f"{day}/{eid}:start"
                         if start_key not in fired:
                             store.mark_msg_fired(bot, start_key)
                             fired.add(start_key)
                             try:
-                                start_mk = "routine" if start_kind in ("out", "back") else str(item.get("msg_kind") or "")
+                                start_mk = "routine" if start_kind in ("out", "back", "wake_morning") else str(item.get("msg_kind") or "")
                                 scheduled += await self.schedule_segment_msg(
                                     bot, item, node="start", purpose=start_purpose, kind=start_kind,
                                     msg_kind=start_mk, now=real_now,
@@ -999,7 +1014,7 @@ class ProactivePlanner:
         if explicit in MSG_KINDS:
             return explicit
         kind = str((meta or {}).get("kind") or "segment").strip()
-        if kind in ("out", "back", "meal", "morning", "night", "wake_greet"):
+        if kind in ("out", "back", "meal", "morning", "night", "wake_greet", "wake_morning"):
             return "routine"
         purpose = str((meta or {}).get("purpose") or "").strip()
         done = (meta or {}).get("done") if isinstance((meta or {}).get("done"), dict) else {}
