@@ -1037,7 +1037,7 @@ class SpaceIndex:
             for i, stage in enumerate(stages):
                 start = parse_time(stage.get("at"))
                 what = str(stage.get("what") or "")
-                if what in ("吃完了", "用完了", "丢了", "坏了扔了", "送人了", "记错了"):
+                if what in ("吃完了", "用完了", "卖了", "换出去了", "丢了", "坏了扔了", "送人了", "记错了"):
                     break
                 if (i == 0 and what == "做好了") or what == "热了一下":
                     info["heat"].append(start)
@@ -1072,7 +1072,7 @@ def _degree(value: float, h1: float, h2: float) -> float:
 
 # ---------- 一件吃的从有了起往后推 ----------
 
-END_WHATS = ("吃完了", "用完了", "丢了", "坏了扔了", "送人了", "记错了")
+END_WHATS = ("吃完了", "用完了", "卖了", "换出去了", "丢了", "坏了扔了", "送人了", "记错了")
 
 
 class Sim:

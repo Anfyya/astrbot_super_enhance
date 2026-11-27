@@ -7630,6 +7630,72 @@
     return box;
   }
 
+  function worldMoneyAcc(d, acc) {
+    var k = String(acc || "").trim();
+    if (!k) { return ""; }
+    if (k === "master") { return "主人钱包"; }
+    if (k === "tin_box") { return "公用铁盒"; }
+    return worldLabel(d, k);
+  }
+
+  function worldMoneyAmt(v) {
+    var n = Number(v);
+    if (!isFinite(n)) { return String(v || ""); }
+    return (Math.round(n * 100) / 100) + "元";
+  }
+
+  function worldMoneyText(d, m) {
+    if (!m || typeof m !== "object") { return ""; }
+    var kind = String(m.kind || "").trim();
+    var amt = worldMoneyAmt(m.amount);
+    var acc = worldMoneyAcc(d, m.account);
+    var fromAcc = worldMoneyAcc(d, m.from_account);
+    var toAcc = worldMoneyAcc(d, m.to_account);
+    var cp = String(m.counterparty || "").trim();
+    var what = String(m.what || "").trim();
+    var head = "";
+    if (kind === "spend") {
+      head = "花钱 -" + amt;
+      var sDetail = [acc && cp ? (acc + " → " + cp) : (acc || cp), what].filter(Boolean).join("：");
+      return sDetail ? (head + "（" + sDetail + "）") : head;
+    }
+    if (kind === "earn") {
+      head = "进账 +" + amt;
+      var eDetail = [cp && acc ? (cp + " → " + acc) : (acc || cp), what].filter(Boolean).join("：");
+      return eDetail ? (head + "（" + eDetail + "）") : head;
+    }
+    if (kind === "transfer") {
+      head = "存取 " + amt;
+      var tDetail = [fromAcc && toAcc ? (fromAcc + " → " + toAcc) : (fromAcc || toAcc), what].filter(Boolean).join("：");
+      return tDetail ? (head + "（" + tDetail + "）") : head;
+    }
+    if (kind === "debt_add") {
+      head = (m.direction === "receivable" ? "待收 " : "赊账 ") + amt;
+      var dDetail = [cp, what].filter(Boolean).join("：");
+      return dDetail ? (head + "（" + dDetail + "）") : head;
+    }
+    if (kind === "debt_settle") {
+      head = "结账 " + amt;
+      var cDetail = [[acc, cp].filter(Boolean).join(" · "), what].filter(Boolean).join("：");
+      return cDetail ? (head + "（" + cDetail + "）") : head;
+    }
+    return [kind || "动钱", amt, what].filter(Boolean).join(" ");
+  }
+
+  function worldMoney(d, e) {
+    var list = Array.isArray(e.money) ? e.money.filter(function (x) { return x && typeof x === "object"; }) : [];
+    if (!list.length) { return null; }
+    var done = !!e.end && String(e.end).slice(0, 16) <= String(d.now || "").slice(0, 16);
+    var box = h("div", { class: "wthings" }, h("span", { class: "wthings-l", text: "钱" }));
+    list.forEach(function (m) {
+      box.appendChild(h("button", { class: "tchip", type: "button", title: "到「船屋钱匣」查看账本流水",
+        onclick: function () { openMoney(); } }, worldMoneyText(d, m)));
+    });
+    if (e.stopped) { box.appendChild(h("span", { class: "tag warn", title: "做到一半停下的段：标了第几步的，做到了那一步才算；没标的，停在最后收尾那步照算", text: "停在半路，做到的才算" })); }
+    else if (!done) { box.appendChild(h("span", { class: "muted", text: "做完才算" })); }
+    return box;
+  }
+
   /* ---------- 这个人的时间线 ---------- */
   function worldTimelineSection(d, who) {
     var day = (d.days || [])[0] || { date: d.date, entries: [] };
@@ -7889,6 +7955,7 @@
       worldSteps(e, pct),
       (!(e.stop_shown !== undefined ? e.stop_shown : e.stopped) && e.result) ? h("div", { class: "wres", text: "结果：" + e.result }) : null,
       worldThings(d, e, null),
+      worldMoney(d, e),
       h("div", { class: "lm" },
         e.source === "step" ? srcTag : null,
         !e.send_msg && msgTag ? msgTag : null,
