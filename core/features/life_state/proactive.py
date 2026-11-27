@@ -672,37 +672,15 @@ class ProactivePlanner:
                         prev_out = view_mod._is_outside_place(prev_valid.get("place"), prev_valid.get("at_home"), home)
                         cur_out = view_mod._is_outside_place(item.get("place"), item.get("at_home"), home)
                         if prev_out != cur_out:
-                            # 两人同行同一时刻出门/回家时，只由一人代表发声防重复
-                            joint_partners = [
-                                str(x) for x in (item.get("with") or [])
-                                if str(x) in items_by_bot and str(x) != bot
-                            ]
-                            skip_joint = False
-                            for p_bot in joint_partners:
-                                for p_it in items_by_bot[p_bot]:
-                                    if is_event(p_it) or real_stop(p_it):
-                                        continue
-                                    if p_it.get("start") == item.get("start"):
-                                        if p_it.get("send_msg") and p_it.get("msg_at") == "start":
-                                            skip_joint = True
-                                        elif "napcat2" in (bot, p_bot):
-                                            if bot != "napcat2":
-                                                skip_joint = True
-                                        elif bot > p_bot:
-                                            skip_joint = True
-                                        break
-                                if skip_joint:
-                                    break
-                            if not skip_joint:
-                                place_txt = clean_line(item.get("place") or "", 40)
-                                doing_txt = clean_line(item.get("doing") or "", 80)
-                                if cur_out:
-                                    start_kind = "out"
-                                    start_purpose = f"准备出门去{place_txt}（{doing_txt}），临走前跟主人说一声"
-                                else:
-                                    prev_place = clean_line(prev_valid.get("place") or "外头", 30)
-                                    start_kind = "back"
-                                    start_purpose = f"刚从{prev_place}回到住处（{doing_txt}），跟主人报一声回来了"
+                            place_txt = clean_line(item.get("place") or "", 40)
+                            doing_txt = clean_line(item.get("doing") or "", 80)
+                            if cur_out:
+                                start_kind = "out"
+                                start_purpose = f"准备出门去{place_txt}（{doing_txt}），临走前跟主人说一声"
+                            else:
+                                prev_place = clean_line(prev_valid.get("place") or "外头", 30)
+                                start_kind = "back"
+                                start_purpose = f"刚从{prev_place}回到住处（{doing_txt}），跟主人报一声回来了"
                     if start_kind:
                         start_key = f"{day}/{eid}:start"
                         if start_key not in fired:
@@ -821,7 +799,7 @@ class ProactivePlanner:
         return removed
 
     async def on_master_wake(self, now: datetime.datetime | None = None) -> int:
-        """主人睡醒起床后：若此刻有角色清醒且在屋里，选 1 人在 45~90 秒后自然招呼；都在外头则不穿帮强发。"""
+        """主人睡醒起床后：凡此刻清醒且在屋里的角色都排醒来招呼（多人错开几十秒防撞车）；都在外头则不穿帮强发。"""
         if not self.enabled or self.world is None:
             return 0
         cron = self._cron()
@@ -849,45 +827,51 @@ class ProactivePlanner:
             logger.info("[super_enhance/life] 主人醒来时没有角色清醒在屋，不发穿帮问候")
             return 0
 
-        chosen = ""
-        if self.companionship is not None:
-            for bot in candidates:
-                if self.companionship.safe("deferred_for", bot, flat, default=[]):
-                    chosen = bot
-                    break
-        if not chosen:
-            today_text = flat.date().isoformat()
-            for bot in candidates:
-                rows = self.world.entries(today_text, bot)
-                if any(
-                    x.get("meal") or any(w in str(x.get("doing") or "") for w in ("早饭", "煮粥", "留一", "温在"))
-                    for x in rows
-                ):
-                    chosen = bot
-                    break
-        if not chosen:
-            chosen = candidates[flat.date().toordinal() % len(candidates)]
+        # 决定先后顺序：有睡期暂存事项或做了早饭的优先先打招呼，其余按日期奇偶轮转先后，但所有在屋清醒角色都发
+        today_text = flat.date().isoformat()
+        day_parity = flat.date().toordinal() % max(1, len(candidates))
+        def _priority(idx_bot: tuple[int, str]) -> tuple[int, int, int]:
+            idx, bot = idx_bot
+            has_def = bool(
+                self.companionship is not None
+                and self.companionship.safe("deferred_for", bot, flat, default=[])
+            )
+            rows = self.world.entries(today_text, bot)
+            made_meal = any(
+                x.get("meal") or any(w in str(x.get("doing") or "") for w in ("早饭", "煮粥", "留一", "温在"))
+                for x in rows
+            )
+            rot = (idx - day_parity) % max(1, len(candidates))
+            return (0 if has_def else 1, 0 if made_meal else 1, rot)
+
+        ordered = [bot for _idx, bot in sorted(enumerate(candidates), key=_priority)]
 
         home_word = "船屋" if str(self.cfg.get("world_home") or "").strip() == "海边小镇" else "屋"
         purpose = (
             f"主人刚睡醒起床了（你在{home_word}里看见他起来），跟他说声早安或自然招呼一声；"
             "若有他睡着期间攒着没吵他的事或留着的饭菜顺嘴提一句"
         )
-        at = (local_now + datetime.timedelta(seconds=random.randint(45, 90))).replace(microsecond=0)
-        meta = {
-            "kind": "wake_greet",
-            "bot": chosen,
-            "date": at.date().isoformat(),
-            "minute": at.hour * 60 + at.minute,
-            "postponed": 0,
-            "purpose": purpose,
-        }
         created = 0
-        for target in self._targets(chosen):
-            if await self._add_job(cron, meta, target, at):
-                created += 1
-        if created:
-            logger.info("[super_enhance/life] [%s] 主人睡醒且角色在屋，已排 %s 醒来招呼", chosen, at.strftime("%H:%M:%S"))
+        offset_sec = 0
+        for bot in ordered:
+            offset_sec += random.randint(45, 75)
+            at = (local_now + datetime.timedelta(seconds=offset_sec)).replace(microsecond=0)
+            meta = {
+                "kind": "wake_greet",
+                "bot": bot,
+                "date": at.date().isoformat(),
+                "minute": at.hour * 60 + at.minute,
+                "postponed": 0,
+                "purpose": purpose,
+                "msg_kind": "routine",
+            }
+            bot_created = 0
+            for target in self._targets(bot):
+                if await self._add_job(cron, meta, target, at):
+                    created += 1
+                    bot_created += 1
+            if bot_created:
+                logger.info("[super_enhance/life] [%s] 主人睡醒且角色在屋，已排 %s 醒来招呼", bot, at.strftime("%H:%M:%S"))
         return created
 
     def _targets(self, bot: str) -> list[str]:
