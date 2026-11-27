@@ -195,6 +195,75 @@ class BotDialogFeature:
         umo = str(getattr(event, "unified_msg_origin", "") or "")
         return ":GroupMessage:" in umo
 
+    GROUP_STOP_CMD = "__se_group_stop__"
+    GROUP_SYNC_PREFIX = "__se_group_sync__"
+
+    async def handle_group_control(self, event, reply_guard=None) -> bool:
+        """处理三人群桥接发来的内部控制指令（仅认主人发来的群消息）：
+        - __se_group_stop__：立刻作废本群在途轮次（不发消息、不写历史）；
+        - __se_group_sync__ <原文>：将主人刚发的群话以原生 user 格式同步写入后手群历史，不唤醒模型。
+        返回 True 表示已消费并停止事件传播。
+        """
+        if not self._is_group(event):
+            return False
+        identity = self._identity(event)
+        if identity.sender not in self.master_ids:
+            return False
+        text = str(event.get_message_str() or "").strip()
+        if not text:
+            return False
+
+        if text == self.GROUP_STOP_CMD:
+            if reply_guard is not None:
+                aborted = reply_guard.abort_session(identity.umo)
+                logger.info(
+                    "[super_enhance/bot_dialog] 群聊急停：%s（作废在途=%s）",
+                    identity.umo,
+                    aborted,
+                )
+            event.stop_event()
+            return True
+
+        if text.startswith(self.GROUP_SYNC_PREFIX):
+            body = text[len(self.GROUP_SYNC_PREFIX) :].strip()
+            conv_mgr = getattr(self.context, "conversation_manager", None)
+            if body and conv_mgr is not None:
+                try:
+                    sender_name = str(event.get_sender_name() or "").strip() or identity.sender
+                except Exception:
+                    sender_name = identity.sender
+                group_name = ""
+                try:
+                    grp = getattr(getattr(event, "message_obj", None), "group", None)
+                    group_name = str(getattr(grp, "group_name", "") or "").strip()
+                except Exception:
+                    group_name = ""
+                now_local = timeutil.now(self._zone())
+                weekdays = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+                meta_lines = [f"User ID: {identity.sender}, Nickname: {sender_name}"]
+                if group_name:
+                    meta_lines.append(f"Group name: {group_name}")
+                meta_lines.append(
+                    f"Current datetime: {now_local.strftime('%Y-%m-%d %H:%M')} (CST), Weekday: {weekdays[now_local.weekday()]}"
+                )
+                reminder = "<system_reminder>" + "\n".join(meta_lines) + "</system_reminder>"
+                msg = {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": body},
+                        {"type": "text", "text": reminder},
+                    ],
+                }
+                try:
+                    await history_io.append(conv_mgr, identity.umo, msg, create=True)
+                    logger.info("[super_enhance/bot_dialog] 群聊同步主人发言至 %s", identity.umo)
+                except Exception:
+                    logger.error("[super_enhance/bot_dialog] 群聊同步主人发言失败", exc_info=True)
+            event.stop_event()
+            return True
+
+        return False
+
     def note_incoming(self, event) -> None:
         if not self.enabled or self._is_group(event):
             return
@@ -806,11 +875,12 @@ class BotDialogFeature:
             setattr(req, "_se_strip_idle_tools", True)
             drop_names = list(IDLE_BUILTIN_TOOLS)
             if is_group:
-                # 群聊原生同场说话：隐藏私聊转发、跨会话传话、世界线改写与长期记忆工具，避免串到私聊或污染世界线/记忆
+                # 群聊原生同场说话：隐藏私聊转发、跨会话传话、世界线改写、旧日程回查与长期记忆工具，避免串到私聊、权限报错或污染世界线/记忆
                 drop_names.extend([
                     SEND_TOOL,
                     TELL_TOOL,
                     "start_doing",
+                    "recall",
                     "recall_long_term_memory",
                     "memorize_long_term_memory",
                 ])

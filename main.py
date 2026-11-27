@@ -511,6 +511,9 @@ class SuperEnhance(Star):
         """每条新消息最先经过这里：登记新消息（静默工具要用），再处理新消息优先。"""
         mark_arrived(event)
         identify_event(event, self.bot_dialog.bots, proactive=is_proactive_event(event))
+        if await self.bot_dialog.handle_group_control(event, reply_guard=self.reply_guard):
+            # 群聊内部控制（/stop 在途作废、主人发言原生同步给后手）：直接消费，不进模型
+            return
         if self.bot_dialog.is_blank_bot_event(event):
             # 另一个机器人「正在输入」推过来的空消息：不计来回、不写记录、不触发回复
             event.stop_event()

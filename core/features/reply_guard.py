@@ -149,6 +149,18 @@ class ReplyGuardFeature:
             self._turn.pop(umo, None)
             self._pending.pop(umo, None)
 
+    def abort_session(self, umo: str) -> bool:
+        """外部急停（如三人群 /stop）：把该会话正在跑的在途轮次直接作废，既不发消息也不写进历史。"""
+        key = str(umo or "").strip()
+        if not key:
+            return False
+        previous = self._turn.pop(key, None)
+        self._pending.pop(key, None)
+        if not previous or previous.get("delivered") or self._finished_without_reply(previous):
+            return False
+        self._cancel(previous, cancel_ts=time.time())
+        return True
+
     @staticmethod
     def _finished_without_reply(previous: dict) -> bool:
         """上一轮已经跑完、却没有要发的东西（出错、只调了工具、空回复），或者早就过期了。"""
