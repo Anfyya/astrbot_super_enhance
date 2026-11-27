@@ -196,19 +196,9 @@ RECORDER_SYSTEM_TEMPLATE = """{base_system}
 """
 
 MASTER_MOOD_RECORDER_NOTE = """
-【主人情绪校准（放入 companionship.master_mood，无变化可省略或填 target="none"）】
-- 格式："master_mood": {"target": "self"|"both"|"owner"|"none", "level": -1..3, "reason": "纯白话一句", "peer_aware": false}
-- target：
-  · "self"：主人只冲本私聊这位角色不满或缓和；
-  · "both"：主人冲两个角色一起不满或缓和；
-  · "owner"：主人自身顺心开心（-1）或因外头人/事/工作累烦气（1..3），不是冲角色来的；
-  · "none"：本批对话未涉及主人情绪状态变化。
-- level：
-  · "self"/"both" 只能填 0|1|2|3（0=平常/和好翻篇，1=微凉小不满，2=明显生气认真批评，3=严重冷战发大火）；
-  · "owner" 可填 -1|0|1|2|3（-1=主人自己顺心开心，注意主人夸她不是主人 -1）。
-- 硬规矩：带「哈哈 / 😂 / 调侃斗嘴 / 打闹」绝不判生气；骂游戏/天气/外头人/上班累归 "owner"；单字冷敷衍（“嗯”“哦”“随便”“行”）绝不降档；聊回平常话题、语气平和无刺（即使没提“原谅/不生气了”）可逐档降或明确和解归 0。
-- peer_aware（物理可见性）：若冲突发生时两人在同一处且主人在家，或本批对话提到了转告/tell/两人都在场，填 true；单人私聊且另一人不在场填 false。
-- 仍兼容条目里的 upset: true（记录员照旧可标，程序会自动兼容映射）。
+【主人情绪（放入 companionship.master_mood，无变化可省略或填 target="none"）】
+- 格式："master_mood": {"target": "self"|"both"|"owner"|"none", "level": -1..3, "reason": "白话一句", "peer_aware": false}
+- 判断主人有没有生气、缓和或情绪变化：target 填 self（冲当前角色）/ both（冲两人）/ owner（主人自身或外部）/ none（无变化）；level 填 0平常、1小不满、2明显生气、3很生气（owner 可填 -1 开心）；peer_aware 为另一位室友是否在场知情；条目里照旧可标 upset: true。
 """.strip()
 
 RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，整理成结构化的条目。
