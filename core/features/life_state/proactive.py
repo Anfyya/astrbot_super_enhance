@@ -761,7 +761,7 @@ class ProactivePlanner:
         world=None,
         things=None,
     ) -> int:
-        """摆在主人跟前的饭菜满 30 分钟仍未开吃：仅向此刻在家清醒的 1 位角色发送纯事实提醒（不加任何引导）。"""
+        """摆在主人跟前的饭菜满 30 分钟仍未开吃：向此刻在家清醒的每位角色各自发送纯事实提醒（不加任何引导）。"""
         if not self.enabled:
             return 0
         store = world if world is not None else self.world
@@ -790,18 +790,7 @@ class ProactivePlanner:
         if not untouched:
             return 0
 
-        # 全屋统一去重：同一份摆上桌的饭菜全屋只提醒 1 次
-        all_fired: set[str] = set()
-        for b in bot_list:
-            all_fired.update(store.fired_msgs(b))
-        fresh = [
-            f for f in untouched
-            if f"untouched_food:{f['id']}:{f['at']}" not in all_fired
-        ]
-        if not fresh:
-            return 0
-
-        # 只挑此刻清醒且在家的角色
+        # 挑出此刻清醒且在家的全部角色，各自独立去重、各自发纯事实提醒
         home = str(self.cfg.get("world_home") or "").strip() if hasattr(self, "cfg") and isinstance(self.cfg, dict) else ""
         if not home:
             home = str(store.home_at(flat) or "").strip() if hasattr(store, "home_at") else ""
@@ -821,45 +810,44 @@ class ProactivePlanner:
         if not candidates:
             return 0
 
-        # 只提醒在家的 1 个人：优先选把这份东西端到主人跟前的人，否则按日期轮选 1 人
-        chosen = ""
-        for f in fresh:
-            by = str(f.get("by") or "").strip()
-            if by in candidates:
-                chosen = by
-                break
-        if not chosen:
-            chosen = candidates[flat.date().toordinal() % len(candidates)]
-
-        names = "、".join(dict.fromkeys(str(f["name"]) for f in fresh if f.get("name")))
-        max_mins = max(int(f.get("minutes") or 30) for f in fresh)
-        purpose = f"摆在主人跟前的「{names}」已经放了约 {max_mins} 分钟，主人还没有动。"
-        food_ids = [str(f["id"]) for f in fresh if f.get("id")]
-
         self.install_gate()
-        at = (local_now + datetime.timedelta(seconds=15)).replace(microsecond=0)
-        meta = {
-            "kind": "food_untouched",
-            "bot": chosen,
-            "date": at.date().isoformat(),
-            "minute": at.hour * 60 + at.minute,
-            "postponed": 0,
-            "purpose": purpose,
-            "msg_kind": "routine",
-            "food_ids": food_ids,
-        }
-        created = 0
-        for target in self._targets(chosen):
-            if await self._add_job(cron, meta, target, at):
-                created += 1
-        if created:
-            for f in fresh:
-                store.mark_msg_fired(chosen, f"untouched_food:{f['id']}:{f['at']}")
-            logger.info(
-                "[super_enhance/life] [%s] 摆在主人跟前的「%s」满 %d 分钟未动，已排纯事实提醒",
-                chosen, names, max_mins,
-            )
-        return created
+        total_created = 0
+        for idx, bot in enumerate(candidates):
+            fired = set(store.fired_msgs(bot))
+            fresh = [
+                f for f in untouched
+                if f"untouched_food:{f['id']}:{f['at']}" not in fired
+            ]
+            if not fresh:
+                continue
+            names = "、".join(dict.fromkeys(str(f["name"]) for f in fresh if f.get("name")))
+            max_mins = max(int(f.get("minutes") or 30) for f in fresh)
+            purpose = f"摆在主人跟前的「{names}」已经放了约 {max_mins} 分钟，主人还没有动。"
+            food_ids = [str(f["id"]) for f in fresh if f.get("id")]
+            at = (local_now + datetime.timedelta(seconds=15 + idx * 10)).replace(microsecond=0)
+            meta = {
+                "kind": "food_untouched",
+                "bot": bot,
+                "date": at.date().isoformat(),
+                "minute": at.hour * 60 + at.minute,
+                "postponed": 0,
+                "purpose": purpose,
+                "msg_kind": "routine",
+                "food_ids": food_ids,
+            }
+            created = 0
+            for target in self._targets(bot):
+                if await self._add_job(cron, meta, target, at):
+                    created += 1
+            if created:
+                for f in fresh:
+                    store.mark_msg_fired(bot, f"untouched_food:{f['id']}:{f['at']}")
+                total_created += created
+                logger.info(
+                    "[super_enhance/life] [%s] 摆在主人跟前的「%s」满 %d 分钟未动，已排纯事实提醒",
+                    bot, names, max_mins,
+                )
+        return total_created
 
     def on_entries_dropped(self, who: str, entry_keys: set[str] | list[str]) -> None:
         """WorldStore 删除或打断条目时的回调：撤除关联未发 cron 任务，并回退未发出的 fired_msgs 标记。"""

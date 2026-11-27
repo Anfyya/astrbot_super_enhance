@@ -121,11 +121,11 @@ STEP_SYSTEM_TEMPLATE = """{base_system}
    - **日常固定会开口跟主人说一声的 5 个节点**（就算主人就在船屋里，叫他吃饭、跟他搭话也必须标 `send_msg: true` 才会真的开口）：
      1) **早安**：早上睡醒起床后的第一段（`msg_at: "start"`，或跨夜睡觉那段的 `"end"`，二选一别重复），**不管主人在不在睡觉，两个人都各自标 `send_msg: true` 跟主人道早安**（`msg_purpose` 写明道早安）；
      2) **晚安**：晚上入睡那一段（`state: "睡觉"` **必须填 `msg_at: "start"`**，入睡前说晚安，严禁填 `"end"`）；
-     3) **叫主人吃饭**：早饭、午饭、晚饭或夜宵做好开饭时（只要主人醒着），在做饭段的 `"end"` **或** 吃饭段的 `"start"` 挑一处标 `send_msg: true` 叫主人吃饭（二选一，严禁两段连着标）；
+     3) **叫主人吃饭**：早饭、午饭、晚饭或夜宵做好开饭时（只要主人醒着），在做饭段的 `"end"` **或** 吃饭段的 `"start"` 挑一处标 `send_msg: true` 叫主人吃饭（每人二选一，严禁同一个人两段连着标；**两人一起做饭/吃饭时两个人都各自标 `send_msg: true` 叫主人**）；
      4) **出门**：离开宿舍往外走那一段（`at_home` 从 true 变成 false，去码头、镇上、集市、海边、打捞船等，`msg_at: "start"`；只在院子廊下走动或门口几步路丢个东西不算正式出门）；
      5) **回来**：从外头回到宿舍时（回程段 `"end"` 或到家第一段 `"start"` 二选一），跟主人说一声回来了（买了或捡了什么顺嘴提一句）。
    - **想跟主人讲/分享/搭话时必须标 `send_msg: true`**：探路瞧见新露出的旧铺面或铁箱、捞到或捡到好玩的东西、做菜成了或翻车了、修好了某样物件、看到好看的海景天气、突然惦记主人想撒个娇或闲聊，想跟主人说就标 `send_msg: true`（若需要主人拍板定夺则填 `ask_master` 并把 `at` 填在回屋开口那一刻；同一件事已填 `ask_master` 的，对应段不再重复标 `send_msg: true`，以免同一分钟说两遍），**绝不把“讲给主人听”闷在段里演完却填 `send_msg: false`**；安安静静看书、洗碗、擦桌子、打盹这些不找主人的平淡日常填 `false`。不设死板条数上限，但先看一眼上面「今天已发过的主动消息」——同一件事别反复说，如果前面连发了好几条主人一直没回，后面除非固定节点就少发一点。
-   - **两人同行防撞车**：两人一块做饭开饭（`with` 里有对方）时只由其中一个人标 `send_msg: true`（谁掌勺就谁去喊）；早安、晚安、出门、回来，或者两个人各自碰到不同趣事想分开聊的，**两个人都各自发，不受限**。
+   - **两人同行各发各的**：早安、晚安、叫吃饭、出门、回来，或者两个人各自碰到不同趣事想分开聊的，**两个人都各自标 `send_msg: true` 各自发，不要只留一个人说**。
    - **主人睡觉时照常按实际情况标 `send_msg`**：主人在睡觉时，早上道早安、出门、回来、做好留着饭或真有事想跟他说时照常标 `send_msg: true`（发不发、怎么说由主动消息那边顾着他在休息自己拿捏）；没要紧事的平淡日常仍填 `false`。若两人都要出门不在家，把早饭盖好温着，再在 `items` 里写一张留给主人的字条压在堂屋矮桌上。
 11. 段里是在练「在练的事」里的某件，training 填它的编号（例如 "#2"）；不是在练就留空，不要往里写别的。
 12. 段里做的是「各自的打算」里她的某一条，intent 填那条的编号（例如 "i2"）；不是就留空。标着「现在就去」的，是她刚答应马上去做的：这次就从给你的时刻起先排它，别排在别的事后面；标着「就在今天」的（主人拍板定在今天办、或原定今天要做的事）：只要非狂风暴雨或深夜，**当天紧接着就排进 segments 推进（例如主人 10 点答应，11 点就能出发）**并填对应 intent 编号，严禁习惯性拖到明天！若主人明确说了几点干就严格按那个钟点排；若主人只答应了但没说具体几点，**严禁她俩自作主张定出发时间或拖到明天**，应在 `ask_master` 里直接顺嘴问主人一句具体时间（例如「主人，那 1 个小时之后出发可以嘛？」或「那吃完午饭两点出发成不成？」），等主人定准点后再按点出发。她人还不在做这件事的地方、世界线上也还没在往那边去的，先写一段走过去；可以分成几段（比如先去买、再回来做），每段 intent 都填这个编号。
@@ -485,18 +485,25 @@ def _is_greeting_purpose(purpose: str) -> bool:
     return any(w in text for w in ("早安", "早上好", "晚安", "睡了", "先睡了", "歇下了"))
 
 
+def _is_meal_entry(entry: dict) -> bool:
+    if bool(entry.get("meal")):
+        return True
+    purpose = str(entry.get("msg_purpose") or "")
+    return any(w in purpose for w in ("吃饭", "开饭", "早饭", "午饭", "晚饭", "夜宵", "饭好了", "端上桌", "盛好了"))
+
+
 def _is_routine_joint_node(entry: dict) -> bool:
     purpose = str(entry.get("msg_purpose") or "")
-    if bool(entry.get("meal")) or entry.get("at_home") is False:
+    if entry.get("at_home") is False:
         return True
     return any(
         w in purpose
-        for w in ("吃饭", "开饭", "早饭", "午饭", "晚饭", "夜宵", "出门", "去码头", "去镇上", "去集市", "回来", "回船屋", "回宿舍", "到家")
+        for w in ("出门", "去码头", "去镇上", "去集市", "回来", "回船屋", "回宿舍", "到家")
     )
 
 
 def _dedup_joint_proactive(written_by_bot: dict, now: datetime.datetime | None = None, world: WorldStore | None = None) -> None:
-    """双人同行例行节点（叫吃饭、同进同出）撞车去重：保留一人主报，早晚安或不同话题保留双发。"""
+    """双人同行非关键同话题撞车去重：早晚安、叫吃饭、或不同话题均保留双发。"""
     flat = (now or datetime.datetime.now()).replace(tzinfo=None)
     pool: dict[str, list[dict]] = {}
     seen_ids: set[tuple[str, str]] = set()
@@ -540,10 +547,11 @@ def _dedup_joint_proactive(written_by_bot: dict, now: datetime.datetime | None =
                     pb = str(b.get("msg_purpose") or "")
                     if _is_greeting_purpose(pa) or _is_greeting_purpose(pb):
                         continue
+                    if _is_meal_entry(a) or _is_meal_entry(b):
+                        continue
                     together = (
                         bot_b in (a.get("with") or [])
                         or bot_a in (b.get("with") or [])
-                        or (bool(a.get("place")) and a.get("place") == b.get("place") and bool(a.get("meal")) and bool(b.get("meal")))
                     )
                     same_topic = bool(_squash(pa)) and _squash(pa) == _squash(pb)
                     if not together and not same_topic:
