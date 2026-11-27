@@ -21,7 +21,6 @@ from astrbot.core.agent.message import TextPart
 
 from ..common import history_io, text as text_utils, timeutil
 from ..common.bots import BotRegistry, identify_event, session_for
-from .cron_context import is_cron_event
 
 ROUND_FLAG = "_super_enhance_bot_dialog_round"
 SEND_TOOL = "send_message_to_user"
@@ -796,26 +795,19 @@ class BotDialogFeature:
         umo = str(getattr(event, "unified_msg_origin", "") or "")
         own = self._identity(event).bot
         enabled = set(self._enabled_platforms())
-        is_managed_bot = bool(own and own in enabled)
-        cron = is_cron_event(event)
-        allow_send = cron or not is_managed_bot
-        if is_managed_bot:
+        if own and own in enabled:
             setattr(req, "_se_strip_idle_tools", True)
-            strip = list(IDLE_BUILTIN_TOOLS)
-            if not cron:
-                strip.append(SEND_TOOL)
             if hasattr(tool_set, "remove_tool"):
-                for tname in strip:
+                for tname in IDLE_BUILTIN_TOOLS:
                     tool_set.remove_tool(tname)
                 tools = getattr(tool_set, "tools", None) or []
             else:
-                strip_set = set(strip)
+                strip_set = set(IDLE_BUILTIN_TOOLS)
                 tools[:] = [t for t in tools if getattr(t, "name", "") not in strip_set]
         texts = {
-            TELL_TOOL: self.tell_text(own, allow_send=allow_send),
+            SEND_TOOL: self.send_text(own, umo),
+            TELL_TOOL: self.tell_text(own, allow_send=True),
         }
-        if allow_send:
-            texts[SEND_TOOL] = self.send_text(own, umo)
         for index, tool in enumerate(tools):
             text = texts.get(getattr(tool, "name", ""))
             if text:
