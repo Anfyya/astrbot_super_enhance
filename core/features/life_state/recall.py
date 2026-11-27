@@ -1,9 +1,9 @@
 """回想：她自己按关键词 / 日期 / 时间翻世界线（recall 工具）。
 
-- 搜：只列简短的几条（带编号），不把整天涌进上下文；
-- 看：按编号看那一刻准确的世界线——她自己那段的全部细节（分步、结果、和谁一起）、前后各一件、
-  同一时候别人在干什么、那段时间里顺带发生的事。
-只给她看得到的：自己的全给，别人的按 seen_by 给细节或粗粒度（和注入的【世界线】同一套规矩）。
+- 搜：只列她自己简短的几条（带编号），不把整天涌进上下文；
+- 看：按编号看她自己那一刻准确的世界线——她自己那段的全部细节（分步、结果、和谁一起）、前后各一件、
+  那段时间里她自己顺带发生的事。
+只给她看她自己的条目，不再展示另一位角色或别人的记录。
 """
 
 import datetime
@@ -175,7 +175,9 @@ def search(world: WorldStore, viewer: str, label, now: datetime.datetime,
     for one in days:
         hits = []
         day_end = datetime.datetime.combine(one + datetime.timedelta(days=1), datetime.time())
-        for item in world.entries(one.isoformat(), ""):
+        for item in world.entries(one.isoformat(), viewer):
+            if str(item.get("who") or "") != viewer:
+                continue
             level = visible_to(item, viewer)
             if level == "none":
                 continue
@@ -215,7 +217,7 @@ def search(world: WorldStore, viewer: str, label, now: datetime.datetime,
     shown = sum(1 for x in rows if x.startswith("- "))
     lines = ["翻到 %d 条%s：" % (total, "（只列了 %d 条，想看别的就加上日期或时间缩小）" % shown if shown < total else "")]
     lines.extend(rows)
-    lines.append("要看某一条当时准确的世界线（那段的分步和结果、前后的事、同一时候别人在干什么），用 entry 填它的编号。")
+    lines.append("要看某一条当时准确的世界线（那段的分步和结果、前后的事），用 entry 填它的编号。")
     return "\n".join(lines)
 
 
@@ -239,6 +241,9 @@ def detail(world: WorldStore, viewer: str, label, now: datetime.datetime, ref: s
     item = next((x for x in items if str(x.get("id")) == entry_id), None)
     if item is None:
         return "%s 那天没有 %s 这一条。" % (day.isoformat(), entry_id)
+    who = str(item.get("who") or "")
+    if who != viewer:
+        return "这一条你看不到。"
     level = visible_to(item, viewer)
     if level == "none":
         return "这一条你看不到。"
@@ -247,14 +252,13 @@ def detail(world: WorldStore, viewer: str, label, now: datetime.datetime, ref: s
     if start is None or start > now:
         return "这一条尚未发生。"
     lines = ["当时的世界线：%s（%s）%s" % (day.isoformat(), WEEKDAYS_CN[day.weekday()], _span_text(item, day))]
-    who = str(item.get("who") or "")
     text = _text(item, level, now, full=True)
     withs = ["主人" if x == "master" else (label(x) or x) for x in item.get("with") or [] if x != viewer]
     lines.append("%s：%s%s%s" % (
         _who(item, viewer, label), text, "（和%s一起）" % "、".join(withs) if withs else "",
         "（原话：%s）" % item["src_quote"] if level == "detail" and item.get("src_quote")
         and (is_event(item) or (end is not None and end <= now)) and not item.get("_fact_error") else ""))
-    # 同一个人前后各一件（包含 day + 1，防止跨夜或次日凌晨「后一件」漏查）
+    # 自己前后各一件（包含 day + 1，防止跨夜或次日凌晨「后一件」漏查）
     own = []
     if who and who != "master":
         check_days = {
@@ -289,7 +293,7 @@ def detail(world: WorldStore, viewer: str, label, now: datetime.datetime, ref: s
                 lines.append("%s%s：%s %s" % (
                     "你" if who == viewer else _who(item, viewer, label), word,
                     _span_text(other, other_day), _clip(_text(other, seen, now))))
-    # 同一时候别人在干什么、这段时间里顺带的事（包含 day + 1 覆盖跨夜条目）
+    # 这段时间里自己顺带的事（仅限 viewer 本人，不再展示同一时候别人的记录）
     if start is not None:
         lo = start
         if is_event(item):
@@ -298,7 +302,6 @@ def detail(world: WorldStore, viewer: str, label, now: datetime.datetime, ref: s
             hi = max(end, start)
         else:
             hi = max(now, start)
-        others: dict = {}
         events = []
         scan_days = sorted({
             day - datetime.timedelta(days=1),
@@ -306,41 +309,28 @@ def detail(world: WorldStore, viewer: str, label, now: datetime.datetime, ref: s
             day + datetime.timedelta(days=1),
             hi.date(),
         })
-        seen_peer: set[tuple[str, str, str]] = set()
+        seen_ev: set[tuple[str, str]] = set()
         for one in scan_days:
-            for x in world.entries(one.isoformat(), ""):
+            for x in world.entries(one.isoformat(), viewer):
+                if str(x.get("who") or "") != viewer or not is_event(x):
+                    continue
                 if x is item or (
                     str(x.get("id") or "") == str(item.get("id") or "")
                     and str(x.get("start") or "") == str(item.get("start") or "")
-                    and str(x.get("who") or "") == who
                 ):
                     continue
-                peer_key = (str(x.get("who") or ""), str(x.get("id") or ""), str(x.get("start") or ""))
-                if peer_key in seen_peer:
+                ev_key = (str(x.get("id") or ""), str(x.get("start") or ""))
+                if ev_key in seen_ev:
                     continue
-                seen_peer.add(peer_key)
+                seen_ev.add(ev_key)
                 seen = visible_to(x, viewer)
                 if seen == "none":
                     continue
                 a = parse_time(x.get("start"))
                 if a is None or a > now:
                     continue
-                if is_event(x):
-                    if lo <= a <= hi:
-                        events.append("%s %s：%s" % (_span_text(x, day), _who(x, viewer, label), _clip(_text(x, seen, now))))
-                    continue
-                b = parse_time(x.get("end")) if x.get("end") else now
-                if str(x.get("who")) == who:
-                    continue
-                if not (a < hi and (b or a) > lo):
-                    continue  # 首尾刚好挨着的不算同一时候
-                others.setdefault(str(x.get("who")), []).append(
-                    "%s %s" % (_span_text(x, day), _clip(_text(x, seen, now))))
-        if others:
-            lines.append("同一时候：")
-            for other, rows in others.items():
-                name = "主人" if other == "master" else ("你" if other == viewer else label(other) or other)
-                lines.extend("- %s：%s" % (name, row) for row in rows[:SAME_TIME_MAX])
+                if lo <= a <= hi:
+                    events.append("%s %s：%s" % (_span_text(x, day), _who(x, viewer, label), _clip(_text(x, seen, now))))
         if events:
             lines.append("这段时间里顺带的事：")
             lines.extend("- " + x for x in events[:SAME_TIME_MAX * 2])
