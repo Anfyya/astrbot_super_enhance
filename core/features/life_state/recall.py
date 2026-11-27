@@ -13,30 +13,18 @@ from ...common import timeutil
 from .world import WorldStore, event_text_at, is_event, parse_time, visible_to
 
 WEEKDAYS_CN = timeutil.WEEKDAYS_CN
-# 一次最多列几条（再多就让她加日期 / 时间缩小）
+# 一次最多允许返回几条（超过直接报错要求缩小范围，一条都不返回）
 MAX_ROWS = 12
-# 看一条时，同一时候每个人最多列几段
+# 看一条时，顺带事件最多列几段
 SAME_TIME_MAX = 3
 ROW_LIMIT = 120
-DAY_WORDS = {"今天": 0, "今日": 0, "昨天": 1, "昨日": 1, "前天": 2, "大前天": 3}
-# 说法 → (开始分钟, 结束分钟)
-TIME_WORDS = (
-    ("凌晨", (0, 6 * 60)), ("半夜", (0, 5 * 60)), ("清早", (5 * 60, 8 * 60)), ("早上", (5 * 60, 9 * 60)),
-    ("上午", (6 * 60, 12 * 60)), ("中午", (11 * 60, 14 * 60)), ("下午", (12 * 60, 18 * 60)),
-    ("傍晚", (17 * 60, 19 * 60 + 30)), ("晚上", (18 * 60, 24 * 60)), ("夜里", (21 * 60, 24 * 60)),
-)
 
 
 def parse_day(text, today: datetime.date):
-    """「今天 / 昨天 / 前天 / 大前天 / 3天前 / 2026-10-14 / 10-14 / 10月14日」→ date；空 → None；认不出 → False。"""
+    """只接受具体日期：「2026-10-14 / 10-14 / 10月14日」→ date；空 → None；相对词或认不出 → False。"""
     text = re.sub(r"\s+", "", str(text or ""))
     if not text:
         return None
-    if text in DAY_WORDS:
-        return today - datetime.timedelta(days=DAY_WORDS[text])
-    m = re.fullmatch(r"(\d{1,3})天(前|以前)", text)
-    if m:
-        return today - datetime.timedelta(days=int(m.group(1)))
     m = re.fullmatch(r"(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})[日号]?", text)
     if m:
         try:
@@ -85,16 +73,15 @@ def _clock(text: str, pm: bool = False):
 
 
 def parse_span(text):
-    """「下午 / 晚上 / 15:00-17:00 / 15:00 / 下午3点」→ (开始分钟, 结束分钟)；空 → None；认不出 → False。
-    只给一个钟点就看覆盖那一刻的事。"""
+    """只接受具体时间段或具体钟点：「15:00-17:00 / 15:00 / 下午3点-5点 / 19点半」→ (开始分钟, 结束分钟)；
+    空 → None；纯模糊时段词（如上午/下午/晚上）或认不出 → False。"""
     text = re.sub(r"\s+", "", str(text or ""))
     if not text:
         return None
-    for word, span in TIME_WORDS:
-        if text == word:
-            return span
     pm = text.startswith(("下午", "晚上", "傍晚"))
-    body = re.sub(r"^(凌晨|早上|上午|中午|下午|傍晚|晚上|夜里)", "", text)
+    body = re.sub(r"^(凌晨|半夜|清早|早上|上午|中午|下午|傍晚|晚上|夜里)", "", text)
+    if not body:
+        return False
     parts = re.split(r"[-~～—–到至]", body)
     if len(parts) == 2:
         a, b = _clock(parts[0], pm), _clock(parts[1], pm)
@@ -158,20 +145,27 @@ def _available_days(world: WorldStore, today: datetime.date) -> list:
 
 def search(world: WorldStore, viewer: str, label, now: datetime.datetime,
            keyword: str = "", date: str = "", time: str = "") -> str:
-    """按关键词 / 日期 / 时间搜，列简短的几条。"""
+    """按具体日期+具体时间段（或关键词）搜，仅返回本人记录；超过 MAX_ROWS 直接报错。"""
     now = now.replace(tzinfo=None)
     today = now.date()
     day = parse_day(date, today)
     if day is False:
-        return "没认出日期「%s」：写成 今天 / 昨天 / 前天 / 3天前 / 10-14 这样。" % date
+        return "报错：日期「%s」不合法。不接受今天/昨天/前天等相对说法，请写具体日期，例如 %s 或 %s。" % (
+            date, today.isoformat(), today.strftime("%m-%d"),
+        )
     span = parse_span(time)
     if span is False:
-        return "没认出时间「%s」：写成 上午 / 下午 / 晚上 / 15:00-17:00 / 15:00 这样。" % time
+        return "报错：时间段「%s」不合法。不接受上午/下午/晚上等模糊说法，请写具体时间段或钟点，例如 19:00-21:00 或 19:30。" % time
     terms = [x for x in re.split(r"[\s,，、/]+", str(keyword or "")) if x]
+    # 按时间查必须同时写具体日期 + 具体时间段；允许纯关键词跨天搜索（但超 12 条仍直接报错）
+    if (day is not None) != (span is not None) or (not terms and (day is None or span is None)):
+        return "报错：查询范围不明确。请同时写明具体日期（如 %s 或 %s）和具体时间段（如 19:00-21:00），不接受今天/昨天或只填日期。" % (
+            today.isoformat(), today.strftime("%m-%d"),
+        )
     days = [day] if day else _available_days(world, today)
     if day and day not in _available_days(world, today):
         return "%s 那天的世界线已经没有了（只留最近几天的）。" % day.isoformat()
-    rows, total, shown_count = [], 0, 0
+    rows, total = [], 0
     for one in days:
         hits = []
         day_end = datetime.datetime.combine(one + datetime.timedelta(days=1), datetime.time())
@@ -203,32 +197,33 @@ def search(world: WorldStore, viewer: str, label, now: datetime.datetime,
             hits.append("- %s %s %s：%s" % (_ref(one, item), _span_text(item, one), _who(item, viewer, label),
                                          _clip(_text(item, level, now))))
         total += len(hits)
-        if hits and shown_count < MAX_ROWS:
-            remain = MAX_ROWS - shown_count
+        if total > MAX_ROWS:
+            return "报错：范围太大（匹配结果超过 %d 条），未返回任何条目。请把具体时间段缩得更窄（例如 19:00-20:30）或加上具体日期与关键词后重试。" % MAX_ROWS
+        if hits:
             head = "%s（%s）" % (one.isoformat(), WEEKDAYS_CN[one.weekday()])
-            take = hits[:remain] if day or span else hits[-remain:]
             rows.append(head)
-            rows.extend(take)
-            shown_count += len(take)
+            rows.extend(hits)
     if not total:
         return "世界线里没翻到%s。" % "、".join(
             x for x in ("「%s」" % keyword if terms else "", day.isoformat() if day else "",
                         time if span else "") if x) if (terms or day or span) else "世界线里没翻到。"
-    shown = sum(1 for x in rows if x.startswith("- "))
-    lines = ["翻到 %d 条%s：" % (total, "（只列了 %d 条，想看别的就加上日期或时间缩小）" % shown if shown < total else "")]
+    lines = ["翻到 %d 条：" % total]
     lines.extend(rows)
     lines.append("要看某一条当时准确的世界线（那段的分步和结果、前后的事），用 entry 填它的编号。")
     return "\n".join(lines)
 
 
 def _parse_ref(ref: str, today: datetime.date, date: str = ""):
-    """「10-15#e40 / 2026-10-15#e40 / e40（配合 date）」→ (date, "e40")；认不出 → (None, "")。"""
+    """「10-15#e40 / 2026-10-15#e40 / e40（配合具体 date）」→ (date, "e40")；认不出 → (None, "")。"""
     ref = re.sub(r"\s+", "", str(ref or ""))
     m = re.fullmatch(r"(?:(.+?)#)?(e\d+)", ref)
     if not m:
         return None, ""
-    day = parse_day(m.group(1) or date or "今天", today)
-    return (day or None), m.group(2)
+    day_raw = m.group(1) or date
+    if not day_raw:
+        return None, ""
+    day = parse_day(day_raw, today)
+    return (day if isinstance(day, datetime.date) else None), m.group(2)
 
 
 def detail(world: WorldStore, viewer: str, label, now: datetime.datetime, ref: str, date: str = "") -> str:
