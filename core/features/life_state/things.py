@@ -414,6 +414,8 @@ SCAN_DAYS = 31
 SEG_SAME_MINUTES = 30
 LOOKAHEAD_DAYS = 45
 MASTER_DONE_MINUTES = 40
+MASTER_LEGACY_DONE_MINUTES = 60
+MASTER_OPEN_EAT_SINCE = datetime.datetime(2026, 11, 27, 18, 43)
 MASTER_UNTOUCHED_MINUTES = 30
 MASTER_UNTOUCHED_MAX_MINUTES = 180
 MASTER_PLACE_RE = re.compile(r"主人·?跟前")
@@ -841,7 +843,7 @@ def _is_master_eatable(item: dict, last: dict) -> bool:
 
 def master_done(items: dict, now: datetime.datetime) -> int:
     """只有主人明确开吃（最后一步为 what='开吃' 且 by='master'）后满 MASTER_DONE_MINUTES 无人再动，才自动核销为吃完了。
-    单方面摆在主人跟前的食物绝不自动吃完。"""
+    单方面摆在主人跟前的食物绝不自动吃完；对新规上线（MASTER_OPEN_EAT_SINCE）前遗留停在主人跟前的历史旧食物沿用旧规结单，避免复活成过期坏菜。"""
     done = 0
     for item in items.values():
         if cat_of(item) != CAT_FOOD or is_ended(item) is not None:
@@ -850,21 +852,33 @@ def master_done(items: dict, now: datetime.datetime) -> int:
         if not stages:
             continue
         last = max(stages, key=lambda s: (str(s.get("at") or ""), int(s.get("_i", 0))))
-        if str(last.get("what") or "").strip() != "开吃":
-            continue
-        if str(last.get("by") or "").strip().lower() != "master":
-            continue
         if not _is_master_eatable(item, last):
             continue
         moment = parse_time(last.get("at"))
         if moment is None:
             continue
-        due = moment + datetime.timedelta(minutes=MASTER_DONE_MINUTES)
+        is_open_eat = (
+            str(last.get("what") or "").strip() == "开吃"
+            and str(last.get("by") or "").strip().lower() == "master"
+        )
+        is_legacy_before_master = (
+            moment < MASTER_OPEN_EAT_SINCE
+            and bool(MASTER_PLACE_RE.search(str(last.get("place") or "")))
+        )
+        if is_open_eat:
+            wait_min = MASTER_DONE_MINUTES
+            note = "主人开吃 %d 分钟后没人再动，程序当主人吃完了" % wait_min
+        elif is_legacy_before_master:
+            wait_min = MASTER_LEGACY_DONE_MINUTES
+            note = "历史记录到主人跟前 %d 分钟没人再动，沿用旧规当主人吃完了" % wait_min
+        else:
+            continue
+        due = moment + datetime.timedelta(minutes=wait_min)
         if due > now:
             continue
         stages.append({"at": fmt_time(due), "what": "吃完了", "left": "", "place": last.get("place") or "", "by": "master",
                        "keep": last.get("keep") or "", "spot": last.get("spot") or "", "state": last.get("state") or "",
-                       "note": "主人开吃 %d 分钟后没人再动，程序当主人吃完了" % MASTER_DONE_MINUTES, "_auto": True})
+                       "note": note, "_auto": True})
         done += 1
     return done
 
@@ -892,7 +906,7 @@ def master_untouched_foods(
         if str(last.get("what") or "").strip() in ("开吃", "吃了一部分"):
             continue
         moment = parse_time(last.get("at"))
-        if moment is None:
+        if moment is None or moment < MASTER_OPEN_EAT_SINCE:
             continue
         elapsed = (now - moment).total_seconds() / 60.0
         if elapsed < min_minutes or (max_minutes > 0 and elapsed > max_minutes):
