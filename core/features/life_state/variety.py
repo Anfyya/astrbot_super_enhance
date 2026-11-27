@@ -2140,9 +2140,7 @@ def _eval_gates(
                 if str(item.get("wx") or "") != "gale":
                     gates.append(("mood_block_together", "hard", "主人情绪不佳，暂停双人常规娱乐"))
             elif bucket in _IDLE_BUCKETS:
-                if bucket == "甲板看海" and outdoor:
-                    mood_mult *= 0.25
-                    notes.append("主人情绪不佳，减少甲板闲逛 ×0.25")
+                gates.append(("mood_block_idle", "hard", "主人情绪不佳，暂停日常闲着发呆"))
             elif not _is_mood_essential(item, bucket, link):
                 if _is_playful_for_mood(item, bucket, grp, link, outdoor, text):
                     gates.append(("mood_block_playful", "hard", "主人情绪不佳，暂停娱乐外出与闲玩"))
@@ -2950,10 +2948,11 @@ def draw_window(
         for sk in shared_window_keys:
             local_seen[sk] = 0
         off_bot = (offered or {}).get(bot) if isinstance(offered, dict) else None
+        bot_mvs = _mood_views_for_eval(name, ctx) or _mood_views_for_eval(bot, ctx)
+        ban_pastime_idle = any(bool(mv.get("block_playful_pool")) for mv in bot_mvs)
         if night:
             twists[bot] = []
             night_pool = pools["night_twists"]
-            bot_mvs = _mood_views_for_eval(name, ctx) or _mood_views_for_eval(bot, ctx)
             if any(str(mv.get("code") or "").strip() for mv in bot_mvs):
                 night_texts = {x.get("text") for x in night_pool if isinstance(x, dict)}
                 extra_mood_rows = [
@@ -2966,7 +2965,7 @@ def draw_window(
                 night_pool, bot, name, NIGHT_PICK, False, local_seen, off_bot, shared_window_keys, can_foil=True,
             )
             idles[bot] = []
-            night_idles[bot] = _pick_cooled(
+            night_idles[bot] = [] if ban_pastime_idle else _pick_cooled(
                 rows_for(pools["night_idles"], name, home, work=True, ctx=ctx),
                 local_seen, NIGHT_IDLE_PICK, rng, groups, PASTIME_COOLDOWN,
                 offered=off_bot, exclude_keys=shared_window_keys, buckets=buckets,
@@ -2976,13 +2975,13 @@ def draw_window(
                 pools["twists"], bot, name, DAY_PICK, True, local_seen, off_bot, shared_window_keys, can_foil=True,
             )
             night_twists[bot] = []
-            idles[bot] = _pick_cooled(
+            idles[bot] = [] if ban_pastime_idle else _pick_cooled(
                 rows_for(pools["idles"], name, home, work=True, ctx=ctx),
                 local_seen, IDLE_PICK, rng, groups, PASTIME_COOLDOWN,
                 offered=off_bot, exclude_keys=shared_window_keys, buckets=buckets,
             )
             night_idles[bot] = []
-        pastimes[bot] = _draw_slot(
+        pastimes[bot] = [] if ban_pastime_idle else _draw_slot(
             pools["pastimes"], bot, name, PASTIME_PICK, False, local_seen, off_bot, shared_window_keys,
             table=PASTIME_COOLDOWN, can_foil=False,
         )
