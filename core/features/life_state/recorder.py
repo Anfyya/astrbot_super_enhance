@@ -185,8 +185,7 @@ RECORDER_SYSTEM_TEMPLATE = """{base_system}
   "companionship": {{
     "owner": {{}},
     "decisions": [],
-    "notes": [],
-    "master_mood": {{"target": "none", "level": 0, "reason": "", "peer_aware": false}}
+    "notes": []
   }}
 }}
 
@@ -196,15 +195,10 @@ RECORDER_SYSTEM_TEMPLATE = """{base_system}
 - abilities 只在主人明确确认她学会了一件新本事、而这件事不是在练的事时才写，很少用。
 {lifecycle_rules}
 {recorder_note}
-{master_mood_note}
 """
 
-MASTER_MOOD_RECORDER_NOTE = """
-【主人情绪（放入 companionship.master_mood，无变化可省略或填 target="none"）】
-- 格式："master_mood": {"target": "self"|"peer"|"both"|"owner"|"none", "level": -1..3, "reason": "白话一句", "peer_aware": false}
-- target 严格区分对象：self（只冲当前对话角色）/ peer（只冲另一位室友——在当前窗口跟 A 吐槽、批评或说 B 的不是时必须填 peer，绝不连坐 A，严禁因此填 both）/ both（仅当主人明确同时责怪两人才填）/ owner（主人自身或外部）/ none（无变化）。
-- level 尺度：0平常、1小不满、2明显生气、3很生气（owner 可填 -1 开心）；随口打趣、带笑吐槽（如「你说她气不气人」）、玩笑式吓唬或就事论事澄清都不算真生气，填 target="none"；若只是顺口提起另一人之前已在气头上的事且程度没变，也填 target="none"（不要把对方原档位覆盖降档）。peer_aware 为另一位室友是否知情；条目里照旧可标 upset: true。
-""".strip()
+# 主人情绪已统一交由独立快裁判 mood_judge 接管，记录员不再参与情绪判断
+MASTER_MOOD_RECORDER_NOTE = ""
 
 RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，整理成结构化的条目。
 
@@ -686,7 +680,6 @@ class Recorder:
             world_notes=self.world_notes,
             lifecycle_rules=LIFECYCLE_RULES.strip(),
             recorder_note=RECORDER_NOTE,
-            master_mood_note=MASTER_MOOD_RECORDER_NOTE,
         ), home)
 
     def _format_proposals(self, proposals: list[dict]) -> str:
@@ -730,10 +723,6 @@ class Recorder:
         bot = bot_of_umo(umo)
         interaction = (companion.safe("render", bot, now, recorder=True, default="")
                        if companion is not None else "")
-        if companion is not None and bot:
-            mm_line = self._master_mood_prompt_line(bot, now)
-            if mm_line:
-                interaction = (interaction + "\n" + mm_line) if interaction else mm_line
         previous = companion.safe("reply_context", umo, items, now, default=[]) if companion is not None else []
         transcript = self._transcript(items, umo) if items else "（本批暂无新增聊天消息，请直接裁定下方提议）"
         if previous:
@@ -982,7 +971,7 @@ class Recorder:
             # 先定对不上的那几段怎么收场（收尾、做完、交接要几分钟），再记这次的新条目：免得新条目先把手上的事一刀截断
             state.free_at = self._apply_stale(data.get("stale") or [], now)
             self._apply_entries(data.get("entries") or [], umo, now, items, bots, state.free_at, flat_now)
-            self._apply_master_mood(umo, comp_raw, batch, now, bots)
+            # 记录员已彻底停用主人情绪判断（由异步快裁判 mood_judge 唯一负责）
             if batch and not any(str(x.get("role") or "") == "user" for x in batch):
                 # 这批全是她主动发的、主人一句没说：规矩和打算都不可能从这里来（主动消息里的不记）
                 if data.get("constraints") or data.get("intentions"):
@@ -1269,193 +1258,8 @@ class Recorder:
         now: datetime.datetime,
         bots: set[str],
     ) -> None:
-        """慢通道情绪校准：msg_ts 取本批最后一条主人消息时间戳，is_calibration=True 防纠偏误锁 easing，
-        严格以事件自身时刻做 legacy upset:true 兼容防和好后倒流，并在 need_interrupt / need_replan 时联动截停与撤排。"""
-        companion = getattr(self, "companionship", None)
-        if companion is None:
-            return
-        bot = bot_of_umo(umo)
-        if not bot or bot not in bots:
-            return
-        # 非目标私聊不写主人情绪
-        if hasattr(companion, "_target") and not companion._target(umo):
-            return
-        master_ts_list = []
-        for item in batch:
-            if str(item.get("role") or "") != "user":
-                continue
-            if not strip_inline_system(str(item.get("text") or "")).strip():
-                continue
-            try:
-                ts_val = float(item.get("ts") or 0.0)
-            except Exception:
-                ts_val = 0.0
-            if ts_val > 0:
-                master_ts_list.append(ts_val)
-        if not master_ts_list:
-            return
-        msg_ts = max(master_ts_list)
-        min_master_ts = min(master_ts_list)
-        bot_list = sorted(bots)
-        mv_before = companion.safe("mood_view_for", bot, now, bots=bot_list, default={}) or {}
-        existing_self_lvl = int(mv_before.get("self_level") or 0)
-
-        # 物理同场或对话提及 tell/同场
-        phys_or_mentioned = infer_peer_aware(self, bot, now, bots=bot_list) or self._batch_mentions_peer_aware(bot, batch, bots)
-        # 仅在异步快裁判开启时走慢校准（防纠偏误锁 easing）；快裁判关闭时记录员本身是主通道，必须正常推导 easing 与翻篇余波
-        is_cal = bool(self.cfg.get("mood_judge_enabled", False))
-        transitions: list[dict] = []
-        covered_bots: set[str] = set()
-        any_mood_changed = False
-
-        mm = comp_raw.get("master_mood") if isinstance(comp_raw, dict) else None
-        if isinstance(mm, dict):
-            target = str(mm.get("target") or "none").strip().lower()
-            raw_pa = mm.get("peer_aware")
-            explicit_pa = raw_pa is True or str(raw_pa or "").strip().lower() == "true"
-            explicit_pa_false = raw_pa is False or str(raw_pa or "").strip().lower() == "false"
-            if target in ("self", "peer", "both", "owner"):
-                try:
-                    level = int(mm.get("level"))
-                except (TypeError, ValueError):
-                    level = None
-                if level is not None:
-                    reason = clean_text(mm.get("reason"), 80)
-                    heard_by: list[str] | None = None
-                    skip_update = False
-                    if target == "owner":
-                        level = max(-1, min(3, level))
-                        scope = "owner"
-                        peer_aware = None
-                        heard_by = [] if level == 0 else compute_owner_heard_by(
-                            self, bot, now, bots=bot_list, peer_present=bool(explicit_pa or phys_or_mentioned)
-                        )
-                    elif target == "peer":
-                        if level < 0:
-                            level = 0
-                        level = max(0, min(3, level))
-                        peer_bot = resolve_peer_bot(bot, bot_list, reason, self.label)
-                        if not peer_bot:
-                            skip_update = True
-                            scope = ""
-                            peer_aware = None
-                        else:
-                            scope = peer_bot
-                            covered_bots.add(peer_bot)
-                            # 主人在当前角色窗口直接提及对另一位室友生气，当前角色（作为室友）自然知情
-                            peer_aware = True if level > 0 else None
-                    else:
-                        if level < 0:
-                            level = 0
-                        level = max(0, min(3, level))
-                        scope = "both" if target == "both" else bot
-                        if target == "both":
-                            peer_aware = True
-                            covered_bots.update(bot_list)
-                        else:
-                            covered_bots.add(bot)
-                            if level > 0:
-                                if explicit_pa or phys_or_mentioned:
-                                    peer_aware = True
-                                elif explicit_pa_false and existing_self_lvl == 0:
-                                    peer_aware = False
-                                elif existing_self_lvl == 0:
-                                    peer_aware = False
-                                else:
-                                    peer_aware = None
-                            else:
-                                peer_aware = None
-                    if not skip_update:
-                        update_kwargs = dict(
-                            scope=scope,
-                            level=level,
-                            reason=reason,
-                            msg_ts=msg_ts,
-                            source="recorder",
-                            now=now,
-                            peer_aware=peer_aware,
-                            is_calibration=is_cal,
-                            bots=bot_list,
-                        )
-                        if scope == "owner":
-                            update_kwargs["heard_by"] = heard_by
-                        res = call_update_master_mood(companion, **update_kwargs)
-                        if isinstance(res, dict):
-                            transitions.append(res)
-                            if res.get("changed"):
-                                any_mood_changed = True
-                        if target == "self" and level > 0 and (explicit_pa or phys_or_mentioned):
-                            if companion.safe("mark_peer_aware", bot, aware=True, now=now, default=False):
-                                any_mood_changed = True
-            elif existing_self_lvl > 0 and (explicit_pa or self._batch_mentions_peer_aware(bot, batch, bots)):
-                # 档位没变，但本批里另一人通过 tell / 同场获知了正在进行的冲突
-                if companion.safe("mark_peer_aware", bot, aware=True, now=now, default=False):
-                    any_mood_changed = True
-
-        # 兼容老格式 upset: true：严格以该条 event 自身时刻作为 msg_ts（绝不用整批最后一条 msg_ts），
-        # 若该 bot 已有更新的 msg_ts / 和好记录 / 本批已被 master_mood 或新裁判处理过，直接跳过防和好后倒流。
-        snap_now = companion.safe("get_master_mood", now, default={}) or {}
-        per_bot_map = snap_now.get("per_bot") if isinstance(snap_now, dict) else {}
-        inc_map = snap_now.get("incidents") if isinstance(snap_now, dict) else {}
-        for evt in self.batch.upset_events:
-            who = str(evt.get("who") or "")
-            if not who or who not in bots or who in covered_bots:
-                continue
-            evt_ts = self._event_ts(evt.get("at") or evt.get("start"))
-            if evt_ts <= 0.0:
-                continue
-            row = (per_bot_map or {}).get(who) if isinstance(per_bot_map, dict) else None
-            inc = (inc_map or {}).get(who) if isinstance(inc_map, dict) else None
-            existing_msg_ts = float((row or {}).get("msg_ts") or 0.0)
-            resolved_ts = float((inc or {}).get("resolved_ts") or 0.0)
-            if max(existing_msg_ts, resolved_ts) >= evt_ts:
-                continue
-            # 若新裁判已处理过本批该 bot 消息，跳过 legacy 映射
-            if str((row or {}).get("source") or "") == "judge" and existing_msg_ts >= min_master_ts - 5.0:
-                continue
-            cur_mv = companion.safe("mood_view_for", who, now, bots=bot_list, default={}) or {}
-            cur_lvl = int(cur_mv.get("self_level") or 0)
-            target_lvl = max(2, cur_lvl)
-            pa = True if (infer_peer_aware(self, who, now, bots=bot_list) or self._batch_mentions_peer_aware(who, batch, bots)) else (False if cur_lvl == 0 else None)
-            res = call_update_master_mood(
-                companion,
-                scope=who,
-                level=target_lvl,
-                reason=str(evt.get("reason") or ""),
-                msg_ts=evt_ts,
-                source="recorder",
-                now=now,
-                peer_aware=pa,
-                is_calibration=is_cal,
-                bots=bot_list,
-            )
-            if isinstance(res, dict):
-                transitions.append(res)
-                if res.get("changed"):
-                    any_mood_changed = True
-            covered_bots.add(who)
-
-        handler = getattr(self, "on_mood_transition", None)
-        transition_dispatched = False
-        for res in transitions:
-            if not (res.get("need_interrupt") or res.get("need_replan")):
-                continue
-            transition_dispatched = True
-            if callable(handler):
-                try:
-                    handler(res, now)
-                except Exception:
-                    logger.warning("[super_enhance/world] 记录员触发情绪联动截停失败", exc_info=True)
-            else:
-                self._fallback_mood_transition(res, now, bots)
-
-        if any_mood_changed and not transition_dispatched:
-            notifier = getattr(self, "on_mood_changed", None)
-            if callable(notifier):
-                try:
-                    notifier()
-                except Exception:
-                    pass
+        """已停用：记录员不再判断或改写主人情绪（由独立快裁判 mood_judge 唯一接管）。"""
+        return
 
     def _apply_constraints(self, data: dict, umo: str, now: datetime.datetime, batch: list) -> None:
         """记新规矩、撤规矩。谁的规矩变了，两个人后面补写排的、还没开始的段都撤掉，由补写按新规矩重排

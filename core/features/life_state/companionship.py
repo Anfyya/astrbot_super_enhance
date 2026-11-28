@@ -1218,20 +1218,11 @@ class Companionship:
         if bot_id and bot_id not in known:
             known.append(bot_id)
 
-        owner = snap["owner"]
-        owner_hb = owner.get("heard_by") or []
-        # 物理可见性：空列表或含 "*" 为全员可见（兼容旧数据与 WebUI 手调），否则仅知情者可见
-        owner_visible = (not owner_hb) or ("*" in owner_hb) or (bot_id in owner_hb)
-        if owner_visible:
-            owner_level = owner["level"]
-            owner_phase = owner["phase"]
-            owner_peak = owner["peak"]
-            owner_reason = owner["reason"]
-        else:
-            owner_level = 0
-            owner_phase = ""
-            owner_peak = 0
-            owner_reason = ""
+        # owner 外部情绪层已停用，仅保留对室友的生气状态机
+        owner_level = 0
+        owner_phase = ""
+        owner_peak = 0
+        owner_reason = ""
 
         per_bot = snap["per_bot"]
         self_row = per_bot.get(bot_id) or _default_bot_mood()
@@ -1349,10 +1340,10 @@ class Companionship:
             "incident": incident,
             "updated_ts": updated_ts,
             "level_changed_ts": level_changed_ts,
-            "exempt_forced_twist": bool(self_level >= 1 or peer_level >= 2 or owner_level >= 2),
-            "block_playful_pool": bool(self_level >= 2 or peer_level >= 2 or owner_level >= 2),
-            "suppress_casual_proactive": bool(self_level >= 2 or peer_level >= 2 or owner_level >= 2),
-            "suppress_nonurgent_ask": bool(self_level >= 3 or owner_level >= 3),
+            "exempt_forced_twist": bool(self_level >= 2 or peer_level >= 2),
+            "block_playful_pool": bool(self_level >= 2 or peer_level >= 2),
+            "suppress_casual_proactive": bool(self_level >= 2 or peer_level >= 2),
+            "suppress_nonurgent_ask": bool(self_level >= 3),
         }
 
     def _apply_single_mood_update(
@@ -1687,35 +1678,14 @@ class Companionship:
         scope_raw = str(scope or "").strip()
 
         if scope_raw == "owner":
-            res = self._apply_single_mood_update(
-                mm,
-                is_owner=True,
-                level=level,
-                reason=reason,
-                msg_ts=msg_ts,
-                source=source,
-                now_ts=now_ts,
-                now_str=now_str,
-                heard_by=heard_by,
-                known_bots=known,
-                is_calibration=is_calibration,
-            )
-            if res["changed"] or res["need_replan"] or not res.get("blocked"):
-                self._save()
-            if res["changed"] or res["need_replan"]:
-                if res.get("new_listeners") and res["prev_level"] == res["new_level"]:
-                    affected = list(res["new_listeners"])
-                else:
-                    affected = list(res.get("heard_by_bots") or [])
-            else:
-                affected = []
+            # owner 外部情绪层已停用，作为缓冲桶静默忽略
             return {
-                "changed": bool(res["changed"]),
-                "need_replan": bool(res["need_replan"]),
+                "changed": False,
+                "need_replan": False,
                 "need_interrupt": False,
-                "affected_bots": affected,
-                "prev_level": res["prev_level"],
-                "new_level": res["new_level"],
+                "affected_bots": [],
+                "prev_level": 0,
+                "new_level": 0,
             }
 
         if scope_raw == "both":
@@ -1859,34 +1829,7 @@ class Companionship:
         prev_levels: list[int] = []
         new_levels: list[int] = []
 
-        if owner_level is not None or owner_reason is not None:
-            cur_owner = _normalize_owner_mood(mm.get("owner"))
-            lvl = cur_owner["level"] if owner_level is None else _clamp_int(owner_level, -1, 3, 0)
-            rsn = cur_owner["reason"] if owner_reason is None else str(owner_reason)
-            r = self._apply_single_mood_update(
-                mm,
-                is_owner=True,
-                level=lvl,
-                reason=rsn,
-                reason_provided=(owner_reason is not None),
-                msg_ts=now_ts,
-                source="manual",
-                now_ts=now_ts,
-                now_str=now_str,
-                heard_by=["*"] if lvl != 0 else [],
-                known_bots=known,
-                lock_minutes=lock_mins,
-            )
-            prev_levels.append(r["prev_level"])
-            new_levels.append(r["new_level"])
-            if r["changed"]:
-                any_changed = True
-            if r["need_replan"]:
-                any_replan = True
-            if r["changed"] or r["need_replan"]:
-                for b in (r.get("heard_by_bots") or known):
-                    if b not in affected:
-                        affected.append(b)
+        # owner 外部情绪层已停用，WebUI 传入的 owner_level / owner_reason 静默忽略
 
         if isinstance(per_bot, dict):
             for raw_bot, spec in per_bot.items():
@@ -1957,16 +1900,16 @@ class Companionship:
         now_ts = self._ts(moment)
         snap = self.get_master_mood(moment)
         known = self._known_bots(bots)
-        owner = snap["owner"]
+        # owner 外部情绪层已停用，保留结构零态兼容 WebUI
         owner_out = {
-            "level": owner["level"],
-            "phase": owner["phase"],
-            "peak": owner["peak"],
-            "reason": owner["reason"],
-            "updated_at": owner["updated_at"],
-            "source": owner["source"],
-            "heard_by": list(owner.get("heard_by") or []),
-            "locked": bool(now_ts < owner["manual_lock_until"]),
+            "level": 0,
+            "phase": "calm",
+            "peak": 0,
+            "reason": "",
+            "updated_at": "",
+            "source": "",
+            "heard_by": [],
+            "locked": False,
         }
         per_bot_out: dict[str, dict] = {}
         for b in known:

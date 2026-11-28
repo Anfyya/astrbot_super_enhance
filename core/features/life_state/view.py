@@ -766,11 +766,10 @@ def mood_now_text(service, bot: str, now: datetime.datetime) -> str:
         mv = companion.safe("mood_view_for", bot, now, bots=bots, default=None)
         if isinstance(mv, dict):
             self_level = int(mv.get("self_level") or 0)
-            owner_level = int(mv.get("owner_level") or 0)
             peer_level = int(mv.get("peer_level") or 0)
             is_peer_tense = str(mv.get("rel") or "") == "other" and peer_level >= 2
             ref_ts = max(float(mv.get("level_changed_ts") or 0.0), float(mv.get("updated_ts") or 0.0))
-            if (self_level >= 1 or owner_level >= 2 or is_peer_tense) and ref_ts > 0:
+            if (self_level >= 2 or is_peer_tense) and ref_ts > 0:
                 if latest and latest_start is not None:
                     start_dt = latest_start.replace(tzinfo=tz) if tz is not None else latest_start
                     if ref_ts > start_dt.timestamp():
