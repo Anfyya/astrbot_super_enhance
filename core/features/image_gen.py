@@ -472,9 +472,9 @@ class ImageGenFeature:
 
     async def _ask_images_compat(self, bot: str, pid: str, client, model: str, prompt_text: str, refs: list,
                                  want: str, began: float, left: float, extra_body: dict) -> tuple[list, str, dict, dict]:
-        """调用 /v1/images/*：默认传 quality='low'（2.6 另默认传 complexity='low'）与锁定后的 宽x高，仅在上游拒收时降级重试。"""
+        """调用 /v1/images/*：默认传 quality='medium'（2.6 另默认传 complexity='low'）与锁定后的 宽x高，仅在上游拒收时降级重试。"""
         eb = dict(extra_body)
-        quality = str(eb.pop("quality", "") or "low")
+        quality = str(eb.pop("quality", "") or "medium")
         if "2.6" in str(model or "").lower() and "complexity" not in eb:
             eb["complexity"] = "low"
         img_size = want
