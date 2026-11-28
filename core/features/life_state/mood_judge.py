@@ -23,6 +23,7 @@ from collections import deque
 import datetime
 import inspect
 import json
+from pathlib import Path
 import re
 import threading
 import time
@@ -32,7 +33,7 @@ from zoneinfo import ZoneInfo
 
 from astrbot.api import logger
 
-from ...common import llm
+from ...common import jsonio, live as common_live, llm
 from ...common.bots import identify_event, platform_of
 from ...common.text import strip_inline_system
 from ..cron_context import is_cron_event
@@ -67,6 +68,8 @@ RECENT_HISTORY_MESSAGES = 8  # 最近约 4 轮对话
 MAX_MSG_CHARS = 240
 MAX_PENDING_PER_SESSION = 12
 DEDUP_TTL_SECONDS = 3.0
+JUDGE_LOG_FILE = "mood_judge_log.json"
+JUDGE_LOG_MAX = 400
 
 EVENT_JUDGED_ATTR = "_super_enhance_mood_judged"
 
@@ -706,6 +709,53 @@ class MoodJudge:
         self._seen: dict[str, float] = {}
         self._stopping: bool = False
         self.quota = DecisionsQuotaGuard()
+        self._log_lock = threading.Lock()
+        self._log_cache: list[dict] | None = None
+        data_dir = getattr(service, "data_dir", None)
+        self._log_path: Path | None = (Path(data_dir) / JUDGE_LOG_FILE) if data_dir else None
+
+    def _load_logs_locked(self) -> list[dict]:
+        if self._log_cache is not None:
+            return self._log_cache
+        rows: list[dict] = []
+        if self._log_path is not None and self._log_path.exists():
+            raw = jsonio.load(self._log_path, [])
+            if isinstance(raw, list):
+                rows = [x for x in raw if isinstance(x, dict)]
+        self._log_cache = rows[-JUDGE_LOG_MAX:]
+        return self._log_cache
+
+    def append_log(self, record: dict) -> None:
+        """持久化一条情绪裁判明细（滚动保留最近 JUDGE_LOG_MAX 条）并通知 WebUI 实时刷新。"""
+        if not isinstance(record, dict):
+            return
+        try:
+            with self._log_lock:
+                rows = self._load_logs_locked()
+                rows.append(dict(record))
+                if len(rows) > JUDGE_LOG_MAX:
+                    rows = rows[-JUDGE_LOG_MAX:]
+                self._log_cache = rows
+                if self._log_path is not None:
+                    jsonio.save(self._log_path, rows, indent=1)
+        except Exception:
+            logger.warning("[super_enhance/mood_judge] 写入情绪裁判明细日志失败", exc_info=True)
+            return
+        try:
+            common_live.notify("mood_judge")
+        except Exception:
+            pass
+
+    def recent_logs(self, umo: str = "", limit: int = JUDGE_LOG_MAX) -> list[dict]:
+        """读取近期情绪裁判明细（按时间正序；传 umo 时只返回该会话）。"""
+        with self._log_lock:
+            rows = list(self._load_logs_locked())
+        if umo:
+            key = str(umo).strip()
+            rows = [r for r in rows if str(r.get("umo") or "") == key]
+        if limit > 0 and len(rows) > limit:
+            rows = rows[-limit:]
+        return rows
 
     @property
     def cfg(self):
@@ -1069,12 +1119,13 @@ class MoodJudge:
             "metrics": decision["metrics"],
             "quota": q_snap,
         }
+        elapsed_sec = round(time.time() - started, 2)
         llm._record(
             label="情绪裁判",
             provider=f"decisions/{self.decisions_model}",
             session_id=f"super_enhance_mood_judge_{bot}",
             started=started,
-            elapsed=round(time.time() - started, 2),
+            elapsed=elapsed_sec,
             attempt=1,
             system_prompt="",
             prompt=input_text,
@@ -1082,13 +1133,35 @@ class MoodJudge:
             text=json.dumps(summary_record, ensure_ascii=False),
             thought="",
         )
+        quote_reason = _format_quote_reason(batch)
+        self.append_log({
+            "at": fmt_time(moment.replace(tzinfo=None)),
+            "ts": round(time.time(), 2),
+            "umo": str(umo),
+            "bot": bot,
+            "bot_label": self.service.bots.label_for(bot) or bot,
+            "peer_bot": peer_bot,
+            "peer_label": (self.service.bots.label_for(peer_bot) or peer_bot) if peer_bot else "",
+            "engine": "decisions",
+            "model": self.decisions_model,
+            "elapsed": elapsed_sec,
+            "messages": [
+                {"text": str(x.get("text") or ""), "time": str(x.get("time") or ""), "ts": round(float(x.get("ts") or 0.0), 2)}
+                for x in batch
+            ],
+            "cur_self": cur_self,
+            "cur_peer": cur_peer,
+            "self_new": self_new,
+            "peer_new": peer_new,
+            "metrics": decision["metrics"],
+            "reason": quote_reason if ((self_new is not None and self_new >= 2) or (peer_new is not None and peer_new >= 2)) else "",
+        })
 
         if self_new is None and peer_new is None:
             return True, None
 
         companion = getattr(self.service, "companionship", None)
         msg_ts = max(float(x.get("ts") or 0.0) for x in batch)
-        quote_reason = _format_quote_reason(batch)
         last_res: dict | None = None
 
         # 双方同时升到 >= 2 时按 scope="both" 一次写入，保持双方 peer_aware=True
@@ -1205,6 +1278,7 @@ class MoodJudge:
         if provider is None:
             return None
         prompt = self._build_fallback_prompt(umo, bot, peer_bot, batch, moment, state)
+        started = time.time()
         try:
             text, _thought = await llm.text_chat(
                 self.service.context,
@@ -1219,17 +1293,44 @@ class MoodJudge:
         except Exception as exc:
             logger.warning("[super_enhance/mood_judge] 降级裁判调用失败（%s）：%s", bot, exc)
             return None
+        elapsed_sec = round(time.time() - started, 2)
+
+        def _log_fb(self_n=None, peer_n=None, note_txt="", rsn_txt=""):
+            self.append_log({
+                "at": fmt_time(moment.replace(tzinfo=None)),
+                "ts": round(time.time(), 2),
+                "umo": str(umo),
+                "bot": bot,
+                "bot_label": self.service.bots.label_for(bot) or bot,
+                "peer_bot": peer_bot,
+                "peer_label": (self.service.bots.label_for(peer_bot) or peer_bot) if peer_bot else "",
+                "engine": "fallback",
+                "model": self.provider_id or "default",
+                "elapsed": elapsed_sec,
+                "messages": [
+                    {"text": str(x.get("text") or ""), "time": str(x.get("time") or ""), "ts": round(float(x.get("ts") or 0.0), 2)}
+                    for x in batch
+                ],
+                "cur_self": cur_self,
+                "cur_peer": cur_peer,
+                "self_new": self_n,
+                "peer_new": peer_n,
+                "metrics": {"fallback_note": note_txt} if note_txt else {},
+                "reason": rsn_txt,
+            })
 
         parsed = llm.extract_json(text)
         if not isinstance(parsed, dict):
             return None
         changed = parsed.get("changed")
         if changed is not True and str(changed or "").strip().lower() != "true":
+            _log_fb(note_txt="unchanged")
             return None
 
         target = str(parsed.get("target") or "none").strip().lower()
         # owner 一律作为缓冲桶丢弃
         if target not in ("self", "peer", "both"):
+            _log_fb(note_txt=f"ignored_{target}")
             return None
         try:
             level = int(parsed.get("level"))
@@ -1240,6 +1341,7 @@ class MoodJudge:
         level = max(0, min(3, level))
         # 1 档作为缓冲桶一律丢弃（0 时保持 0，2/3 时维持原判）
         if level == 1:
+            _log_fb(note_txt="buffer_lv1")
             return None
 
         companion = getattr(self.service, "companionship", None)
@@ -1249,21 +1351,27 @@ class MoodJudge:
         if target == "peer":
             target_bot = resolve_peer_bot(bot, bots, reason, self.service.bots.label_for)
             if not target_bot:
+                _log_fb(note_txt="no_peer")
                 return None
             if cur_peer >= 2 and level == 0 and cold:
+                _log_fb(note_txt="cold_hold")
                 return None
             if level >= 2:
                 level = max(cur_peer, level)
             scope = target_bot
             peer_aware = True if level >= 2 else None
+            _log_fb(peer_n=level, note_txt="peer_update", rsn_txt=reason)
         elif target == "both":
             base_level = max(cur_self, cur_peer)
             if base_level >= 2 and level == 0 and cold:
+                _log_fb(note_txt="cold_hold")
                 return None
             scope = "both"
             peer_aware = True if level >= 2 else None
+            _log_fb(self_n=level, peer_n=level, note_txt="both_update", rsn_txt=reason)
         else:
             if cur_self >= 2 and level == 0 and cold:
+                _log_fb(note_txt="cold_hold")
                 return None
             scope = bot
             if level >= 2:
@@ -1271,6 +1379,7 @@ class MoodJudge:
                 peer_aware = True if phys_aware else (False if cur_self == 0 else None)
             else:
                 peer_aware = None
+            _log_fb(self_n=level, note_txt="self_update", rsn_txt=reason)
 
         msg_ts = max(float(x.get("ts") or 0.0) for x in batch)
         res = call_update_master_mood(

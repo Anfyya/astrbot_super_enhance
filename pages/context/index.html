@@ -307,6 +307,21 @@
   .meta .x{opacity:0;transition:opacity .12s}
   .row.me .meta{flex-direction:row-reverse}
   .row:hover .meta .x,.row.focus .meta .x{opacity:1}
+  .mj-btn{display:inline-flex;align-items:center;gap:4px;height:18px;padding:0 6px;border:0;border-radius:5px;
+    background:var(--sunk);color:var(--t3);font:500 11.5px/18px var(--font);cursor:pointer;font-variant-numeric:tabular-nums;transition:background-color .12s,color .12s}
+  .mj-btn:hover{background:var(--hover);color:var(--t1)}
+  .mj-btn.lv2{background:var(--warn-soft);color:var(--warn)}
+  .mj-btn.lv3{background:var(--danger-soft);color:var(--danger)}
+  .mj-btn.ok{background:var(--ok-soft);color:var(--ok)}
+  .mj-btn.hold{background:var(--warn-soft);color:var(--warn)}
+  .mj-card{margin:6px 14px 0;padding:8px 11px;border-radius:10px;border:1px solid var(--line);background:var(--sunk);
+    color:var(--t2);font-size:12px;line-height:1.65;max-width:480px;text-align:left;font-variant-numeric:tabular-nums}
+  .mj-card.insp{margin:10px 0 0;max-width:none}
+  .mj-card .mj-hd{display:flex;align-items:center;gap:6px;flex-wrap:wrap;color:var(--t1);font-weight:600;margin-bottom:3px}
+  .mj-card .mj-hd .mj-sub{font-weight:400;color:var(--t3);font-size:11.5px;margin-left:auto}
+  .mj-card .mj-row{color:var(--t2);word-break:break-word}
+  .mj-card .mj-row b{color:var(--t1);font-weight:600}
+  .mj-card .mj-note{color:var(--t3);font-size:11.5px;margin-top:2px;word-break:break-word}
   .think-t{border:0;background:transparent;color:var(--t3);font-size:12px;line-height:18px;padding:2px 6px 2px 4px;margin:0 0 4px 10px;border-radius:6px;display:inline-flex;align-items:center;gap:4px}
   .think-t:hover{color:var(--t1);background:var(--hover)}
   .think-t svg.i{width:13px;height:13px;transition:transform .15s}
@@ -1901,7 +1916,7 @@
     convs: [], convErr: "", convSig: "", labels: {}, sideRest: store.get("sideRest", null),
     view: "conv", cid: "", tab: store.get("tab", "history") === "requests" ? "requests" : "history",
     items: [], range: null, histErr: "", histLoading: false,
-    q: "", showThink: false, flips: {}, openText: {},
+    q: "", showThink: false, flips: {}, openText: {}, mjOpen: {},
     multi: false, multiAuto: false, sel: {}, anchor: null,
     insp: null,
     req: { list: [], idx: 0, data: null, err: "", disabled: false, tab: store.get("reqTab", "inject"), all: false, raw: false, loading: false },
@@ -2561,7 +2576,14 @@
       calls.forEach(function (c) { cw.appendChild(callEl(c, opt.q)); });
       col.appendChild(cw);
     }
-    col.appendChild(metaEl(it));
+    var mjCard = null;
+    var mjKey = opt.ns + it.i;
+    if (it.mood_judge) {
+      mjCard = mjCardEl(it.mood_judge, false);
+      mjCard.hidden = !S.mjOpen[mjKey];
+    }
+    col.appendChild(metaEl(it, mjKey, mjCard));
+    if (mjCard) { col.appendChild(mjCard); }
     row.appendChild(col);
     return wireRow(row, it, opt);
   }
@@ -2616,9 +2638,112 @@
     return h("details", { class: "call" }, h("summary", null, icon("tool"), "调用", h("b", { text: c.name || "?" })), pre);
   }
 
-  function metaEl(it) {
+  function mjPct(v) { return Math.round((+v || 0) * 100) + "%"; }
+
+  function mjSummary(mj) {
+    var m = (mj && mj.metrics) || {};
+    var selfM = m.self || {};
+    var peerM = m.peer || {};
+    var curSelf = +mj.cur_self || 0;
+    var selfNew = mj.self_new === null || mj.self_new === undefined ? null : +mj.self_new;
+    var peerNew = mj.peer_new === null || mj.peer_new === undefined ? null : +mj.peer_new;
+    var cold = !!m.cold_dismissive;
+    var text = "平常", cls = "";
+    if (selfNew === 3) { text = "升至很生气(3档)"; cls = "lv3"; }
+    else if (selfNew === 2) { text = "升至生气(2档)"; cls = "lv2"; }
+    else if (selfNew === 0 && curSelf >= 2) { text = "消气归0"; cls = "ok"; }
+    else if (curSelf >= 2 && selfNew === null) {
+      text = (cold ? "冷敷衍·" : "") + "维持" + (curSelf === 3 ? "很生气" : "生气");
+      cls = "hold";
+    } else if (typeof selfM.p1 === "number" && selfM.p1 >= 0.35 && (selfM.ge2 || 0) < 0.55) {
+      text = "平常(1档缓冲)";
+    }
+    var probBit = typeof selfM.ge2 === "number" ? " " + mjPct(selfM.ge2) : "";
+    var peerBit = "";
+    if (peerNew !== null && mj.peer_label) {
+      peerBit = " · " + mj.peer_label + (peerNew === 0 ? "消气" : "→" + peerNew + "档");
+      if (!cls) { cls = peerNew === 3 ? "lv3" : peerNew === 2 ? "lv2" : "ok"; }
+    }
+    var fbBit = mj.engine === "fallback" ? "·降级" : "";
+    return {
+      short: "裁判·" + text + probBit + peerBit + fbBit,
+      full: text + peerBit + (mj.engine === "fallback" ? "（降级 LLM）" : ""),
+      cls: cls,
+      selfM: selfM,
+      peerM: peerM,
+      m: m,
+    };
+  }
+
+  function mjCardEl(mj, inInsp) {
+    var info = mjSummary(mj);
+    var card = h("div", { class: "mj-card" + (inInsp ? " insp" : "") });
+    var subBits = [];
+    if (mj.model) { subBits.push(mj.model); }
+    if (mj.elapsed !== null && mj.elapsed !== undefined && mj.elapsed !== "") { subBits.push(mj.elapsed + "s"); }
+    if ((+mj.batch_size || 0) > 1) { subBits.push("合并 " + mj.batch_size + " 条"); }
+    if (mj.at) { subBits.push(String(mj.at).slice(11, 16)); }
+    card.appendChild(h("div", { class: "mj-hd" },
+      h("span", { text: "情绪裁判：" + info.full }),
+      subBits.length ? h("span", { class: "mj-sub", text: subBits.join(" · ") }) : null
+    ));
+    if (mj.engine === "decisions" && typeof info.selfM.p0 === "number") {
+      var who = mj.bot_label || "当前";
+      card.appendChild(h("div", { class: "mj-row" },
+        "对", who, "：0档 ", h("b", { text: mjPct(info.selfM.p0) }),
+        " · 1档缓冲 ", h("b", { text: mjPct(info.selfM.p1) }),
+        " · 2档 ", h("b", { text: mjPct(info.selfM.p2) }),
+        " · 3档 ", h("b", { text: mjPct(info.selfM.p3) }),
+        "（≥2档 ", h("b", { text: mjPct(info.selfM.ge2) }), "）"
+      ));
+      var r2 = [];
+      if (mj.peer_label && info.peerM && info.peerM.choice) {
+        var pChoice = info.peerM.choice;
+        var pDesc = pChoice === "none" ? ("未提及 " + mjPct(info.peerM.none))
+          : (pChoice + "档（≥2档 " + mjPct(info.peerM.ge2) + "）");
+        r2.push(mj.peer_label + "：" + pDesc);
+      }
+      if (typeof info.m.calmed === "number") { r2.push("消气 " + mjPct(info.m.calmed)); }
+      if (typeof info.m.owner_buffer_ge2 === "number") { r2.push("外部缓冲 " + mjPct(info.m.owner_buffer_ge2)); }
+      if (info.m.cold_dismissive) { r2.push("识别为冷敷衍"); }
+      if (r2.length) { card.appendChild(h("div", { class: "mj-row", text: r2.join(" · ") })); }
+    } else if (mj.engine === "fallback") {
+      var noteMap = {
+        unchanged: "未触发档位变化",
+        buffer_lv1: "判为 1 档，缓冲吸收不变",
+        cold_hold: "识别为冷敷衍，维持原生气档位",
+        ignored_owner: "判为外部受气，缓冲忽略",
+        ignored_none: "无情绪变化",
+      };
+      var fn = info.m.fallback_note ? (noteMap[info.m.fallback_note] || info.m.fallback_note) : "降级模型裁定";
+      card.appendChild(h("div", { class: "mj-row", text: fn }));
+    }
+    if (mj.reason) {
+      card.appendChild(h("div", { class: "mj-note", text: "记录起因：" + mj.reason }));
+    }
+    return card;
+  }
+
+  function metaEl(it, mjKey, mjCard) {
     var m = h("div", { class: "meta" });
     if (it.stamp) { m.appendChild(h("span", { text: it.stamp.slice(6) })); }
+    if (it.mood_judge) {
+      var info = mjSummary(it.mood_judge);
+      var btn = h("button", {
+        type: "button",
+        class: "mj-btn" + (info.cls ? " " + info.cls : ""),
+        text: info.short,
+        title: "点击展开/收起情绪裁判详情",
+      });
+      if (mjCard && mjKey) {
+        btn.addEventListener("click", function (ev) {
+          ev.stopPropagation();
+          S.mjOpen[mjKey] = !S.mjOpen[mjKey];
+          mjCard.hidden = !S.mjOpen[mjKey];
+        });
+      }
+      m.appendChild(btn);
+    }
     if (it.images) { m.appendChild(h("span", { class: "tag" }, icon("image"), String(it.images))); }
     if (it.noSave) { m.appendChild(h("span", { class: "tag acc", text: "仅本次请求" })); }
     m.appendChild(h("span", { class: "x", text: "#" + it.i + " · " + fmtN(it.chars) + " 字" }));
@@ -2628,7 +2753,7 @@
   function wireRow(row, it, opt) {
     if (!opt.interactive) { return row; }
     row.addEventListener("click", function (ev) {
-      if (ev.target.closest("button:not(.selmark), summary, details, .think, a, input, textarea")) { return; }
+      if (ev.target.closest("button:not(.selmark), summary, details, .think, .mj-card, a, input, textarea")) { return; }
       if (!S.multi && window.getSelection && String(window.getSelection()).length > 0) { return; }
       onRowClick(it.i, ev);
     });
@@ -2853,6 +2978,7 @@
     if (it.role === "tool" && it.tool_name) { tags.appendChild(h("span", { class: "tag", text: "回包给 " + it.tool_name })); }
     (it.tool_calls || []).forEach(function (c) { tags.appendChild(h("span", { class: "tag" }, icon("tool"), c.name || "?")); });
     body.appendChild(tags);
+    if (it.mood_judge) { body.appendChild(mjCardEl(it.mood_judge, true)); }
     var canPic = it.role === "user" || it.role === "assistant";
 
     var save = h("button", { class: "btn pri", type: "button", text: "保存", disabled: true, title: "⌘/Ctrl + Enter" });
@@ -10153,6 +10279,12 @@
     }
     if (p.master_mood) {
       if (S.moodOpen && (S.moodDirty || S.moodSaving)) { later = true; } else { drop("master_mood"); loadMasterMood(true); }
+    }
+    if (p.mood_judge) {
+      if (S.view === "conv" && S.tab === "history" && S.cid) {
+        if (S.histLoading || (S.insp && S.insp.dirty)) { later = true; }
+        else { drop("mood_judge"); loadHistory("keep"); }
+      } else { drop("mood_judge"); }
     }
     if (LIVE.side) { LIVE.side = false; loadSide(); }
     if (later) { LIVE.flushT = setTimeout(liveFlush, 1500); }

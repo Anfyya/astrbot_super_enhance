@@ -2092,6 +2092,103 @@ class ContextPageApi:
                 "editable": editable,
         }
 
+    def _attach_mood_judges(self, umo: str, items: list[dict]) -> None:
+        """为上下文页的每条用户消息匹配对应的情绪裁判记录（仅按同会话+同日分钟窗+正文对齐）。"""
+        life = getattr(self.plugin, "life", None)
+        judge = getattr(life, "mood_judge", None) if life is not None else None
+        if judge is None or not hasattr(judge, "recent_logs") or not umo or not items:
+            return
+        try:
+            logs = judge.recent_logs(umo)
+        except Exception:
+            return
+        if not logs:
+            return
+
+        def _norm_msg(raw: str) -> str:
+            s = text_utils.strip_stamps(str(raw or ""))
+            s = text_utils.strip_inline_system(s)
+            return re.sub(r"\s+", "", s)
+
+        def _mmdd_hm_to_mins(stamp: str) -> tuple[str, int] | None:
+            m = re.match(r"^(\d{2}-\d{2})\s+(\d{2}):(\d{2})$", str(stamp or "").strip())
+            if not m:
+                return None
+            return m.group(1), int(m.group(2)) * 60 + int(m.group(3))
+
+        prepared: list[tuple[dict, tuple[str, int] | None, list[tuple[str, str]]]] = []
+        for rec in logs:
+            at_full = str(rec.get("at") or "")
+            at_key = _mmdd_hm_to_mins(at_full[5:16]) if len(at_full) >= 16 else None
+            msg_pairs: list[tuple[str, str]] = []
+            for m in rec.get("messages") or []:
+                if not isinstance(m, dict):
+                    continue
+                nm = _norm_msg(str(m.get("text") or ""))
+                if nm:
+                    msg_pairs.append((nm, str(m.get("time") or "").strip()))
+            if msg_pairs:
+                prepared.append((rec, at_key, msg_pairs))
+        if not prepared:
+            return
+
+        for row in items:
+            if row.get("role") != "user":
+                continue
+            body_norm = _norm_msg(str(row.get("text") or ""))
+            if not body_norm:
+                continue
+            row_key = _mmdd_hm_to_mins(str(row.get("stamp") or ""))
+            best_rec = None
+            best_diff = 999999
+            for rec, at_key, msg_pairs in reversed(prepared):
+                text_hit = False
+                msg_hm = ""
+                for nm, m_time in msg_pairs:
+                    if body_norm == nm or (len(nm) >= 12 and body_norm.startswith(nm[:60])) or (len(body_norm) >= 12 and nm.startswith(body_norm[:60])):
+                        text_hit = True
+                        msg_hm = m_time
+                        break
+                if not text_hit:
+                    continue
+                if row_key is not None and at_key is not None:
+                    # 允许跨午夜 ±4 分钟与常规 ±5 分钟窗口
+                    if row_key[0] == at_key[0]:
+                        diff = abs(at_key[1] - row_key[1])
+                        if msg_hm and len(msg_hm) == 5 and msg_hm[2] == ":":
+                            try:
+                                m_min = int(msg_hm[:2]) * 60 + int(msg_hm[3:5])
+                                diff = min(diff, abs(m_min - row_key[1]))
+                            except ValueError:
+                                pass
+                    else:
+                        diff = 9999
+                    if diff > 5:
+                        continue
+                else:
+                    diff = 0
+                if diff < best_diff:
+                    best_diff = diff
+                    best_rec = rec
+                    if diff == 0:
+                        break
+            if best_rec is not None:
+                row["mood_judge"] = {
+                    "at": str(best_rec.get("at") or ""),
+                    "engine": str(best_rec.get("engine") or "decisions"),
+                    "model": str(best_rec.get("model") or ""),
+                    "elapsed": best_rec.get("elapsed"),
+                    "bot_label": str(best_rec.get("bot_label") or ""),
+                    "peer_label": str(best_rec.get("peer_label") or ""),
+                    "cur_self": int(best_rec.get("cur_self") or 0),
+                    "cur_peer": int(best_rec.get("cur_peer") or 0),
+                    "self_new": best_rec.get("self_new"),
+                    "peer_new": best_rec.get("peer_new"),
+                    "metrics": best_rec.get("metrics") or {},
+                    "reason": str(best_rec.get("reason") or ""),
+                    "batch_size": len(best_rec.get("messages") or []),
+                }
+
     async def get_history(self, *, cid: str | None = None, limit: int | None = None, end: int | None = None):
         args = request.args if request is not None else {}
         if cid is None:
@@ -2126,6 +2223,7 @@ class ContextPageApi:
 
         drawer = getattr(self.plugin, "image_gen", None)
         items = [self._history_row(history[index], index, tool_names, drawer) for index in range(start, end)]
+        self._attach_mood_judges(str(conv.user_id or ""), items)
         return _ok(
             {
                 "cid": cid,
