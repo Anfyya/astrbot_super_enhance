@@ -686,11 +686,11 @@ class Recorder:
         if not proposals:
             return ""
         lines = [
-            "【待你裁定的「现在去做(start_doing)」提议（尚未写入世界线，也未撤掉原有排程）】：",
-            "请结合上方完整对话、主人后续回话和「今天已记下的世界线」，逐条判断是否真要落盘：",
-            "1) 若世界线上马上（如 15 分钟内）本来就排好了同一件事，直接丢弃忽略、别打断原排程；",
+            "【待你裁定的「此刻动身打算(start_doing)」提议（尚未写入世界线，也未撤掉原有排程）】：",
+            "请结合上方完整对话、主人后续回话和「今天已记下的世界线」，逐条判断这条打算是否有效：",
+            "1) 若世界线上此刻正在做或马上（约 15 分钟内）本来就排好了同一件事，直接丢弃忽略（或记打算并填 same_as 指向原段），绝不打断原排程；",
             "2) 若对话里主人没同意、改口、叫停，或提议与实际对话对不上，直接丢弃忽略；",
-            "3) 若确属主人临时改主意或确实需要此刻新开一段，再照常写进 entries（填清 at_home / with / stove / same_as / stale，不要重复记同一件事）。",
+            "3) 若确实需要此刻动身去做这件新事，**不要写进 entries（绝不要替她捏造一整段无分步的时长）**，请记成一条 `intentions`（`now: true`，`since` 填提议时刻，`text` 写清要做什么、在哪、和谁、`why` 写清对话起因，和主人一起的带 `with: [\"master\"]`），把后续如何拆段、写分步、以及现场缺不缺东西全部交给补写自由发挥！（只有对话里她已经做完或已发生的既成事实才写进 entries。）",
         ]
         for p in proposals:
             who_lbl = self.label(p.get("bot")) or p.get("bot") or ""
@@ -698,18 +698,16 @@ class Recorder:
                 "主人" if x == "master" else (self.label(x) or x)
                 for x in (p.get("with") or [])
             ]
+            at_text = str(p.get("at") or "")
             bits = [
-                "%s–%s %s提议：%s" % (str(p.get("at") or "")[11:16], str(p.get("end") or "")[11:16], who_lbl, p.get("what") or ""),
+                "%s %s提议立刻去做：%s" % (at_text[11:16] or at_text, who_lbl, p.get("what") or ""),
             ]
+            if at_text:
+                bits.append("since=%s" % at_text)
             if p.get("place"):
                 bits.append("地点=%s" % p["place"])
-            bits.append("at_home=%s" % ("true" if p.get("at_home") else "false"))
             if with_lbls:
                 bits.append("同行=%s" % "、".join(with_lbls))
-            if p.get("stove"):
-                bits.append("stove=%s" % p["stove"])
-            if p.get("intent"):
-                bits.append("intent=%s" % p["intent"])
             lines.append("- " + "，".join(bits))
         return "\n".join(lines)
 

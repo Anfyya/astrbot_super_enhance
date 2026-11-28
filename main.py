@@ -603,55 +603,31 @@ class SuperEnhance(Star):
         self,
         event: AstrMessageEvent,
         what: str,
-        minutes: int,
-        action_kind: str,
-        stove: str = "",
-        cook: str = "",
-        lamp: bool = False,
-        major_decision: bool = False,
-        decision_or_intent_id: str = "",
-        with_who: str = "",
         place: str = "",
-        result: str = "",
+        with_who: str = "",
     ) -> str:
-        """仅在主人临时改主意、要你立刻放下手头事去做一件原本没排的新事时调用，提交动作意向并校验库存与权限。
+        """仅在主人临时改主意、或你此刻决定放下手头事马上动身去做一件原本没排的新事时调用，登记这条「此刻打算」。
 
         【重要限制】以下情况严禁调用此工具，直接正常回话即可：
         - 世界线上「你接下来打算」里马上（十几分钟内）本来就要去做的事；
         - 跟此刻正在做的同一件事（不要反复连点）。
-        调用后不会直接改动或清空现有排程，会先校验真实库存（干柴/闷炭/食用油/煤油）、当家拍板与角色边界，1 分钟后由后台记录员结合完整对话与原排程统一决定是否正式落盘；不合理或与原排程重复会自动丢弃。
+        此工具只记下你准备动身去做的意向，不预估时长、也不提前替你查库存或盘点燃料（实际走到现场有没有东西、怎么分步展开由后台世界线推演处理）；60 秒后若对话里没改口或叫停，会作为高优「现在就去」打算交由后台补写接手安排。
 
-        调用此工具时本轮正文留空，拿到返回结果后再回复对方，严禁提及编号或工具细节。
+        调用此工具时本轮正文留空，拿到返回结果后再自然回复对方，严禁提及编号或工具细节。
 
         Args:
-            what (string): 做什么，例如「在柴炉边生火暖舱」或「炒午饭的菜」。
-            minutes (int): 这件事实际要多少分钟。
-            action_kind (string): 必填五选一："indoor"（在当前室内干活/看图/写字/歇息）| "go_out"（外出走动/拾柴/取水/打捞，不对外交易）| "trade"（对外采买/卖物/接委托单）| "cook"（灶台做饭/烧水/热菜）| "heat"（生柴炉取暖/烘干或点灯）。
-            stove (string): 是否点炉火三选一：""（未点火）| "charcoal"（船屋小炭炉，须家里闷炭>0）| "wood"（铁桶柴炉，须家里干柴>0）。外出或室内不点火必须填 ""。
-            cook (string): 做熟食时可填五选一："" | "boil" | "fry"（家里食用油为 0 时禁填）| "steam" | "roast" | "cold"。
-            lamp (boolean): 是否点着家里那盏煤油灯（煤油见底时严禁填 true）。
-            major_decision (boolean): 是否属于动用家底买大件（厚衣/棉被/修大设施）或接打捞委托单等须主人拍板的事。
-            decision_or_intent_id (string): 若涉及已拍板或既定打算，填对应的 d 编号或 i 编号（例如 "d16" 或 "i297"）；没有填 ""。
-            with_who (string): 和谁一起做（逗号或顿号隔开，例如 "主人"、"丛雨"、"亚托莉"、"主人,丛雨"；独自做填 ""）。同行人会同步写进世界线避免两人时间线错开。
-            place (string): 在哪做；空着就是你现在待的地方。
-            result (string): 可选，这件事做完的结果（做完时你才看得到）。
+            what (string): 你此刻准备动身去做什么，例如「端烤小海鱼去灶台小炭炉再热透」或「下船去码头转转」。
+            place (string): 可选，打算去哪做；空着就是你现在待的地方。
+            with_who (string): 可选，和谁一起做（逗号或顿号隔开，例如 "主人"、"丛雨"、"亚托莉"、"主人,丛雨"；独自做填 ""）。
 
         Returns:
-            写进世界线的结果（不合规时返回具体拦截原因）。
+            登记打算的结果。
         """
         return life_ops.start_now(
             self.life,
             getattr(event, "unified_msg_origin", "") or "",
             what,
-            minutes,
-            place,
-            result,
-            action_kind=action_kind,
-            stove=stove,
-            cook=cook,
-            lamp=lamp,
-            major_decision=major_decision,
-            decision_or_intent_id=decision_or_intent_id,
+            place=place,
             with_who=with_who,
         )
 
