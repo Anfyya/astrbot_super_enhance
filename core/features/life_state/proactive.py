@@ -69,6 +69,12 @@ _ROUTINE_PURPOSE_WORDS = (
     "吃饭", "开饭", "早饭", "午饭", "晚饭", "夜宵",
     "出门", "回来", "到家", "回船屋", "回宿舍",
 )
+_OUT_BACK_PURPOSE_WORDS = (
+    "出门", "出去", "下船去", "上坡去", "离开船屋", "去集市", "去码头",
+    "去半淹", "去坡上", "去镇上", "去柴料场", "去灯塔", "去海边",
+    "回来", "回船", "回屋", "回宿舍", "回住处", "到家",
+)
+_NON_OUT_BACK_KEEP_WORDS = ("早安", "早上好", "晚安", "吃饭", "开饭", "早饭", "午饭", "晚饭", "夜宵")
 
 
 @dataclass(frozen=True)
@@ -625,8 +631,31 @@ class ProactivePlanner:
         if not home:
             home = str(store.home_at(flat) or "").strip() if hasattr(store, "home_at") else ""
         master_cur = store.current("master", flat)
-        master_sleeping = master_cur is not None and is_sleep(master_cur) and not master_cur.get("end")
+        companion = getattr(self, "companionship", None)
+        master_sleeping = bool(
+            (master_cur is not None and is_sleep(master_cur) and not master_cur.get("end"))
+            or (companion is not None and companion.safe("resting", real_now, default=False))
+        )
         from . import view as view_mod
+
+        def is_out_back_notice(kind_name: str, prev_out_flag, cur_out_flag, purpose_str: str, *, node: str) -> bool:
+            """判定是否属于出门/回来报备（主人睡觉期间在排单入口直接丢弃，不排任务也不攒着）。"""
+            if kind_name in ("out", "back"):
+                return True
+            if kind_name != "segment":
+                return False
+            text = str(purpose_str or "").strip()
+            if any(w in text for w in _NON_OUT_BACK_KEEP_WORDS):
+                return False
+            if any(w in text for w in _OUT_BACK_PURPOSE_WORDS):
+                return True
+            if node == "start" and prev_out_flag is not None and cur_out_flag is not None and prev_out_flag != cur_out_flag:
+                return True
+            if node == "start" and cur_out_flag is True:
+                return True
+            if node == "end" and cur_out_flag is True:
+                return True
+            return False
 
         items_by_bot = {b: store.activities(b, flat) for b in bot_list}
         for bot in bot_list:
@@ -662,6 +691,12 @@ class ProactivePlanner:
                     and (flat - start).total_seconds() <= NODE_WINDOW_SECONDS
                     and (end is None or flat < end)
                 )
+                cur_out = view_mod._is_outside_place(item.get("place"), item.get("at_home"), home)
+                prev_out = (
+                    view_mod._is_outside_place(prev_valid.get("place"), prev_valid.get("at_home"), home)
+                    if prev_valid is not None
+                    else None
+                )
                 if in_start_win:
                     start_kind = ""
                     start_purpose = ""
@@ -673,8 +708,6 @@ class ProactivePlanner:
                         and str(item.get("tool") or "") != "start_doing"
                         and str(item.get("source") or "") != "chat"
                     ):
-                        prev_out = view_mod._is_outside_place(prev_valid.get("place"), prev_valid.get("at_home"), home)
-                        cur_out = view_mod._is_outside_place(item.get("place"), item.get("at_home"), home)
                         if prev_out != cur_out:
                             place_txt = clean_line(item.get("place") or "", 40)
                             doing_txt = clean_line(item.get("doing") or "", 80)
@@ -690,14 +723,22 @@ class ProactivePlanner:
                         if start_key not in fired:
                             store.mark_msg_fired(bot, start_key)
                             fired.add(start_key)
-                            try:
-                                start_mk = "routine" if start_kind in ("out", "back") else str(item.get("msg_kind") or "")
-                                scheduled += await self.schedule_segment_msg(
-                                    bot, item, node="start", purpose=start_purpose, kind=start_kind,
-                                    msg_kind=start_mk, now=real_now,
+                            if master_sleeping and is_out_back_notice(
+                                start_kind, prev_out, cur_out, start_purpose, node="start"
+                            ):
+                                logger.info(
+                                    "[super_enhance/life] [%s] 主人睡着，直接丢弃出门/回来报备（%s）：%s",
+                                    bot, start_key, start_purpose[:32],
                                 )
-                            except Exception:
-                                logger.warning("[super_enhance/life] 排段头主动对话失败", exc_info=True)
+                            else:
+                                try:
+                                    start_mk = "routine" if start_kind in ("out", "back") else str(item.get("msg_kind") or "")
+                                    scheduled += await self.schedule_segment_msg(
+                                        bot, item, node="start", purpose=start_purpose, kind=start_kind,
+                                        msg_kind=start_mk, now=real_now,
+                                    )
+                                except Exception:
+                                    logger.warning("[super_enhance/life] 排段头主动对话失败", exc_info=True)
                 prev_valid = item
 
                 # 2. 检查 "end" 节点与打算收尾
@@ -739,12 +780,20 @@ class ProactivePlanner:
                     if end_key not in fired:
                         store.mark_msg_fired(bot, end_key)
                         fired.add(end_key)
-                        try:
-                            scheduled += await self.schedule_segment_msg(
-                                bot, item, node="end", purpose=end_purpose, kind=end_kind, now=real_now
+                        if master_sleeping and is_out_back_notice(
+                            end_kind, prev_out, cur_out, end_purpose, node="end"
+                        ):
+                            logger.info(
+                                "[super_enhance/life] [%s] 主人睡着，直接丢弃出门/回来报备（%s）：%s",
+                                bot, end_key, end_purpose[:32],
                             )
-                        except Exception:
-                            logger.warning("[super_enhance/life] 排段尾主动对话失败", exc_info=True)
+                        else:
+                            try:
+                                scheduled += await self.schedule_segment_msg(
+                                    bot, item, node="end", purpose=end_purpose, kind=end_kind, now=real_now
+                                )
+                            except Exception:
+                                logger.warning("[super_enhance/life] 排段尾主动对话失败", exc_info=True)
 
             if store.done_mark(bot) != flat_text:
                 store.set_done_mark(bot, flat_text)
