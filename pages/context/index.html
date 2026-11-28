@@ -1617,13 +1617,13 @@
       <div class="scroller scroll"><div class="scene" id="worldBody"></div></div>
     </section>
 
-    <!-- 家里的吃的 -->
+    <!-- 吃的和东西 -->
     <section class="view" id="thingsView" hidden>
       <header class="mhead"><div class="mhead-in">
         <button class="btn quiet ibtn narrow-only" data-icon="menu" data-open-side title="会话列表" type="button"></button>
         <div class="who">
-          <span class="av hm" data-icon="bowl" id="thingsAv"></span>
-          <div class="who-t"><span class="who-n" id="thingsTitle">家里的吃的</span><span class="who-s" id="thingsSub">此刻现算：记录员记的 + 世界线里做完的段标的</span></div>
+          <span class="av hm" data-icon="box" id="thingsAv"></span>
+          <div class="who-t"><span class="who-n" id="thingsTitle">吃的和东西</span><span class="who-s" id="thingsSub">此刻现算：记录员记的 + 世界线里做完的段标的</span></div>
         </div>
         <div class="seg" id="thingsWhen"></div>
         <div class="grow"></div>
@@ -1915,9 +1915,8 @@
     world: null, worldErr: "", worldLoading: false, worldDate: "", worldWho: "", worldBusy: "", worldShowLifted: false, worldShowStatus: false,
     wEdit: {}, cEdit: {}, iEdit: {}, rEdit: {}, nEdit: {}, wOpen: {},
     things: null, thingsErr: "", thingsLoading: false, thingsFilter: "now", thingsQ: "", thingsOpen: {}, thingsVoid: {}, tEdit: {}, thingsFocus: "",
-    thingsCat: "food", objFilter: "now", objQ: "",
-    // 筛选面板里那几组：排序（默认新到旧）、在哪、状态（只有吃的）、类别；「什么时候」在标题旁边，还是 thingsFilter / objFilter
-    tPick: { food: { where: "here", state: "", kind: "", sort: "new" }, item: { where: "here", state: "", kind: "", sort: "new" } },
+    // 筛选面板里那几组：排序（默认新到旧）、类型（默认全部混排）、在哪、状态、类别；「什么时候」在标题旁边，用 thingsFilter
+    tPick: { where: "here", cat: "", state: "", kind: "", sort: "new" },
     tPanel: false,
     masterMood: null, moodOpen: false, moodDraft: null, moodDirty: false, moodSaving: false
   };
@@ -2019,28 +2018,23 @@
       onclick: function () { openHeat(); }
     }, hg, h("span", { class: "nav-t" }, h("span", { class: "nav-n", text: "家里热源" }), h("span", { class: "nav-s", text: hsub }))));
 
-    // 吃的、东西：只写件数，算此刻住的这一处 + 带在身上的（跟列表默认列的、她们眼下看得到的一样）
+    // 吃的和东西：合并成一个入口，副标题列两边此刻住处 + 身上的件数
     var tg = h("span", { class: "av hm" });
-    tg.appendChild(icon("bowl"));
-    var tsub = "读取中…", food = side.food;
-    if (S.things) { food = { n: (S.things.items || []).filter(function (x) { return !x.ended && tPassWhere(x, "here"); }).length }; }
+    tg.appendChild(icon("box"));
+    var tsub = "读取中…", food = side.food, objs = side.items;
+    if (S.things) {
+      food = { n: (S.things.items || []).filter(function (x) { return !x.ended && tPassWhere(x, "here"); }).length };
+      objs = { n: (S.things.objects || []).filter(function (x) { return !x.ended && tPassWhere(x, "here"); }).length };
+    }
     if (S.thingsErr && !S.things) { tsub = "不可用"; }
-    else if (food) { tsub = food.n ? food.n + " 件" : "还没有记着的"; }
+    else if (food || objs) {
+      var fn = (food && food.n) || 0, on = (objs && objs.n) || 0;
+      tsub = (fn || on) ? ("吃的 " + fn + " · 东西 " + on) : "还没有记着的";
+    }
     world.appendChild(h("button", {
-      class: "nav-item" + (S.view === "things" && S.thingsCat !== "item" ? " on" : ""), type: "button",
-      onclick: function () { openThings(null, "food"); }
-    }, tg, h("span", { class: "nav-t" }, h("span", { class: "nav-n", text: "家里的吃的" }), h("span", { class: "nav-s", text: tsub }))));
-
-    var og = h("span", { class: "av hm" });
-    og.appendChild(icon("box"));
-    var osub = "读取中…", objs = side.items;
-    if (S.things) { objs = { n: (S.things.objects || []).filter(function (x) { return !x.ended && tPassWhere(x, "here"); }).length }; }
-    if (S.thingsErr && !S.things) { osub = "不可用"; }
-    else if (objs) { osub = objs.n ? objs.n + " 件" : "还没有记着的"; }
-    world.appendChild(h("button", {
-      class: "nav-item" + (S.view === "things" && S.thingsCat === "item" ? " on" : ""), type: "button",
-      onclick: function () { openThings(null, "item"); }
-    }, og, h("span", { class: "nav-t" }, h("span", { class: "nav-n", text: "家里的东西" }), h("span", { class: "nav-s", text: osub }))));
+      class: "nav-item" + (S.view === "things" ? " on" : ""), type: "button",
+      onclick: function () { openThings(null); }
+    }, tg, h("span", { class: "nav-t" }, h("span", { class: "nav-n", text: "吃的和东西" }), h("span", { class: "nav-s", text: tsub }))));
 
     var mg = h("span", { class: "av hm" });
     mg.appendChild(icon("coin"));
@@ -2260,39 +2254,31 @@
     });
   }
 
-  // 家里的吃的；focusId：跳过来时展开、闪一下那一件
-  function openThings(focusId, cat) {
+  // 吃的和东西；focusId：跳过来时展开、闪一下那一件
+  function openThings(focusId) {
     guardDirty().then(function (ok) {
       if (!ok) { return; }
       setSideOpen(false);
       closeInsp(true);
-      var was = S.view === "things" ? S.thingsCat : "", saved = S.view !== "things" ? S.thingsSaved : null;
+      var wasThings = S.view === "things", saved = !wasThings ? S.thingsSaved : null;
       S.view = "things";
-      S.thingsCat = cat || (focusId ? (/^p\d/i.test(focusId) ? "item" : "food") : S.thingsCat);
       if (focusId) {
         S.thingsOpen[focusId] = true;
         S.thingsFocus = focusId;
-        if (S.thingsCat === "item") {
-          var obj = objFind(focusId);
-          if (obj && obj.ended && S.objFilter === "now") { S.objFilter = "all"; }
-          if (obj && S.objFilter === "future") { S.objFilter = obj.ended ? "all" : "now"; }
-          tReveal(true, obj);
-        } else {
-          var hit = thingFind(focusId);
-          if (hit && hit.ended && S.thingsFilter === "now") { S.thingsFilter = "all"; }
-          if (hit && S.thingsFilter === "future") { S.thingsFilter = hit.ended ? "all" : "now"; }
-          tReveal(false, hit);
+        var obj = objFind(focusId), hit = obj || thingFind(focusId);
+        if (hit) {
+          if (hit.ended && S.thingsFilter === "now") { S.thingsFilter = "all"; }
+          if (S.thingsFilter === "future") { S.thingsFilter = hit.ended ? "all" : "now"; }
+          tReveal(!!obj, hit);
         }
-      }
-      if (focusId) {
         // 跳过来找一件：搜索框清掉，未来里的那几件在「未来」里看
-        if (S.thingsCat === "item") { S.objQ = ""; if (futureFind(focusId)) { S.objFilter = "future"; } }
-        else { S.thingsQ = ""; if (futureFind(focusId)) { S.thingsFilter = "future"; } }
+        S.thingsQ = "";
+        if (futureFind(focusId)) { S.thingsFilter = "future"; }
       }
       showView();
       loadThings();
-      if (!focusId && saved && saved.cat === S.thingsCat) { renderThings({ anchor: saved.a }); }
-      else { renderThings(was !== S.thingsCat ? { toTop: true } : {}); }
+      if (!focusId && saved) { renderThings({ anchor: saved.a }); }
+      else { renderThings({}); }
     });
   }
 
@@ -2314,7 +2300,7 @@
 
   function showView() {
     // 离开吃的 / 东西页时记下看到哪了（藏起来以后滚动位置会丢），回来时放回去
-    if (S.view !== "things" && !$("thingsView").hidden && S.things) { S.thingsSaved = { cat: S.thingsCat, a: thingsAnchor() }; }
+    if (S.view !== "things" && !$("thingsView").hidden && S.things) { S.thingsSaved = { a: thingsAnchor() }; }
     var isConv = S.view === "conv";
     $("convView").hidden = !isConv;
     $("heatView").hidden = S.view !== "heat";
@@ -8901,7 +8887,7 @@
   }
   // 只换这一件那一行（展开 / 收起每一步、看作废的几步）：别的不动，页面不跳；收起后行头翻到上面去了就带回来
   function thingRedraw(id) {
-    var obj = S.thingsCat === "item", it = obj ? objFind(id) : thingFind(id);
+    var obj = objFind(id), it = obj || thingFind(id);
     var old = it ? $("thingsBody").querySelector('[data-tk="t:' + it.id + '"]') : null;
     if (!old) { renderThings(); return; }
     var sc = thingsScroller(), y = sc.scrollTop;
@@ -8924,17 +8910,20 @@
     }
   }
 
-  // ---------- 筛选与排序（吃的、东西两页共用） ----------
-  // 「什么时候」（看哪张单子）在标题旁边，点一下就切，还是 thingsFilter / objFilter；
-  // 筛选面板里是排序、在哪、状态（只有吃的）、类别，在 S.tPick。
-  // 在哪：here = 此刻住的这一处 + 带在身上的；带在身上 / 某一处 / all。没分过两处（homes 空）不显示这一组
+  // ---------- 筛选与排序（吃的和东西同页合并展示，实际数据结构与后端逻辑不变） ----------
   var T_WHENS = [["now", "现有的"], ["future", "未来"], ["gone", "没了的"], ["all", "全部"]];
+  var T_CATS = [["", "全部"], ["food", "吃的"], ["item", "东西"]];
   var T_STATES = [["", "全部"], ["hurry", "快不行了"], ["bad", "按时间算坏了"], ["low", "余量不多"]];
-  // 排序默认新到旧（按记下来的先后）；原来的默认还能选：吃的「要紧的在前」、东西「长得像的排一起」
-  var T_SORTS = { food: [["new", "新到旧"], ["old", "旧到新"], ["urgent", "要紧的在前"], ["name", "按名字"]],
-    item: [["new", "新到旧"], ["old", "旧到新"], ["group", "长得像的排一起"], ["name", "按名字"], ["touched", "最近动过的在前"]] };
-  function tDefaultPick() { return { where: "here", state: "", kind: "", sort: "new" }; }
-  function tPick(objectMode) { return S.tPick[objectMode ? "item" : "food"]; }
+  var T_SORTS = [["new", "新到旧"], ["old", "旧到新"], ["urgent", "要紧的在前"], ["touched", "最近动过的在前"], ["name", "按名字"]];
+  function tDefaultPick() { return { where: "here", cat: "", state: "", kind: "", sort: "new" }; }
+  function tPick() { return S.tPick; }
+  function tAllEntries(d) {
+    if (!d) { return []; }
+    var out = [];
+    (d.items || []).forEach(function (x) { out.push({ it: x, obj: false }); });
+    (d.objects || []).forEach(function (x) { out.push({ it: x, obj: true }); });
+    return out;
+  }
   function tKindOf(x, objectMode) { return objectMode ? objKind(x) : (x.kind || ""); }
   function tPassWhere(x, where) {
     var d = S.things || {};
@@ -8943,8 +8932,9 @@
     if (where === "here") { return w === "带在身上" || w === (d.home || ""); }
     return w === where;
   }
-  function tPassState(x, state) {
+  function tPassState(x, objectMode, state) {
     if (!state) { return true; }
+    if (objectMode) { return false; }
     var level = (x.fresh || {}).level;
     if (state === "hurry") { return !x.ended && level === "快不行了"; }
     if (state === "bad") { return !x.ended && level === "坏了"; }
@@ -8952,11 +8942,12 @@
     return true;
   }
   // 除了 skip 那一组，别的都照现在选的筛（给每组的选项数个数用）
-  function tPassAll(x, objectMode, skip) {
-    var p = tPick(objectMode), filter = objectMode ? S.objFilter : S.thingsFilter;
+  function tPassAll(entry, skip) {
+    var x = entry.it, objectMode = entry.obj, p = tPick(), filter = S.thingsFilter;
     if (skip !== "when" && ((filter === "now" && x.ended) || (filter === "gone" && !x.ended))) { return false; }
+    if (skip !== "cat" && p.cat && ((p.cat === "item") !== objectMode)) { return false; }
     if (skip !== "where" && !tPassWhere(x, p.where)) { return false; }
-    if (!objectMode && skip !== "state" && !tPassState(x, p.state)) { return false; }
+    if (skip !== "state" && !tPassState(x, objectMode, p.state)) { return false; }
     if (skip !== "kind" && p.kind && tKindOf(x, objectMode) !== p.kind) { return false; }
     return true;
   }
@@ -8966,75 +8957,91 @@
   }
   // 编号里的数（w12 → 12）：同一分钟记下的几件按它分先后
   function tNum(x) { var m = /(\d+)/.exec(String(x.id || "")); return m ? +m[1] : 0; }
-  function tSort(list, objectMode) {
-    var s = tPick(objectMode).sort;
-    if (s === "new") { list.sort(function (a, b) { return String(b.created).localeCompare(String(a.created)) || tNum(b) - tNum(a); }); }
-    else if (s === "old") { list.sort(function (a, b) { return String(a.created).localeCompare(String(b.created)) || tNum(a) - tNum(b); }); }
-    else if (s === "name") { list.sort(function (a, b) { return String(a.name || "").localeCompare(String(b.name || ""), "zh"); }); }
-    else if (s === "touched") { list.sort(function (a, b) { return tLastAt(b).localeCompare(tLastAt(a)); }); }
-    return list;
+  function tSort(entries) {
+    var s = tPick().sort;
+    if (s === "new") {
+      entries.sort(function (ea, eb) { return String(eb.it.created).localeCompare(String(ea.it.created)) || tNum(eb.it) - tNum(ea.it); });
+    } else if (s === "old") {
+      entries.sort(function (ea, eb) { return String(ea.it.created).localeCompare(String(eb.it.created)) || tNum(ea.it) - tNum(eb.it); });
+    } else if (s === "name") {
+      entries.sort(function (ea, eb) { return String(ea.it.name || "").localeCompare(String(eb.it.name || ""), "zh"); });
+    } else if (s === "touched") {
+      entries.sort(function (ea, eb) { return tLastAt(eb.it).localeCompare(tLastAt(ea.it)); });
+    } else if (s === "urgent") {
+      entries.sort(function (ea, eb) {
+        var ra = ea.obj ? 50 : thingRank(ea.it), rb = eb.obj ? 50 : thingRank(eb.it);
+        if (ra !== rb) { return ra - rb; }
+        if (!ea.obj && !eb.obj) {
+          if (ea.it.ended && eb.it.ended) { return String(eb.it.ended.at).localeCompare(String(ea.it.ended.at)); }
+          var ba = (ea.it.fresh || {}).bad_at || "9999", bb = (eb.it.fresh || {}).bad_at || "9999";
+          if (ba !== bb) { return ba.localeCompare(bb); }
+        }
+        return String(eb.it.created).localeCompare(String(ea.it.created)) || tNum(eb.it) - tNum(ea.it);
+      });
+    }
+    return entries;
   }
-  // 「在哪」那组显示的字
   function tWhereLabel(v) {
     var d = S.things || {};
     if (v === "here") { return "这一处" + (d.home ? "（" + d.home + "）" : ""); }
     return v === "all" ? "全部" : v;
   }
-  // 改了一组：重画（列表、按钮上的数、面板都跟着变）。换了一张单子（什么时候）就回到最上面
-  function tSet(objectMode, key, value) {
+  function tSet(key, value) {
     if (key === "when") {
-      if (objectMode) { S.objFilter = value; } else { S.thingsFilter = value; }
+      S.thingsFilter = value;
       renderDataPage({ toTop: true });
       return;
     }
-    tPick(objectMode)[key] = value;
+    tPick()[key] = value;
     renderDataPage();
   }
-  // 跳过来找某一件：这几组要是会把它藏起来，先放开（在哪、状态、类别回到全部）
   function tReveal(objectMode, x) {
     if (!x) { return; }
-    var p = tPick(objectMode);
+    var p = tPick();
+    if (p.cat && ((p.cat === "item") !== !!objectMode)) { p.cat = ""; }
     if (!tPassWhere(x, p.where)) { p.where = "all"; }
-    if (!objectMode && !tPassState(x, p.state)) { p.state = ""; }
-    if (p.kind && tKindOf(x, objectMode) !== p.kind) { p.kind = ""; }
+    if (p.state && !tPassState(x, !!objectMode, p.state)) { p.state = ""; }
+    if (p.kind && tKindOf(x, !!objectMode) !== p.kind) { p.kind = ""; }
   }
-  // 筛选面板里跟默认不一样的那几组（按钮上的数、收起时按钮下面那一串可点掉的小标签）。「什么时候」在标题旁边，不算在这里
-  function tPicked(objectMode) {
-    var p = tPick(objectMode), d = S.things || {}, out = [];
+  function tPicked() {
+    var p = tPick(), d = S.things || {}, out = [];
     var lab = function (rows, v) { return (rows.filter(function (x) { return x[0] === v; })[0] || [0, v])[1]; };
-    if (p.sort !== "new") { out.push({ key: "sort", label: "排序：" + lab(T_SORTS[objectMode ? "item" : "food"], p.sort), reset: "new" }); }
+    if (p.sort !== "new") { out.push({ key: "sort", label: "排序：" + lab(T_SORTS, p.sort), reset: "new" }); }
+    if (p.cat) { out.push({ key: "cat", label: lab(T_CATS, p.cat), reset: "" }); }
     if ((d.homes || []).length && p.where !== "here") { out.push({ key: "where", label: "在哪：" + tWhereLabel(p.where), reset: "here" }); }
-    if (!objectMode && p.state) { out.push({ key: "state", label: lab(T_STATES, p.state), reset: "" }); }
+    if (p.state) { out.push({ key: "state", label: lab(T_STATES, p.state), reset: "" }); }
     if (p.kind) { out.push({ key: "kind", label: "类别：" + p.kind, reset: "" }); }
     return out;
   }
-  // 标题旁边「现有的 / 未来 / 没了的 / 全部」：看哪张单子，点一下就切。件数照筛选面板里选的算（未来那张单子不分这些）
-  function tWhenSeg(objectMode, items) {
+  function tWhenSeg(entries) {
     var seg = clear($("thingsWhen"));
-    if (!items) { return; }
-    var filter = objectMode ? S.objFilter : S.thingsFilter;
-    var pass = items.filter(function (x) { return tPassAll(x, objectMode, "when"); });
-    var counts = { now: pass.filter(function (x) { return !x.ended; }).length, gone: pass.filter(function (x) { return !!x.ended; }).length,
-      all: pass.length, future: futureList(objectMode ? "item" : "food", "").length };
+    if (!entries) { return; }
+    var filter = S.thingsFilter;
+    var pass = entries.filter(function (e) { return tPassAll(e, "when"); });
+    var counts = {
+      now: pass.filter(function (e) { return !e.it.ended; }).length,
+      gone: pass.filter(function (e) { return !!e.it.ended; }).length,
+      all: pass.length,
+      future: futureList(null, "").length
+    };
     T_WHENS.forEach(function (o) {
       seg.appendChild(h("button", { type: "button", class: o[0] === filter ? "on" : "", "aria-pressed": o[0] === filter ? "true" : "false",
-        onclick: function () { if (o[0] !== (objectMode ? S.objFilter : S.thingsFilter)) { tSet(objectMode, "when", o[0]); } } },
+        onclick: function () { if (o[0] !== S.thingsFilter) { tSet("when", o[0]); } } },
         o[1], h("span", { class: "wcount", text: String(counts[o[0]]) })));
     });
   }
-  // 搜的字对得上哪些（名字、编号、种类、哪来的、搁在哪……）
-  function tMatch(x, q, objectMode) {
+  function tMatch(entry, q) {
     if (!q) { return true; }
-    var fields = objectMode
+    var x = entry.it;
+    var fields = entry.obj
       ? [x.id, x.name, x.kind, x.look, x.inside, x.origin, x.place, x.holder_label, x.state, x.owner_label]
       : [x.id, x.name, x.kind, x.origin, x.place];
     return fields.join(" ").toLowerCase().indexOf(q) >= 0;
   }
-  // 搜的时候，照现在的条件没列出来、别处还有对得上的：说在哪，点一下全放开一起看
-  function tHiddenHint(objectMode, hidden, filter, none) {
-    var p = tPick(objectMode), why = {}, order = [];
-    hidden.forEach(function (x) {
-      var k;
+  function tHiddenHint(hidden, filter, none) {
+    var p = tPick(), why = {}, order = [];
+    hidden.forEach(function (entry) {
+      var x = entry.it, k;
       if (filter === "now" && x.ended) { k = "已经没了"; }
       else if (filter === "gone" && !x.ended) { k = "还在的"; }
       else if (!tPassWhere(x, p.where)) { k = x.where === "带在身上" ? "带在身上" : "在" + (x.where || "别处"); }
@@ -9046,42 +9053,42 @@
     return h("div", { class: none ? "muted" : "thidden", style: none ? "font-size:13px;line-height:1.7" : null },
       (none ? "照现在的条件没有对得上的。别处还有 " : "别处还有 ") + hidden.length + " 件对得上：" + parts,
       h("button", { class: "tlink", type: "button", style: none ? "font-size:13px;margin-left:8px" : null, onclick: function () {
-        if (objectMode) { S.objFilter = "all"; } else { S.thingsFilter = "all"; }
-        p.where = "all"; p.state = ""; p.kind = "";
+        S.thingsFilter = "all";
+        p.where = "all"; p.cat = ""; p.state = ""; p.kind = "";
         renderDataPage({ toTop: true });
       } }, "放开一起看"));
   }
-  function tChips(objectMode, key, opts, cur, counts) {
+  function tChips(key, opts, cur, counts) {
     var wrap = h("div", { class: "chips" });
     opts.forEach(function (o) {
       wrap.appendChild(h("button", { type: "button", class: "chip-t" + (o[0] === cur ? " on" : ""), onclick: function () {
-        if (o[0] !== cur) { tSet(objectMode, key, o[0]); }
+        if (o[0] !== cur) { tSet(key, o[0]); }
       } }, o[1], counts && counts[o[0]] !== undefined ? h("span", { class: "wcount", text: String(counts[o[0]]) }) : null));
     });
     return wrap;
   }
-  // 筛选面板（点「筛选」在工具栏下面展开）：排序（最常改的放第一行）、在哪、状态（只有吃的）、类别
-  function tFilterPanel(objectMode, items) {
-    var p = tPick(objectMode), d = S.things || {};
+  function tFilterPanel(entries) {
+    var p = tPick(), d = S.things || {};
     var panel = h("div", { class: "tfilt" });
     var row = function (label, body) { panel.appendChild(h("div", { class: "fg" }, h("b", { text: label }), body)); };
-    var count = function (skip, pass) { return items.filter(function (x) { return tPassAll(x, objectMode, skip) && pass(x); }).length; };
-    row("排序", tChips(objectMode, "sort", T_SORTS[objectMode ? "item" : "food"], p.sort));
+    var count = function (skip, pass) { return entries.filter(function (e) { return tPassAll(e, skip) && pass(e); }).length; };
+    row("排序", tChips("sort", T_SORTS, p.sort));
+    var cc = {};
+    T_CATS.forEach(function (o) { cc[o[0]] = count("cat", function (e) { return !o[0] || ((o[0] === "item") === e.obj); }); });
+    row("类型", tChips("cat", T_CATS, p.cat, cc));
     if ((d.homes || []).length) {
       var wopts = [["here", tWhereLabel("here")], ["带在身上", "带在身上"]];
       (d.homes || []).forEach(function (hm) { if (hm !== d.home) { wopts.push([hm, hm]); } });
       wopts.push(["all", "全部"]);
       var wc = {};
-      wopts.forEach(function (o) { wc[o[0]] = count("where", function (x) { return tPassWhere(x, o[0]); }); });
-      row("在哪", tChips(objectMode, "where", wopts, p.where, wc));
+      wopts.forEach(function (o) { wc[o[0]] = count("where", function (e) { return tPassWhere(e.it, o[0]); }); });
+      row("在哪", tChips("where", wopts, p.where, wc));
     }
-    if (!objectMode) {
-      var sc = {};
-      T_STATES.forEach(function (o) { sc[o[0]] = count("state", function (x) { return tPassState(x, o[0]); }); });
-      row("状态", tChips(objectMode, "state", T_STATES, p.state, sc));
-    }
+    var sc = {};
+    T_STATES.forEach(function (o) { sc[o[0]] = count("state", function (e) { return tPassState(e.it, e.obj, o[0]); }); });
+    row("状态", tChips("state", T_STATES, p.state, sc));
     var kinds = {};
-    items.forEach(function (x) { if (tPassAll(x, objectMode, "kind")) { var k = tKindOf(x, objectMode); if (k) { kinds[k] = (kinds[k] || 0) + 1; } } });
+    entries.forEach(function (e) { if (tPassAll(e, "kind")) { var k = tKindOf(e.it, e.obj); if (k) { kinds[k] = (kinds[k] || 0) + 1; } } });
     var sel = h("select", { class: "inp" });
     sel.appendChild(h("option", { value: "", text: "全部" }));
     Object.keys(kinds).sort(function (a, b) { return kinds[b] - kinds[a] || a.localeCompare(b, "zh"); }).forEach(function (k) {
@@ -9089,11 +9096,11 @@
     });
     if (p.kind && !kinds[p.kind]) { sel.appendChild(h("option", { value: p.kind, text: p.kind + "（0）" })); }
     sel.value = p.kind;
-    sel.addEventListener("change", function () { tSet(objectMode, "kind", sel.value); });
+    sel.addEventListener("change", function () { tSet("kind", sel.value); });
     row("类别", sel);
     var foot = h("div", { class: "ffoot" });
-    foot.appendChild(h("button", { class: "btn sm quiet", type: "button", disabled: !tPicked(objectMode).length, onclick: function () {
-      S.tPick[objectMode ? "item" : "food"] = tDefaultPick();
+    foot.appendChild(h("button", { class: "btn sm quiet", type: "button", disabled: !tPicked().length, onclick: function () {
+      S.tPick = tDefaultPick();
       renderDataPage();
     } }, "都恢复默认"));
     foot.appendChild(h("button", { class: "btn sm", type: "button", onclick: function () { S.tPanel = false; renderDataPage(); } }, "收起"));
@@ -9101,38 +9108,30 @@
     return panel;
   }
 
-  // 整页重画。opt.toTop：回到最上面（换到吃的 / 东西时）；opt.anchor：放回离开前记下的位置；
-  // 都不给就停在原来的位置（按视口里最上面那一件对）
   function renderDataPage(opt) {
-    var objectMode = S.thingsCat === "item";
-    thingsHead(objectMode ? "家里的东西" : "家里的吃的", objectMode ? "box" : "bowl");
+    thingsHead("吃的和东西", "box");
     opt = opt || {};
     var anchor = opt.toTop ? null : opt.anchor !== undefined ? opt.anchor : thingsAnchor();
     var box = clear($("thingsBody"));
     var d = S.things;
     if (!d) {
-      tWhenSeg(objectMode, null);
+      tWhenSeg(null);
       if (S.thingsErr) {
-        box.appendChild(errState((objectMode ? "家里的东西" : "家里的吃的") + "读取失败", S.thingsErr, function () { loadThings(); }));
+        box.appendChild(errState("吃的和东西读取失败", S.thingsErr, function () { loadThings(); }));
       } else {
         box.appendChild(skeleton("people", ["height:120px", "height:260px"]));
       }
       return;
     }
-    $("thingsSub").textContent = "此刻 " + String(d.now || "").slice(11, 16) + " 现算 · " + (objectMode
-      ? "吃的以外的东西，记录员记的 + 世界线里做完的段标的"
-      : "记录员记的 + 世界线里做完的段标的");
-    var items = (objectMode ? d.objects : d.items) || [];
-    tWhenSeg(objectMode, items);
-    var setQuery = function (value) { if (objectMode) { S.objQ = value; } else { S.thingsQ = value; } };
+    $("thingsSub").textContent = "此刻 " + String(d.now || "").slice(11, 16) + " 现算 · 记录员记的 + 世界线里做完的段标的";
+    var entries = tAllEntries(d);
+    tWhenSeg(entries);
     var bar = h("div", { class: "tbar" });
-    var q = h("input", { class: "inp", type: "text", placeholder: objectMode ? "搜名字、编号、样子、在哪" : "搜名字、编号、哪来的", value: objectMode ? S.objQ : S.thingsQ });
-    q.addEventListener("input", function () { setQuery(q.value); drawDataList(); });
+    var q = h("input", { class: "inp", type: "text", placeholder: "搜名字、编号、样子、在哪、哪来的", value: S.thingsQ });
+    q.addEventListener("input", function () { S.thingsQ = q.value; drawDataList(); });
     bar.appendChild(h("label", { class: "search" }, thingSearchIcon(), q));
-    // 筛选：一个按钮，点开是一块面板（排序、在哪、状态、类别）；跟默认不一样的几组收起时排在按钮下面，点 × 去掉。
-    // 看「未来」时这几样都用不上（那张单子按世界线排），按钮灰掉
-    var future = (objectMode ? S.objFilter : S.thingsFilter) === "future";
-    var picked = future ? [] : tPicked(objectMode);
+    var future = S.thingsFilter === "future";
+    var picked = future ? [] : tPicked();
     bar.appendChild(h("button", { class: "btn sm fbtn" + (!future && (S.tPanel || picked.length) ? " on" : ""), type: "button",
       "aria-expanded": !future && S.tPanel ? "true" : "false", disabled: future,
       title: future ? "未来那张单子按世界线排，不分在哪、状态、类别" : null,
@@ -9140,32 +9139,29 @@
       icon("filter"), "筛选", picked.length ? h("span", { class: "wcount", text: String(picked.length) }) : null));
     bar.appendChild(h("div", { class: "grow" }));
     bar.appendChild(h("button", { class: "btn sm", type: "button", onclick: function () {
-      var draft = objectMode
-        ? { name: "", kind: "", look: "", inside: "", owner: "", origin: "", from: [], what: d.item_steps.start[0], at: thingAt(d.now), place: "", holder: "", state: "", by: [], note: "" }
-        : { name: "", kind: "", origin: "", from: [], what: d.steps.start[0], at: thingAt(d.now), left: "", amount: "",
-            place: "", keep: d.keeps[0], spot: (d.spots || [])[0] || "", state: d.states[0], by: [], note: "" };
-      thingOpenForm(objectMode ? "onew" : "new", draft);
-    } }, icon("plus"), "加一件"));
+      var draft = { name: "", kind: "", origin: "", from: [], what: d.steps.start[0], at: thingAt(d.now), left: "", amount: "",
+        place: "", keep: d.keeps[0], spot: (d.spots || [])[0] || "", state: d.states[0], by: [], note: "" };
+      thingOpenForm("new", draft);
+    } }, icon("plus"), "加吃的"));
+    bar.appendChild(h("button", { class: "btn sm", type: "button", onclick: function () {
+      var draft = { name: "", kind: "", look: "", inside: "", owner: "", origin: "", from: [], what: d.item_steps.start[0], at: thingAt(d.now), place: "", holder: "", state: "", by: [], note: "" };
+      thingOpenForm("onew", draft);
+    } }, icon("plus"), "加东西"));
     box.appendChild(bar);
-    if (S.tPanel && !future) { box.appendChild(tFilterPanel(objectMode, items)); }
+    if (S.tPanel && !future) { box.appendChild(tFilterPanel(entries)); }
     else if (picked.length) {
       var pk = h("div", { class: "tpicked" });
       picked.forEach(function (x) {
-        pk.appendChild(h("button", { class: "chip-t on", type: "button", title: "去掉这一条", onclick: function () { tSet(objectMode, x.key, x.reset); } },
+        pk.appendChild(h("button", { class: "chip-t on", type: "button", title: "去掉这一条", onclick: function () { tSet(x.key, x.reset); } },
           x.label, icon("x")));
       });
       box.appendChild(pk);
     }
 
-    // 说明（快不行了、余量不多这些不在这里数，要看在筛选的「状态」里挑）
     var sum = h("div", { class: "tsum" });
-    if (objectMode) {
-      sum.appendChild(h("span", { text: "每件一个编号，记哪来的、经过谁手、搁在哪、变成什么样；模型查的也是这一份" }));
-    } else {
-      sum.appendChild(h("span", { text: "保鲜：还能放多久，按每一步怎么放、放在哪（冷热）、切没切、腌晒熏到哪了、当天天气和钟点现算。余量：还剩一开始的几成，米面油盐、调料干货、腌菜按克 / 毫升记、用一次扣一次。口感：跟刚有的时候比还剩几成，蔫了、回软、串味、凉了、熟过头……都往下扣，凉了热一热、发硬蒸一蒸这种缓回来就又满了" }));
-    }
+    sum.appendChild(h("span", { text: "每件一个编号（w 吃的 / p 东西），记录哪来的、经过谁手、搁在哪；吃的按放法、冷热、天气和钟点现算保鲜、余量与口感" }));
     box.appendChild(sum);
-    box.appendChild(h("div", { class: "tlist" }, h("div", { class: "pc", id: objectMode ? "objList" : "thingsList" })));
+    box.appendChild(h("div", { class: "tlist" }, h("div", { class: "pc", id: "thingsList" })));
     drawDataList();
     thingsAfterDraw(anchor, opt);
   }
@@ -9199,66 +9195,37 @@
   }
 
   function drawDataList() {
-    var objectMode = S.thingsCat === "item";
-    var card = $(objectMode ? "objList" : "thingsList");
+    var card = $("thingsList");
     if (!card || !S.things) { return; }
     clear(card);
-    if (S.tEdit[objectMode ? "onew" : "new"]) { card.appendChild(dataNewForm(S.things, objectMode)); }
-    var q = String((objectMode ? S.objQ : S.thingsQ) || "").trim().toLowerCase();
-    var filter = objectMode ? S.objFilter : S.thingsFilter;
-    if (filter === "future") { card.appendChild(futureRows(objectMode ? "item" : "food", q)); return; }
-    var source = (objectMode ? S.things.objects : S.things.items) || [];
-    var list = source.filter(function (x) { return tPassAll(x, objectMode, "") && tMatch(x, q, objectMode); });
-    // 搜的时候：照现在的条件没列出来、别处还有对得上的（没了的、在别的地方的、被状态类别挡住的）
-    var hidden = q ? source.filter(function (x) { return !tPassAll(x, objectMode, "") && tMatch(x, q, objectMode); }) : [];
+    if (S.tEdit["new"]) { card.appendChild(dataNewForm(S.things, false)); }
+    if (S.tEdit["onew"]) { card.appendChild(dataNewForm(S.things, true)); }
+    var q = String(S.thingsQ || "").trim().toLowerCase();
+    var filter = S.thingsFilter;
+    if (filter === "future") { card.appendChild(futureRows(null, q)); return; }
+    var source = tAllEntries(S.things);
+    var list = source.filter(function (e) { return tPassAll(e, "") && tMatch(e, q); });
+    var hidden = q ? source.filter(function (e) { return !tPassAll(e, "") && tMatch(e, q); }) : [];
     var rows = h("div", { class: "lrows" });
     if (!list.length && hidden.length) {
-      rows.appendChild(tHiddenHint(objectMode, hidden, filter, true));
+      rows.appendChild(tHiddenHint(hidden, filter, true));
       card.appendChild(rows);
       return;
     }
-    if (hidden.length) { rows.appendChild(tHiddenHint(objectMode, hidden, filter, false)); }
+    if (hidden.length) { rows.appendChild(tHiddenHint(hidden, filter, false)); }
     if (!list.length) {
       var empty = !source.length;
       rows.appendChild(h("div", { class: "muted", style: "font-size:13px;line-height:1.7", text: empty
-        ? (objectMode
-          ? "家里还没记着别的东西。聊天里说买了、收到了、做好了、挪了、交给谁了，记录员会记下来；补写在世界线里排的做手工、收拾东西，那一段做完也会算进来。也可以点右上角「加一件」手动记。"
-          : "家里还没有记着的吃的。聊天里说买了、收到了、做好了，记录员会记下来；补写在世界线里排的买菜、做饭，那一段做完也会算进来。也可以点右上角「加一件」手动记。")
-        : (q || tPicked(objectMode).some(function (x) { return x.key !== "sort"; }) ? "没有对得上的。" : filter === "gone"
-          ? (objectMode ? "还没有送走、丢掉、用完的。" : "还没有吃完、用完的。")
-          : (objectMode ? "家里现在没有了。" : "家里现在没有了，都吃完用完了。")) }));
+        ? "家里还没有记着的吃的或东西。聊天里说买了、收到了、做好了、挪了、交给谁了，记录员会记下来；补写在世界线里排的段做完也会算进来。也可以点右上角手动加。"
+        : (q || tPicked().some(function (x) { return x.key !== "sort"; }) ? "没有对得上的。" : filter === "gone"
+          ? "还没有吃完、送走、丢掉或用完的。"
+          : "家里现在没有了。") }));
       card.appendChild(rows);
       return;
     }
-    var sortBy = tPick(objectMode).sort;
-    if (objectMode ? sortBy !== "group" : sortBy !== "urgent") {
-      tSort(list, objectMode).forEach(function (it) { rows.appendChild(objectMode ? objRow(it) : thingRow(it)); });
-    } else if (objectMode) {
-      var groups = {}, order = [];
-      list.forEach(function (x) {
-        var k = objKind(x);
-        if (!groups[k]) { groups[k] = []; order.push(k); }
-        groups[k].push(x);
-      });
-      var multi = order.filter(function (k) { return groups[k].length > 1; }).sort();
-      var single = order.filter(function (k) { return groups[k].length === 1; });
-      multi.forEach(function (k) {
-        rows.appendChild(h("div", { class: "ogroup" }, h("span", { class: "tag warn", text: "长得像" }),
-          h("span", { text: "「" + k + "」" + groups[k].length + " 件，认准编号" })));
-        groups[k].forEach(function (it) { rows.appendChild(objRow(it)); });
-      });
-      if (single.length && multi.length) { rows.appendChild(h("div", { class: "ogroup", text: "别的" })); }
-      single.forEach(function (k) { rows.appendChild(objRow(groups[k][0])); });
-    } else {
-      list.sort(function (a, b) {
-        var r = thingRank(a) - thingRank(b);
-        if (r) { return r; }
-        if (a.ended && b.ended) { return String(b.ended.at).localeCompare(String(a.ended.at)); }
-        var ba = a.fresh.bad_at || "9999", bb = b.fresh.bad_at || "9999";
-        return ba === bb ? String(a.created).localeCompare(String(b.created)) : ba.localeCompare(bb);
-      });
-      list.forEach(function (it) { rows.appendChild(thingRow(it)); });
-    }
+    tSort(list).forEach(function (entry) {
+      rows.appendChild(entry.obj ? objRow(entry.it) : thingRow(entry.it));
+    });
     card.appendChild(rows);
   }
 
@@ -9279,7 +9246,7 @@
   }
   function futureList(cat, q) {
     return ((S.things && S.things.future) || []).filter(function (x) {
-      if ((x.cat || "food") !== cat) { return false; }
+      if (cat && (x.cat || "food") !== cat) { return false; }
       return !q || [x.id, x.name, x.kind, x.origin, x.place, x.look].join(" ").toLowerCase().indexOf(q) >= 0;
     });
   }
@@ -9295,13 +9262,12 @@
     return h("button", { class: "tlink", type: "button", title: "到世界线看这一段", onclick: function () { openWorldEntry(m.date, m.entry, m.who); } },
       "世界线 " + String(m.date || "").slice(5) + " " + (m.who_label || "") + " " + rangeText(m.start, m.end, m.date));
   }
-  // 「未来」那一页：两页共用（东西只给看，点世界线那一段过去改）
   function futureRows(cat, q) {
     var rows = h("div", { class: "lrows" });
     var fut = futureList(cat, q);
     rows.appendChild(h("div", { class: "muted", style: "font-size:13px;line-height:1.7", text: fut.length
       ? "世界线里还没做完的段要添的，编号先发好了；那一段做完才算进「现有的」"
-      : (q ? "没有对得上的。" : "世界线里还没做完的段，眼下没有要添的" + (cat === "item" ? "东西。" : "吃的。")) }));
+      : (q ? "没有对得上的。" : "世界线里还没做完的段，眼下没有要添的吃的或东西。") }));
     fut.forEach(function (x) { rows.appendChild(futureRow(x)); });
     return rows;
   }
@@ -9414,45 +9380,30 @@
   function thingJump(id) {
     var obj = objFind(id);
     if (obj) {
-      if (!thingGuard()) { return; }
-      var toObj = S.thingsCat !== "item";
-      S.thingsCat = "item";
-      if ((S.objFilter === "now" && obj.ended) || (S.objFilter === "gone" && !obj.ended) || S.objFilter === "future") { S.objFilter = "all"; }
+      if ((S.thingsFilter === "now" && obj.ended) || (S.thingsFilter === "gone" && !obj.ended) || S.thingsFilter === "future") { S.thingsFilter = "all"; }
       tReveal(true, obj);
-      if (S.objQ) { S.objQ = ""; }
+      if (S.thingsQ) { S.thingsQ = ""; }
       S.thingsOpen[id] = true;
       S.thingsFocus = id;
-      renderSide();
-      renderThings(toObj ? { toTop: true } : {});
+      renderThings({});
       return;
     }
     var it = thingFind(id);
     if (!it) {
       var fu = futureFind(id);
       if (!fu) { toast("没有 " + id + " 这一件", { err: true }); return; }
-      var cat = fu.cat === "item" ? "item" : "food";
-      if (S.thingsCat !== cat && !thingGuard()) { return; }
-      var moved = S.thingsCat !== cat;
-      S.thingsCat = cat;
-      if (cat === "item") { S.objFilter = "future"; S.objQ = ""; }
-      else { S.thingsFilter = "future"; S.thingsQ = ""; }
+      S.thingsFilter = "future";
+      S.thingsQ = "";
       S.thingsFocus = fu.id;
-      renderSide();
-      renderThings(moved ? { toTop: true } : {});
+      renderThings({});
       return;
-    }
-    var switched = S.thingsCat !== "food";
-    if (switched) {
-      if (!thingGuard()) { return; }
-      S.thingsCat = "food";
-      renderSide();
     }
     if ((S.thingsFilter === "now" && it.ended) || (S.thingsFilter === "gone" && !it.ended) || S.thingsFilter === "future") { S.thingsFilter = "all"; }
     tReveal(false, it);
     if (S.thingsQ) { S.thingsQ = ""; }
     S.thingsOpen[id] = true;
     S.thingsFocus = id;
-    renderThings(switched ? { toTop: true } : {});
+    renderThings({});
   }
 
   function dataRow(it, opt) {
