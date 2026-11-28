@@ -7458,13 +7458,12 @@
     }
     var who = worldPerson(d);
     renderWorldPeople(d, who);
-    var moodHost = h("div", { class: "wmood-host", id: "worldMoodHost" });
-    box.appendChild(moodHost);
-    renderWorldMood(moodHost);
     box.appendChild(worldToolbar(d, who));
     if (who !== "master") { box.appendChild(worldJump(d, who)); }
     if (who === "master") {
-      box.appendChild(h("div", { class: "wgrid solo" }, h("div", { class: "w-main" }, worldTimelineSection(d, who))));
+      var moodHost = h("div", { class: "wmood-host", id: "worldMoodHost" });
+      renderWorldMood(moodHost);
+      box.appendChild(h("div", { class: "wgrid solo" }, h("div", { class: "w-main" }, moodHost, worldTimelineSection(d, who))));
       return;
     }
     var bot = (d.bots || []).filter(function (b) { return b.key === who; })[0] || { key: who, label: worldLabel(d, who) };
@@ -10208,31 +10207,16 @@
     if (later) { LIVE.flushT = setTimeout(liveFlush, 1500); }
   }
 
-  /* ================= 世界线内联主人情绪条 ================= */
-  var MOOD_OWNER_OPTS = [
-    { v: -1, text: "开心", tone: "tone-happy" },
-    { v: 0, text: "平常", tone: "" },
-    { v: 1, text: "烦累", tone: "tone-lv1" },
-    { v: 2, text: "气着", tone: "tone-lv2" },
-    { v: 3, text: "崩了", tone: "tone-lv3" }
-  ];
+  /* ================= 主人页情绪面板（仅保留对室友的 2/3 档生气） ================= */
   var MOOD_BOT_OPTS = [
     { v: 0, text: "平常", tone: "" },
-    { v: 1, text: "微凉", tone: "tone-lv1" },
     { v: 2, text: "生气", tone: "tone-lv2" },
-    { v: 3, text: "严重", tone: "tone-lv3" }
+    { v: 3, text: "很生气", tone: "tone-lv3" }
   ];
-
-  function moodOwnerWord(level) {
-    var lv = Number(level || 0);
-    for (var i = 0; i < MOOD_OWNER_OPTS.length; i++) {
-      if (MOOD_OWNER_OPTS[i].v === lv) { return MOOD_OWNER_OPTS[i].text; }
-    }
-    return "平常";
-  }
 
   function moodBotWord(level) {
     var lv = Number(level || 0);
+    if (lv === 1) { lv = 0; }
     for (var i = 0; i < MOOD_BOT_OPTS.length; i++) {
       if (MOOD_BOT_OPTS[i].v === lv) { return MOOD_BOT_OPTS[i].text; }
     }
@@ -10305,41 +10289,33 @@
 
   function moodSummaryInfo(raw) {
     var m = moodNorm(raw);
-    var ownerLv = m.owner.level;
     var activeBots = [];
     m.bots.forEach(function (b) {
       var row = m.per_bot[b.key];
-      if (row && row.level > 0) {
-        activeBots.push({ key: b.key, label: row.label, level: row.level, phase: row.phase, reason: row.reason, peer_aware: row.peer_aware, updated_at: row.updated_at });
+      var lv = row ? (row.level === 1 ? 0 : row.level) : 0;
+      if (row && lv >= 2) {
+        activeBots.push({ key: b.key, label: row.label, level: lv, phase: row.phase, reason: row.reason, peer_aware: row.peer_aware, updated_at: row.updated_at });
       }
     });
     activeBots.sort(function (a, b) { return b.level - a.level; });
 
     var incKeys = Object.keys(m.incidents || {}).filter(function (k) { return m.incidents[k]; });
-    var maxPos = Math.max(ownerLv > 0 ? ownerLv : 0, activeBots.length ? activeBots[0].level : 0);
-    var hasNonZero = ownerLv !== 0 || activeBots.length > 0;
+    var maxPos = activeBots.length ? activeBots[0].level : 0;
+    var hasNonZero = activeBots.length > 0;
     var tone = "calm";
     if (maxPos >= 3) { tone = "lv3"; }
     else if (maxPos === 2) { tone = "lv2"; }
-    else if (maxPos === 1) { tone = "lv1"; }
-    else if (ownerLv === -1) { tone = "happy"; }
 
     var parts = [];
     activeBots.forEach(function (b) {
       var w = moodBotWord(b.level);
       parts.push("对" + b.label + w + (b.phase === "easing" ? "（缓和中）" : ""));
     });
-    if (ownerLv > 0) {
-      parts.push("自己" + moodOwnerWord(ownerLv) + (m.owner.phase === "easing" ? "（缓和中）" : ""));
-    } else if (ownerLv === -1) {
-      parts.push("开心");
-    }
 
     var text = "平常";
     if (hasNonZero) {
       if (parts.length === 1) {
-        var singleReason = activeBots.length === 1 ? activeBots[0].reason : m.owner.reason;
-        var sr = moodShort(singleReason, 14);
+        var sr = moodShort(activeBots[0].reason, 14);
         text = parts[0] + (sr ? " · " + sr : "");
       } else {
         text = parts.join(" / ");
@@ -10426,16 +10402,15 @@
       var pb = {};
       d.bots.forEach(function (b) {
         var r = d.per_bot[b.key] || {};
+        var lv = Number(r.level || 0);
+        if (lv === 1) { lv = 0; }
         pb[b.key] = {
-          level: Number(r.level || 0),
+          level: lv,
           reason: String(r.reason || "").trim(),
           peer_aware: !!r.peer_aware
         };
       });
-      body = {
-        owner: { level: Number(d.owner.level || 0), reason: String(d.owner.reason || "").trim() },
-        per_bot: pb
-      };
+      body = { per_bot: pb };
     }
     S.moodSaving = true;
     renderWorldMood();
@@ -10499,50 +10474,10 @@
       var curNorm = info.norm;
       var pane = h("div", { class: "wmood-pane" });
 
-      var ownerSeg = h("div", { class: "seg wmood-seg" });
-      MOOD_OWNER_OPTS.forEach(function (opt) {
-        var on = d.owner.level === opt.v;
-        ownerSeg.appendChild(h("button", {
-          type: "button",
-          class: on ? ("on" + (opt.tone ? " " + opt.tone : "")) : "",
-          disabled: S.moodSaving,
-          text: opt.text,
-          onclick: function () {
-            if (d.owner.level === opt.v) { return; }
-            d.owner.level = opt.v;
-            if (opt.v === 0) { d.owner.reason = ""; }
-            S.moodDirty = true;
-            renderWorldMood();
-          }
-        }));
-      });
-      var ownerMeta = curNorm.owner.level !== 0
-        ? (curNorm.owner.phase === "easing" ? "缓和中" : (curNorm.owner.updated_at ? curNorm.owner.updated_at.slice(5, 16) : ""))
-        : "";
-      var ownerRow = h("div", { class: "wmood-row" },
-        h("div", { class: "wmood-row-h" },
-          h("span", { class: "wmood-row-t", text: "我自己" }),
-          ownerMeta ? h("span", { class: "wmood-row-m", text: ownerMeta }) : null
-        ),
-        ownerSeg
-      );
-      if (d.owner.level !== 0) {
-        ownerRow.appendChild(h("div", { class: "wmood-extra" },
-          h("input", {
-            class: "inp",
-            type: "text",
-            placeholder: "起因（可选）",
-            value: d.owner.reason,
-            disabled: S.moodSaving,
-            oninput: function (ev) { d.owner.reason = ev.target.value; S.moodDirty = true; }
-          })
-        ));
-      }
-      pane.appendChild(ownerRow);
-
       d.bots.forEach(function (b) {
         var row = d.per_bot[b.key];
         if (!row) { return; }
+        if (row.level === 1) { row.level = 0; }
         var seg = h("div", { class: "seg wmood-seg" });
         MOOD_BOT_OPTS.forEach(function (opt) {
           var on = row.level === opt.v;
@@ -10605,7 +10540,7 @@
         pane.appendChild(h("div", { class: "wmood-inc", text: "刚翻篇余波：" + incParts.join("、") }));
       }
 
-      var hasDraftNonZero = d.owner.level !== 0 || d.bots.some(function (b) { return (d.per_bot[b.key] || {}).level > 0; });
+      var hasDraftNonZero = d.bots.some(function (b) { return (d.per_bot[b.key] || {}).level >= 2; });
       pane.appendChild(h("div", { class: "wmood-foot" },
         (info.hasNonZero || hasDraftNonZero) ? h("button", {
           class: "btn quiet sm",
