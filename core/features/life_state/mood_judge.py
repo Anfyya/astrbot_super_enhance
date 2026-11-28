@@ -83,10 +83,32 @@ JUDGE_PROMPT_TEMPLATE = """请判断主人刚刚发来的这批消息，是否�
 {incoming}
 
 判断主人有没有生气、缓和或情绪变化，只输出一个 JSON 对象（无变化填 changed=false, target="none"）：
-- target：self（冲{bot_label}）/ both（冲两人）/ owner（主人自身或外部）/ none（无变化）
+- target：self（只冲{bot_label}）/ peer（只冲另一位室友{peer_label}，例如跟{bot_label}吐槽或批评{peer_label}时填 peer，绝不连坐{bot_label}，严禁填 both）/ both（仅主人明确同时责怪两人时才填）/ owner（主人自身或外部）/ none（无变化）
 - level：0=平常，1=小不满，2=明显生气，3=很生气（target 为 owner 时可填 -1=开心）
-{{"target": "self"|"both"|"owner"|"none", "level": -1|0|1|2|3, "reason": "白话一句（无变化留空）", "changed": true|false}}
+- 尺度：随口打趣、带笑抱怨（如「你说她气不气人」）、玩笑式吓唬或就事论事澄清都不算真生气，填 changed=false, target="none"；若只是顺口提起另一人已记录的旧气且程度未变，也填 changed=false, target="none"，不要误覆写或降档。
+{{"target": "self"|"peer"|"both"|"owner"|"none", "level": -1|0|1|2|3, "reason": "白话一句（无变化留空）", "changed": true|false}}
 """
+
+
+def resolve_peer_bot(
+    bot: str,
+    bots: list[str] | set[str],
+    reason: str = "",
+    label_fn=None,
+) -> str:
+    """解析 target='peer' 对应的另一位室友 bot id（绝不返回当前对话 bot 自身）。"""
+    others = [str(b) for b in (bots or []) if str(b) and str(b) != str(bot)]
+    if not others:
+        return ""
+    if len(others) == 1:
+        return others[0]
+    txt = str(reason or "")
+    if txt and callable(label_fn):
+        for other in others:
+            lbl = str(label_fn(other) or "").strip()
+            if lbl and lbl in txt:
+                return other
+    return others[0]
 
 
 def _norm_place_key(place: str) -> str:
@@ -539,15 +561,23 @@ class MoodJudge:
             str(mine.get("updated_at") or ""),
             is_owner=False,
         )
-        peer_line = ""
-        peer_lvl = int((mv or {}).get("peer_level") or 0)
-        if peer_lvl > 0:
-            peer_bot = str((mv or {}).get("peer_bot") or "")
-            p_name = self.service.bots.label_for(peer_bot) if peer_bot else peer_label
-            p_reason = str((mv or {}).get("peer_reason") or "")
-            peer_line = "\n- 主人对%s的态度（室友已知情）：%d 档%s" % (
-                p_name, peer_lvl, "（%s）" % p_reason if p_reason else "",
-            )
+        peer_lines: list[str] = []
+        if isinstance(per_bot, dict):
+            for other_b in bots:
+                if not other_b or str(other_b) == str(bot):
+                    continue
+                other_row = per_bot.get(other_b) if isinstance(per_bot.get(other_b), dict) else {}
+                o_lvl = int(other_row.get("level") or 0)
+                p_name = self.service.bots.label_for(other_b) or other_b
+                o_desc = _format_level_desc(
+                    o_lvl,
+                    str(other_row.get("phase") or ""),
+                    str(other_row.get("reason") or ""),
+                    str(other_row.get("updated_at") or ""),
+                    is_owner=False,
+                )
+                peer_lines.append("\n- 主人对%s的态度（peer）：%s" % (p_name, o_desc))
+        peer_line = "".join(peer_lines)
 
         incoming_lines = [
             "- %s 主人：%s" % (str(item.get("time") or now.strftime("%H:%M")), str(item.get("text") or ""))
@@ -629,7 +659,7 @@ class MoodJudge:
             return None
 
         target = str(parsed.get("target") or "none").strip().lower()
-        if target not in ("self", "both", "owner"):
+        if target not in ("self", "peer", "both", "owner"):
             return None
 
         try:
@@ -637,6 +667,7 @@ class MoodJudge:
         except (TypeError, ValueError):
             return None
 
+        reason = clean_text(parsed.get("reason"), 60)
         heard_by: list[str] | None = None
         if target == "owner":
             level = max(-1, min(3, level))
@@ -653,30 +684,45 @@ class MoodJudge:
             if level < 0:
                 return None
             level = max(0, min(3, level))
-            base_level = max(self_level, peer_level) if target == "both" else self_level
-            if base_level > 0 and level < base_level and _is_cold_dismissive_batch(batch):
-                logger.info(
-                    "[super_enhance/mood_judge] 拦截单字冷敷衍误降档（%s target=%s %d -> %d）",
-                    bot, target, base_level, level,
-                )
-                return None
-            scope = "both" if target == "both" else bot
-            if target == "both":
-                peer_aware = True
-            elif level > 0:
-                phys_aware = infer_peer_aware(self.service, bot, moment, bots=bots)
-                if phys_aware:
-                    peer_aware = True
-                elif self_level == 0:
-                    # 新冲突且另一人不在场，显式标 False 防读心穿帮
-                    peer_aware = False
-                else:
-                    # 已有冲突中保留原 peer_aware（不冲掉此前通过 tell 建立的知情状态）
-                    peer_aware = None
+            if target == "peer":
+                peer_bot = resolve_peer_bot(bot, bots, reason, self.service.bots.label_for)
+                if not peer_bot:
+                    return None
+                peer_row = per_bot_state.get(peer_bot) if isinstance(per_bot_state, dict) else {}
+                base_level = int((peer_row or {}).get("level") or 0)
+                if base_level > 0 and level < base_level and _is_cold_dismissive_batch(batch):
+                    logger.info(
+                        "[super_enhance/mood_judge] 拦截单字冷敷衍误降档（%s target=peer(%s) %d -> %d）",
+                        bot, peer_bot, base_level, level,
+                    )
+                    return None
+                scope = peer_bot
+                # 主人在当前角色窗口直接提及对另一位室友生气，当前角色（作为室友）自然知情
+                peer_aware = True if level > 0 else None
             else:
-                peer_aware = None
+                base_level = max(self_level, peer_level) if target == "both" else self_level
+                if base_level > 0 and level < base_level and _is_cold_dismissive_batch(batch):
+                    logger.info(
+                        "[super_enhance/mood_judge] 拦截单字冷敷衍误降档（%s target=%s %d -> %d）",
+                        bot, target, base_level, level,
+                    )
+                    return None
+                scope = "both" if target == "both" else bot
+                if target == "both":
+                    peer_aware = True
+                elif level > 0:
+                    phys_aware = infer_peer_aware(self.service, bot, moment, bots=bots)
+                    if phys_aware:
+                        peer_aware = True
+                    elif self_level == 0:
+                        # 新冲突且另一人不在场，显式标 False 防读心穿帮
+                        peer_aware = False
+                    else:
+                        # 已有冲突中保留原 peer_aware（不冲掉此前通过 tell 建立的知情状态）
+                        peer_aware = None
+                else:
+                    peer_aware = None
 
-        reason = clean_text(parsed.get("reason"), 60)
         msg_ts = max(float(x.get("ts") or 0.0) for x in batch)
         update_kwargs = dict(
             scope=scope,

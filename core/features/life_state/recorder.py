@@ -24,6 +24,7 @@ from .mood_judge import (
     compute_owner_heard_by,
     infer_peer_aware,
     is_interruptible_step_entry,
+    resolve_peer_bot,
 )
 from .homewords import localize
 from .facts import fact_batch
@@ -200,8 +201,9 @@ RECORDER_SYSTEM_TEMPLATE = """{base_system}
 
 MASTER_MOOD_RECORDER_NOTE = """
 【主人情绪（放入 companionship.master_mood，无变化可省略或填 target="none"）】
-- 格式："master_mood": {"target": "self"|"both"|"owner"|"none", "level": -1..3, "reason": "白话一句", "peer_aware": false}
-- 判断主人有没有生气、缓和或情绪变化：target 填 self（冲当前角色）/ both（冲两人）/ owner（主人自身或外部）/ none（无变化）；level 填 0平常、1小不满、2明显生气、3很生气（owner 可填 -1 开心）；peer_aware 为另一位室友是否在场知情；条目里照旧可标 upset: true。
+- 格式："master_mood": {"target": "self"|"peer"|"both"|"owner"|"none", "level": -1..3, "reason": "白话一句", "peer_aware": false}
+- target 严格区分对象：self（只冲当前对话角色）/ peer（只冲另一位室友——在当前窗口跟 A 吐槽、批评或说 B 的不是时必须填 peer，绝不连坐 A，严禁因此填 both）/ both（仅当主人明确同时责怪两人才填）/ owner（主人自身或外部）/ none（无变化）。
+- level 尺度：0平常、1小不满、2明显生气、3很生气（owner 可填 -1 开心）；随口打趣、带笑吐槽（如「你说她气不气人」）、玩笑式吓唬或就事论事澄清都不算真生气，填 target="none"；若只是顺口提起另一人之前已在气头上的事且程度没变，也填 target="none"（不要把对方原档位覆盖降档）。peer_aware 为另一位室友是否知情；条目里照旧可标 upset: true。
 """.strip()
 
 RECORDER_TEMPLATE = """你在给一段对话做记录：把刚刚发生的事，整理成结构化的条目。
@@ -1159,6 +1161,25 @@ class Recorder:
             ))
         else:
             parts.append("对%s=0档（平常）" % (self.label(bot) or bot))
+        snap = companion.safe("get_master_mood", now, default=None)
+        per_bot = (snap.get("per_bot") if isinstance(snap, dict) else None) or {}
+        for other_b in bots:
+            if not other_b or str(other_b) == str(bot):
+                continue
+            orow = per_bot.get(other_b) if isinstance(per_bot.get(other_b), dict) else {}
+            olvl = int(orow.get("level") or 0)
+            ophase = str(orow.get("phase") or "")
+            oreason = str(orow.get("reason") or "")
+            olbl = self.label(other_b) or other_b
+            if olvl > 0:
+                parts.append("对%s=%d档%s%s" % (
+                    olbl,
+                    olvl,
+                    "（缓和中）" if ophase == "easing" else "（气头上）",
+                    "「%s」" % oreason if oreason else "",
+                ))
+            else:
+                parts.append("对%s=0档（平常）" % olbl)
         return "当前主人情绪记录（供校准参考）：" + "；".join(parts)
 
     def _batch_mentions_peer_aware(self, bot: str, batch: list[dict], bots: set[str]) -> bool:
@@ -1293,7 +1314,7 @@ class Recorder:
             raw_pa = mm.get("peer_aware")
             explicit_pa = raw_pa is True or str(raw_pa or "").strip().lower() == "true"
             explicit_pa_false = raw_pa is False or str(raw_pa or "").strip().lower() == "false"
-            if target in ("self", "both", "owner"):
+            if target in ("self", "peer", "both", "owner"):
                 try:
                     level = int(mm.get("level"))
                 except (TypeError, ValueError):
@@ -1301,6 +1322,7 @@ class Recorder:
                 if level is not None:
                     reason = clean_text(mm.get("reason"), 80)
                     heard_by: list[str] | None = None
+                    skip_update = False
                     if target == "owner":
                         level = max(-1, min(3, level))
                         scope = "owner"
@@ -1308,6 +1330,20 @@ class Recorder:
                         heard_by = [] if level == 0 else compute_owner_heard_by(
                             self, bot, now, bots=bot_list, peer_present=bool(explicit_pa or phys_or_mentioned)
                         )
+                    elif target == "peer":
+                        if level < 0:
+                            level = 0
+                        level = max(0, min(3, level))
+                        peer_bot = resolve_peer_bot(bot, bot_list, reason, self.label)
+                        if not peer_bot:
+                            skip_update = True
+                            scope = ""
+                            peer_aware = None
+                        else:
+                            scope = peer_bot
+                            covered_bots.add(peer_bot)
+                            # 主人在当前角色窗口直接提及对另一位室友生气，当前角色（作为室友）自然知情
+                            peer_aware = True if level > 0 else None
                     else:
                         if level < 0:
                             level = 0
@@ -1329,27 +1365,28 @@ class Recorder:
                                     peer_aware = None
                             else:
                                 peer_aware = None
-                    update_kwargs = dict(
-                        scope=scope,
-                        level=level,
-                        reason=reason,
-                        msg_ts=msg_ts,
-                        source="recorder",
-                        now=now,
-                        peer_aware=peer_aware,
-                        is_calibration=is_cal,
-                        bots=bot_list,
-                    )
-                    if scope == "owner":
-                        update_kwargs["heard_by"] = heard_by
-                    res = call_update_master_mood(companion, **update_kwargs)
-                    if isinstance(res, dict):
-                        transitions.append(res)
-                        if res.get("changed"):
-                            any_mood_changed = True
-                    if target == "self" and level > 0 and (explicit_pa or phys_or_mentioned):
-                        if companion.safe("mark_peer_aware", bot, aware=True, now=now, default=False):
-                            any_mood_changed = True
+                    if not skip_update:
+                        update_kwargs = dict(
+                            scope=scope,
+                            level=level,
+                            reason=reason,
+                            msg_ts=msg_ts,
+                            source="recorder",
+                            now=now,
+                            peer_aware=peer_aware,
+                            is_calibration=is_cal,
+                            bots=bot_list,
+                        )
+                        if scope == "owner":
+                            update_kwargs["heard_by"] = heard_by
+                        res = call_update_master_mood(companion, **update_kwargs)
+                        if isinstance(res, dict):
+                            transitions.append(res)
+                            if res.get("changed"):
+                                any_mood_changed = True
+                        if target == "self" and level > 0 and (explicit_pa or phys_or_mentioned):
+                            if companion.safe("mark_peer_aware", bot, aware=True, now=now, default=False):
+                                any_mood_changed = True
             elif existing_self_lvl > 0 and (explicit_pa or self._batch_mentions_peer_aware(bot, batch, bots)):
                 # 档位没变，但本批里另一人通过 tell / 同场获知了正在进行的冲突
                 if companion.safe("mark_peer_aware", bot, aware=True, now=now, default=False):
