@@ -8,8 +8,10 @@
   静默跳过或局部修正该单条，绝不抛异常炸毁整批世界线。
 """
 
+import bisect
 import copy
 import datetime
+import functools
 import hashlib
 import json
 import re
@@ -279,10 +281,15 @@ ITEM_LIST_MAX = 60
 
 def norm_cat(cat, kind="") -> str:
     """凡 kind 命中 food.KINDS 的条目自动归为 cat='food'（防晒好的小鱼干等被误记成 item）。"""
-    clean_k = re.sub(r"\s+", "", str(kind or ""))
-    if clean_k in KINDS:
-        return CAT_FOOD
-    return CAT_ITEM if str(cat or "") == CAT_ITEM else CAT_FOOD
+    if isinstance(kind, str) and kind:
+        if kind in KINDS:
+            return CAT_FOOD
+        if any(ch.isspace() for ch in kind) and re.sub(r"\s+", "", kind) in KINDS:
+            return CAT_FOOD
+    elif kind:
+        if re.sub(r"\s+", "", str(kind)) in KINDS:
+            return CAT_FOOD
+    return CAT_ITEM if cat == CAT_ITEM or str(cat or "") == CAT_ITEM else CAT_FOOD
 
 
 def steps_of(cat: str) -> tuple:
@@ -337,11 +344,8 @@ def _parse_num_or_range(token: str) -> float | None:
     return cn_number(token)
 
 
-def parse_amount(value) -> tuple | None:
-    """「500克」「1.5斤」「一斤半」「半斤」「大半斤」「半两」「2-3斤」「15毫升」「两勺」「300」→（克或毫升的数, 克 / 毫升 / 空）；认不出返回 None。"""
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return (float(value), "") if value >= 0 else None
-    text = str(value or "").strip()
+@functools.lru_cache(maxsize=4096)
+def _parse_amount_str(text: str) -> tuple | None:
     if not text or _has_negative_num(text):
         return None
     for m in _AMOUNT_RE.finditer(text):
@@ -370,6 +374,18 @@ def parse_amount(value) -> tuple | None:
         return count * rate, family
     bare = re.fullmatch(r"(?:约|大约|还剩|剩)?\s*(\d+(?:\.\d+)?)", text)
     return (float(bare.group(1)), "") if bare else None
+
+
+def parse_amount(value) -> tuple | None:
+    """「500克」「1.5斤」「一斤半」「半斤」「大半斤」「半两」「2-3斤」「15毫升」「两勺」「300」→（克或毫升的数, 克 / 毫升 / 空）；认不出返回 None。"""
+    if value is None or value == "":
+        return None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return (float(value), "") if value >= 0 else None
+    text = str(value).strip()
+    if not text:
+        return None
+    return _parse_amount_str(text)
 
 
 def fraction_of(text) -> float | None:
@@ -527,7 +543,10 @@ def is_charcoal(item: dict) -> bool:
     """灶台小炭炉用的闷炭 / 木炭（排除炭笔、炭画等非燃料物件）。"""
     if not isinstance(item, dict) or cat_of(item) != CAT_ITEM:
         return False
-    name = re.sub(r"\s+", "", str(item.get("name") or ""))
+    raw_name = str(item.get("name") or "")
+    if "炭" not in raw_name:
+        return False
+    name = re.sub(r"\s+", "", raw_name)
     kind = re.sub(r"\s+", "", str(item.get("kind") or ""))
     if any(ex in name for ex in CHARCOAL_EXCLUDE) or kind in ("画", "文具", "书"):
         return False
@@ -846,21 +865,36 @@ def master_done(items: dict, now: datetime.datetime) -> int:
     单方面摆在主人跟前的食物绝不自动吃完；对新规上线（MASTER_OPEN_EAT_SINCE）前遗留停在主人跟前的历史旧食物沿用旧规结单，避免复活成过期坏菜。"""
     done = 0
     for item in items.values():
-        if cat_of(item) != CAT_FOOD or is_ended(item) is not None:
+        if cat_of(item) != CAT_FOOD:
+            continue
+        kind = str(item.get("kind") or "").strip()
+        if kind not in MASTER_EATABLE_KINDS:
             continue
         stages = item.get("stages") or []
         if not stages:
             continue
-        last = max(stages, key=lambda s: (str(s.get("at") or ""), int(s.get("_i", 0))))
+        # 绝大多数历史旧菜最后一步已落为 END_STEPS，O(1) 快筛直接跳过（避免每次反复跑 max()）
+        if stages[-1].get("what") in END_STEPS:
+            continue
+        last = stages[0] if len(stages) == 1 else max(stages, key=lambda s: (str(s.get("at") or ""), int(s.get("_i", 0))))
+        last_what = str(last.get("what") or "").strip()
+        if last_what in END_STEPS:
+            continue
+        is_open_eat = (
+            last_what == "开吃"
+            and str(last.get("by") or "").strip().lower() == "master"
+        )
+        if not is_open_eat:
+            at_str = str(last.get("at") or "")
+            if at_str >= "2026-11-27 18:43" or "主人" not in str(last.get("place") or ""):
+                continue
+        if is_ended(item) is not None:
+            continue
         if not _is_master_eatable(item, last):
             continue
         moment = parse_time(last.get("at"))
         if moment is None:
             continue
-        is_open_eat = (
-            str(last.get("what") or "").strip() == "开吃"
-            and str(last.get("by") or "").strip().lower() == "master"
-        )
         is_legacy_before_master = (
             moment < MASTER_OPEN_EAT_SINCE
             and bool(MASTER_PLACE_RE.search(str(last.get("place") or "")))
@@ -1372,7 +1406,7 @@ class ThingStore:
         if moment is None:
             return items_map, None
         try:
-            shelf = self._build_view(moment, allow_settle=False)
+            shelf = self._build_view(moment, allow_settle=False, with_weathering=False)
         except Exception:
             return items_map, None
         for tid, v_item in shelf.items():
@@ -2148,10 +2182,11 @@ class ThingStore:
         return False
 
     def _collect_local_staples(self, items: dict, moment: datetime.datetime, at: str, by: str, matcher, ref: str, eff_prefix: str = "", target_id: str = ""):
-        local_foods = [
-            x for x in self._local_items(items.values(), moment)
+        raw_matched = [
+            x for x in items.values()
             if matcher(x) and str(x.get("created") or "") <= at and self.can_touch(x, by)
         ]
+        local_foods = self._local_items(raw_matched, moment) if raw_matched else []
         already = 0.0
         already_matched = False
         has_eff = False
@@ -2432,12 +2467,13 @@ class ThingStore:
         if seg_s is None or seg_s >= seg_e:
             seg_s = seg_e - datetime.timedelta(minutes=max(15, min(240, int(minutes or 60))))
         moment = seg_e
-        day_text, home_at = self._weather_helpers(moment)
-        fire_lit_fn = self._fire_lit_fn(moment)
-        all_wood = [
-            x for x in self._local_items(items.values(), moment)
-            if weathering.fuel_item(x) and not is_charcoal(x)
+        raw_wood = [
+            x for x in items.values()
+            if x.get("cat") == CAT_ITEM and weathering.fuel_item(x) and not is_charcoal(x)
         ]
+        if not raw_wood:
+            return
+        all_wood = self._local_items(raw_wood, moment)
         if not all_wood:
             return
 
@@ -2478,13 +2514,26 @@ class ThingStore:
                 if st_wl:
                     if "/" in st_wl and self.world is not None and hasattr(self.world, "find"):
                         try:
-                            d_part, eid_part = st_wl.split("/", 1)
-                            ent = self.world.find(eid_part, date_text=d_part)
-                            if isinstance(ent, dict) and str(ent.get("stove") or "").strip().lower() == "wood":
-                                es = parse_time(ent.get("start"))
-                                ee = parse_time(ent.get("end"))
-                                if es is not None and ee is not None and ee > es:
-                                    covered.append((es, ee))
+                            wl_span_cache = getattr(self, "_wl_wood_span_cache", None)
+                            rev = self.world.revision() if hasattr(self.world, "revision") else 0
+                            if wl_span_cache is None or wl_span_cache[0] != rev:
+                                wl_span_cache = (rev, {})
+                                self._wl_wood_span_cache = wl_span_cache
+                            span_map = wl_span_cache[1]
+                            if st_wl in span_map:
+                                cached_span = span_map[st_wl]
+                            else:
+                                d_part, eid_part = st_wl.split("/", 1)
+                                ent = self.world.find(eid_part, date_text=d_part)
+                                cached_span = None
+                                if isinstance(ent, dict) and str(ent.get("stove") or "").strip().lower() == "wood":
+                                    es = parse_time(ent.get("start"))
+                                    ee = parse_time(ent.get("end"))
+                                    if es is not None and ee is not None and ee > es:
+                                        cached_span = (es, ee)
+                                span_map[st_wl] = cached_span
+                            if cached_span is not None:
+                                covered.append(cached_span)
                         except Exception:
                             pass
                     continue
@@ -2500,21 +2549,21 @@ class ThingStore:
         if net_minutes < 1.0:
             return
 
-        pool = [
-            x for x in all_wood
-            if weathering.usable_stove_wood(x, moment, day_text, home_at, fire_lit_fn=fire_lit_fn)
-        ]
-        if not pool:
-            return
         candidates = sorted(
-            (x for x in pool if is_ended(x) is None and str(x.get("created") or "") <= at),
+            (x for x in all_wood if is_ended(x) is None and str(x.get("created") or "") <= at),
             key=lambda x: (str(x.get("created") or ""), str(x.get("id") or "")),
         )
+        if not candidates:
+            return
+        day_text, home_at = self._weather_helpers(moment)
+        fire_lit_fn = self._fire_lit_fn(moment)
         dur = min(240.0, net_minutes)
         remain_ratio = 1.0
         for wood in candidates:
             if remain_ratio <= 1e-6:
                 break
+            if not weathering.usable_stove_wood(wood, moment, day_text, home_at, fire_lit_fn=fire_lit_fn):
+                continue
             tier = weathering.wood_fuel_meta(wood, moment).get("tier")
             rate = WOOD_KG_PER_HOUR_KINDLING if tier == "kindling" else WOOD_KG_PER_HOUR_HARDWOOD
             need_kg = max(0.1, round(rate * (dur / 60.0) * remain_ratio, 1))
@@ -2577,7 +2626,10 @@ class ThingStore:
             grams = int(round(grams * min(1.0, net_minutes / total_minutes)))
             if grams <= 0:
                 return
-        pool = [x for x in self._local_items(items.values(), moment) if is_charcoal(x)]
+        raw_charcoal = [x for x in items.values() if is_charcoal(x)]
+        if not raw_charcoal:
+            return
+        pool = self._local_items(raw_charcoal, moment)
         if not pool:
             return
         already_auto = 0.0
@@ -2668,18 +2720,19 @@ class ThingStore:
             logger.info("[super_enhance/things] 世界线里 %d 段做完满 %d 天，标的吃的沉进存货", len(todo), SETTLE_DAYS)
             return len(todo)
 
-    def _build_view(self, flat: datetime.datetime, *, allow_settle: bool = True) -> View:
+    def _build_view(self, flat: datetime.datetime, *, allow_settle: bool = True, with_weathering: bool = True) -> View:
         if allow_settle:
             try:
                 self.settle(flat)
             except Exception:
                 logger.warning("[super_enhance/things] 沉世界线里的吃的失败", exc_info=True)
         data = self._load()
+        flat_str = fmt_time(flat)
         items = {str(x.get("id")): copy.deepcopy(x) for x in data.get("items") or []
-                 if str(x.get("created") or "") <= fmt_time(flat)}
+                 if str(x.get("created") or "") <= flat_str}
         for item in items.values():
             item["cat"] = norm_cat(item.get("cat"), item.get("kind"))
-            item["stages"] = [stage for stage in item.get("stages") or [] if str(stage.get("at") or "") <= fmt_time(flat)]
+            item["stages"] = [stage for stage in item.get("stages") or [] if str(stage.get("at") or "") <= flat_str]
             for index, stage in enumerate(item.get("stages") or []):
                 stage["_i"] = index
         alias = dict(data.get("alias") or {})
@@ -2694,10 +2747,11 @@ class ThingStore:
             if tid in items and isinstance(info, dict):
                 items[tid]["_opened"] = info
         master_done(items, flat)
-        try:
-            self._weathering(items, flat)
-        except Exception:
-            logger.warning("[super_enhance/things] 算风吹日晒雨淋失败", exc_info=True)
+        if with_weathering:
+            try:
+                self._weathering(items, flat)
+            except Exception:
+                logger.warning("[super_enhance/things] 算风吹日晒雨淋失败", exc_info=True)
         return View(items, alias)
 
     def view(self, now: datetime.datetime) -> View:
@@ -3145,9 +3199,21 @@ class ThingStore:
         if hasattr(self.world, "home_at") and self.world.home_at(flat) != "海边小镇":
             return None
         windows = self._fire_windows(flat)
+        if not windows:
+            return lambda _moment: False
+        merged: list[tuple[datetime.datetime, datetime.datetime]] = []
+        for lo, hi in sorted(windows, key=lambda x: x[0]):
+            if merged and lo <= merged[-1][1]:
+                if hi > merged[-1][1]:
+                    merged[-1] = (merged[-1][0], hi)
+            else:
+                merged.append((lo, hi))
+        starts = [lo for lo, _ in merged]
+        ends = [hi for _, hi in merged]
 
         def is_lit(moment: datetime.datetime) -> bool:
-            return any(lo <= moment <= hi for lo, hi in windows)
+            idx = bisect.bisect_right(starts, moment) - 1
+            return idx >= 0 and moment <= ends[idx]
 
         return is_lit
 

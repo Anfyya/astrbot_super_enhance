@@ -74,6 +74,32 @@
                 },
                 "default": ""
             },
+            "mood_judge": {
+                "description": "情绪裁判",
+                "type": "object",
+                "hint": "主人发消息后异步判断是否生气；配置 Decisions 接口后优先走零输出快裁判，失败自动降级。",
+                "condition": {
+                    "enabled": true
+                },
+                "items": {
+                    "mood_judge_enabled": {
+                        "description": "启用情绪裁判",
+                        "type": "bool",
+                        "default": true
+                    },
+                    "mood_judge_decisions_url": {
+                        "description": "Decisions 接口地址",
+                        "type": "string",
+                        "hint": "留空时回退到记录员/补写模型进行情绪判断。",
+                        "default": ""
+                    },
+                    "mood_judge_decisions_model": {
+                        "description": "Decisions 模型名",
+                        "type": "string",
+                        "default": "gemini-decision-1"
+                    }
+                }
+            },
             "proactive": {
                 "description": "主动消息",
                 "type": "object",

@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import datetime
+import functools
 import hashlib
 import math
 import re
@@ -95,19 +96,29 @@ GREEN_WORDS = ("新鲜枝木", "新鲜修枝", "刚砍", "新砍", "新伐", "�
 WET_WORDS = ("湿透", "泡透", "浸湿", "淋湿", "潮湿", "湿木", "湿柴", "湿的", "返潮", "受潮")
 DEEP_SOAK_WORDS = ("泡透", "内部湿透", "久泡", "海里捞", "海底捞")
 NEGATED_ACTION = re.compile(r"(?:尚未|还没|没有|未曾|还未|不能|不必|无需|未|没|不|别|勿|准备|打算|等待|需要|正在|继续|帮助|利于|便于|加快|恢复|拿去|等|待|去|让|得|要)[^，。；;!?！？\n]{0,8}$")
+_CLAUSE_SPLIT_RE = re.compile(r"[，。；;!?！？\n]")
+_ASSERT_AFTER_1 = re.compile(r"(?:前|后再|以后|之前|才能|才可|就能)")
+_ASSERT_AFTER_2 = re.compile(r"(?:了)?(?:没有|了吗|吗|没有呢|不够)")
 
 
 def asserted(text: str, words) -> bool:
-    for clause in re.split(r"[，。；;!?！？\n]", str(text or "")):
+    raw = str(text or "")
+    if not raw or not any(word in raw for word in words):
+        return False
+    for clause in _CLAUSE_SPLIT_RE.split(raw):
+        if not clause:
+            continue
         for word in words:
-            for match in re.finditer(re.escape(word), clause):
-                if NEGATED_ACTION.search(clause[:match.start()]):
-                    continue
-                if re.match(r"(?:前|后再|以后|之前|才能|才可|之前|就能)", clause[match.end():]):
-                    continue
-                if re.match(r"(?:了)?(?:没有|了吗|吗|没有呢|不够)", clause[match.end():]):
-                    continue
-                return True
+            if not word or word not in clause:
+                continue
+            wlen = len(word)
+            pos = clause.find(word)
+            while pos != -1:
+                if not NEGATED_ACTION.search(clause[:pos]):
+                    tail = clause[pos + wlen:]
+                    if not _ASSERT_AFTER_1.match(tail) and not _ASSERT_AFTER_2.match(tail):
+                        return True
+                pos = clause.find(word, pos + wlen)
     return False
 
 
@@ -134,22 +145,41 @@ def _is_legacy_item(item: dict) -> bool:
     return bool(created and created < STRUCTURED_FUEL_CUTOFF)
 
 
+_MATCH_STICK_RE = re.compile(r"(?<!引)火柴")
+
+
 def fuel_item(item: dict) -> bool:
     """炉柴识别：2026-11-18 12:00 起新物品只认精确枚举 kind（燃柴/薪柴/引火料）或显式 purpose='fuel'，零关键词猜测。"""
-    kind = re.sub(r"\s+", "", str(item.get("kind") or ""))
-    if kind in STOVE_WOOD_KINDS:
-        return True
+    raw_kind = item.get("kind")
+    if isinstance(raw_kind, str):
+        if raw_kind in STOVE_WOOD_KINDS:
+            return True
+        if raw_kind and any(ch.isspace() for ch in raw_kind) and re.sub(r"\s+", "", raw_kind) in STOVE_WOOD_KINDS:
+            return True
+    elif raw_kind:
+        if re.sub(r"\s+", "", str(raw_kind)) in STOVE_WOOD_KINDS:
+            return True
     stages = item.get("stages") or []
-    if any(isinstance(stage, dict) and str(stage.get("purpose") or "").strip() == "fuel" for stage in stages):
-        return True
+    for stage in stages:
+        if isinstance(stage, dict) and stage.get("purpose") == "fuel":
+            return True
+        if isinstance(stage, dict) and stage.get("purpose") and str(stage.get("purpose")).strip() == "fuel":
+            return True
     if not _is_legacy_item(item):
         return False
-    labels = [str(item.get(key) or "") for key in ("name", "kind")]
-    if any(re.search(r"(?<!引)火柴", label) for label in labels):
+    name = str(item.get("name") or "")
+    kind_s = str(raw_kind or "")
+    if ("火柴" in name and _MATCH_STICK_RE.search(name)) or ("火柴" in kind_s and _MATCH_STICK_RE.search(kind_s)):
         return False
-    return (any(word in label for label in labels for word in FUEL_WORDS)
-            or any(any(key in (stage.get("weather") or {}) for key in ("fuel_source", "fuel_state", "fuel_wet"))
-                   for stage in stages if isinstance(stage, dict)))
+    for word in FUEL_WORDS:
+        if word in name or word in kind_s:
+            return True
+    for stage in stages:
+        if isinstance(stage, dict):
+            w = stage.get("weather")
+            if isinstance(w, dict) and ("fuel_source" in w or "fuel_state" in w or "fuel_wet" in w):
+                return True
+    return False
 
 
 def wood_candidate(item: dict) -> bool:
@@ -381,11 +411,26 @@ def _month_temp(home: str, moment: datetime.datetime) -> float:
     return (MONTH_TEMP.get(home) or DEFAULT_MONTH_TEMP)[moment.month - 1]
 
 
-def _parse(text) -> datetime.datetime | None:
+@functools.lru_cache(maxsize=8192)
+def _parse_cached(s: str) -> datetime.datetime | None:
+    if len(s) == 16 and s[4] == "-" and s[7] == "-" and s[10] in (" ", "T") and s[13] == ":":
+        try:
+            return datetime.datetime.fromisoformat(s)
+        except Exception:
+            pass
     try:
-        return datetime.datetime.strptime(str(text or "")[:16], "%Y-%m-%d %H:%M")
+        return datetime.datetime.strptime(s, "%Y-%m-%d %H:%M")
     except Exception:
         return None
+
+
+def _parse(text) -> datetime.datetime | None:
+    if not text:
+        return None
+    s = str(text)[:16]
+    if not s:
+        return None
+    return _parse_cached(s)
 
 
 def _has(text: str, words) -> bool:
@@ -395,10 +440,17 @@ def _has(text: str, words) -> bool:
 def simulate(item: dict, now: datetime.datetime, day_text, home_at, food: bool = False, fire_lit_fn=None) -> dict | None:
     """这件此刻的样子；没什么可说的返回 None。day_text(date) 给那天的天气原文（可带「住处::」），home_at(moment) 给那时住在哪。"""
     flat = now.replace(tzinfo=None)
-    stages = sorted((s for s in item.get("stages") or [] if _parse(s.get("at")) is not None and _parse(s.get("at")) <= flat),
-                    key=lambda s: str(s.get("at")))
-    if not stages:
+    parsed_stages: list[tuple[datetime.datetime, str, dict]] = []
+    for s in item.get("stages") or []:
+        at_str = str(s.get("at") or "")
+        at_dt = _parse(at_str)
+        if at_dt is not None and at_dt <= flat:
+            parsed_stages.append((at_dt, at_str, s))
+    if not parsed_stages:
         return None
+    parsed_stages.sort(key=lambda row: row[1])
+    stages = [row[2] for row in parsed_stages]
+    stage_dts = [row[0] for row in parsed_stages]
     name, kind = str(item.get("name") or ""), str(item.get("kind") or "")
     look_text = str(item.get("look") or "")
     material = material_of(name, kind, food)
@@ -409,10 +461,10 @@ def simulate(item: dict, now: datetime.datetime, day_text, home_at, food: bool =
     rusty_look = "锈" in look_text
     inherently_rust_free = _has(name + " " + kind + " " + look_text, ("丛雨丸", "不锈钢"))
     is_cookware = not food and _has(name + " " + kind, COOKWARE_WORDS)
-    start = _parse(stages[0]["at"]) if fuel else max(_parse(stages[0]["at"]), flat - datetime.timedelta(days=LOOKBACK_DAYS))
+    start = stage_dts[0] if fuel else max(stage_dts[0], flat - datetime.timedelta(days=LOOKBACK_DAYS))
     exposures = {exposure_of(s.get("place"), s.get("spot"), s.get("keep"), s.get("holder"), food=food) for s in stages}
     if (not fuel and not any(s.get("weather") for s in stages) and exposures <= {"inside", "sealed", "carried"}
-            and not any(home_at(_parse(s["at"])) in SEA_HOMES for s in stages) and home_at(flat) not in SEA_HOMES):
+            and not any(home_at(dt) in SEA_HOMES for dt in stage_dts) and home_at(flat) not in SEA_HOMES):
         return None
     st = {"wet": 0.0, "wet_from": None, "rust": 0.0, "mold": 0.0, "salt": 0.0, "fade": 0.0, "soaked": False,
           "swollen": False, "wet_hours": 0.0, "moved": None}
@@ -422,16 +474,22 @@ def simulate(item: dict, now: datetime.datetime, day_text, home_at, food: bool =
         st["seasoning"] = "seasoned"
         st.update(fuel_properties(item, stages))
     place, spot, keep, holder, tied, near_stove, previous_state = "", "", "", "", 0, False, None
+    base_exposure = "inside"
     oil_protected_until: datetime.datetime | None = None
     if asserted(look_text, OIL_CARE_WORDS):
         oil_protected_until = flat + datetime.timedelta(days=365)
     index = 0
+    n_stages = len(stages)
     cur = start
+    cached_day_key: tuple[datetime.date, str] | None = None
+    cached_day_hours = None
     while cur <= flat:
-        while index < len(stages) and _parse(stages[index]["at"]) <= cur:
+        stage_changed = False
+        while index < n_stages and stage_dts[index] <= cur:
             stage = stages[index]
-            stage_at = _parse(stage["at"])
+            stage_at = stage_dts[index]
             index += 1
+            stage_changed = True
             prev_place = place
             if stage.get("place") and stage.get("place") != place:
                 for key in ("rain_cover", "ventilated", "off_ground"):
@@ -522,19 +580,26 @@ def simulate(item: dict, now: datetime.datetime, day_text, home_at, food: bool =
                     oil_protected_until = max(oil_protected_until or stage_at, stage_at + datetime.timedelta(days=14))
             if asserted(hold_text, OIL_CARE_WORDS) and stage_at is not None:
                 oil_protected_until = max(oil_protected_until or stage_at, stage_at + datetime.timedelta(days=30))
+        if stage_changed:
+            base_exposure = exposure_of(place, spot, keep, holder, food=food)
         if cur >= flat:
             break
         nxt = min(cur.replace(minute=0, second=0, microsecond=0) + datetime.timedelta(hours=1), flat)
-        if index < len(stages):
-            nxt = min(nxt, _parse(stages[index]["at"]))
+        if index < n_stages and stage_dts[index] < nxt:
+            nxt = stage_dts[index]
         dt = (nxt - cur).total_seconds() / 3600.0
         if dt <= 0:
             cur = nxt
             continue
         home = home_at(cur) or "穗织"
         sea = home in SEA_HOMES
-        hour = weather_mod.day_hours(cur.date().isoformat(), day_text(cur.date()), home)[cur.hour]
-        exposure = "sea" if st["moved"] and st["moved"]["sea"] else exposure_of(place, spot, keep, holder, food=food)
+        cur_date = cur.date()
+        day_key = (cur_date, home)
+        if cached_day_key != day_key:
+            cached_day_key = day_key
+            cached_day_hours = weather_mod.day_hours(cur_date.isoformat(), day_text(cur_date), home)
+        hour = cached_day_hours[cur.hour]
+        exposure = "sea" if st["moved"] and st["moved"]["sea"] else base_exposure
         if conditions.get("rain_cover") and exposure in ("open", "semi"):
             exposure = "covered"
         if st["moved"] and not st["moved"]["sea"]:
